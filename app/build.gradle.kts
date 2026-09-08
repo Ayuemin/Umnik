@@ -20,6 +20,15 @@ android {
         compose = true
     }
 
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            // В v0.1.0 используем debug-подпись только для тестовой установки APK.
+            // Перед публичным распространением нужно перейти на постоянный release keystore.
+            signingConfig = signingConfigs.getByName("debug")
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
