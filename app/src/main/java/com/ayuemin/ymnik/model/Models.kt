@@ -5,6 +5,14 @@ enum class ChatMode {
     IMAGE
 }
 
+enum class ReasoningEffort(val apiValue: String) {
+    MINIMAL("minimal"),
+    LOW("low"),
+    MEDIUM("medium"),
+    HIGH("high"),
+    XHIGH("xhigh")
+}
+
 enum class ThemeChoice {
     DYNAMIC,
     GRAPHITE,
@@ -71,6 +79,7 @@ data class ChatSession(
     val title: String,
     val messages: List<ChatMessage> = emptyList(),
     val projectId: String? = null,
+    val mode: ChatMode? = null,
     val isFavorite: Boolean = false,
     val assignedRole: String? = null,
     val masterPrompt: String? = null,
@@ -113,6 +122,7 @@ data class UiState(
     val imageModel: String = "bytedance-seed/seedream-4.5",
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
+    val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val busyLabel: String? = null,

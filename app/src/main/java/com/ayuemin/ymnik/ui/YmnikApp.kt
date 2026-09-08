@@ -110,6 +110,7 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
@@ -202,7 +203,6 @@ fun YmnikApp(viewModel: ChatViewModel) {
 private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
-    var pickerMode by remember { mutableStateOf<ChatMode?>(null) }
     var chatsOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
@@ -228,9 +228,10 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             state = state,
             onChats = { chatsOpen = true },
             onProjects = { projectsOpen = true },
-            onSelectMode = { mode ->
-                vm.setMode(mode)
-                pickerMode = mode
+            onSelectMode = vm::setMode,
+            onNewChat = {
+                val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+                vm.createChat(projectId)
             },
             onClear = vm::clearChat
         )
@@ -347,15 +348,6 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         }
     }
 
-    pickerMode?.let { mode ->
-        ModelPickerDialog(
-            mode = mode,
-            state = state,
-            vm = vm,
-            onDismiss = { pickerMode = null }
-        )
-    }
-
     if (chatsOpen) {
         ChatsHubDialog(
             state = state,
@@ -379,6 +371,7 @@ private fun ChatHeader(
     onChats: () -> Unit,
     onProjects: () -> Unit,
     onSelectMode: (ChatMode) -> Unit,
+    onNewChat: () -> Unit,
     onClear: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
@@ -400,15 +393,23 @@ private fun ChatHeader(
                 CompactModeIcon(
                     selected = state.mode == ChatMode.TEXT,
                     icon = Icons.Outlined.TextFields,
-                    description = "Текстовая модель",
+                    description = "Текстовый режим",
                     onClick = { onSelectMode(ChatMode.TEXT) }
                 )
                 CompactModeIcon(
                     selected = state.mode == ChatMode.IMAGE,
                     icon = Icons.Outlined.Image,
-                    description = "Модель изображений",
+                    description = "Режим изображений",
                     onClick = { onSelectMode(ChatMode.IMAGE) }
                 )
+
+                IconButton(
+                    onClick = onNewChat,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = "Новый чат", modifier = Modifier.size(21.dp))
+                }
 
                 if (state.isLoading) {
                     CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
@@ -585,7 +586,7 @@ private fun ChatsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Удалить диалог?") },
-            text = { Text("«${chat.title}» и связанные с ним сгенерированные файлы будут удалены.") },
+            text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
             confirmButton = {
                 TextButton(onClick = {
                     vm.deleteChat(chat.id)
@@ -998,7 +999,9 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
 private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
     var storageOpen by remember { mutableStateOf(false) }
+    var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     val themes = ThemeChoice.entries
+    val reasoningEfforts = ReasoningEffort.entries
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1040,7 +1043,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                     ) { Text("Сохранить") }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Ключ шифруется через Android Keystore. Модель выбирается значками текста и изображения в шапке чата.",
+                        "Ключ шифруется через Android Keystore. Модели выбираются ниже в настройках.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1073,6 +1076,35 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                             onCheckedChange = vm::setAnswerSoundEnabled
                         )
                     }
+
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Psychology, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Сила размышления", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Используется, когда значок размышления включён в чате",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(reasoningEfforts) { effort ->
+                            FilterChip(
+                                selected = state.reasoningEffort == effort,
+                                onClick = { vm.setReasoningEffort(effort) },
+                                label = { Text(reasoningEffortLabel(effort)) }
+                            )
+                        }
+                    }
+                    Text(
+                        "Не каждая модель поддерживает все уровни. Средний — наиболее совместимый вариант.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
 
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1144,11 +1176,31 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                 colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("Текущие модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Text("Модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(9.dp))
+                    FilledTonalButton(
+                        onClick = { modelPicker = ChatMode.TEXT },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.TextFields, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Текстовая", fontWeight = FontWeight.Medium)
+                            Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                     Spacer(Modifier.height(7.dp))
-                    Text("Текст: ${state.textModel}", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Изображения: ${state.imageModel}", style = MaterialTheme.typography.bodyMedium)
+                    FilledTonalButton(
+                        onClick = { modelPicker = ChatMode.IMAGE },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Image, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Изображения", fontWeight = FontWeight.Medium)
+                            Text(state.imageModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                    }
                 }
             }
         }
@@ -1156,6 +1208,15 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
 
     if (storageOpen) {
         StorageDialog(state = state, vm = vm, onDismiss = { storageOpen = false })
+    }
+
+    modelPicker?.let { mode ->
+        ModelPickerDialog(
+            mode = mode,
+            state = state,
+            vm = vm,
+            onDismiss = { modelPicker = null }
+        )
     }
 }
 
@@ -1269,7 +1330,7 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
             onDismissRequest = { clearConfirm = false },
             title = { Text("Очистить рабочие файлы?") },
             text = {
-                Text("Будут удалены сгенерированные изображения/файлы и временный экспорт. Тексты диалогов, API-ключ и навыки останутся.")
+                Text("Будут удалены сохранённые внутри Umnik изображения, сгенерированные файлы и экспорт. Тексты диалогов, API-ключ, проекты и навыки останутся.")
             },
             confirmButton = {
                 TextButton(onClick = {
@@ -1282,6 +1343,14 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
             }
         )
     }
+}
+
+private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort) {
+    ReasoningEffort.MINIMAL -> "Минимальная"
+    ReasoningEffort.LOW -> "Низкая"
+    ReasoningEffort.MEDIUM -> "Средняя"
+    ReasoningEffort.HIGH -> "Высокая"
+    ReasoningEffort.XHIGH -> "Максимальная"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {

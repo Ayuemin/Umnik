@@ -66,7 +66,8 @@ class OpenRouterClient(private val context: Context) {
         attachments: List<PendingAttachment>,
         systemPrompt: String,
         webSearchEnabled: Boolean = false,
-        reasoningEnabled: Boolean = false
+        reasoningEnabled: Boolean = false,
+        reasoningEffort: String = "medium"
     ): Result = withContext(Dispatchers.IO) {
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
@@ -96,7 +97,7 @@ class OpenRouterClient(private val context: Context) {
                 if (reasoningEnabled) {
                     add("reasoning", JsonObject().apply {
                         addProperty("enabled", true)
-                        addProperty("effort", "medium")
+                        addProperty("effort", reasoningEffort)
                         addProperty("exclude", true)
                     })
                 }

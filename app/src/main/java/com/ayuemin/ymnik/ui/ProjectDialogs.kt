@@ -110,7 +110,7 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
             title = { Text("Удалить диалог?") },
-            text = { Text("«${chat.title}» будет удалён вместе с его локальными сгенерированными файлами.") },
+            text = { Text("«${chat.title}» будет удалён. Его сгенерированные файлы останутся в хранилище Umnik.") },
             confirmButton = {
                 TextButton(onClick = {
                     vm.deleteChat(chat.id)

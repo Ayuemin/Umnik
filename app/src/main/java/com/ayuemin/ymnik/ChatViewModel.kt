@@ -21,6 +21,7 @@ import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
+import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
@@ -58,13 +59,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = initialChatId,
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
-            mode = runCatching {
+            mode = initialChat.mode ?: runCatching {
                 ChatMode.valueOf(prefs.getString("chat_mode", ChatMode.TEXT.name) ?: ChatMode.TEXT.name)
             }.getOrDefault(ChatMode.TEXT),
             textModel = prefs.getString("text_model", prefs.getString("model", "openrouter/auto")) ?: "openrouter/auto",
             imageModel = prefs.getString("image_model", "bytedance-seed/seedream-4.5") ?: "bytedance-seed/seedream-4.5",
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
+            reasoningEffort = runCatching {
+                ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
+            }.getOrDefault(ReasoningEffort.MEDIUM),
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             themeChoice = runCatching {
@@ -86,7 +90,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun setMode(mode: ChatMode) {
         prefs.edit().putString("chat_mode", mode.name).apply()
-        _state.value = _state.value.copy(mode = mode)
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == _state.value.currentChatId) chat.copy(mode = mode) else chat
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(mode = mode, chats = chats)
     }
 
     fun selectModel(mode: ChatMode, model: String) {
@@ -114,6 +122,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(reasoningEnabled = enabled)
     }
 
+    fun setReasoningEffort(effort: ReasoningEffort) {
+        prefs.edit().putString("reasoning_effort", effort.name).apply()
+        _state.value = _state.value.copy(reasoningEffort = effort)
+    }
+
     fun setAnswerSoundEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("answer_sound", enabled).apply()
         _state.value = _state.value.copy(answerSoundEnabled = enabled)
@@ -130,7 +143,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val chat = ChatSession(
             id = UUID.randomUUID().toString(),
             title = "Новый чат",
-            projectId = projectId
+            projectId = projectId,
+            mode = _state.value.mode
         )
         val next = listOf(chat) + _state.value.chats
         chatsRepository.save(next)
@@ -148,22 +162,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun switchChat(id: String) {
         if (_state.value.isLoading) return
         val chat = _state.value.chats.firstOrNull { it.id == id } ?: return
-        prefs.edit().putString("current_chat_id", id).apply()
+        val nextMode = chat.mode ?: _state.value.mode
+        prefs.edit()
+            .putString("current_chat_id", id)
+            .putString("chat_mode", nextMode.name)
+            .apply()
         _state.value = _state.value.copy(
             currentChatId = id,
             messages = chat.messages,
+            mode = nextMode,
             pendingAttachments = emptyList()
         )
     }
 
     fun deleteChat(id: String) {
         if (_state.value.isLoading) return
-        val target = _state.value.chats.firstOrNull { it.id == id } ?: return
-        target.messages.flatMap { it.generatedFiles }.forEach { File(it.localPath).delete() }
+        if (_state.value.chats.none { it.id == id }) return
 
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
-            remaining = listOf(ChatSession(UUID.randomUUID().toString(), "Новый чат"))
+            remaining = listOf(ChatSession(UUID.randomUUID().toString(), "Новый чат", mode = _state.value.mode))
         }
 
         val selected = if (_state.value.currentChatId == id) remaining.first() else
@@ -175,6 +193,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = remaining,
             currentChatId = selected.id,
             messages = selected.messages,
+            mode = selected.mode ?: _state.value.mode,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -484,6 +503,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val imageModel = _state.value.imageModel
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
+        val reasoningEffort = _state.value.reasoningEffort
 
         viewModelScope.launch {
             val operation = runCatching {
@@ -508,7 +528,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             pending + projectFiles,
                             buildSystemPrompt(skillText, currentProject, currentChat),
                             webSearchEnabled,
-                            reasoningEnabled
+                            reasoningEnabled,
+                            reasoningEffort.apiValue
                         )
                     }
                     ChatMode.IMAGE -> {
@@ -559,7 +580,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun exportMessage(message: ChatMessage): GeneratedFile {
-        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val dir = File(context.filesDir, "exports").apply { mkdirs() }
         val name = "umnik_${message.timestamp}.md"
         val file = File(dir, name)
         file.writeText(message.text)
@@ -579,7 +600,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun clearChat() {
         if (_state.value.isLoading) return
-        _state.value.messages.flatMap { it.generatedFiles }.forEach { File(it.localPath).delete() }
         val chats = replaceChatMessages(_state.value.chats, _state.value.currentChatId, emptyList(), "Новый чат")
         chatsRepository.save(chats)
         _state.value = _state.value.copy(

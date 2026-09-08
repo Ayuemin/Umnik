@@ -8,7 +8,7 @@ import java.util.UUID
 
 class StorageRepository(private val context: Context) {
     private val generatedRoot = File(context.filesDir, "generated").apply { mkdirs() }
-    private val exportsRoot = File(context.cacheDir, "exports").apply { mkdirs() }
+    private val exportsRoot = File(context.filesDir, "exports").apply { mkdirs() }
     private val skillsRoot = File(context.filesDir, "skills").apply { mkdirs() }
     private val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
     private val chatsFile = File(File(context.filesDir, "chats"), "chats.json")
