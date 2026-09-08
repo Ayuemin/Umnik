@@ -9,11 +9,13 @@ import android.os.Looper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
@@ -43,6 +45,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
     private val chatsRepository = ChatRepository(context)
+    private val chatFilesRepository = ChatFileRepository(context)
     private val projectsRepository = ProjectRepository(context)
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
@@ -307,6 +310,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
         if (_state.value.chats.none { it.id == id }) return
 
+        chatFilesRepository.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
             remaining = listOf(ChatSession(UUID.randomUUID().toString(), "Новый чат", mode = _state.value.mode))
@@ -582,6 +586,74 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return if (info?.accepts("file") == true) true to null else false to "Выбранная модель не принимает этот тип файла"
     }
 
+    private fun shouldPersistInChat(attachment: PendingAttachment): Boolean {
+        if (_state.value.mode != ChatMode.TEXT) return false
+        val mime = attachment.mimeType.lowercase()
+        val name = attachment.name.lowercase()
+        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
+            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+        return textLike || mime == "application/pdf" || name.endsWith(".pdf")
+    }
+
+    private fun chatFileAsAttachment(file: ChatFile): PendingAttachment = PendingAttachment(
+        uri = "chat://${file.id}",
+        name = file.name,
+        mimeType = file.mimeType,
+        size = file.size,
+        localPath = file.localPath
+    )
+
+    private fun persistChatAttachment(attachment: PendingAttachment) {
+        val chatId = _state.value.currentChatId
+        val current = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        val duplicate = current.chatFiles.orEmpty().any {
+            it.name.equals(attachment.name, ignoreCase = true) &&
+                (attachment.size <= 0L || it.size == attachment.size)
+        }
+        if (duplicate) {
+            _state.value = _state.value.copy(status = "Файл «${attachment.name}» уже есть в этом чате")
+            return
+        }
+        runCatching { chatFilesRepository.importFile(chatId, attachment) }
+            .onSuccess { file ->
+                val chats = _state.value.chats.map { chat ->
+                    if (chat.id == chatId) chat.copy(
+                        chatFiles = chat.chatFiles.orEmpty() + file,
+                        updatedAt = System.currentTimeMillis()
+                    ) else chat
+                }
+                chatsRepository.save(chats)
+                _state.value = _state.value.copy(
+                    chats = chats,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Файл «${file.name}» закреплён за этим чатом"
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл чата") }
+    }
+
+    fun removeChatFile(fileId: String) {
+        if (_state.value.isLoading) return
+        val chatId = _state.value.currentChatId
+        val current = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        val file = current.chatFiles.orEmpty().firstOrNull { it.id == fileId } ?: return
+        chatFilesRepository.delete(file)
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == chatId) chat.copy(
+                chatFiles = chat.chatFiles.orEmpty().filterNot { it.id == fileId },
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = chats,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Файл «${file.name}» убран из контекста чата"
+        )
+    }
+
     fun addAttachment(uri: Uri) {
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
@@ -589,8 +661,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
                     val (allowed, reason) = attachmentAllowed(attachment)
-                    if (!allowed) _state.value = _state.value.copy(status = reason)
-                    else _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                    if (!allowed) {
+                        _state.value = _state.value.copy(status = reason)
+                    } else if (shouldPersistInChat(attachment)) {
+                        persistChatAttachment(attachment)
+                    } else {
+                        _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                    }
                 }
             }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
@@ -679,8 +756,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val clean = text.trim()
         val pending = _state.value.pendingAttachments
-        if (clean.isBlank() && pending.isEmpty()) return
         if (_state.value.isLoading) return
+
+        val mode = _state.value.mode
+        val chatId = _state.value.currentChatId
+        val currentChat = _state.value.chats.firstOrNull { it.id == chatId }
+        val persistentChatFiles = if (mode == ChatMode.TEXT) {
+            currentChat?.chatFiles.orEmpty().map(::chatFileAsAttachment)
+        } else {
+            emptyList()
+        }
+        if (clean.isBlank() && pending.isEmpty() && persistentChatFiles.isEmpty()) return
 
         val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
         if (invalidPending != null) {
@@ -688,20 +774,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
 
-        val chatId = _state.value.currentChatId
-        val currentChat = _state.value.chats.firstOrNull { it.id == chatId }
         val currentProject = currentChat?.projectId?.let { id -> _state.value.projects.firstOrNull { it.id == id } }
         val before = _state.value.messages
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "user",
             text = clean.ifBlank {
-                if (_state.value.mode == ChatMode.IMAGE) "Создай вариант приложенного изображения" else "[Вложения]"
+                when {
+                    mode == ChatMode.IMAGE -> "Создай вариант приложенного изображения"
+                    persistentChatFiles.isNotEmpty() -> "[Файлы чата]"
+                    else -> "[Вложения]"
+                }
             },
             attachmentNames = pending.map { it.name }
         )
         val nextMessages = before + user
-        val title = if (before.isEmpty()) makeChatTitle(clean, pending.map { it.name }) else null
+        val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }
+        val title = if (before.isEmpty()) makeChatTitle(clean, titleAttachments) else null
         val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
         chatsRepository.save(nextChats)
 
@@ -715,7 +804,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             storageStats = storageRepository.stats()
         )
 
-        val mode = _state.value.mode
         val textModel = currentTextModelId()
         val imageModel = _state.value.imageModel
         val webSearchEnabled = _state.value.webSearchEnabled
@@ -746,7 +834,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             textModel,
                             before,
                             clean,
-                            pending + projectFiles,
+                            (pending + persistentChatFiles.filter { attachmentAllowed(it).first } + projectFiles)
+                                .distinctBy { it.localPath ?: it.uri },
                             buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true),
                             webSearchEnabled,
                             actualReasoning,
@@ -824,7 +913,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun clearChat() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
-        val chats = replaceChatMessages(_state.value.chats, _state.value.currentChatId, emptyList(), "Новый чат")
+        val chatId = _state.value.currentChatId
+        chatFilesRepository.deleteChat(chatId)
+        val now = System.currentTimeMillis()
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == chatId) chat.copy(
+                title = "Новый чат",
+                messages = emptyList(),
+                chatFiles = emptyList(),
+                updatedAt = now
+            ) else chat
+        }
         chatsRepository.save(chats)
         _state.value = _state.value.copy(
             messages = emptyList(),
@@ -832,7 +931,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Чат очищен"
+            status = "Чат очищен вместе с его временными файлами"
         )
     }
 
@@ -962,6 +1061,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 appendLine(it)
             }
             appendLine("===== КОНЕЦ НАСТРОЕК ДИАЛОГА =====")
+        }
+        if (!chat?.chatFiles.isNullOrEmpty()) {
+            appendLine("Файлы этого диалога автоматически приложены к текущему запросу. Используй их как постоянный рабочий контекст этого чата.")
         }
         if (toolsEnabled) appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
         appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")

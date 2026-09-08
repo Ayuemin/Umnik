@@ -225,6 +225,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     }
     val reasoningAvailable = state.mode == ChatMode.TEXT && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
+    val currentChatFiles = state.chats.firstOrNull { it.id == state.currentChatId }?.chatFiles.orEmpty()
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
@@ -291,13 +292,25 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
 
-        if (state.pendingAttachments.isNotEmpty()) {
+        if (currentChatFiles.isNotEmpty() || state.pendingAttachments.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(state.pendingAttachments, key = { it.uri }) { attachment ->
+                    items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
+                        AssistChip(
+                            onClick = { vm.removeChatFile(file.id) },
+                            label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                            },
+                            trailingIcon = {
+                                Icon(Icons.Outlined.Close, contentDescription = "Убрать файл из контекста чата", modifier = Modifier.size(18.dp))
+                            }
+                        )
+                    }
+                    items(state.pendingAttachments, key = { "pending-${it.uri}" }) { attachment ->
                         AssistChip(
                             onClick = { vm.removeAttachment(attachment.uri) },
                             label = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },

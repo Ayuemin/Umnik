@@ -11,6 +11,7 @@ class StorageRepository(private val context: Context) {
     private val exportsRoot = File(context.filesDir, "exports").apply { mkdirs() }
     private val skillsRoot = File(context.filesDir, "skills").apply { mkdirs() }
     private val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
+    private val chatFilesRoot = File(context.filesDir, "chat_files").apply { mkdirs() }
     private val chatsFile = File(File(context.filesDir, "chats"), "chats.json")
 
     fun list(): List<StoredFile> {
@@ -19,6 +20,7 @@ class StorageRepository(private val context: Context) {
         collect(exportsRoot, "Экспорт", true, items)
         collect(skillsRoot, "Навыки", false, items, skipName = "skills.json")
         collect(projectsRoot, "Проекты", false, items, skipName = "projects.json")
+        collect(chatFilesRoot, "Файлы чатов", false, items)
         return items.sortedByDescending { it.modifiedAt }
     }
 
@@ -27,7 +29,7 @@ class StorageRepository(private val context: Context) {
         exportBytes = sizeOf(exportsRoot),
         skillBytes = sizeOf(skillsRoot),
         projectBytes = sizeOf(projectsRoot),
-        chatBytes = if (chatsFile.exists()) chatsFile.length() else 0L
+        chatBytes = (if (chatsFile.exists()) chatsFile.length() else 0L) + sizeOf(chatFilesRoot)
     )
 
     fun delete(path: String): Boolean {

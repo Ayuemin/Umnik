@@ -67,6 +67,15 @@ data class PendingAttachment(
     val localPath: String? = null
 )
 
+data class ChatFile(
+    val id: String,
+    val name: String,
+    val mimeType: String,
+    val localPath: String,
+    val size: Long,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
 data class GeneratedFile(
     val id: String,
     val name: String,
@@ -112,6 +121,7 @@ data class ChatSession(
     val projectId: String? = null,
     val mode: ChatMode? = null,
     val textModelOverride: String? = null,
+    val chatFiles: List<ChatFile>? = null,
     val isFavorite: Boolean = false,
     val assignedRole: String? = null,
     val masterPrompt: String? = null,
