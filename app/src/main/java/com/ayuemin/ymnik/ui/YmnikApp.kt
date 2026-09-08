@@ -9,7 +9,7 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
+import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -239,8 +239,20 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                                     overflow = TextOverflow.Ellipsis
                                 )
                             },
-                            leadingIcon = { Icon(Icons.Outlined.AttachFile, contentDescription = null, Modifier.size(18.dp)) },
-                            trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = "Убрать", Modifier.size(18.dp)) }
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.AttachFile,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            trailingIcon = {
+                                Icon(
+                                    Icons.Outlined.Close,
+                                    contentDescription = "Убрать",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         )
                     }
                 }
@@ -334,13 +346,25 @@ private fun ChatHeader(
                     selected = state.mode == ChatMode.TEXT,
                     onClick = { onMode(ChatMode.TEXT) },
                     label = { Text("Текст") },
-                    leadingIcon = { Icon(Icons.Outlined.TextFields, contentDescription = null, Modifier.size(18.dp)) }
+                    leadingIcon = {
+                        Icon(
+                            Icons.Outlined.TextFields,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 )
                 FilterChip(
                     selected = state.mode == ChatMode.IMAGE,
                     onClick = { onMode(ChatMode.IMAGE) },
                     label = { Text("Изображение") },
-                    leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null, Modifier.size(18.dp)) }
+                    leadingIcon = {
+                        Icon(
+                            Icons.Outlined.Image,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 )
             }
 
@@ -374,7 +398,13 @@ private fun ChatHeader(
                         AssistChip(
                             onClick = { },
                             label = { Text(skill.name) },
-                            leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, Modifier.size(18.dp)) }
+                            leadingIcon = {
+                                Icon(
+                                    Icons.Outlined.Extension,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         )
                     }
                 }
@@ -516,7 +546,12 @@ private fun MessageCard(
                 message.attachmentNames.forEach { name ->
                     Spacer(Modifier.height(7.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.AttachFile, contentDescription = null, Modifier.size(17.dp), tint = content)
+                        Icon(
+                            Icons.Outlined.AttachFile,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp),
+                            tint = content
+                        )
                         Spacer(Modifier.width(5.dp))
                         Text(name, style = MaterialTheme.typography.bodySmall, color = content)
                     }
@@ -534,9 +569,7 @@ private fun MessageCard(
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = {
-                    copyText(context, message.text)
-                }) {
+                IconButton(onClick = { copyText(context, message.text) }) {
                     Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать ответ")
                 }
                 IconButton(onClick = { shareText(context, message.text) }) {
@@ -589,7 +622,11 @@ private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color)
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             IconButton(onClick = { copyText(context, part.text) }) {
-                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать блок", Modifier.size(18.dp))
+                                Icon(
+                                    Icons.Outlined.ContentCopy,
+                                    contentDescription = "Копировать блок",
+                                    modifier = Modifier.size(18.dp)
+                                )
                             }
                         }
                         SelectionContainer {
@@ -636,7 +673,7 @@ private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Un
     if (file.mimeType.startsWith("image/")) {
         val bitmap = remember(file.localPath) { BitmapFactory.decodeFile(file.localPath) }
         if (bitmap != null) {
-            Image(
+            ComposeImage(
                 bitmap = bitmap.asImageBitmap(),
                 contentDescription = file.name,
                 modifier = Modifier
@@ -735,7 +772,13 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
                                 selected = skill.id in state.activeSkillIds,
                                 onClick = { vm.toggleSkill(skill.id) },
                                 label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") },
-                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, Modifier.size(18.dp)) }
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Outlined.Extension,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             )
                             Spacer(Modifier.width(6.dp))
                             IconButton(onClick = { vm.deleteSkill(skill.id) }) {
@@ -787,7 +830,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                 ) { Text("Сохранить") }
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Ключ шифруется через Android Keystore. Модели теперь выбираются прямо в верхней части чата.",
+                    "Ключ шифруется через Android Keystore. Модели выбираются прямо в верхней части чата.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
