@@ -12,8 +12,8 @@ android {
         applicationId = "com.ayuemin.ymnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 2
+        versionName = "0.1.1"
     }
 
     buildFeatures {
@@ -23,8 +23,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // В v0.1.0 используем debug-подпись только для тестовой установки APK.
-            // Перед публичным распространением нужно перейти на постоянный release keystore.
+            // Для тестовых релизов пока используется debug-подпись.
+            // Перед стабильным публичным распространением нужно перейти на постоянный release keystore.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
