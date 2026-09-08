@@ -9,11 +9,15 @@ import android.os.Looper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
+import com.ayuemin.ymnik.data.StorageRepository
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
+import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.network.OpenRouterClient
@@ -30,12 +34,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val prefs = context.getSharedPreferences("ymnik", Context.MODE_PRIVATE)
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
+    private val chatsRepository = ChatRepository(context)
+    private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val gson = Gson()
 
+    private val initialChats = loadInitialChats()
+    private val initialChatId = prefs.getString("current_chat_id", null)
+        ?.takeIf { id -> initialChats.any { it.id == id } }
+        ?: initialChats.first().id
+    private val initialChat = initialChats.first { it.id == initialChatId }
+
     private val _state = MutableStateFlow(
         UiState(
-            messages = loadMessages(),
+            messages = initialChat.messages,
+            chats = initialChats,
+            currentChatId = initialChatId,
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
             mode = runCatching {
@@ -47,7 +61,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             themeChoice = runCatching {
                 ThemeChoice.valueOf(prefs.getString("theme_choice", ThemeChoice.DYNAMIC.name) ?: ThemeChoice.DYNAMIC.name)
-            }.getOrDefault(ThemeChoice.DYNAMIC)
+            }.getOrDefault(ThemeChoice.DYNAMIC),
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -89,6 +105,61 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun setThemeChoice(choice: ThemeChoice) {
         prefs.edit().putString("theme_choice", choice.name).apply()
         _state.value = _state.value.copy(themeChoice = choice)
+    }
+
+    fun createChat() {
+        if (_state.value.isLoading) return
+        val chat = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = "Новый чат"
+        )
+        val next = listOf(chat) + _state.value.chats
+        chatsRepository.save(next)
+        prefs.edit().putString("current_chat_id", chat.id).apply()
+        _state.value = _state.value.copy(
+            chats = next,
+            currentChatId = chat.id,
+            messages = emptyList(),
+            pendingAttachments = emptyList(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun switchChat(id: String) {
+        if (_state.value.isLoading) return
+        val chat = _state.value.chats.firstOrNull { it.id == id } ?: return
+        prefs.edit().putString("current_chat_id", id).apply()
+        _state.value = _state.value.copy(
+            currentChatId = id,
+            messages = chat.messages,
+            pendingAttachments = emptyList()
+        )
+    }
+
+    fun deleteChat(id: String) {
+        if (_state.value.isLoading) return
+        val target = _state.value.chats.firstOrNull { it.id == id } ?: return
+        target.messages.flatMap { it.generatedFiles }.forEach { File(it.localPath).delete() }
+
+        var remaining = _state.value.chats.filterNot { it.id == id }
+        if (remaining.isEmpty()) {
+            remaining = listOf(ChatSession(UUID.randomUUID().toString(), "Новый чат"))
+        }
+
+        val selected = if (_state.value.currentChatId == id) remaining.first() else
+            remaining.firstOrNull { it.id == _state.value.currentChatId } ?: remaining.first()
+
+        chatsRepository.save(remaining)
+        prefs.edit().putString("current_chat_id", selected.id).apply()
+        _state.value = _state.value.copy(
+            chats = remaining,
+            currentChatId = selected.id,
+            messages = selected.messages,
+            pendingAttachments = emptyList(),
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Диалог удалён"
+        )
     }
 
     fun refreshModels(mode: ChatMode) {
@@ -148,7 +219,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun importSkillFile(uri: Uri) {
         runCatching { skills.importFile(uri) }
             .onSuccess { skill ->
-                _state.value = _state.value.copy(skills = skills.list(), status = "Навык «${skill.name}» импортирован")
+                _state.value = _state.value.copy(
+                    skills = skills.list(),
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Навык «${skill.name}» импортирован"
+                )
             }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
@@ -156,7 +232,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun importSkillTree(uri: Uri) {
         runCatching { skills.importTree(uri) }
             .onSuccess { skill ->
-                _state.value = _state.value.copy(skills = skills.list(), status = "Папка навыка «${skill.name}» импортирована")
+                _state.value = _state.value.copy(
+                    skills = skills.list(),
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Папка навыка «${skill.name}» импортирована"
+                )
             }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
@@ -171,7 +252,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         skills.delete(id)
         val next = _state.value.activeSkillIds - id
         prefs.edit().putStringSet("active_skills", next).apply()
-        _state.value = _state.value.copy(skills = skills.list(), activeSkillIds = next)
+        _state.value = _state.value.copy(
+            skills = skills.list(),
+            activeSkillIds = next,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
     }
 
     fun send(text: String) {
@@ -191,6 +277,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
 
+        val chatId = _state.value.currentChatId
         val before = _state.value.messages
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -200,15 +287,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             },
             attachmentNames = pending.map { it.name }
         )
-        val next = before + user
+        val nextMessages = before + user
+        val title = if (before.isEmpty()) makeChatTitle(clean, pending.map { it.name }) else null
+        val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
+        chatsRepository.save(nextChats)
+
         _state.value = _state.value.copy(
-            messages = next,
+            messages = nextMessages,
+            chats = nextChats,
             pendingAttachments = emptyList(),
             isLoading = true,
             busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Модель думает…",
-            status = null
+            status = null,
+            storageStats = storageRepository.stats()
         )
-        persistMessages(next)
 
         val mode = _state.value.mode
         val textModel = _state.value.textModel
@@ -235,12 +327,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     generatedFiles = result.files
                 )
                 val messages = _state.value.messages + assistant
+                val chats = replaceChatMessages(_state.value.chats, chatId, messages, null)
+                chatsRepository.save(chats)
                 _state.value = _state.value.copy(
                     messages = messages,
+                    chats = chats,
                     isLoading = false,
-                    busyLabel = null
+                    busyLabel = null,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
                 )
-                persistMessages(messages)
                 playReadySound()
             }.onFailure {
                 _state.value = _state.value.copy(
@@ -257,20 +353,82 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val name = "umnik_${message.timestamp}.md"
         val file = File(dir, name)
         file.writeText(message.text)
-        return GeneratedFile(
+        val generated = GeneratedFile(
             id = UUID.randomUUID().toString(),
             name = name,
             mimeType = "text/markdown",
             localPath = file.absolutePath,
             size = file.length()
         )
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+        return generated
     }
 
     fun clearChat() {
-        _state.value.generatedPaths().forEach { File(it).delete() }
-        _state.value = _state.value.copy(messages = emptyList(), status = "Чат очищен")
-        persistMessages(emptyList())
+        if (_state.value.isLoading) return
+        _state.value.messages.flatMap { it.generatedFiles }.forEach { File(it.localPath).delete() }
+        val chats = replaceChatMessages(_state.value.chats, _state.value.currentChatId, emptyList(), "Новый чат")
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            messages = emptyList(),
+            chats = chats,
+            pendingAttachments = emptyList(),
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Чат очищен"
+        )
     }
+
+    fun refreshStorage() {
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun deleteStoredFile(file: StoredFile) {
+        if (!file.deletable) {
+            _state.value = _state.value.copy(status = "Файлы навыков удаляются во вкладке «Навыки»")
+            return
+        }
+        if (!storageRepository.delete(file.localPath)) {
+            _state.value = _state.value.copy(status = "Не удалось удалить файл")
+            return
+        }
+        removeFileReferences(setOf(file.localPath))
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Файл удалён"
+        )
+    }
+
+    fun clearWorkingFiles() {
+        if (_state.value.isLoading) return
+        val generatedPaths = _state.value.chats
+            .flatMap { it.messages }
+            .flatMap { it.generatedFiles }
+            .map { it.localPath }
+            .toSet()
+        storageRepository.clearWorkingFiles()
+        removeFileReferences(generatedPaths)
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Сгенерированные файлы и экспорт очищены"
+        )
+    }
+
+    fun storedFileAsGenerated(file: StoredFile): GeneratedFile = GeneratedFile(
+        id = file.id,
+        name = file.name,
+        mimeType = file.mimeType,
+        localPath = file.localPath,
+        size = file.size
+    )
 
     fun saveGeneratedFile(file: GeneratedFile, destination: Uri) {
         viewModelScope.launch {
@@ -319,17 +477,66 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private fun persistMessages(messages: List<ChatMessage>) {
-        prefs.edit().putString("messages", gson.toJson(messages.takeLast(80))).apply()
+    private fun replaceChatMessages(
+        chats: List<ChatSession>,
+        chatId: String,
+        messages: List<ChatMessage>,
+        titleOverride: String?
+    ): List<ChatSession> {
+        val now = System.currentTimeMillis()
+        return chats.map { chat ->
+            if (chat.id == chatId) chat.copy(
+                title = titleOverride ?: chat.title,
+                messages = messages.takeLast(120),
+                updatedAt = now
+            ) else chat
+        }
     }
 
-    private fun loadMessages(): List<ChatMessage> = runCatching {
+    private fun removeFileReferences(paths: Set<String>) {
+        if (paths.isEmpty()) return
+        val chats = _state.value.chats.map { chat ->
+            chat.copy(messages = chat.messages.map { message ->
+                message.copy(generatedFiles = message.generatedFiles.filterNot { it.localPath in paths })
+            })
+        }
+        chatsRepository.save(chats)
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = current?.messages ?: emptyList()
+        )
+    }
+
+    private fun makeChatTitle(text: String, attachmentNames: List<String>): String {
+        val source = text.trim().ifBlank { attachmentNames.firstOrNull().orEmpty() }.ifBlank { "Новый чат" }
+        val oneLine = source.replace(Regex("\\s+"), " ").trim()
+        return if (oneLine.length <= 38) oneLine else oneLine.take(38).trimEnd() + "…"
+    }
+
+    private fun loadInitialChats(): List<ChatSession> {
+        val existing = chatsRepository.list()
+        if (existing.isNotEmpty()) return existing
+
+        val legacy = loadLegacyMessages()
+        val chat = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = if (legacy.isEmpty()) "Новый чат" else makeChatTitle(
+                legacy.firstOrNull { it.role == "user" }?.text.orEmpty(),
+                legacy.firstOrNull { it.role == "user" }?.attachmentNames ?: emptyList()
+            ),
+            messages = legacy
+        )
+        chatsRepository.save(listOf(chat))
+        prefs.edit().remove("messages").apply()
+        return listOf(chat)
+    }
+
+    private fun loadLegacyMessages(): List<ChatMessage> = runCatching {
         val raw = prefs.getString("messages", null) ?: return emptyList()
         val type = object : TypeToken<List<ChatMessage>>() {}.type
         gson.fromJson<List<ChatMessage>>(raw, type) ?: emptyList()
     }.getOrDefault(emptyList())
-
-    private fun UiState.generatedPaths() = messages.flatMap { it.generatedFiles }.map { it.localPath }
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
