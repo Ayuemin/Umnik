@@ -9,11 +9,11 @@ android {
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.ayuemin.ymnik"
+        applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
     }
 
     buildFeatures {
@@ -23,8 +23,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
-            // Для тестовых релизов пока используется debug-подпись.
-            // Перед стабильным публичным распространением нужно перейти на постоянный release keystore.
+            // Тестовые релизы пока подписываются debug-ключом CI.
+            // Перед стабильным распространением перейдём на постоянный release keystore.
             signingConfig = signingConfigs.getByName("debug")
         }
     }
