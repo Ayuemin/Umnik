@@ -83,6 +83,7 @@ data class UiState(
     val mode: ChatMode = ChatMode.TEXT,
     val textModel: String = "openrouter/auto",
     val imageModel: String = "bytedance-seed/seedream-4.5",
+    val webSearchEnabled: Boolean = false,
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val busyLabel: String? = null,
