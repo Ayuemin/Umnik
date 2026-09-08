@@ -1,17 +1,26 @@
 package com.ayuemin.ymnik.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
+import android.content.Intent
+import android.graphics.BitmapFactory
 import android.net.Uri
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -21,6 +30,27 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.ChatBubbleOutline
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteOutline
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Download
+import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Extension
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Send
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Share
+import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
@@ -29,6 +59,9 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -51,11 +84,18 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.tts.TtsController
@@ -88,19 +128,19 @@ fun YmnikApp(viewModel: ChatViewModel) {
                     NavigationBarItem(
                         selected = tab == 0,
                         onClick = { tab = 0 },
-                        icon = { Text("💬") },
+                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
                         label = { Text("Чат") }
                     )
                     NavigationBarItem(
                         selected = tab == 1,
                         onClick = { tab = 1 },
-                        icon = { Text("🧩") },
+                        icon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
                         label = { Text("Навыки") }
                     )
                     NavigationBarItem(
                         selected = tab == 2,
                         onClick = { tab = 2 },
-                        icon = { Text("⚙") },
+                        icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
                         label = { Text("Настройки") }
                     )
                 }
@@ -115,7 +155,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
 
                 if (state.isLoading) {
                     Surface(
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.surfaceContainerHigh,
                         tonalElevation = 4.dp
@@ -126,7 +166,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Text("Модель думает…", style = MaterialTheme.typography.labelLarge)
+                            Text(state.busyLabel ?: "Выполняю…", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -139,6 +179,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
 private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
+    var pickerMode by remember { mutableStateOf<ChatMode?>(null) }
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
@@ -150,67 +191,35 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        Surface(
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 1.dp
-        ) {
-            Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Umnik",
-                            style = MaterialTheme.typography.headlineMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(2.dp))
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.secondaryContainer
-                        ) {
-                            Text(
-                                text = state.model,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSecondaryContainer
-                            )
-                        }
-                    }
-                    TextButton(
-                        onClick = vm::clearChat,
-                        enabled = state.messages.isNotEmpty() && !state.isLoading
-                    ) { Text("Очистить") }
-                }
-
-                if (state.activeSkillIds.isNotEmpty()) {
-                    Spacer(Modifier.height(8.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
-                            AssistChip(
-                                onClick = { vm.toggleSkill(skill.id) },
-                                label = { Text(skill.name) },
-                                leadingIcon = { Text("🧩") }
-                            )
-                        }
-                    }
-                }
-            }
-        }
+        ChatHeader(
+            state = state,
+            onMode = vm::setMode,
+            onChooseModel = { mode -> pickerMode = mode },
+            onClear = vm::clearChat
+        )
 
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (state.messages.isEmpty()) {
-                item {
-                    EmptyChatCard()
-                }
+                item { EmptyChatCard(state.mode) }
             }
             items(state.messages, key = { it.id }) { message ->
-                MessageCard(message, tts) { file ->
-                    fileToSave = file
-                    save.launch(file.name)
-                }
+                MessageCard(
+                    message = message,
+                    tts = tts,
+                    onSaveGenerated = { file ->
+                        fileToSave = file
+                        save.launch(file.name)
+                    },
+                    onExportText = {
+                        val file = vm.exportMessage(message)
+                        fileToSave = file
+                        save.launch(file.name)
+                    }
+                )
             }
         }
 
@@ -223,7 +232,15 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     items(state.pendingAttachments, key = { it.uri }) { attachment ->
                         AssistChip(
                             onClick = { vm.removeAttachment(attachment.uri) },
-                            label = { Text("📎 ${attachment.name}  ×") }
+                            label = {
+                                Text(
+                                    attachment.name,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            leadingIcon = { Icon(Icons.Outlined.AttachFile, contentDescription = null, Modifier.size(18.dp)) },
+                            trailingIcon = { Icon(Icons.Outlined.Close, contentDescription = "Убрать", Modifier.size(18.dp)) }
                         )
                     }
                 }
@@ -242,36 +259,124 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                FilledTonalButton(
-                    onClick = { attach.launch(arrayOf("*/*")) },
+                IconButton(
+                    onClick = {
+                        val types = if (state.mode == ChatMode.IMAGE) arrayOf("image/*") else arrayOf("*/*")
+                        attach.launch(types)
+                    },
                     enabled = !state.isLoading,
-                    modifier = Modifier.size(52.dp),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp)
+                    modifier = Modifier.size(50.dp)
                 ) {
-                    Text("＋", style = MaterialTheme.typography.headlineSmall)
+                    Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
                 }
 
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("Сообщение…") },
-                    shape = RoundedCornerShape(26.dp),
-                    maxLines = 5
+                    placeholder = {
+                        Text(if (state.mode == ChatMode.IMAGE) "Опишите изображение…" else "Сообщение…")
+                    },
+                    shape = RoundedCornerShape(25.dp),
+                    maxLines = 6
                 )
 
-                Button(
+                IconButton(
                     onClick = {
                         vm.send(text)
                         text = ""
                     },
                     enabled = !state.isLoading && (text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
-                    modifier = Modifier.size(52.dp),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp)
+                    modifier = Modifier.size(50.dp)
                 ) {
-                    Text("↑", style = MaterialTheme.typography.headlineSmall)
+                    Icon(Icons.Outlined.Send, contentDescription = "Отправить")
+                }
+            }
+        }
+    }
+
+    pickerMode?.let { mode ->
+        ModelPickerDialog(
+            mode = mode,
+            state = state,
+            vm = vm,
+            onDismiss = { pickerMode = null }
+        )
+    }
+}
+
+@Composable
+private fun ChatHeader(
+    state: UiState,
+    onMode: (ChatMode) -> Unit,
+    onChooseModel: (ChatMode) -> Unit,
+    onClear: () -> Unit
+) {
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Umnik",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                IconButton(
+                    onClick = onClear,
+                    enabled = state.messages.isNotEmpty() && !state.isLoading
+                ) {
+                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить чат")
+                }
+            }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = state.mode == ChatMode.TEXT,
+                    onClick = { onMode(ChatMode.TEXT) },
+                    label = { Text("Текст") },
+                    leadingIcon = { Icon(Icons.Outlined.TextFields, contentDescription = null, Modifier.size(18.dp)) }
+                )
+                FilterChip(
+                    selected = state.mode == ChatMode.IMAGE,
+                    onClick = { onMode(ChatMode.IMAGE) },
+                    label = { Text("Изображение") },
+                    leadingIcon = { Icon(Icons.Outlined.Image, contentDescription = null, Modifier.size(18.dp)) }
+                )
+            }
+
+            Spacer(Modifier.height(7.dp))
+            val currentModel = if (state.mode == ChatMode.TEXT) state.textModel else state.imageModel
+            OutlinedButton(
+                onClick = { onChooseModel(state.mode) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+            ) {
+                Icon(
+                    if (state.mode == ChatMode.TEXT) Icons.Outlined.TextFields else Icons.Outlined.Image,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    currentModel,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Icon(Icons.Outlined.ExpandMore, contentDescription = "Выбрать модель")
+            }
+
+            if (state.mode == ChatMode.TEXT && state.activeSkillIds.isNotEmpty()) {
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
+                        AssistChip(
+                            onClick = { },
+                            label = { Text(skill.name) },
+                            leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, Modifier.size(18.dp)) }
+                        )
+                    }
                 }
             }
         }
@@ -279,19 +384,93 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 }
 
 @Composable
-private fun EmptyChatCard() {
+private fun ModelPickerDialog(
+    mode: ChatMode,
+    state: UiState,
+    vm: ChatViewModel,
+    onDismiss: () -> Unit
+) {
+    var query by remember(mode) { mutableStateOf("") }
+    val models = if (mode == ChatMode.TEXT) state.availableTextModels else state.availableImageModels
+
+    LaunchedEffect(mode) {
+        if (models.isEmpty()) vm.refreshModels(mode)
+    }
+
+    val filtered = remember(models, query) {
+        models.filter { it.contains(query.trim(), ignoreCase = true) }.take(250)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (mode == ChatMode.TEXT) "Текстовая модель" else "Модель изображений") },
+        text = {
+            Column {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    placeholder = { Text("Поиск модели") }
+                )
+                Spacer(Modifier.height(8.dp))
+                if (filtered.isEmpty()) {
+                    Text(
+                        if (state.isLoading) "Загрузка списка…" else "Модели не найдены",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 430.dp)) {
+                        items(filtered) { id ->
+                            TextButton(
+                                onClick = {
+                                    vm.selectModel(mode, id)
+                                    onDismiss()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    id,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { vm.refreshModels(mode) }) { Text("Обновить") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Закрыть") }
+        }
+    )
+}
+
+@Composable
+private fun EmptyChatCard(mode: ChatMode) {
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
-        ),
-        shape = RoundedCornerShape(24.dp)
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+        shape = RoundedCornerShape(22.dp)
     ) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Привет!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+        Column(Modifier.padding(18.dp)) {
+            Text(
+                if (mode == ChatMode.TEXT) "Готов к работе" else "Режим изображений",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
             Spacer(Modifier.height(6.dp))
             Text(
-                "Напишите сообщение, приложите файл или подключите навык. Umnik отправит запрос выбранной модели через OpenRouter.",
+                if (mode == ChatMode.TEXT)
+                    "Напишите сообщение, приложите файл или подключите навык."
+                else
+                    "Опишите изображение. При необходимости приложите изображение-референс.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
@@ -302,23 +481,25 @@ private fun EmptyChatCard() {
 private fun MessageCard(
     message: ChatMessage,
     tts: TtsController,
-    onSave: (GeneratedFile) -> Unit
+    onSaveGenerated: (GeneratedFile) -> Unit,
+    onExportText: () -> Unit
 ) {
+    val context = LocalContext.current
     val user = message.role == "user"
     val container = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
     val content = if (user) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
 
-    Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = if (user) Arrangement.End else Arrangement.Start
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (user) Alignment.End else Alignment.Start
     ) {
         ElevatedCard(
-            modifier = Modifier.fillMaxWidth(0.9f),
+            modifier = Modifier.fillMaxWidth(0.92f),
             shape = RoundedCornerShape(
-                topStart = 24.dp,
-                topEnd = 24.dp,
-                bottomStart = if (user) 24.dp else 6.dp,
-                bottomEnd = if (user) 6.dp else 24.dp
+                topStart = 22.dp,
+                topEnd = 22.dp,
+                bottomStart = if (user) 22.dp else 6.dp,
+                bottomEnd = if (user) 6.dp else 22.dp
             ),
             colors = CardDefaults.elevatedCardColors(containerColor = container)
         ) {
@@ -329,32 +510,164 @@ private fun MessageCard(
                     style = MaterialTheme.typography.labelLarge,
                     color = content
                 )
-                Spacer(Modifier.height(5.dp))
-                Text(message.text, color = content)
+                Spacer(Modifier.height(6.dp))
+                MessageBody(message.text, content)
 
-                message.attachmentNames.forEach {
-                    Spacer(Modifier.height(5.dp))
-                    Text("📎 $it", style = MaterialTheme.typography.bodySmall, color = content)
-                }
-
-                if (!user && message.text.isNotBlank()) {
-                    Spacer(Modifier.height(5.dp))
-                    TextButton(onClick = { tts.toggle(message.id, message.text) }) {
-                        Text(if (tts.speakingMessageId == message.id) "■ Стоп" else "🔊 Озвучить")
+                message.attachmentNames.forEach { name ->
+                    Spacer(Modifier.height(7.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.AttachFile, contentDescription = null, Modifier.size(17.dp), tint = content)
+                        Spacer(Modifier.width(5.dp))
+                        Text(name, style = MaterialTheme.typography.bodySmall, color = content)
                     }
                 }
 
                 message.generatedFiles.forEach { file ->
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { onSave(file) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Сохранить ${file.name} · ${humanSize(file.size)}")
+                    Spacer(Modifier.height(10.dp))
+                    GeneratedFileCard(file, onSaveGenerated)
+                }
+            }
+        }
+
+        if (!user && (message.text.isNotBlank() || message.generatedFiles.isNotEmpty())) {
+            Row(
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = {
+                    copyText(context, message.text)
+                }) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать ответ")
+                }
+                IconButton(onClick = { shareText(context, message.text) }) {
+                    Icon(Icons.Outlined.Share, contentDescription = "Поделиться")
+                }
+                if (message.text.isNotBlank()) {
+                    IconButton(onClick = { tts.toggle(message.id, message.text) }) {
+                        Icon(
+                            if (tts.speakingMessageId == message.id) Icons.Outlined.StopCircle else Icons.Outlined.VolumeUp,
+                            contentDescription = if (tts.speakingMessageId == message.id) "Остановить озвучку" else "Озвучить"
+                        )
+                    }
+                    IconButton(onClick = onExportText) {
+                        Icon(Icons.Outlined.Download, contentDescription = "Сохранить ответ файлом")
                     }
                 }
             }
         }
+    }
+}
+
+private data class MessagePart(
+    val text: String,
+    val code: Boolean,
+    val language: String = ""
+)
+
+@Composable
+private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color) {
+    val parts = remember(text) { splitFencedBlocks(text) }
+    val context = LocalContext.current
+
+    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+        parts.forEach { part ->
+            if (part.code) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHighest
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                part.language.ifBlank { "текст" },
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            IconButton(onClick = { copyText(context, part.text) }) {
+                                Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать блок", Modifier.size(18.dp))
+                            }
+                        }
+                        SelectionContainer {
+                            Text(
+                                part.text,
+                                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+                                fontFamily = FontFamily.Monospace,
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                        }
+                    }
+                }
+            } else if (part.text.isNotBlank()) {
+                SelectionContainer {
+                    Text(part.text.trim(), color = color)
+                }
+            }
+        }
+    }
+}
+
+private fun splitFencedBlocks(text: String): List<MessagePart> {
+    val regex = Regex("```([^\\n`]*)\\n?([\\s\\S]*?)```")
+    val result = mutableListOf<MessagePart>()
+    var cursor = 0
+    regex.findAll(text).forEach { match ->
+        if (match.range.first > cursor) {
+            result += MessagePart(text.substring(cursor, match.range.first), false)
+        }
+        result += MessagePart(
+            text = match.groupValues[2].trimEnd(),
+            code = true,
+            language = match.groupValues[1].trim()
+        )
+        cursor = match.range.last + 1
+    }
+    if (cursor < text.length) result += MessagePart(text.substring(cursor), false)
+    if (result.isEmpty()) result += MessagePart(text, false)
+    return result
+}
+
+@Composable
+private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Unit) {
+    if (file.mimeType.startsWith("image/")) {
+        val bitmap = remember(file.localPath) { BitmapFactory.decodeFile(file.localPath) }
+        if (bitmap != null) {
+            Image(
+                bitmap = bitmap.asImageBitmap(),
+                contentDescription = file.name,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat())
+                    .clip(RoundedCornerShape(14.dp)),
+                contentScale = ContentScale.Fit
+            )
+            Spacer(Modifier.height(7.dp))
+        }
+    }
+
+    FilledTonalButton(
+        onClick = { onSave(file) },
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Icon(
+            if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.Description,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            "${file.name} · ${humanSize(file.size)}",
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
+        Spacer(Modifier.width(8.dp))
+        Icon(Icons.Outlined.Download, contentDescription = "Сохранить")
     }
 }
 
@@ -371,17 +684,21 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
         Text("Навыки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
         Text(
-            "Подключайте SKILL.md и папки с текстовыми материалами. Активные навыки автоматически добавляются к инструкции модели.",
+            "SKILL.md и папки с текстовыми материалами. Подключённые навыки применяются в текстовом режиме.",
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(14.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) {
-                Text("＋ Файл")
+                Icon(Icons.Outlined.Description, contentDescription = null)
+                Spacer(Modifier.width(7.dp))
+                Text("Файл")
             }
             FilledTonalButton(onClick = { treePicker.launch(null) }) {
-                Text("📁 Папка")
+                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                Spacer(Modifier.width(7.dp))
+                Text("Папка")
             }
         }
 
@@ -392,7 +709,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
                 item {
                     ElevatedCard(
                         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-                        shape = RoundedCornerShape(24.dp)
+                        shape = RoundedCornerShape(22.dp)
                     ) {
                         Text(
                             "Пока навыков нет. Импортируйте SKILL.md или папку навыка.",
@@ -405,7 +722,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
             items(state.skills, key = { it.id }) { skill ->
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ) {
                     Column(Modifier.padding(15.dp)) {
@@ -417,10 +734,13 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
                             FilterChip(
                                 selected = skill.id in state.activeSkillIds,
                                 onClick = { vm.toggleSkill(skill.id) },
-                                label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") }
+                                label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") },
+                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, Modifier.size(18.dp)) }
                             )
-                            Spacer(Modifier.width(8.dp))
-                            TextButton(onClick = { vm.deleteSkill(skill.id) }) { Text("Удалить") }
+                            Spacer(Modifier.width(6.dp))
+                            IconButton(onClick = { vm.deleteSkill(skill.id) }) {
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить навык")
+                            }
                         }
                     }
                 }
@@ -432,111 +752,77 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
 @Composable
 private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
-    var model by remember(state.model) { mutableStateOf(state.model) }
-    var showModels by remember { mutableStateOf(false) }
-    var query by remember { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
         Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(4.dp))
-        Text("OpenRouter и модель", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("OpenRouter и локальные параметры", color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.height(14.dp))
 
         ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
+            shape = RoundedCornerShape(22.dp),
             colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
             Column(Modifier.padding(16.dp)) {
+                Text("API-ключ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = key,
                     onValueChange = { key = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text(if (state.apiKeyConfigured) "OpenRouter API key сохранён" else "OpenRouter API key") },
+                    label = {
+                        Text(if (state.apiKeyConfigured) "Новый ключ (старый уже сохранён)" else "OpenRouter API key")
+                    },
                     placeholder = { Text("sk-or-v1-…") },
-                    shape = RoundedCornerShape(18.dp),
+                    visualTransformation = PasswordVisualTransformation(),
                     singleLine = true
                 )
-                Spacer(Modifier.height(10.dp))
-                OutlinedTextField(
-                    value = model,
-                    onValueChange = { model = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("ID модели") },
-                    shape = RoundedCornerShape(18.dp),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(12.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = {
-                        vm.saveSettings(key.takeIf { it.isNotBlank() }, model)
+                Spacer(Modifier.height(8.dp))
+                Button(
+                    onClick = {
+                        vm.saveApiKey(key.takeIf { it.isNotBlank() })
                         key = ""
-                    }) { Text("Сохранить") }
-                    FilledTonalButton(onClick = {
-                        vm.refreshModels()
-                        showModels = true
-                    }) { Text("Выбрать модель") }
-                }
+                    }
+                ) { Text("Сохранить") }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Ключ шифруется через Android Keystore. Модели теперь выбираются прямо в верхней части чата.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 
         Spacer(Modifier.height(12.dp))
-
-        Surface(
-            color = MaterialTheme.colorScheme.secondaryContainer,
-            shape = RoundedCornerShape(20.dp)
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(22.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
         ) {
-            Column(Modifier.padding(15.dp)) {
-                Text("🔐 Ключ хранится локально", fontWeight = FontWeight.SemiBold)
+            Column(Modifier.padding(16.dp)) {
+                Text("Текущие модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(7.dp))
+                Text("Текст: ${state.textModel}", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "API-ключ шифруется через Android Keystore и не записывается в APK или репозиторий.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSecondaryContainer
-                )
+                Text("Изображения: ${state.imageModel}", style = MaterialTheme.typography.bodyMedium)
             }
         }
     }
+}
 
-    if (showModels) {
-        val filtered = state.availableModels.filter { it.contains(query, ignoreCase = true) }.take(100)
-        AlertDialog(
-            onDismissRequest = { showModels = false },
-            title = { Text("Модель OpenRouter") },
-            text = {
-                Column {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("Поиск модели") },
-                        shape = RoundedCornerShape(18.dp)
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    if (state.availableModels.isEmpty()) {
-                        Text("Список загружается…")
-                    } else {
-                        LazyColumn(Modifier.height(420.dp)) {
-                            items(filtered) { id ->
-                                TextButton(
-                                    onClick = {
-                                        model = id
-                                        showModels = false
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text(id, modifier = Modifier.fillMaxWidth())
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showModels = false }) { Text("Закрыть") }
-            }
-        )
+private fun copyText(context: Context, text: String) {
+    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    clipboard.setPrimaryClip(ClipData.newPlainText("Umnik", text))
+    Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+}
+
+private fun shareText(context: Context, text: String) {
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_TEXT, text)
     }
+    context.startActivity(Intent.createChooser(intent, "Поделиться ответом"))
 }
 
 private fun humanSize(bytes: Long): String = when {
