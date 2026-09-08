@@ -1,0 +1,34 @@
+name: Apply Umnik 0.6.2 patch
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "scripts/patch_062.py"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply patch
+        run: python3 scripts/patch_062.py
+
+      - name: Commit changes
+        run: |
+          if git diff --quiet; then
+            echo "No changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app .github/workflows/android-release.yml
+          git commit -m "Add camera retry and user profile"
+          git push
