@@ -21,6 +21,21 @@ data class UserProfile(
     fun isEmpty(): Boolean = name.isBlank() && gender.isBlank() && age.isBlank() && occupation.isBlank() && note.isBlank()
 }
 
+data class ModelInfo(
+    val id: String,
+    val inputModalities: Set<String> = setOf("text"),
+    val supportedParameters: Set<String> = emptySet(),
+    val reasoningEfforts: Set<String> = emptySet()
+) {
+    fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
+    val supportsReasoning: Boolean
+        get() = "reasoning" in supportedParameters || "reasoning_effort" in supportedParameters
+    val supportsReasoningEffort: Boolean
+        get() = "reasoning_effort" in supportedParameters
+    val supportsTools: Boolean
+        get() = "tools" in supportedParameters
+}
+
 enum class ReasoningEffort(val apiValue: String) {
     MINIMAL("minimal"),
     LOW("low"),
@@ -145,8 +160,8 @@ data class UiState(
     val isLoading: Boolean = false,
     val busyLabel: String? = null,
     val status: String? = null,
-    val availableTextModels: List<String> = emptyList(),
-    val availableImageModels: List<String> = emptyList(),
+    val availableTextModels: List<ModelInfo> = emptyList(),
+    val availableImageModels: List<ModelInfo> = emptyList(),
     val answerSoundEnabled: Boolean = true,
     val themeChoice: ThemeChoice = ThemeChoice.DYNAMIC,
     val storedFiles: List<StoredFile> = emptyList(),

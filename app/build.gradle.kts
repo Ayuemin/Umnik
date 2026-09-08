@@ -1,4 +1,4 @@
-// Umnik v0.6.2
+// Umnik v0.6.3
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.6.2"
+        versionCode = 12
+        versionName = "0.6.3"
     }
 
     buildFeatures {

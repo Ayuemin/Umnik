@@ -18,6 +18,7 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
@@ -92,12 +93,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    init {
+        if (!secrets.getApiKey().isNullOrBlank()) refreshModelCapabilities()
+    }
+
     fun saveApiKey(apiKey: String?) {
         if (!apiKey.isNullOrBlank()) secrets.saveApiKey(apiKey)
         _state.value = _state.value.copy(
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             status = "Настройки сохранены"
         )
+        if (_state.value.apiKeyConfigured) refreshModelCapabilities()
     }
 
     fun setMode(mode: ChatMode) {
@@ -114,8 +120,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (clean.isBlank()) return
         when (mode) {
             ChatMode.TEXT -> {
-                prefs.edit().putString("text_model", clean).apply()
-                _state.value = _state.value.copy(textModel = clean)
+                val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+                val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true
+                prefs.edit()
+                    .putString("text_model", clean)
+                    .putBoolean("reasoning_enabled", keepReasoning)
+                    .apply()
+                _state.value = _state.value.copy(textModel = clean, reasoningEnabled = keepReasoning)
             }
             ChatMode.IMAGE -> {
                 prefs.edit().putString("image_model", clean).apply()
@@ -130,6 +141,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setReasoningEnabled(enabled: Boolean) {
+        if (enabled) {
+            val info = currentTextModelInfo()
+            if (info?.supportsReasoning != true) {
+                _state.value = _state.value.copy(status = "Выбранная модель не поддерживает размышление")
+                return
+            }
+            if (info.reasoningEfforts.isNotEmpty() && _state.value.reasoningEffort.apiValue !in info.reasoningEfforts) {
+                _state.value = _state.value.copy(status = "Выбранная сила размышления не поддерживается этой моделью")
+                return
+            }
+        }
         prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
         _state.value = _state.value.copy(reasoningEnabled = enabled)
     }
@@ -407,15 +429,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     ChatMode.TEXT -> api.models(key)
                     ChatMode.IMAGE -> api.imageModels(key)
                 }
-            }.onSuccess { ids ->
+            }.onSuccess { infos ->
                 _state.value = when (mode) {
-                    ChatMode.TEXT -> _state.value.copy(
-                        availableTextModels = ids,
-                        isLoading = false,
-                        busyLabel = null
-                    )
+                    ChatMode.TEXT -> {
+                        val current = infos.firstOrNull { it.id == _state.value.textModel }
+                        val keepReasoning = _state.value.reasoningEnabled && current?.supportsReasoning == true &&
+                            (current.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in current.reasoningEfforts)
+                        if (!keepReasoning && _state.value.reasoningEnabled) {
+                            prefs.edit().putBoolean("reasoning_enabled", false).apply()
+                        }
+                        _state.value.copy(
+                            availableTextModels = infos,
+                            reasoningEnabled = keepReasoning,
+                            isLoading = false,
+                            busyLabel = null
+                        )
+                    }
                     ChatMode.IMAGE -> _state.value.copy(
-                        availableImageModels = ids,
+                        availableImageModels = infos,
                         isLoading = false,
                         busyLabel = null
                     )
@@ -430,13 +461,60 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    private fun refreshModelCapabilities() {
+        val key = secrets.getApiKey() ?: return
+        viewModelScope.launch {
+            val textInfos = runCatching { api.models(key) }.getOrNull()
+            val imageInfos = runCatching { api.imageModels(key) }.getOrNull()
+            var next = _state.value
+            if (textInfos != null) {
+                val current = textInfos.firstOrNull { it.id == next.textModel }
+                val keepReasoning = next.reasoningEnabled && current?.supportsReasoning == true &&
+                    (current.reasoningEfforts.isEmpty() || next.reasoningEffort.apiValue in current.reasoningEfforts)
+                if (!keepReasoning && next.reasoningEnabled) prefs.edit().putBoolean("reasoning_enabled", false).apply()
+                next = next.copy(availableTextModels = textInfos, reasoningEnabled = keepReasoning)
+            }
+            if (imageInfos != null) next = next.copy(availableImageModels = imageInfos)
+            _state.value = next
+        }
+    }
+
+    private fun currentTextModelInfo(): ModelInfo? =
+        _state.value.availableTextModels.firstOrNull { it.id == _state.value.textModel }
+
+    private fun currentImageModelInfo(): ModelInfo? =
+        _state.value.availableImageModels.firstOrNull { it.id == _state.value.imageModel }
+
+    private fun attachmentAllowed(attachment: PendingAttachment): Pair<Boolean, String?> {
+        if (_state.value.mode == ChatMode.IMAGE) {
+            if (!attachment.mimeType.startsWith("image/")) return false to "В режиме изображений можно добавлять только изображения-референсы"
+            val info = currentImageModelInfo()
+            return if (info?.accepts("image") == true) true to null
+            else false to "Выбранная модель изображений не принимает изображения-референсы"
+        }
+
+        val info = currentTextModelInfo()
+        val mime = attachment.mimeType.lowercase()
+        val name = attachment.name.lowercase()
+        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
+            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+        if (textLike) return true to null
+        if (mime == "application/pdf" || name.endsWith(".pdf")) return true to null
+        if (mime.startsWith("image/")) return if (info?.accepts("image") == true) true to null else false to "Выбранная модель не принимает изображения"
+        if (mime.startsWith("audio/")) return if (info?.accepts("audio") == true) true to null else false to "Выбранная модель не принимает аудио"
+        if (mime.startsWith("video/")) return if (info?.accepts("video") == true) true to null else false to "Выбранная модель не принимает видео"
+        return if (info?.accepts("file") == true) true to null else false to "Выбранная модель не принимает этот тип файла"
+    }
+
     fun addAttachment(uri: Uri) {
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
                 if (attachment.size > 25L * 1024 * 1024) {
                     _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
-                    _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                    val (allowed, reason) = attachmentAllowed(attachment)
+                    if (!allowed) _state.value = _state.value.copy(status = reason)
+                    else _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
                 }
             }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
@@ -449,7 +527,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     File(localPath).delete()
                     _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
                 } else {
-                    _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                    val (allowed, reason) = attachmentAllowed(attachment)
+                    if (!allowed) {
+                        File(localPath).delete()
+                        _state.value = _state.value.copy(status = reason)
+                    } else {
+                        _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                    }
                 }
             }
             .onFailure {
@@ -576,16 +660,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 localPath = file.localPath
                             )
                         }
+                        val modelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
+                        val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true
+                        val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) reasoningEffort.apiValue else null
                         api.chat(
                             key,
                             textModel,
                             before,
                             clean,
                             pending + projectFiles,
-                            buildSystemPrompt(skillText, currentProject, currentChat),
+                            buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true),
                             webSearchEnabled,
-                            reasoningEnabled,
-                            reasoningEffort.apiValue
+                            actualReasoning,
+                            effort,
+                            modelInfo?.supportsTools == true
                         )
                     }
                     ChatMode.IMAGE -> {
@@ -758,7 +846,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?): String = buildString {
+    private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         val profile = _state.value.userProfile
         val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
@@ -797,7 +885,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
             appendLine("===== КОНЕЦ НАСТРОЕК ДИАЛОГА =====")
         }
-        appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
+        if (toolsEnabled) appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
         appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")
         appendLine(":::copy")
         appendLine("текст блока")

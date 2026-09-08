@@ -212,6 +212,14 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val textModelInfo = state.availableTextModels.firstOrNull { it.id == state.textModel }
+    val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
+    val cameraAvailable = when (state.mode) {
+        ChatMode.TEXT -> textModelInfo?.accepts("image") == true
+        ChatMode.IMAGE -> imageModelInfo?.accepts("image") == true
+    }
+    val reasoningAvailable = state.mode == ChatMode.TEXT && textModelInfo?.supportsReasoning == true &&
+        (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
@@ -332,7 +340,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                             }
                             .onFailure { Toast.makeText(context, it.message ?: "Не удалось открыть камеру", Toast.LENGTH_SHORT).show() }
                     },
-                    enabled = !state.isLoading,
+                    enabled = !state.isLoading && cameraAvailable,
                     modifier = Modifier.size(42.dp)
                 ) {
                     Icon(Icons.Outlined.CameraAlt, contentDescription = "Сделать фото")
@@ -349,6 +357,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         selected = state.reasoningEnabled,
                         icon = Icons.Outlined.Psychology,
                         description = if (state.reasoningEnabled) "Размышление включено" else "Включить размышление",
+                        enabled = reasoningAvailable,
                         onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) }
                     )
                 }
@@ -525,11 +534,13 @@ private fun ComposerToggleIcon(
     selected: Boolean,
     icon: ImageVector,
     description: String,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     if (selected) {
         FilledTonalIconButton(
             onClick = onClick,
+            enabled = enabled,
             modifier = Modifier.size(38.dp),
             shape = RoundedCornerShape(10.dp)
         ) {
@@ -538,6 +549,7 @@ private fun ComposerToggleIcon(
     } else {
         IconButton(
             onClick = onClick,
+            enabled = enabled,
             modifier = Modifier.size(38.dp)
         ) {
             Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
@@ -646,7 +658,7 @@ private fun ModelPickerDialog(
     }
 
     val filtered = remember(models, query) {
-        models.filter { it.contains(query.trim(), ignoreCase = true) }.take(250)
+        models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(250)
     }
 
     AlertDialog(
@@ -678,15 +690,15 @@ private fun ModelPickerDialog(
                     )
                 } else {
                     LazyColumn(Modifier.heightIn(max = 430.dp)) {
-                        items(filtered) { id ->
+                        items(filtered, key = { it.id }) { modelInfo ->
                             TextButton(
                                 onClick = {
-                                    vm.selectModel(mode, id)
+                                    vm.selectModel(mode, modelInfo.id)
                                     onDismiss()
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(id, modifier = Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(modelInfo.id, modifier = Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                             HorizontalDivider()
                         }
@@ -1055,6 +1067,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     val themes = ThemeChoice.entries
     val reasoningEfforts = ReasoningEffort.entries
     val profileScopes = UserProfileScope.entries
+    val selectedTextModelInfo = state.availableTextModels.firstOrNull { it.id == state.textModel }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1149,6 +1162,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                             FilterChip(
                                 selected = state.reasoningEffort == effort,
                                 onClick = { vm.setReasoningEffort(effort) },
+                                enabled = selectedTextModelInfo?.supportsReasoning == true &&
+                                    (!selectedTextModelInfo.supportsReasoningEffort || selectedTextModelInfo.reasoningEfforts.isEmpty() || effort.apiValue in selectedTextModelInfo.reasoningEfforts),
                                 label = { Text(reasoningEffortLabel(effort)) }
                             )
                         }

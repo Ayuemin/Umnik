@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -31,15 +32,15 @@ class OpenRouterClient(private val context: Context) {
 
     data class Result(val text: String, val files: List<GeneratedFile>)
 
-    suspend fun models(apiKey: String): List<String> = withContext(Dispatchers.IO) {
-        getModelIds(apiKey, "https://openrouter.ai/api/v1/models")
+    suspend fun models(apiKey: String): List<ModelInfo> = withContext(Dispatchers.IO) {
+        getModelInfos(apiKey, "https://openrouter.ai/api/v1/models")
     }
 
-    suspend fun imageModels(apiKey: String): List<String> = withContext(Dispatchers.IO) {
-        getModelIds(apiKey, "https://openrouter.ai/api/v1/images/models")
+    suspend fun imageModels(apiKey: String): List<ModelInfo> = withContext(Dispatchers.IO) {
+        getModelInfos(apiKey, "https://openrouter.ai/api/v1/images/models")
     }
 
-    private fun getModelIds(apiKey: String, url: String): List<String> {
+    private fun getModelInfos(apiKey: String, url: String): List<ModelInfo> {
         val request = Request.Builder()
             .url(url)
             .header("Authorization", "Bearer $apiKey")
@@ -51,9 +52,34 @@ class OpenRouterClient(private val context: Context) {
             if (!response.isSuccessful) error(apiError(response.code, body))
             val root = gson.fromJson(body, JsonObject::class.java)
             return root.getAsJsonArray("data")
-                ?.mapNotNull { item -> item.takeIf { it.isJsonObject }?.asJsonObject?.get("id")?.asString }
-                ?.distinct()
-                ?.sorted()
+                ?.mapNotNull { element ->
+                    val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+                    val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                    val inputModalities = item.getAsJsonObject("architecture")
+                        ?.getAsJsonArray("input_modalities")
+                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
+                        ?.toSet()
+                        .orEmpty()
+                        .ifEmpty { setOf("text") }
+                    val supportedParameters = when (val supported = item.get("supported_parameters")) {
+                        null -> emptySet()
+                        else -> when {
+                            supported.isJsonArray -> supported.asJsonArray
+                                .mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
+                                .toSet()
+                            supported.isJsonObject -> supported.asJsonObject.keySet().map { it.lowercase() }.toSet()
+                            else -> emptySet()
+                        }
+                    }
+                    val reasoningEfforts = item.getAsJsonObject("reasoning")
+                        ?.getAsJsonArray("supported_efforts")
+                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
+                        ?.toSet()
+                        .orEmpty()
+                    ModelInfo(id, inputModalities, supportedParameters, reasoningEfforts)
+                }
+                ?.distinctBy { it.id }
+                ?.sortedBy { it.id }
                 ?: emptyList()
         }
     }
@@ -67,7 +93,8 @@ class OpenRouterClient(private val context: Context) {
         systemPrompt: String,
         webSearchEnabled: Boolean = false,
         reasoningEnabled: Boolean = false,
-        reasoningEffort: String = "medium"
+        reasoningEffort: String? = "medium",
+        toolsEnabled: Boolean = true
     ): Result = withContext(Dispatchers.IO) {
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
@@ -83,7 +110,7 @@ class OpenRouterClient(private val context: Context) {
                 addProperty("model", model)
                 add("messages", messages)
                 addProperty("max_tokens", 6000)
-                add("tools", tools())
+                if (toolsEnabled) add("tools", tools())
 
                 if (webSearchEnabled) {
                     add("plugins", JsonArray().apply {
@@ -97,7 +124,7 @@ class OpenRouterClient(private val context: Context) {
                 if (reasoningEnabled) {
                     add("reasoning", JsonObject().apply {
                         addProperty("enabled", true)
-                        addProperty("effort", reasoningEffort)
+                        reasoningEffort?.takeIf { it.isNotBlank() }?.let { addProperty("effort", it) }
                         addProperty("exclude", true)
                     })
                 }
@@ -230,6 +257,19 @@ class OpenRouterClient(private val context: Context) {
                         addProperty("url", "data:${attachment.mimeType};base64,$b64")
                     })
                 })
+                attachment.mimeType.startsWith("audio/") -> parts.add(JsonObject().apply {
+                    addProperty("type", "input_audio")
+                    add("input_audio", JsonObject().apply {
+                        addProperty("data", b64)
+                        addProperty("format", audioFormat(attachment))
+                    })
+                })
+                attachment.mimeType.startsWith("video/") -> parts.add(JsonObject().apply {
+                    addProperty("type", "video_url")
+                    add("video_url", JsonObject().apply {
+                        addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                    })
+                })
                 attachment.mimeType.startsWith("text/") ||
                     attachment.name.endsWith(".md", true) ||
                     attachment.name.endsWith(".json", true) ||
@@ -311,6 +351,21 @@ class OpenRouterClient(private val context: Context) {
         val uri = Uri.parse(attachment.uri)
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error("Не удалось прочитать ${attachment.name}")
+    }
+
+    private fun audioFormat(attachment: PendingAttachment): String {
+        val ext = attachment.name.substringAfterLast('.', "").lowercase()
+        if (ext in setOf("wav", "mp3", "flac", "m4a", "ogg", "webm", "aac")) return ext
+        return when (attachment.mimeType.lowercase()) {
+            "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+            "audio/mpeg", "audio/mp3" -> "mp3"
+            "audio/flac", "audio/x-flac" -> "flac"
+            "audio/mp4", "audio/x-m4a" -> "m4a"
+            "audio/ogg" -> "ogg"
+            "audio/webm" -> "webm"
+            "audio/aac" -> "aac"
+            else -> error("Формат аудио ${attachment.name} не поддерживается")
+        }
     }
 
     private fun safeName(value: String): String = value
