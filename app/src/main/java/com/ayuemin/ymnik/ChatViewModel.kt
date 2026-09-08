@@ -217,8 +217,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setReasoningEffort(effort: ReasoningEffort) {
-        prefs.edit().putString("reasoning_effort", effort.name).apply()
-        _state.value = _state.value.copy(reasoningEffort = effort)
+        val info = currentTextModelInfo()
+        val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true &&
+            (info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
+        prefs.edit()
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
+        _state.value = _state.value.copy(reasoningEffort = effort, reasoningEnabled = keepReasoning)
     }
 
     fun saveUserProfile(name: String, gender: String, age: String, occupation: String, note: String) {
@@ -732,8 +738,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             )
                         }.filter { attachmentAllowed(it).first }
                         val modelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
-                        val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true
-                        val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) reasoningEffort.apiValue else null
+                        val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true &&
+                            (modelInfo.reasoningEfforts.isEmpty() || reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+                        val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
                         api.chat(
                             key,
                             textModel,
