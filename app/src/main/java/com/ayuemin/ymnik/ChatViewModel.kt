@@ -121,7 +121,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         when (mode) {
             ChatMode.TEXT -> {
                 val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
-                val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true
+                val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true &&
+                    (info.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in info.reasoningEfforts)
                 prefs.edit()
                     .putString("text_model", clean)
                     .putBoolean("reasoning_enabled", keepReasoning)
@@ -606,8 +607,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (clean.isBlank() && pending.isEmpty()) return
         if (_state.value.isLoading) return
 
-        if (_state.value.mode == ChatMode.IMAGE && pending.any { !it.mimeType.startsWith("image/") }) {
-            _state.value = _state.value.copy(status = "В режиме изображений можно прикладывать только изображения-референсы")
+        val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
+        if (invalidPending != null) {
+            _state.value = _state.value.copy(status = attachmentAllowed(invalidPending).second ?: "Вложение не поддерживается выбранной моделью")
             return
         }
 
@@ -659,7 +661,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 size = file.size,
                                 localPath = file.localPath
                             )
-                        }
+                        }.filter { attachmentAllowed(it).first }
                         val modelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
                         val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true
                         val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) reasoningEffort.apiValue else null
@@ -678,7 +680,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
                     ChatMode.IMAGE -> {
                         val projectImages = currentProject?.files.orEmpty()
-                            .filter { it.mimeType.startsWith("image/") }
+                            .filter { it.mimeType.startsWith("image/") && currentImageModelInfo()?.accepts("image") == true }
                             .map { file -> PendingAttachment(
                                 uri = "project://${file.id}",
                                 name = file.name,

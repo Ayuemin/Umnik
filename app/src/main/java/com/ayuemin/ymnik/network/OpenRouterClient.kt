@@ -273,7 +273,10 @@ class OpenRouterClient(private val context: Context) {
                 attachment.mimeType.startsWith("text/") ||
                     attachment.name.endsWith(".md", true) ||
                     attachment.name.endsWith(".json", true) ||
-                    attachment.name.endsWith(".csv", true) -> {
+                    attachment.name.endsWith(".csv", true) ||
+                    attachment.name.endsWith(".yaml", true) ||
+                    attachment.name.endsWith(".yml", true) ||
+                    attachment.name.endsWith(".xml", true) -> {
                     val content = runCatching { String(bytes, Charsets.UTF_8) }.getOrDefault("")
                     parts.add(JsonObject().apply {
                         addProperty("type", "text")
