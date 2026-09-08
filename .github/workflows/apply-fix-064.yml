@@ -1,0 +1,35 @@
+name: Apply Umnik 0.6.4 reasoning fix
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - "scripts/fix_064_reasoning.py"
+      - ".github/workflows/apply-fix-064.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply fix
+        run: python3 scripts/fix_064_reasoning.py
+
+      - name: Commit app changes
+        run: |
+          if git diff --quiet -- app; then
+            echo "No app changes"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app
+          git commit -m "Harden reasoning compatibility for quick model switching"
+          git push
