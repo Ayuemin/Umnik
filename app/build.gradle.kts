@@ -1,4 +1,4 @@
-// Umnik v0.6.5 chat-scoped persistent documents
+// Umnik v0.6.5 chat-scoped files + model handoff
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
