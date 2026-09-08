@@ -16,12 +16,13 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,14 +30,15 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
@@ -45,12 +47,13 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
-import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -89,6 +92,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -97,11 +101,16 @@ import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
+import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
@@ -109,6 +118,8 @@ fun YmnikApp(viewModel: ChatViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val tts = remember { TtsController(context) }
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
     var tab by remember { mutableIntStateOf(0) }
 
     DisposableEffect(tts) {
@@ -127,43 +138,45 @@ fun YmnikApp(viewModel: ChatViewModel) {
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                NavigationBar(
-                    modifier = Modifier.height(58.dp),
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer
-                ) {
-                    NavigationBarItem(
-                        selected = tab == 0,
-                        onClick = { tab = 0 },
-                        icon = {
-                            Icon(
-                                Icons.Outlined.ChatBubbleOutline,
-                                contentDescription = "Чат",
-                                modifier = Modifier.size(25.dp)
-                            )
-                        }
-                    )
-                    NavigationBarItem(
-                        selected = tab == 1,
-                        onClick = { tab = 1 },
-                        icon = {
-                            Icon(
-                                Icons.Outlined.Extension,
-                                contentDescription = "Навыки",
-                                modifier = Modifier.size(25.dp)
-                            )
-                        }
-                    )
-                    NavigationBarItem(
-                        selected = tab == 2,
-                        onClick = { tab = 2 },
-                        icon = {
-                            Icon(
-                                Icons.Outlined.Settings,
-                                contentDescription = "Настройки",
-                                modifier = Modifier.size(25.dp)
-                            )
-                        }
-                    )
+                if (!imeVisible) {
+                    NavigationBar(
+                        modifier = Modifier.height(58.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer
+                    ) {
+                        NavigationBarItem(
+                            selected = tab == 0,
+                            onClick = { tab = 0 },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.ChatBubbleOutline,
+                                    contentDescription = "Чат",
+                                    modifier = Modifier.size(25.dp)
+                                )
+                            }
+                        )
+                        NavigationBarItem(
+                            selected = tab == 1,
+                            onClick = { tab = 1 },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.Extension,
+                                    contentDescription = "Навыки",
+                                    modifier = Modifier.size(25.dp)
+                                )
+                            }
+                        )
+                        NavigationBarItem(
+                            selected = tab == 2,
+                            onClick = { tab = 2 },
+                            icon = {
+                                Icon(
+                                    Icons.Outlined.Settings,
+                                    contentDescription = "Настройки",
+                                    modifier = Modifier.size(25.dp)
+                                )
+                            }
+                        )
+                    }
                 }
             }
         ) { padding ->
@@ -183,6 +196,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var pickerMode by remember { mutableStateOf<ChatMode?>(null) }
+    var chatsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -194,11 +208,9 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         fileToSave = null
     }
 
-    LaunchedEffect(state.messages.lastOrNull()?.id) {
+    LaunchedEffect(state.currentChatId, state.messages.lastOrNull()?.id) {
         if (state.messages.isNotEmpty()) {
             delay(180)
-            listState.animateScrollToItem(state.messages.size)
-            delay(80)
             listState.scrollToItem(state.messages.size)
         }
     }
@@ -206,6 +218,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     Column(Modifier.fillMaxSize()) {
         ChatHeader(
             state = state,
+            onChats = { chatsOpen = true },
             onSelectMode = { mode ->
                 vm.setMode(mode)
                 pickerMode = mode
@@ -237,9 +250,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     }
                 )
             }
-            item(key = "chat-end") {
-                Spacer(Modifier.height(1.dp))
-            }
+            item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
 
         if (state.pendingAttachments.isNotEmpty()) {
@@ -251,9 +262,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     items(state.pendingAttachments, key = { it.uri }) { attachment ->
                         AssistChip(
                             onClick = { vm.removeAttachment(attachment.uri) },
-                            label = {
-                                Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            },
+                            label = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             leadingIcon = {
                                 Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
                             },
@@ -270,7 +279,6 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .imePadding()
                     .padding(horizontal = 10.dp, vertical = 9.dp),
                 verticalAlignment = Alignment.Bottom,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -319,58 +327,73 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             onDismiss = { pickerMode = null }
         )
     }
+
+    if (chatsOpen) {
+        ChatsDialog(
+            state = state,
+            vm = vm,
+            onDismiss = { chatsOpen = false }
+        )
+    }
 }
 
 @Composable
 private fun ChatHeader(
     state: UiState,
+    onChats: () -> Unit,
     onSelectMode: (ChatMode) -> Unit,
     onClear: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
                     "Umnik",
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleLarge,
+                    style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
 
-                FilterChip(
+                TextButton(
+                    onClick = onChats,
+                    enabled = !state.isLoading,
+                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Text("Чаты", style = MaterialTheme.typography.labelLarge)
+                }
+
+                CompactModeButton(
                     selected = state.mode == ChatMode.TEXT,
-                    onClick = { onSelectMode(ChatMode.TEXT) },
-                    label = { Text("Текст") }
+                    label = "Текст",
+                    onClick = { onSelectMode(ChatMode.TEXT) }
                 )
-                FilterChip(
+                CompactModeButton(
                     selected = state.mode == ChatMode.IMAGE,
-                    onClick = { onSelectMode(ChatMode.IMAGE) },
-                    label = { Text("Фото") }
+                    label = "Фото",
+                    onClick = { onSelectMode(ChatMode.IMAGE) }
                 )
 
                 if (state.isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        strokeWidth = 2.dp
-                    )
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
                 }
 
                 IconButton(
                     onClick = onClear,
                     enabled = state.messages.isNotEmpty() && !state.isLoading,
-                    modifier = Modifier.size(40.dp)
+                    modifier = Modifier.size(34.dp)
                 ) {
-                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить чат")
+                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить текущий чат")
                 }
             }
 
             if (state.mode == ChatMode.TEXT && state.activeSkillIds.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(3.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
                         AssistChip(
@@ -384,6 +407,110 @@ private fun ChatHeader(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun CompactModeButton(selected: Boolean, label: String, onClick: () -> Unit) {
+    if (selected) {
+        FilledTonalButton(
+            onClick = onClick,
+            modifier = Modifier.height(34.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            shape = RoundedCornerShape(10.dp)
+        ) { Text(label, style = MaterialTheme.typography.labelLarge) }
+    } else {
+        TextButton(
+            onClick = onClick,
+            modifier = Modifier.height(34.dp),
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            shape = RoundedCornerShape(10.dp)
+        ) { Text(label, style = MaterialTheme.typography.labelLarge) }
+    }
+}
+
+@Composable
+private fun ChatsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
+    var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
+    val chats = state.chats.sortedByDescending { it.updatedAt }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Диалоги") },
+        text = {
+            Column {
+                FilledTonalButton(
+                    onClick = {
+                        vm.createChat()
+                        onDismiss()
+                    },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Новый чат")
+                }
+                Spacer(Modifier.height(10.dp))
+                LazyColumn(Modifier.heightIn(max = 430.dp)) {
+                    items(chats, key = { it.id }) { chat ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
+                                onClick = {
+                                    vm.switchChat(chat.id)
+                                    onDismiss()
+                                },
+                                enabled = !state.isLoading,
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        chat.title,
+                                        fontWeight = if (chat.id == state.currentChatId) FontWeight.Bold else FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        "${chat.messages.size} сообщ. · ${formatDate(chat.updatedAt)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            IconButton(
+                                onClick = { deleteTarget = chat },
+                                enabled = !state.isLoading
+                            ) {
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить диалог")
+                            }
+                        }
+                        HorizontalDivider()
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
+    )
+
+    deleteTarget?.let { chat ->
+        AlertDialog(
+            onDismissRequest = { deleteTarget = null },
+            title = { Text("Удалить диалог?") },
+            text = { Text("«${chat.title}» и связанные с ним сгенерированные файлы будут удалены.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteChat(chat.id)
+                    deleteTarget = null
+                }) { Text("Удалить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { deleteTarget = null }) { Text("Отмена") }
+            }
+        )
     }
 }
 
@@ -451,12 +578,8 @@ private fun ModelPickerDialog(
                 }
             }
         },
-        confirmButton = {
-            TextButton(onClick = { vm.refreshModels(mode) }) { Text("Обновить") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Закрыть") }
-        }
+        confirmButton = { TextButton(onClick = { vm.refreshModels(mode) }) { Text("Обновить") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
     )
 }
 
@@ -789,6 +912,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
 @Composable
 private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
+    var storageOpen by remember { mutableStateOf(false) }
     val themes = ThemeChoice.entries
 
     LazyColumn(
@@ -892,6 +1016,48 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                 colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
             ) {
                 Column(Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Storage, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Хранилище Umnik", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        "Сгенерировано: ${humanSize(state.storageStats.generatedBytes)} · экспорт: ${humanSize(state.storageStats.exportBytes)}\n" +
+                            "Навыки: ${humanSize(state.storageStats.skillBytes)} · история чатов: ${humanSize(state.storageStats.chatBytes)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            vm.refreshStorage()
+                            storageOpen = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Открыть хранилище")
+                    }
+                }
+            }
+        }
+
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(16.dp)) {
                     Text("Текущие модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(7.dp))
                     Text("Текст: ${state.textModel}", style = MaterialTheme.typography.bodyMedium)
@@ -900,6 +1066,135 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                 }
             }
         }
+    }
+
+    if (storageOpen) {
+        StorageDialog(state = state, vm = vm, onDismiss = { storageOpen = false })
+    }
+}
+
+@Composable
+private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+    var fileToSave by remember { mutableStateOf<StoredFile?>(null) }
+    var clearConfirm by remember { mutableStateOf(false) }
+
+    val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
+        val file = fileToSave
+        if (uri != null && file != null) {
+            vm.saveGeneratedFile(vm.storedFileAsGenerated(file), uri)
+        }
+        fileToSave = null
+    }
+
+    val filtered = remember(state.storedFiles, query) {
+        val q = query.trim()
+        if (q.isBlank()) state.storedFiles else state.storedFiles.filter {
+            it.name.contains(q, ignoreCase = true) || it.category.contains(q, ignoreCase = true)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Хранилище Umnik") },
+        text = {
+            Column {
+                Text(
+                    "Всего ${humanSize(state.storageStats.totalBytes)}. История диалогов очищается через «Чаты», навыки — во вкладке «Навыки».",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    placeholder = { Text("Найти файл") }
+                )
+                Spacer(Modifier.height(8.dp))
+
+                if (filtered.isEmpty()) {
+                    Text("Файлов не найдено", modifier = Modifier.padding(vertical = 16.dp))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 390.dp)) {
+                        items(filtered, key = { it.id }) { file ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(22.dp)
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${file.category} · ${humanSize(file.size)} · ${formatDate(file.modifiedAt)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    fileToSave = file
+                                    save.launch(file.name)
+                                }) {
+                                    Icon(Icons.Outlined.Download, contentDescription = "Сохранить копию")
+                                }
+                                if (file.deletable) {
+                                    IconButton(onClick = { vm.deleteStoredFile(file) }) {
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл")
+                                    }
+                                }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = vm::refreshStorage) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Обновить")
+                    }
+                    TextButton(
+                        onClick = { clearConfirm = true },
+                        enabled = !state.isLoading
+                    ) {
+                        Icon(Icons.Outlined.DeleteForever, contentDescription = null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Очистить файлы")
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
+    )
+
+    if (clearConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearConfirm = false },
+            title = { Text("Очистить рабочие файлы?") },
+            text = {
+                Text("Будут удалены сгенерированные изображения/файлы и временный экспорт. Тексты диалогов, API-ключ и навыки останутся.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.clearWorkingFiles()
+                    clearConfirm = false
+                }) { Text("Очистить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearConfirm = false }) { Text("Отмена") }
+            }
+        )
     }
 }
 
@@ -925,8 +1220,11 @@ private fun shareText(context: Context, text: String) {
     context.startActivity(Intent.createChooser(intent, "Поделиться ответом"))
 }
 
+private fun formatDate(timestamp: Long): String =
+    SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(timestamp))
+
 private fun humanSize(bytes: Long): String = when {
     bytes < 1024 -> "$bytes Б"
     bytes < 1024 * 1024 -> "${bytes / 1024} КБ"
-    else -> String.format("%.1f МБ", bytes / 1024.0 / 1024.0)
+    else -> String.format(Locale.getDefault(), "%.1f МБ", bytes / 1024.0 / 1024.0)
 }
