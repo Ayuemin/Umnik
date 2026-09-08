@@ -1,5 +1,10 @@
 package com.ayuemin.ymnik.model
 
+enum class ChatMode {
+    TEXT,
+    IMAGE
+}
+
 data class Skill(
     val id: String,
     val name: String,
@@ -36,9 +41,13 @@ data class UiState(
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val skills: List<Skill> = emptyList(),
     val activeSkillIds: Set<String> = emptySet(),
-    val model: String = "openrouter/auto",
+    val mode: ChatMode = ChatMode.TEXT,
+    val textModel: String = "openrouter/auto",
+    val imageModel: String = "bytedance-seed/seedream-4.5",
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
+    val busyLabel: String? = null,
     val status: String? = null,
-    val availableModels: List<String> = emptyList()
+    val availableTextModels: List<String> = emptyList(),
+    val availableImageModels: List<String> = emptyList()
 )
