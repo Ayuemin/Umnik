@@ -4,7 +4,7 @@ on:
   push:
     branches: [ "main" ]
     paths:
-      - "scripts/patch_062.py"
+      - "scripts/patch_062_v2.py"
 
 permissions:
   contents: write
@@ -19,7 +19,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply patch
-        run: python3 scripts/patch_062.py
+        run: python3 scripts/patch_062_v2.py
 
       - name: Commit changes
         run: |
