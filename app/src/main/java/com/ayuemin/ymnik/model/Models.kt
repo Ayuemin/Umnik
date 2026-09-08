@@ -5,6 +5,14 @@ enum class ChatMode {
     IMAGE
 }
 
+enum class ThemeChoice {
+    DYNAMIC,
+    GRAPHITE,
+    OCEAN,
+    FOREST,
+    AMBER
+}
+
 data class Skill(
     val id: String,
     val name: String,
@@ -49,5 +57,7 @@ data class UiState(
     val busyLabel: String? = null,
     val status: String? = null,
     val availableTextModels: List<String> = emptyList(),
-    val availableImageModels: List<String> = emptyList()
+    val availableImageModels: List<String> = emptyList(),
+    val answerSoundEnabled: Boolean = true,
+    val themeChoice: ThemeChoice = ThemeChoice.DYNAMIC
 )
