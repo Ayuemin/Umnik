@@ -25,23 +25,36 @@ class OpenRouterClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .writeTimeout(180, TimeUnit.SECONDS)
+        .readTimeout(240, TimeUnit.SECONDS)
+        .writeTimeout(240, TimeUnit.SECONDS)
         .build()
 
     data class Result(val text: String, val files: List<GeneratedFile>)
 
     suspend fun models(apiKey: String): List<String> = withContext(Dispatchers.IO) {
+        getModelIds(apiKey, "https://openrouter.ai/api/v1/models")
+    }
+
+    suspend fun imageModels(apiKey: String): List<String> = withContext(Dispatchers.IO) {
+        getModelIds(apiKey, "https://openrouter.ai/api/v1/images/models")
+    }
+
+    private fun getModelIds(apiKey: String, url: String): List<String> {
         val request = Request.Builder()
-            .url("https://openrouter.ai/api/v1/models")
+            .url(url)
             .header("Authorization", "Bearer $apiKey")
+            .header("X-Title", "Umnik Android")
             .get()
             .build()
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiError(response.code, body))
             val root = gson.fromJson(body, JsonObject::class.java)
-            root.getAsJsonArray("data")?.mapNotNull { it.asJsonObject.get("id")?.asString }?.sorted() ?: emptyList()
+            return root.getAsJsonArray("data")
+                ?.mapNotNull { item -> item.takeIf { it.isJsonObject }?.asJsonObject?.get("id")?.asString }
+                ?.distinct()
+                ?.sorted()
+                ?: emptyList()
         }
     }
 
@@ -85,14 +98,16 @@ class OpenRouterClient(private val context: Context) {
                 val resultText = if (name == "create_file") {
                     runCatching {
                         val args = gson.fromJson(argsRaw, JsonObject::class.java)
-                        val file = createGeneratedFile(
+                        val file = createGeneratedTextFile(
                             args.get("filename")?.asString ?: "result.txt",
                             args.get("content")?.asString.orEmpty(),
                             args.get("mime_type")?.asString ?: "text/plain"
                         )
                         created += file
                         gson.toJson(mapOf("ok" to true, "filename" to file.name, "size" to file.size))
-                    }.getOrElse { gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка создания файла"))) }
+                    }.getOrElse {
+                        gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка создания файла")))
+                    }
                 } else {
                     gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
@@ -106,12 +121,62 @@ class OpenRouterClient(private val context: Context) {
         Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
     }
 
+    suspend fun generateImage(
+        apiKey: String,
+        model: String,
+        prompt: String,
+        attachments: List<PendingAttachment>
+    ): Result = withContext(Dispatchers.IO) {
+        val payload = JsonObject().apply {
+            addProperty("model", model)
+            addProperty("prompt", prompt.ifBlank { "Создай вариант приложенного изображения." })
+
+            val references = JsonArray()
+            attachments.filter { it.mimeType.startsWith("image/") }.forEach { attachment ->
+                val bytes = readAttachment(attachment)
+                val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                references.add(JsonObject().apply {
+                    addProperty("type", "image_url")
+                    add("image_url", JsonObject().apply {
+                        addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                    })
+                })
+            }
+            if (references.size() > 0) add("input_references", references)
+        }
+
+        val request = Request.Builder()
+            .url("https://openrouter.ai/api/v1/images")
+            .header("Authorization", "Bearer $apiKey")
+            .header("Content-Type", "application/json")
+            .header("X-Title", "Umnik Android")
+            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+            .build()
+
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiError(response.code, body))
+            val root = gson.fromJson(body, JsonObject::class.java)
+            val data = root.getAsJsonArray("data") ?: error("OpenRouter не вернул изображение")
+            val files = data.mapIndexedNotNull { index, element ->
+                if (!element.isJsonObject) return@mapIndexedNotNull null
+                val item = element.asJsonObject
+                val encoded = item.get("b64_json")?.asString?.takeIf { it.isNotBlank() }
+                    ?: return@mapIndexedNotNull null
+                val mime = item.get("media_type")?.asString?.takeIf { it.startsWith("image/") } ?: "image/png"
+                saveGeneratedImage(encoded, mime, index)
+            }
+            if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
+            Result("Изображение создано.", files)
+        }
+    }
+
     private fun requestCompletion(apiKey: String, payload: JsonObject): JsonObject {
         val request = Request.Builder()
             .url("https://openrouter.ai/api/v1/chat/completions")
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
-            .header("X-Title", "Ymnik Android")
+            .header("X-Title", "Umnik Android")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(request).execute().use { response ->
@@ -135,28 +200,31 @@ class OpenRouterClient(private val context: Context) {
             addProperty("type", "text")
             addProperty("text", text.ifBlank { "Изучи вложения и помоги мне с ними." })
         })
-        attachments.forEach { a ->
-            val uri = Uri.parse(a.uri)
-            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-                ?: error("Не удалось прочитать ${a.name}")
+        attachments.forEach { attachment ->
+            val bytes = readAttachment(attachment)
             val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
             when {
-                a.mimeType.startsWith("image/") -> parts.add(JsonObject().apply {
+                attachment.mimeType.startsWith("image/") -> parts.add(JsonObject().apply {
                     addProperty("type", "image_url")
-                    add("image_url", JsonObject().apply { addProperty("url", "data:${a.mimeType};base64,$b64") })
+                    add("image_url", JsonObject().apply {
+                        addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                    })
                 })
-                a.mimeType.startsWith("text/") || a.name.endsWith(".md", true) || a.name.endsWith(".json", true) -> {
+                attachment.mimeType.startsWith("text/") ||
+                    attachment.name.endsWith(".md", true) ||
+                    attachment.name.endsWith(".json", true) ||
+                    attachment.name.endsWith(".csv", true) -> {
                     val content = runCatching { String(bytes, Charsets.UTF_8) }.getOrDefault("")
                     parts.add(JsonObject().apply {
                         addProperty("type", "text")
-                        addProperty("text", "\n--- Вложение: ${a.name} ---\n$content\n--- Конец вложения ---")
+                        addProperty("text", "\n--- Вложение: ${attachment.name} ---\n$content\n--- Конец вложения ---")
                     })
                 }
                 else -> parts.add(JsonObject().apply {
                     addProperty("type", "file")
                     add("file", JsonObject().apply {
-                        addProperty("filename", a.name)
-                        addProperty("file_data", "data:${a.mimeType};base64,$b64")
+                        addProperty("filename", attachment.name)
+                        addProperty("file_data", "data:${attachment.mimeType};base64,$b64")
                     })
                 })
             }
@@ -172,7 +240,10 @@ class OpenRouterClient(private val context: Context) {
             addProperty("type", "function")
             add("function", JsonObject().apply {
                 addProperty("name", "create_file")
-                addProperty("description", "Создать текстовый файл, который пользователь сможет сохранить на Android. Используй, когда пользователь просит файл для скачивания или готовый артефакт.")
+                addProperty(
+                    "description",
+                    "Создать текстовый файл на устройстве пользователя. Используй для длинных материалов и когда пользователь просит результат файлом."
+                )
                 add("parameters", JsonObject().apply {
                     addProperty("type", "object")
                     add("properties", JsonObject().apply {
@@ -180,7 +251,7 @@ class OpenRouterClient(private val context: Context) {
                         add("content", JsonObject().apply { addProperty("type", "string") })
                         add("mime_type", JsonObject().apply {
                             addProperty("type", "string")
-                            addProperty("description", "Например text/markdown, text/plain или application/json")
+                            addProperty("description", "Например text/markdown, text/plain, text/csv, text/html или application/json")
                         })
                     })
                     add("required", JsonArray().apply { add("filename"); add("content") })
@@ -189,15 +260,39 @@ class OpenRouterClient(private val context: Context) {
         })
     }
 
-    private fun createGeneratedFile(nameRaw: String, content: String, mimeType: String): GeneratedFile {
-        val name = nameRaw.substringAfterLast('/').substringAfterLast('\\')
-            .replace(Regex("[^A-Za-zА-Яа-я0-9._ -]"), "_")
-            .take(120).ifBlank { "result.txt" }
+    private fun createGeneratedTextFile(nameRaw: String, content: String, mimeType: String): GeneratedFile {
+        val name = safeName(nameRaw).ifBlank { "result.txt" }
         val dir = File(context.filesDir, "generated").apply { mkdirs() }
         val file = File(dir, "${UUID.randomUUID()}_$name")
         file.writeText(content)
         return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
     }
+
+    private fun saveGeneratedImage(encoded: String, mimeType: String, index: Int): GeneratedFile {
+        val bytes = Base64.decode(encoded.substringAfter("base64,", encoded), Base64.DEFAULT)
+        val extension = when (mimeType.lowercase()) {
+            "image/jpeg", "image/jpg" -> "jpg"
+            "image/webp" -> "webp"
+            else -> "png"
+        }
+        val dir = File(context.filesDir, "generated").apply { mkdirs() }
+        val name = "umnik_image_${System.currentTimeMillis()}_${index + 1}.$extension"
+        val file = File(dir, "${UUID.randomUUID()}_$name")
+        file.writeBytes(bytes)
+        return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
+    }
+
+    private fun readAttachment(attachment: PendingAttachment): ByteArray {
+        val uri = Uri.parse(attachment.uri)
+        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("Не удалось прочитать ${attachment.name}")
+    }
+
+    private fun safeName(value: String): String = value
+        .substringAfterLast('/')
+        .substringAfterLast('\\')
+        .replace(Regex("[^A-Za-zА-Яа-я0-9._ -]"), "_")
+        .take(120)
 
     private fun extractText(content: JsonElement?): String {
         if (content == null || content.isJsonNull) return ""
@@ -213,7 +308,7 @@ class OpenRouterClient(private val context: Context) {
             val root = gson.fromJson(body, JsonObject::class.java)
             root.getAsJsonObject("error")?.get("message")?.asString
         }.getOrNull()
-        return "OpenRouter $code: ${message ?: body.take(300)}"
+        return "OpenRouter $code: ${message ?: body.take(500)}"
     }
 
     fun attachmentFromUri(uri: Uri): PendingAttachment {
