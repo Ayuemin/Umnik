@@ -1,4 +1,4 @@
-// Umnik v0.6.4 quick per-chat model switching
+// Umnik v0.6.4 quick model handoff
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
