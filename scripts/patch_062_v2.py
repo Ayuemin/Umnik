@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# Retry after allowing the workflow to commit app files only.
 root = Path(__file__).resolve().parents[1]
 gradle = root / "app/build.gradle.kts"
 text = gradle.read_text(encoding="utf-8")
