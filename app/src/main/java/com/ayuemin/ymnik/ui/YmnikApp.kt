@@ -127,24 +127,42 @@ fun YmnikApp(viewModel: ChatViewModel) {
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                NavigationBar(
+                    modifier = Modifier.height(58.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer
+                ) {
                     NavigationBarItem(
                         selected = tab == 0,
                         onClick = { tab = 0 },
-                        icon = { Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null) },
-                        label = { Text("Чат") }
+                        icon = {
+                            Icon(
+                                Icons.Outlined.ChatBubbleOutline,
+                                contentDescription = "Чат",
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
                     )
                     NavigationBarItem(
                         selected = tab == 1,
                         onClick = { tab = 1 },
-                        icon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                        label = { Text("Навыки") }
+                        icon = {
+                            Icon(
+                                Icons.Outlined.Extension,
+                                contentDescription = "Навыки",
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
                     )
                     NavigationBarItem(
                         selected = tab == 2,
                         onClick = { tab = 2 },
-                        icon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-                        label = { Text("Настройки") }
+                        icon = {
+                            Icon(
+                                Icons.Outlined.Settings,
+                                contentDescription = "Настройки",
+                                modifier = Modifier.size(25.dp)
+                            )
+                        }
                     )
                 }
             }
@@ -154,24 +172,6 @@ fun YmnikApp(viewModel: ChatViewModel) {
                     0 -> ChatScreen(state, viewModel, tts)
                     1 -> SkillsScreen(state, viewModel)
                     else -> SettingsScreen(state, viewModel)
-                }
-
-                if (state.isLoading) {
-                    Surface(
-                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp),
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        tonalElevation = 4.dp
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                            Text(state.busyLabel ?: "Выполняю…", style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
                 }
             }
         }
@@ -196,8 +196,10 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 
     LaunchedEffect(state.messages.lastOrNull()?.id) {
         if (state.messages.isNotEmpty()) {
-            delay(120)
-            listState.animateScrollToItem(state.messages.lastIndex, 10_000)
+            delay(180)
+            listState.animateScrollToItem(state.messages.size)
+            delay(80)
+            listState.scrollToItem(state.messages.size)
         }
     }
 
@@ -234,6 +236,9 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         save.launch(file.name)
                     }
                 )
+            }
+            item(key = "chat-end") {
+                Spacer(Modifier.height(1.dp))
             }
         }
 
@@ -323,40 +328,49 @@ private fun ChatHeader(
     onClear: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 7.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
                     "Umnik",
                     modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.headlineMedium,
-                    fontWeight = FontWeight.Bold
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1
                 )
-                IconButton(onClick = onClear, enabled = state.messages.isNotEmpty() && !state.isLoading) {
-                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить чат")
-                }
-            }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = state.mode == ChatMode.TEXT,
                     onClick = { onSelectMode(ChatMode.TEXT) },
-                    label = { Text("Текст") },
-                    leadingIcon = {
-                        Icon(Icons.Outlined.TextFields, contentDescription = null, modifier = Modifier.size(18.dp))
-                    }
+                    label = { Text("Текст") }
                 )
                 FilterChip(
                     selected = state.mode == ChatMode.IMAGE,
                     onClick = { onSelectMode(ChatMode.IMAGE) },
-                    label = { Text("Изображение") },
-                    leadingIcon = {
-                        Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(18.dp))
-                    }
+                    label = { Text("Фото") }
                 )
+
+                if (state.isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp
+                    )
+                }
+
+                IconButton(
+                    onClick = onClear,
+                    enabled = state.messages.isNotEmpty() && !state.isLoading,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить чат")
+                }
             }
 
             if (state.mode == ChatMode.TEXT && state.activeSkillIds.isNotEmpty()) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(4.dp))
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
                         AssistChip(
@@ -817,7 +831,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                     ) { Text("Сохранить") }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Ключ шифруется через Android Keystore. Модель выбирается нажатием на «Текст» или «Изображение» в чате.",
+                        "Ключ шифруется через Android Keystore. Модель выбирается нажатием на «Текст» или «Фото» в чате.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
