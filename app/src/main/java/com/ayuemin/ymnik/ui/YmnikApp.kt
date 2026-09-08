@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -45,8 +46,11 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Palette
+import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Send
@@ -54,6 +58,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
@@ -62,6 +67,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -90,6 +96,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -275,13 +282,17 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             }
         }
 
-        Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
+        Surface(
+            modifier = Modifier.imePadding(),
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 3.dp
+        ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                    .padding(horizontal = 8.dp, vertical = 7.dp),
                 verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 IconButton(
                     onClick = {
@@ -289,9 +300,24 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         attach.launch(types)
                     },
                     enabled = !state.isLoading,
-                    modifier = Modifier.size(50.dp)
+                    modifier = Modifier.size(42.dp)
                 ) {
                     Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
+                }
+
+                if (state.mode == ChatMode.TEXT) {
+                    ComposerToggleIcon(
+                        selected = state.webSearchEnabled,
+                        icon = Icons.Outlined.Language,
+                        description = if (state.webSearchEnabled) "Веб-поиск включён" else "Включить веб-поиск",
+                        onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) }
+                    )
+                    ComposerToggleIcon(
+                        selected = state.reasoningEnabled,
+                        icon = Icons.Outlined.Psychology,
+                        description = if (state.reasoningEnabled) "Размышление включено" else "Включить размышление",
+                        onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) }
+                    )
                 }
 
                 OutlinedTextField(
@@ -301,7 +327,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     placeholder = {
                         Text(if (state.mode == ChatMode.IMAGE) "Опишите изображение…" else "Сообщение…")
                     },
-                    shape = RoundedCornerShape(25.dp),
+                    shape = RoundedCornerShape(24.dp),
                     maxLines = 6
                 )
 
@@ -311,7 +337,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         text = ""
                     },
                     enabled = !state.isLoading && (text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
-                    modifier = Modifier.size(50.dp)
+                    modifier = Modifier.size(42.dp)
                 ) {
                     Icon(Icons.Outlined.Send, contentDescription = "Отправить")
                 }
@@ -349,44 +375,48 @@ private fun ChatHeader(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(3.dp)
             ) {
                 Text(
                     "Umnik",
-                    modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1
                 )
 
-                TextButton(
-                    onClick = onChats,
-                    enabled = !state.isLoading,
-                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 0.dp),
-                    modifier = Modifier.height(34.dp)
-                ) {
-                    Text("Чаты", style = MaterialTheme.typography.labelLarge)
-                }
+                Spacer(Modifier.width(5.dp))
 
-                CompactModeButton(
+                CompactModeIcon(
                     selected = state.mode == ChatMode.TEXT,
-                    label = "Текст",
+                    icon = Icons.Outlined.TextFields,
+                    description = "Текстовая модель",
                     onClick = { onSelectMode(ChatMode.TEXT) }
                 )
-                CompactModeButton(
+                CompactModeIcon(
                     selected = state.mode == ChatMode.IMAGE,
-                    label = "Фото",
+                    icon = Icons.Outlined.Image,
+                    description = "Модель изображений",
                     onClick = { onSelectMode(ChatMode.IMAGE) }
                 )
 
                 if (state.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
+                }
+
+                Spacer(Modifier.weight(1f))
+
+                IconButton(
+                    onClick = onChats,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(Icons.Outlined.History, contentDescription = "Чаты")
                 }
 
                 IconButton(
                     onClick = onClear,
                     enabled = state.messages.isNotEmpty() && !state.isLoading,
-                    modifier = Modifier.size(34.dp)
+                    modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить текущий чат")
                 }
@@ -411,21 +441,52 @@ private fun ChatHeader(
 }
 
 @Composable
-private fun CompactModeButton(selected: Boolean, label: String, onClick: () -> Unit) {
+private fun CompactModeIcon(
+    selected: Boolean,
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
     if (selected) {
-        FilledTonalButton(
+        FilledTonalIconButton(
             onClick = onClick,
-            modifier = Modifier.height(34.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = Modifier.size(36.dp),
             shape = RoundedCornerShape(10.dp)
-        ) { Text(label, style = MaterialTheme.typography.labelLarge) }
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
+        }
     } else {
-        TextButton(
+        IconButton(
             onClick = onClick,
-            modifier = Modifier.height(34.dp),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+            modifier = Modifier.size(36.dp)
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun ComposerToggleIcon(
+    selected: Boolean,
+    icon: ImageVector,
+    description: String,
+    onClick: () -> Unit
+) {
+    if (selected) {
+        FilledTonalIconButton(
+            onClick = onClick,
+            modifier = Modifier.size(38.dp),
             shape = RoundedCornerShape(10.dp)
-        ) { Text(label, style = MaterialTheme.typography.labelLarge) }
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
+        }
+    } else {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier.size(38.dp)
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
+        }
     }
 }
 
@@ -955,7 +1016,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                     ) { Text("Сохранить") }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Ключ шифруется через Android Keystore. Модель выбирается нажатием на «Текст» или «Фото» в чате.",
+                        "Ключ шифруется через Android Keystore. Модель выбирается значками текста и изображения в шапке чата.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
