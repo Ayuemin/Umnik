@@ -6,22 +6,28 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -31,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -66,17 +73,36 @@ fun YmnikApp(viewModel: ChatViewModel) {
     }
 
     LaunchedEffect(state.status) {
-        state.status?.let { snackbar.showSnackbar(it); viewModel.dismissStatus() }
+        state.status?.let {
+            snackbar.showSnackbar(it)
+            viewModel.dismissStatus()
+        }
     }
 
-    MaterialTheme {
+    UmnikTheme {
         Scaffold(
+            containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                NavigationBar {
-                    NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("💬") }, label = { Text("Чат") })
-                    NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("🧩") }, label = { Text("Навыки") })
-                    NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Text("⚙") }, label = { Text("Настройки") })
+                NavigationBar(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+                    NavigationBarItem(
+                        selected = tab == 0,
+                        onClick = { tab = 0 },
+                        icon = { Text("💬") },
+                        label = { Text("Чат") }
+                    )
+                    NavigationBarItem(
+                        selected = tab == 1,
+                        onClick = { tab = 1 },
+                        icon = { Text("🧩") },
+                        label = { Text("Навыки") }
+                    )
+                    NavigationBarItem(
+                        selected = tab == 2,
+                        onClick = { tab = 2 },
+                        icon = { Text("⚙") },
+                        label = { Text("Настройки") }
+                    )
                 }
             }
         ) { padding ->
@@ -86,8 +112,23 @@ fun YmnikApp(viewModel: ChatViewModel) {
                     1 -> SkillsScreen(state, viewModel)
                     else -> SettingsScreen(state, viewModel)
                 }
+
                 if (state.isLoading) {
-                    CircularProgressIndicator(Modifier.align(Alignment.TopCenter).padding(top = 8.dp).size(28.dp))
+                    Surface(
+                        modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        tonalElevation = 4.dp
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Text("Модель думает…", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
                 }
             }
         }
@@ -98,6 +139,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
 private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
+
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
     }
@@ -107,24 +149,63 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         fileToSave = null
     }
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text("Умник", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text(state.model, style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = vm::clearChat, enabled = state.messages.isNotEmpty() && !state.isLoading) { Text("Очистить") }
-        }
+    Column(Modifier.fillMaxSize()) {
+        Surface(
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 1.dp
+        ) {
+            Column(Modifier.fillMaxWidth().padding(start = 18.dp, end = 12.dp, top = 14.dp, bottom = 10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Umnik",
+                            style = MaterialTheme.typography.headlineMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = MaterialTheme.colorScheme.secondaryContainer
+                        ) {
+                            Text(
+                                text = state.model,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
+                    }
+                    TextButton(
+                        onClick = vm::clearChat,
+                        enabled = state.messages.isNotEmpty() && !state.isLoading
+                    ) { Text("Очистить") }
+                }
 
-        if (state.activeSkillIds.isNotEmpty()) {
-            Text("Навыки: " + state.skills.filter { it.id in state.activeSkillIds }.joinToString { it.name }, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(4.dp))
+                if (state.activeSkillIds.isNotEmpty()) {
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
+                            AssistChip(
+                                onClick = { vm.toggleSkill(skill.id) },
+                                label = { Text(skill.name) },
+                                leadingIcon = { Text("🧩") }
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            if (state.messages.isEmpty()) {
+                item {
+                    EmptyChatCard()
+                }
+            }
             items(state.messages, key = { it.id }) { message ->
                 MessageCard(message, tts) { file ->
                     fileToSave = file
@@ -134,48 +215,130 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         }
 
         if (state.pendingAttachments.isNotEmpty()) {
-            LazyColumn(Modifier.fillMaxWidth().height(82.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                items(state.pendingAttachments, key = { it.uri }) { a ->
-                    AssistChip(onClick = { vm.removeAttachment(a.uri) }, label = { Text("${a.name}  ×") })
+            Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(state.pendingAttachments, key = { it.uri }) { attachment ->
+                        AssistChip(
+                            onClick = { vm.removeAttachment(attachment.uri) },
+                            label = { Text("📎 ${attachment.name}  ×") }
+                        )
+                    }
                 }
             }
         }
 
-        Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.Bottom) {
-            OutlinedButton(onClick = { attach.launch(arrayOf("*/*")) }, enabled = !state.isLoading) { Text("＋") }
-            Spacer(Modifier.width(8.dp))
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier.weight(1f),
-                placeholder = { Text("Сообщение...") },
-                maxLines = 6
-            )
-            Spacer(Modifier.width(8.dp))
-            Button(
-                onClick = { vm.send(text); text = "" },
-                enabled = !state.isLoading && (text.isNotBlank() || state.pendingAttachments.isNotEmpty())
-            ) { Text("→") }
+        Surface(
+            color = MaterialTheme.colorScheme.surfaceContainer,
+            tonalElevation = 3.dp
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.Bottom,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                FilledTonalButton(
+                    onClick = { attach.launch(arrayOf("*/*")) },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(52.dp),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("＋", style = MaterialTheme.typography.headlineSmall)
+                }
+
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text("Сообщение…") },
+                    shape = RoundedCornerShape(26.dp),
+                    maxLines = 5
+                )
+
+                Button(
+                    onClick = {
+                        vm.send(text)
+                        text = ""
+                    },
+                    enabled = !state.isLoading && (text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
+                    modifier = Modifier.size(52.dp),
+                    shape = CircleShape,
+                    contentPadding = PaddingValues(0.dp)
+                ) {
+                    Text("↑", style = MaterialTheme.typography.headlineSmall)
+                }
+            }
         }
     }
 }
 
 @Composable
-private fun MessageCard(message: ChatMessage, tts: TtsController, onSave: (GeneratedFile) -> Unit) {
+private fun EmptyChatCard() {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.elevatedCardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerLow
+        ),
+        shape = RoundedCornerShape(24.dp)
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text("Привет!", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(6.dp))
+            Text(
+                "Напишите сообщение, приложите файл или подключите навык. Umnik отправит запрос выбранной модели через OpenRouter.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun MessageCard(
+    message: ChatMessage,
+    tts: TtsController,
+    onSave: (GeneratedFile) -> Unit
+) {
     val user = message.role == "user"
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
-        Card(
-            modifier = Modifier.fillMaxWidth(0.92f),
-            shape = RoundedCornerShape(16.dp)
+    val container = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+    val content = if (user) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = if (user) Arrangement.End else Arrangement.Start
+    ) {
+        ElevatedCard(
+            modifier = Modifier.fillMaxWidth(0.9f),
+            shape = RoundedCornerShape(
+                topStart = 24.dp,
+                topEnd = 24.dp,
+                bottomStart = if (user) 24.dp else 6.dp,
+                bottomEnd = if (user) 6.dp else 24.dp
+            ),
+            colors = CardDefaults.elevatedCardColors(containerColor = container)
         ) {
-            Column(Modifier.padding(12.dp)) {
-                Text(if (user) "Вы" else "Умник", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.labelMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(message.text)
-                message.attachmentNames.forEach { Text("📎 $it", style = MaterialTheme.typography.bodySmall) }
+            Column(Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
+                Text(
+                    if (user) "Вы" else "Umnik",
+                    fontWeight = FontWeight.Bold,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = content
+                )
+                Spacer(Modifier.height(5.dp))
+                Text(message.text, color = content)
+
+                message.attachmentNames.forEach {
+                    Spacer(Modifier.height(5.dp))
+                    Text("📎 $it", style = MaterialTheme.typography.bodySmall, color = content)
+                }
 
                 if (!user && message.text.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(5.dp))
                     TextButton(onClick = { tts.toggle(message.id, message.text) }) {
                         Text(if (tts.speakingMessageId == message.id) "■ Стоп" else "🔊 Озвучить")
                     }
@@ -183,8 +346,11 @@ private fun MessageCard(message: ChatMessage, tts: TtsController, onSave: (Gener
 
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(8.dp))
-                    OutlinedButton(onClick = { onSave(file) }, modifier = Modifier.fillMaxWidth()) {
-                        Text("Сохранить ${file.name} (${humanSize(file.size)})")
+                    FilledTonalButton(
+                        onClick = { onSave(file) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Сохранить ${file.name} · ${humanSize(file.size)}")
                     }
                 }
             }
@@ -194,24 +360,59 @@ private fun MessageCard(message: ChatMessage, tts: TtsController, onSave: (Gener
 
 @Composable
 private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
-    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(vm::importSkillFile) }
-    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri -> uri?.let(vm::importSkillTree) }
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importSkillFile)
+    }
+    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(vm::importSkillTree)
+    }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Навыки", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Text("Импортируйте SKILL.md или целую папку. Текст подключённых навыков добавляется к системной инструкции модели.")
-        Spacer(Modifier.height(12.dp))
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Text("Навыки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Подключайте SKILL.md и папки с текстовыми материалами. Активные навыки автоматически добавляются к инструкции модели.",
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) { Text("Файл навыка") }
-            OutlinedButton(onClick = { treePicker.launch(null) }) { Text("Папка навыка") }
+            Button(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) {
+                Text("＋ Файл")
+            }
+            FilledTonalButton(onClick = { treePicker.launch(null) }) {
+                Text("📁 Папка")
+            }
         }
-        Spacer(Modifier.height(12.dp))
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        Spacer(Modifier.height(14.dp))
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (state.skills.isEmpty()) {
+                item {
+                    ElevatedCard(
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
+                        shape = RoundedCornerShape(24.dp)
+                    ) {
+                        Text(
+                            "Пока навыков нет. Импортируйте SKILL.md или папку навыка.",
+                            modifier = Modifier.padding(18.dp),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
             items(state.skills, key = { it.id }) { skill ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(skill.name, fontWeight = FontWeight.Bold)
-                        Text("Файлов: ${skill.files.size}", style = MaterialTheme.typography.bodySmall)
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    Column(Modifier.padding(15.dp)) {
+                        Text(skill.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(3.dp))
+                        Text("Файлов: ${skill.files.size}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             FilterChip(
                                 selected = skill.id in state.activeSkillIds,
@@ -235,27 +436,66 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var showModels by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Настройки", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = key,
-            onValueChange = { key = it },
+    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
+        Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(4.dp))
+        Text("OpenRouter и модель", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Spacer(Modifier.height(14.dp))
+
+        ElevatedCard(
             modifier = Modifier.fillMaxWidth(),
-            label = { Text(if (state.apiKeyConfigured) "OpenRouter API key (уже сохранён)" else "OpenRouter API key") },
-            placeholder = { Text("sk-or-v1-…") },
-            singleLine = true
-        )
-        Spacer(Modifier.height(8.dp))
-        OutlinedTextField(value = model, onValueChange = { model = it }, modifier = Modifier.fillMaxWidth(), label = { Text("ID модели") }, singleLine = true)
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { vm.saveSettings(key.takeIf { it.isNotBlank() }, model); key = "" }) { Text("Сохранить") }
-            OutlinedButton(onClick = { vm.refreshModels(); showModels = true }) { Text("Выбрать модель") }
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                OutlinedTextField(
+                    value = key,
+                    onValueChange = { key = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text(if (state.apiKeyConfigured) "OpenRouter API key сохранён" else "OpenRouter API key") },
+                    placeholder = { Text("sk-or-v1-…") },
+                    shape = RoundedCornerShape(18.dp),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = model,
+                    onValueChange = { model = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("ID модели") },
+                    shape = RoundedCornerShape(18.dp),
+                    singleLine = true
+                )
+                Spacer(Modifier.height(12.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = {
+                        vm.saveSettings(key.takeIf { it.isNotBlank() }, model)
+                        key = ""
+                    }) { Text("Сохранить") }
+                    FilledTonalButton(onClick = {
+                        vm.refreshModels()
+                        showModels = true
+                    }) { Text("Выбрать модель") }
+                }
+            }
         }
-        Spacer(Modifier.height(16.dp))
-        Text("API-ключ шифруется ключом из Android Keystore и не хранится в исходном коде приложения.", style = MaterialTheme.typography.bodySmall)
-        Text("Модель по умолчанию: openrouter/auto. Для навыков с инструментами лучше выбирать модель с поддержкой tool calling.", style = MaterialTheme.typography.bodySmall)
+
+        Spacer(Modifier.height(12.dp))
+
+        Surface(
+            color = MaterialTheme.colorScheme.secondaryContainer,
+            shape = RoundedCornerShape(20.dp)
+        ) {
+            Column(Modifier.padding(15.dp)) {
+                Text("🔐 Ключ хранится локально", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "API-ключ шифруется через Android Keystore и не записывается в APK или репозиторий.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer
+                )
+            }
+        }
     }
 
     if (showModels) {
@@ -265,15 +505,36 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
             title = { Text("Модель OpenRouter") },
             text = {
                 Column {
-                    OutlinedTextField(value = query, onValueChange = { query = it }, modifier = Modifier.fillMaxWidth(), placeholder = { Text("Поиск") })
+                    OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Поиск модели") },
+                        shape = RoundedCornerShape(18.dp)
+                    )
                     Spacer(Modifier.height(8.dp))
-                    if (state.availableModels.isEmpty()) Text("Список загружается…")
-                    else LazyColumn(Modifier.height(420.dp)) {
-                        items(filtered) { id -> TextButton(onClick = { model = id; showModels = false }, modifier = Modifier.fillMaxWidth()) { Text(id, modifier = Modifier.fillMaxWidth()) } }
+                    if (state.availableModels.isEmpty()) {
+                        Text("Список загружается…")
+                    } else {
+                        LazyColumn(Modifier.height(420.dp)) {
+                            items(filtered) { id ->
+                                TextButton(
+                                    onClick = {
+                                        model = id
+                                        showModels = false
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(id, modifier = Modifier.fillMaxWidth())
+                                }
+                            }
+                        }
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showModels = false }) { Text("Закрыть") } }
+            confirmButton = {
+                TextButton(onClick = { showModels = false }) { Text("Закрыть") }
+            }
         )
     }
 }
