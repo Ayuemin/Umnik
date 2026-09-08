@@ -1,4 +1,4 @@
-// Umnik v0.6.3 capability-aware multimodal
+// Umnik v0.6.4 quick per-chat model switching
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 12
-        versionName = "0.6.3"
+        versionCode = 13
+        versionName = "0.6.4"
     }
 
     buildFeatures {

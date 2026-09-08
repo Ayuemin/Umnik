@@ -66,6 +66,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 ChatMode.valueOf(prefs.getString("chat_mode", ChatMode.TEXT.name) ?: ChatMode.TEXT.name)
             }.getOrDefault(ChatMode.TEXT),
             textModel = prefs.getString("text_model", prefs.getString("model", "openrouter/auto")) ?: "openrouter/auto",
+            currentChatTextModel = initialChat.textModelOverride,
+            quickTextModels = loadQuickTextModels(),
             imageModel = prefs.getString("image_model", "bytedance-seed/seedream-4.5") ?: "bytedance-seed/seedream-4.5",
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
@@ -120,9 +122,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (clean.isBlank()) return
         when (mode) {
             ChatMode.TEXT -> {
-                val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
-                val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true &&
-                    (info.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in info.reasoningEfforts)
+                val effectiveId = _state.value.currentChatTextModel ?: clean
+                val info = _state.value.availableTextModels.firstOrNull { it.id == effectiveId }
+                val keepReasoning = reasoningStillValid(info)
                 prefs.edit()
                     .putString("text_model", clean)
                     .putBoolean("reasoning_enabled", keepReasoning)
@@ -134,6 +136,63 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(imageModel = clean)
             }
         }
+    }
+
+    fun toggleQuickTextModel(model: String) {
+        val clean = model.trim()
+        if (clean.isBlank()) return
+        val current = _state.value.quickTextModels
+        val next = if (clean in current) {
+            current.filterNot { it == clean }
+        } else {
+            if (current.size >= 10) {
+                _state.value = _state.value.copy(status = "Можно закрепить до 10 быстрых моделей")
+                return
+            }
+            current + clean
+        }
+        prefs.edit().putString("quick_text_models_json", gson.toJson(next)).apply()
+        _state.value = _state.value.copy(quickTextModels = next)
+    }
+
+    fun selectQuickTextModel(model: String) {
+        if (_state.value.isLoading) return
+        val clean = model.trim()
+        if (clean.isBlank()) return
+        val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+        val keepReasoning = reasoningStillValid(info)
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == _state.value.currentChatId) chat.copy(
+                textModelOverride = clean,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+        prefs.edit().putBoolean("reasoning_enabled", keepReasoning).apply()
+        _state.value = _state.value.copy(
+            chats = chats,
+            currentChatTextModel = clean,
+            reasoningEnabled = keepReasoning
+        )
+    }
+
+    fun useDefaultTextModelForChat() {
+        if (_state.value.isLoading) return
+        val info = _state.value.availableTextModels.firstOrNull { it.id == _state.value.textModel }
+        val keepReasoning = reasoningStillValid(info)
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == _state.value.currentChatId) chat.copy(
+                textModelOverride = null,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+        prefs.edit().putBoolean("reasoning_enabled", keepReasoning).apply()
+        _state.value = _state.value.copy(
+            chats = chats,
+            currentChatTextModel = null,
+            reasoningEnabled = keepReasoning
+        )
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
@@ -212,6 +271,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = next,
             currentChatId = chat.id,
             messages = emptyList(),
+            currentChatTextModel = null,
             pendingAttachments = emptyList(),
             storageStats = storageRepository.stats()
         )
@@ -231,6 +291,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = id,
             messages = chat.messages,
             mode = nextMode,
+            currentChatTextModel = chat.textModelOverride,
             pendingAttachments = emptyList()
         )
     }
@@ -255,6 +316,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = selected.id,
             messages = selected.messages,
             mode = selected.mode ?: _state.value.mode,
+            currentChatTextModel = selected.textModelOverride,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -433,9 +495,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onSuccess { infos ->
                 _state.value = when (mode) {
                     ChatMode.TEXT -> {
-                        val current = infos.firstOrNull { it.id == _state.value.textModel }
-                        val keepReasoning = _state.value.reasoningEnabled && current?.supportsReasoning == true &&
-                            (current.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in current.reasoningEfforts)
+                        val effectiveId = _state.value.currentChatTextModel ?: _state.value.textModel
+                        val current = infos.firstOrNull { it.id == effectiveId }
+                        val keepReasoning = reasoningStillValid(current)
                         if (!keepReasoning && _state.value.reasoningEnabled) {
                             prefs.edit().putBoolean("reasoning_enabled", false).apply()
                         }
@@ -469,7 +531,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val imageInfos = runCatching { api.imageModels(key) }.getOrNull()
             var next = _state.value
             if (textInfos != null) {
-                val current = textInfos.firstOrNull { it.id == next.textModel }
+                val effectiveId = next.currentChatTextModel ?: next.textModel
+                val current = textInfos.firstOrNull { it.id == effectiveId }
                 val keepReasoning = next.reasoningEnabled && current?.supportsReasoning == true &&
                     (current.reasoningEfforts.isEmpty() || next.reasoningEffort.apiValue in current.reasoningEfforts)
                 if (!keepReasoning && next.reasoningEnabled) prefs.edit().putBoolean("reasoning_enabled", false).apply()
@@ -480,8 +543,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    private fun currentTextModelId(): String = _state.value.currentChatTextModel ?: _state.value.textModel
+
     private fun currentTextModelInfo(): ModelInfo? =
-        _state.value.availableTextModels.firstOrNull { it.id == _state.value.textModel }
+        _state.value.availableTextModels.firstOrNull { it.id == currentTextModelId() }
+
+    private fun reasoningStillValid(info: ModelInfo?): Boolean =
+        _state.value.reasoningEnabled && info?.supportsReasoning == true &&
+            (info.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in info.reasoningEfforts)
 
     private fun currentImageModelInfo(): ModelInfo? =
         _state.value.availableImageModels.firstOrNull { it.id == _state.value.imageModel }
@@ -641,7 +710,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
 
         val mode = _state.value.mode
-        val textModel = _state.value.textModel
+        val textModel = currentTextModelId()
         val imageModel = _state.value.imageModel
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
@@ -948,6 +1017,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val oneLine = source.replace(Regex("\\s+"), " ").trim()
         return if (oneLine.length <= 38) oneLine else oneLine.take(38).trimEnd() + "…"
     }
+
+    private fun loadQuickTextModels(): List<String> = runCatching {
+        val type = object : TypeToken<List<String>>() {}.type
+        gson.fromJson<List<String>>(prefs.getString("quick_text_models_json", "[]") ?: "[]", type)
+            .orEmpty()
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+            .take(10)
+    }.getOrDefault(emptyList())
 
     private fun loadInitialChats(): List<ChatSession> {
         val existing = chatsRepository.list()

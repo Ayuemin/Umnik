@@ -59,6 +59,7 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
@@ -66,6 +67,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -210,9 +213,11 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var chatsOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
+    var quickModelsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
-    val textModelInfo = state.availableTextModels.firstOrNull { it.id == state.textModel }
+    val activeTextModel = state.currentChatTextModel ?: state.textModel
+    val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
     val cameraAvailable = when (state.mode) {
         ChatMode.TEXT -> textModelInfo?.accepts("image") == true
@@ -347,19 +352,55 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                 }
 
                 if (state.mode == ChatMode.TEXT) {
-                    ComposerToggleIcon(
-                        selected = state.webSearchEnabled,
-                        icon = Icons.Outlined.Language,
-                        description = if (state.webSearchEnabled) "Веб-поиск включён" else "Включить веб-поиск",
-                        onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) }
-                    )
-                    ComposerToggleIcon(
-                        selected = state.reasoningEnabled,
-                        icon = Icons.Outlined.Psychology,
-                        description = if (state.reasoningEnabled) "Размышление включено" else "Включить размышление",
-                        enabled = reasoningAvailable,
-                        onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) }
-                    )
+                    Box {
+                        IconButton(
+                            onClick = { quickModelsOpen = true },
+                            enabled = !state.isLoading,
+                            modifier = Modifier.size(42.dp)
+                        ) {
+                            Icon(Icons.Outlined.SwapHoriz, contentDescription = "Быстрая смена модели")
+                        }
+                        val quickCandidates = (listOf(activeTextModel, state.textModel) + state.quickTextModels)
+                            .filter { it.isNotBlank() }
+                            .distinct()
+                        DropdownMenu(
+                            expanded = quickModelsOpen,
+                            onDismissRequest = { quickModelsOpen = false }
+                        ) {
+                            quickCandidates.forEach { id ->
+                                val current = id == activeTextModel
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(
+                                                id,
+                                                fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                            if (id == state.textModel) {
+                                                Text(
+                                                    if (state.currentChatTextModel == null && current) "По умолчанию · текущая" else "Модель по умолчанию",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            } else if (current) {
+                                                Text(
+                                                    "Текущая модель этого чата",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        if (id == state.textModel) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(id)
+                                        quickModelsOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
 
                 OutlinedTextField(
@@ -369,6 +410,28 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     placeholder = {
                         Text(if (state.mode == ChatMode.IMAGE) "Опишите изображение…" else "Сообщение…")
                     },
+                    trailingIcon = if (state.mode == ChatMode.TEXT) {
+                        {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(1.dp)
+                            ) {
+                                InlineComposerToggleIcon(
+                                    selected = state.webSearchEnabled,
+                                    icon = Icons.Outlined.Language,
+                                    description = if (state.webSearchEnabled) "Веб-поиск включён" else "Включить веб-поиск",
+                                    onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) }
+                                )
+                                InlineComposerToggleIcon(
+                                    selected = state.reasoningEnabled,
+                                    icon = Icons.Outlined.Psychology,
+                                    description = if (state.reasoningEnabled) "Размышление включено" else "Включить размышление",
+                                    enabled = reasoningAvailable,
+                                    onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) }
+                                )
+                            }
+                        }
+                    } else null,
                     shape = RoundedCornerShape(24.dp),
                     maxLines = 6
                 )
@@ -525,6 +588,34 @@ private fun CompactModeIcon(
             modifier = Modifier.size(36.dp)
         ) {
             Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
+        }
+    }
+}
+
+@Composable
+private fun InlineComposerToggleIcon(
+    selected: Boolean,
+    icon: ImageVector,
+    description: String,
+    enabled: Boolean = true,
+    onClick: () -> Unit
+) {
+    if (selected) {
+        FilledTonalIconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.size(32.dp),
+            shape = RoundedCornerShape(9.dp)
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(17.dp))
+        }
+    } else {
+        IconButton(
+            onClick = onClick,
+            enabled = enabled,
+            modifier = Modifier.size(32.dp)
+        ) {
+            Icon(icon, contentDescription = description, modifier = Modifier.size(17.dp))
         }
     }
 }
@@ -1059,6 +1150,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
     var storageOpen by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
+    var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var profileName by remember(state.userProfile.name) { mutableStateOf(state.userProfile.name) }
     var profileGender by remember(state.userProfile.gender) { mutableStateOf(state.userProfile.gender) }
     var profileAge by remember(state.userProfile.age) { mutableStateOf(state.userProfile.age) }
@@ -1067,7 +1159,6 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     val themes = ThemeChoice.entries
     val reasoningEfforts = ReasoningEffort.entries
     val profileScopes = UserProfileScope.entries
-    val selectedTextModelInfo = state.availableTextModels.firstOrNull { it.id == state.textModel }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1162,8 +1253,6 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                             FilterChip(
                                 selected = state.reasoningEffort == effort,
                                 onClick = { vm.setReasoningEffort(effort) },
-                                enabled = selectedTextModelInfo?.supportsReasoning == true &&
-                                    (!selectedTextModelInfo.supportsReasoningEffort || selectedTextModelInfo.reasoningEfforts.isEmpty() || effort.apiValue in selectedTextModelInfo.reasoningEfforts),
                                 label = { Text(reasoningEffortLabel(effort)) }
                             )
                         }
@@ -1323,6 +1412,21 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                             Text(state.imageModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(
+                        onClick = { quickModelsSettingsOpen = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Быстрые модели", fontWeight = FontWeight.Medium)
+                            Text(
+                                if (state.quickTextModels.isEmpty()) "Только модель по умолчанию" else "Дополнительно: ${state.quickTextModels.size}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -1340,6 +1444,72 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
             onDismiss = { modelPicker = null }
         )
     }
+
+    if (quickModelsSettingsOpen) {
+        QuickModelsSettingsDialog(
+            state = state,
+            vm = vm,
+            onDismiss = { quickModelsSettingsOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun QuickModelsSettingsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
+    var query by remember { mutableStateOf("") }
+
+    LaunchedEffect(Unit) {
+        if (state.availableTextModels.isEmpty()) vm.refreshModels(ChatMode.TEXT)
+    }
+
+    val filtered = remember(state.availableTextModels, query) {
+        state.availableTextModels
+            .filter { it.id.contains(query.trim(), ignoreCase = true) }
+            .take(300)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Быстрые модели") },
+        text = {
+            Column {
+                Text(
+                    "Модель по умолчанию всегда доступна. Здесь можно закрепить до 10 дополнительных моделей для мгновенной смены внутри чата.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                    placeholder = { Text("Поиск модели") }
+                )
+                Spacer(Modifier.height(8.dp))
+                LazyColumn(Modifier.heightIn(max = 430.dp)) {
+                    items(filtered, key = { it.id }) { modelInfo ->
+                        FilterChip(
+                            selected = modelInfo.id in state.quickTextModels,
+                            onClick = { vm.toggleQuickTextModel(modelInfo.id) },
+                            label = {
+                                Text(
+                                    modelInfo.id,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Готово") } }
+    )
 }
 
 @Composable
