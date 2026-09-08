@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 env:
-  VERSION: "0.1.1"
+  VERSION: "0.2.0"
 
 jobs:
   build:
@@ -39,33 +39,30 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "Ymnik-v${VERSION}.apk"
+        run: cp app/build/outputs/apk/release/app-release.apk "Umnik-v${VERSION}.apk"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ymnik-v${{ env.VERSION }}
-          path: Ymnik-v${{ env.VERSION }}.apk
+          name: Umnik-v${{ env.VERSION }}
+          path: Umnik-v${{ env.VERSION }}.apk
 
       - name: Recreate GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete "v${VERSION}" --cleanup-tag -y || true
-          gh release create "v${VERSION}" "Ymnik-v${VERSION}.apk" \
+          gh release create "v${VERSION}" "Umnik-v${VERSION}.apk" \
             --target "$GITHUB_SHA" \
-            --title "Умник v${VERSION}" \
+            --title "Umnik v${VERSION}" \
             --prerelease \
-            --notes "Исправление первой тестовой версии Android-приложения «Умник».
+            --notes "Umnik v0.2.0.
 
-          Исправлено:
-          - запросы к OpenRouter больше не падают из-за кириллицы в HTTP-заголовке X-Title
-
-          Возможности:
-          - OpenRouter чат и выбор модели
-          - локальные навыки SKILL.md и папки навыков
-          - прикрепление файлов
-          - tool calling
-          - создание и сохранение файлов через create_file
-          - зашифрованное хранение API-ключа
-          - озвучивание ответов модели через Android Text-to-Speech"
+          Главное:
+          - исправлен запрос к OpenRouter: X-Title теперь использует корректное ASCII-значение
+          - новый applicationId com.ayuemin.umnik
+          - интерфейс переработан в стиле Material You
+          - динамические цвета Android 12+
+          - светлая и тёмная системные темы
+          - обновлены карточки сообщений, ввод, навыки и настройки
+          - OpenRouter, файлы, SKILL.md, tool calling, create_file и TTS сохранены"
