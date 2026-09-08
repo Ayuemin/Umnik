@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -40,10 +41,10 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
-import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
@@ -65,12 +66,12 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -97,8 +98,10 @@ import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.tts.TtsController
+import kotlinx.coroutines.delay
 
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
@@ -119,7 +122,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
         }
     }
 
-    UmnikTheme {
+    UmnikTheme(state.themeChoice) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) },
@@ -180,6 +183,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var pickerMode by remember { mutableStateOf<ChatMode?>(null) }
+    val listState = rememberLazyListState()
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
@@ -190,15 +194,25 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         fileToSave = null
     }
 
+    LaunchedEffect(state.messages.lastOrNull()?.id) {
+        if (state.messages.isNotEmpty()) {
+            delay(120)
+            listState.animateScrollToItem(state.messages.lastIndex, 10_000)
+        }
+    }
+
     Column(Modifier.fillMaxSize()) {
         ChatHeader(
             state = state,
-            onMode = vm::setMode,
-            onChooseModel = { mode -> pickerMode = mode },
+            onSelectMode = { mode ->
+                vm.setMode(mode)
+                pickerMode = mode
+            },
             onClear = vm::clearChat
         )
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -233,25 +247,13 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         AssistChip(
                             onClick = { vm.removeAttachment(attachment.uri) },
                             label = {
-                                Text(
-                                    attachment.name,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             },
                             leadingIcon = {
-                                Icon(
-                                    Icons.Outlined.AttachFile,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
                             },
                             trailingIcon = {
-                                Icon(
-                                    Icons.Outlined.Close,
-                                    contentDescription = "Убрать",
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Outlined.Close, contentDescription = "Убрать", modifier = Modifier.size(18.dp))
                             }
                         )
                     }
@@ -259,10 +261,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
             }
         }
 
-        Surface(
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp
-        ) {
+        Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 3.dp) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -320,8 +319,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 @Composable
 private fun ChatHeader(
     state: UiState,
-    onMode: (ChatMode) -> Unit,
-    onChooseModel: (ChatMode) -> Unit,
+    onSelectMode: (ChatMode) -> Unit,
     onClear: () -> Unit
 ) {
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
@@ -333,10 +331,7 @@ private fun ChatHeader(
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
-                IconButton(
-                    onClick = onClear,
-                    enabled = state.messages.isNotEmpty() && !state.isLoading
-                ) {
+                IconButton(onClick = onClear, enabled = state.messages.isNotEmpty() && !state.isLoading) {
                     Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить чат")
                 }
             }
@@ -344,51 +339,20 @@ private fun ChatHeader(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = state.mode == ChatMode.TEXT,
-                    onClick = { onMode(ChatMode.TEXT) },
+                    onClick = { onSelectMode(ChatMode.TEXT) },
                     label = { Text("Текст") },
                     leadingIcon = {
-                        Icon(
-                            Icons.Outlined.TextFields,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(Icons.Outlined.TextFields, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                 )
                 FilterChip(
                     selected = state.mode == ChatMode.IMAGE,
-                    onClick = { onMode(ChatMode.IMAGE) },
+                    onClick = { onSelectMode(ChatMode.IMAGE) },
                     label = { Text("Изображение") },
                     leadingIcon = {
-                        Icon(
-                            Icons.Outlined.Image,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
+                        Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                 )
-            }
-
-            Spacer(Modifier.height(7.dp))
-            val currentModel = if (state.mode == ChatMode.TEXT) state.textModel else state.imageModel
-            OutlinedButton(
-                onClick = { onChooseModel(state.mode) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-            ) {
-                Icon(
-                    if (state.mode == ChatMode.TEXT) Icons.Outlined.TextFields else Icons.Outlined.Image,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    currentModel,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Icon(Icons.Outlined.ExpandMore, contentDescription = "Выбрать модель")
             }
 
             if (state.mode == ChatMode.TEXT && state.activeSkillIds.isNotEmpty()) {
@@ -399,11 +363,7 @@ private fun ChatHeader(
                             onClick = { },
                             label = { Text(skill.name) },
                             leadingIcon = {
-                                Icon(
-                                    Icons.Outlined.Extension,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(18.dp)
-                                )
+                                Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
                             }
                         )
                     }
@@ -422,6 +382,7 @@ private fun ModelPickerDialog(
 ) {
     var query by remember(mode) { mutableStateOf("") }
     val models = if (mode == ChatMode.TEXT) state.availableTextModels else state.availableImageModels
+    val current = if (mode == ChatMode.TEXT) state.textModel else state.imageModel
 
     LaunchedEffect(mode) {
         if (models.isEmpty()) vm.refreshModels(mode)
@@ -436,6 +397,14 @@ private fun ModelPickerDialog(
         title = { Text(if (mode == ChatMode.TEXT) "Текстовая модель" else "Модель изображений") },
         text = {
             Column {
+                Text(
+                    "Сейчас: $current",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -460,12 +429,7 @@ private fun ModelPickerDialog(
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text(
-                                    id,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                Text(id, modifier = Modifier.fillMaxWidth(), maxLines = 2, overflow = TextOverflow.Ellipsis)
                             }
                             HorizontalDivider()
                         }
@@ -546,12 +510,7 @@ private fun MessageCard(
                 message.attachmentNames.forEach { name ->
                     Spacer(Modifier.height(7.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Outlined.AttachFile,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp),
-                            tint = content
-                        )
+                        Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(17.dp), tint = content)
                         Spacer(Modifier.width(5.dp))
                         Text(name, style = MaterialTheme.typography.bodySmall, color = content)
                     }
@@ -591,80 +550,106 @@ private fun MessageCard(
     }
 }
 
+private enum class MessagePartKind { PLAIN, CODE, COPY }
+
 private data class MessagePart(
     val text: String,
-    val code: Boolean,
+    val kind: MessagePartKind,
     val language: String = ""
 )
 
 @Composable
 private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color) {
-    val parts = remember(text) { splitFencedBlocks(text) }
+    val parts = remember(text) { splitRichBlocks(text) }
     val context = LocalContext.current
 
-    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         parts.forEach { part ->
-            if (part.code) {
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHighest
-                ) {
-                    Column {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                part.language.ifBlank { "текст" },
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            IconButton(onClick = { copyText(context, part.text) }) {
-                                Icon(
-                                    Icons.Outlined.ContentCopy,
-                                    contentDescription = "Копировать блок",
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                        SelectionContainer {
-                            Text(
-                                part.text,
-                                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
-                                fontFamily = FontFamily.Monospace,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
+            when (part.kind) {
+                MessagePartKind.PLAIN -> if (part.text.isNotBlank()) {
+                    SelectionContainer { Text(part.text.trim(), color = color) }
                 }
-            } else if (part.text.isNotBlank()) {
-                SelectionContainer {
-                    Text(part.text.trim(), color = color)
-                }
+                MessagePartKind.CODE -> IsolatedBlock(
+                    title = part.language.ifBlank { "Код" },
+                    text = part.text,
+                    monospace = true,
+                    onCopy = { copyText(context, part.text) }
+                )
+                MessagePartKind.COPY -> IsolatedBlock(
+                    title = "Для копирования",
+                    text = part.text,
+                    monospace = false,
+                    onCopy = { copyText(context, part.text) }
+                )
             }
         }
     }
 }
 
-private fun splitFencedBlocks(text: String): List<MessagePart> {
-    val regex = Regex("```([^\\n`]*)\\n?([\\s\\S]*?)```")
+@Composable
+private fun IsolatedBlock(
+    title: String,
+    text: String,
+    monospace: Boolean,
+    onCopy: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 1.dp
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    title,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                IconButton(onClick = onCopy) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать блок", modifier = Modifier.size(18.dp))
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+            SelectionContainer {
+                Text(
+                    text.trim(),
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    fontFamily = if (monospace) FontFamily.Monospace else FontFamily.Default,
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            }
+        }
+    }
+}
+
+private fun splitRichBlocks(text: String): List<MessagePart> {
+    val regex = Regex(":::copy[ \\t]*\\n([\\s\\S]*?)\\n:::[ \\t]*|```([^\\n`]*)\\n?([\\s\\S]*?)```")
     val result = mutableListOf<MessagePart>()
     var cursor = 0
+
     regex.findAll(text).forEach { match ->
         if (match.range.first > cursor) {
-            result += MessagePart(text.substring(cursor, match.range.first), false)
+            result += MessagePart(text.substring(cursor, match.range.first), MessagePartKind.PLAIN)
         }
-        result += MessagePart(
-            text = match.groupValues[2].trimEnd(),
-            code = true,
-            language = match.groupValues[1].trim()
-        )
+        if (match.value.startsWith(":::copy")) {
+            result += MessagePart(match.groupValues[1].trim(), MessagePartKind.COPY)
+        } else {
+            result += MessagePart(
+                text = match.groupValues[3].trimEnd(),
+                kind = MessagePartKind.CODE,
+                language = match.groupValues[2].trim()
+            )
+        }
         cursor = match.range.last + 1
     }
-    if (cursor < text.length) result += MessagePart(text.substring(cursor), false)
-    if (result.isEmpty()) result += MessagePart(text, false)
+
+    if (cursor < text.length) result += MessagePart(text.substring(cursor), MessagePartKind.PLAIN)
+    if (result.isEmpty()) result += MessagePart(text, MessagePartKind.PLAIN)
     return result
 }
 
@@ -740,7 +725,6 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
         }
 
         Spacer(Modifier.height(14.dp))
-
         LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (state.skills.isEmpty()) {
                 item {
@@ -773,11 +757,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
                                 onClick = { vm.toggleSkill(skill.id) },
                                 label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") },
                                 leadingIcon = {
-                                    Icon(
-                                        Icons.Outlined.Extension,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(18.dp)
-                                    )
+                                    Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
                                 }
                             )
                             Spacer(Modifier.width(6.dp))
@@ -795,63 +775,126 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel) {
 @Composable
 private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
+    val themes = ThemeChoice.entries
 
-    Column(Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 14.dp)) {
-        Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(4.dp))
-        Text("OpenRouter и локальные параметры", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(14.dp))
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        item {
+            Text("Настройки", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text("OpenRouter и локальные параметры", color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
 
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text("API-ключ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = key,
-                    onValueChange = { key = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = {
-                        Text(if (state.apiKeyConfigured) "Новый ключ (старый уже сохранён)" else "OpenRouter API key")
-                    },
-                    placeholder = { Text("sk-or-v1-…") },
-                    visualTransformation = PasswordVisualTransformation(),
-                    singleLine = true
-                )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = {
-                        vm.saveApiKey(key.takeIf { it.isNotBlank() })
-                        key = ""
-                    }
-                ) { Text("Сохранить") }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "Ключ шифруется через Android Keystore. Модели выбираются прямо в верхней части чата.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("API-ключ", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = key,
+                        onValueChange = { key = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = {
+                            Text(if (state.apiKeyConfigured) "Новый ключ (старый уже сохранён)" else "OpenRouter API key")
+                        },
+                        placeholder = { Text("sk-or-v1-…") },
+                        visualTransformation = PasswordVisualTransformation(),
+                        singleLine = true
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Button(
+                        onClick = {
+                            vm.saveApiKey(key.takeIf { it.isNotBlank() })
+                            key = ""
+                        }
+                    ) { Text("Сохранить") }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Ключ шифруется через Android Keystore. Модель выбирается нажатием на «Текст» или «Изображение» в чате.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(22.dp),
-            colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-        ) {
-            Column(Modifier.padding(16.dp)) {
-                Text("Текущие модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Spacer(Modifier.height(7.dp))
-                Text("Текст: ${state.textModel}", style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
-                Text("Изображения: ${state.imageModel}", style = MaterialTheme.typography.bodyMedium)
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Интерфейс", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(12.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Звук готового ответа", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Короткий тихий сигнал после ответа модели",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = state.answerSoundEnabled,
+                            onCheckedChange = vm::setAnswerSoundEnabled
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Palette, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Text("Цветовая схема", fontWeight = FontWeight.Medium)
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(themes) { choice ->
+                            FilterChip(
+                                selected = state.themeChoice == choice,
+                                onClick = { vm.setThemeChoice(choice) },
+                                label = { Text(themeLabel(choice)) }
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Текущие модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(7.dp))
+                    Text("Текст: ${state.textModel}", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Изображения: ${state.imageModel}", style = MaterialTheme.typography.bodyMedium)
+                }
             }
         }
     }
+}
+
+private fun themeLabel(choice: ThemeChoice): String = when (choice) {
+    ThemeChoice.DYNAMIC -> "Material You"
+    ThemeChoice.GRAPHITE -> "Графит"
+    ThemeChoice.OCEAN -> "Синяя"
+    ThemeChoice.FOREST -> "Зелёная"
+    ThemeChoice.AMBER -> "Янтарная"
 }
 
 private fun copyText(context: Context, text: String) {
