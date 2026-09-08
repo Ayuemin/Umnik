@@ -1,4 +1,4 @@
-// Umnik v0.6.3
+// Umnik v0.6.3 capability-aware multimodal
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
