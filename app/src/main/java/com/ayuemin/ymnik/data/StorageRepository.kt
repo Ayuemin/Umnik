@@ -10,6 +10,7 @@ class StorageRepository(private val context: Context) {
     private val generatedRoot = File(context.filesDir, "generated").apply { mkdirs() }
     private val exportsRoot = File(context.cacheDir, "exports").apply { mkdirs() }
     private val skillsRoot = File(context.filesDir, "skills").apply { mkdirs() }
+    private val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
     private val chatsFile = File(File(context.filesDir, "chats"), "chats.json")
 
     fun list(): List<StoredFile> {
@@ -17,6 +18,7 @@ class StorageRepository(private val context: Context) {
         collect(generatedRoot, "Сгенерировано", true, items)
         collect(exportsRoot, "Экспорт", true, items)
         collect(skillsRoot, "Навыки", false, items, skipName = "skills.json")
+        collect(projectsRoot, "Проекты", false, items, skipName = "projects.json")
         return items.sortedByDescending { it.modifiedAt }
     }
 
@@ -24,6 +26,7 @@ class StorageRepository(private val context: Context) {
         generatedBytes = sizeOf(generatedRoot),
         exportBytes = sizeOf(exportsRoot),
         skillBytes = sizeOf(skillsRoot),
+        projectBytes = sizeOf(projectsRoot),
         chatBytes = if (chatsFile.exists()) chatsFile.length() else 0L
     )
 
@@ -53,7 +56,7 @@ class StorageRepository(private val context: Context) {
             val displayName = if (category == "Сгенерировано") {
                 file.name.substringAfter('_', file.name)
             } else {
-                file.name
+                file.name.substringAfter('_', file.name)
             }
             out += StoredFile(
                 id = UUID.nameUUIDFromBytes(file.absolutePath.toByteArray()).toString(),
@@ -83,6 +86,7 @@ class StorageRepository(private val context: Context) {
         "png" -> "image/png"
         "jpg", "jpeg" -> "image/jpeg"
         "webp" -> "image/webp"
+        "pdf" -> "application/pdf"
         "md" -> "text/markdown"
         "txt" -> "text/plain"
         "json" -> "application/json"

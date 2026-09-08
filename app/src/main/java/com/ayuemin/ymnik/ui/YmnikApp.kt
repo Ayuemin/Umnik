@@ -204,6 +204,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var pickerMode by remember { mutableStateOf<ChatMode?>(null) }
     var chatsOpen by remember { mutableStateOf(false) }
+    var projectsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -226,6 +227,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         ChatHeader(
             state = state,
             onChats = { chatsOpen = true },
+            onProjects = { projectsOpen = true },
             onSelectMode = { mode ->
                 vm.setMode(mode)
                 pickerMode = mode
@@ -355,10 +357,18 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     }
 
     if (chatsOpen) {
-        ChatsDialog(
+        ChatsHubDialog(
             state = state,
             vm = vm,
             onDismiss = { chatsOpen = false }
+        )
+    }
+
+    if (projectsOpen) {
+        ProjectsDialog(
+            state = state,
+            vm = vm,
+            onDismiss = { projectsOpen = false }
         )
     }
 }
@@ -367,6 +377,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 private fun ChatHeader(
     state: UiState,
     onChats: () -> Unit,
+    onProjects: () -> Unit,
     onSelectMode: (ChatMode) -> Unit,
     onClear: () -> Unit
 ) {
@@ -404,6 +415,19 @@ private fun ChatHeader(
                 }
 
                 Spacer(Modifier.weight(1f))
+
+                IconButton(
+                    onClick = onProjects,
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+                    Icon(
+                        Icons.Outlined.FolderOpen,
+                        contentDescription = "Проекты",
+                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
 
                 IconButton(
                     onClick = onChats,
@@ -1092,7 +1116,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                     Spacer(Modifier.height(10.dp))
                     Text(
                         "Сгенерировано: ${humanSize(state.storageStats.generatedBytes)} · экспорт: ${humanSize(state.storageStats.exportBytes)}\n" +
-                            "Навыки: ${humanSize(state.storageStats.skillBytes)} · история чатов: ${humanSize(state.storageStats.chatBytes)}",
+                            "Навыки: ${humanSize(state.storageStats.skillBytes)} · проекты: ${humanSize(state.storageStats.projectBytes)}\n" +
+                            "История чатов: ${humanSize(state.storageStats.chatBytes)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

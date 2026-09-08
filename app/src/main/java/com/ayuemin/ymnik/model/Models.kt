@@ -24,7 +24,8 @@ data class PendingAttachment(
     val uri: String,
     val name: String,
     val mimeType: String,
-    val size: Long
+    val size: Long,
+    val localPath: String? = null
 )
 
 data class GeneratedFile(
@@ -33,6 +34,27 @@ data class GeneratedFile(
     val mimeType: String,
     val localPath: String,
     val size: Long
+)
+
+data class ProjectFile(
+    val id: String,
+    val name: String,
+    val mimeType: String,
+    val localPath: String,
+    val size: Long,
+    val addedAt: Long = System.currentTimeMillis()
+)
+
+data class Project(
+    val id: String,
+    val name: String,
+    val role: String = "",
+    val masterPrompt: String = "",
+    val isFavorite: Boolean = false,
+    val skillIds: Set<String> = emptySet(),
+    val files: List<ProjectFile> = emptyList(),
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
 )
 
 data class ChatMessage(
@@ -48,6 +70,10 @@ data class ChatSession(
     val id: String,
     val title: String,
     val messages: List<ChatMessage> = emptyList(),
+    val projectId: String? = null,
+    val isFavorite: Boolean = false,
+    val assignedRole: String? = null,
+    val masterPrompt: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -67,15 +93,17 @@ data class StorageStats(
     val generatedBytes: Long = 0L,
     val exportBytes: Long = 0L,
     val skillBytes: Long = 0L,
+    val projectBytes: Long = 0L,
     val chatBytes: Long = 0L
 ) {
     val totalBytes: Long
-        get() = generatedBytes + exportBytes + skillBytes + chatBytes
+        get() = generatedBytes + exportBytes + skillBytes + projectBytes + chatBytes
 }
 
 data class UiState(
     val messages: List<ChatMessage> = emptyList(),
     val chats: List<ChatSession> = emptyList(),
+    val projects: List<Project> = emptyList(),
     val currentChatId: String = "",
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val skills: List<Skill> = emptyList(),

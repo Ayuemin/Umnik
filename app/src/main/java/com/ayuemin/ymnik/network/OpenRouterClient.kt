@@ -302,6 +302,11 @@ class OpenRouterClient(private val context: Context) {
     }
 
     private fun readAttachment(attachment: PendingAttachment): ByteArray {
+        attachment.localPath?.takeIf { it.isNotBlank() }?.let { path ->
+            val file = File(path)
+            if (!file.exists()) error("Файл проекта не найден: ${attachment.name}")
+            return file.readBytes()
+        }
         val uri = Uri.parse(attachment.uri)
         return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
             ?: error("Не удалось прочитать ${attachment.name}")

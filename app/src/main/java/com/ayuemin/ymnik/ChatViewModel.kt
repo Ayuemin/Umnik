@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.ChatRepository
+import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
@@ -17,6 +18,9 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.PendingAttachment
+import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.ProjectFile
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
@@ -35,6 +39,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
     private val chatsRepository = ChatRepository(context)
+    private val projectsRepository = ProjectRepository(context)
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val gson = Gson()
@@ -49,6 +54,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         UiState(
             messages = initialChat.messages,
             chats = initialChats,
+            projects = projectsRepository.list(),
             currentChatId = initialChatId,
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
@@ -119,11 +125,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(themeChoice = choice)
     }
 
-    fun createChat() {
-        if (_state.value.isLoading) return
+    fun createChat(projectId: String? = null): String {
+        if (_state.value.isLoading) return _state.value.currentChatId
         val chat = ChatSession(
             id = UUID.randomUUID().toString(),
-            title = "Новый чат"
+            title = "Новый чат",
+            projectId = projectId
         )
         val next = listOf(chat) + _state.value.chats
         chatsRepository.save(next)
@@ -135,6 +142,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             storageStats = storageRepository.stats()
         )
+        return chat.id
     }
 
     fun switchChat(id: String) {
@@ -171,6 +179,161 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
             status = "Диалог удалён"
+        )
+    }
+
+
+    fun updateChatProfile(id: String, title: String, role: String, masterPrompt: String) {
+        if (_state.value.isLoading) return
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == id) chat.copy(
+                title = title.trim().ifBlank { "Новый чат" },
+                assignedRole = role.trim().takeIf { it.isNotBlank() },
+                masterPrompt = masterPrompt.trim().takeIf { it.isNotBlank() },
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        _state.value = _state.value.copy(chats = chats, messages = current?.messages ?: _state.value.messages)
+    }
+
+    fun setChatFavorite(id: String, favorite: Boolean) {
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == id) chat.copy(isFavorite = favorite, updatedAt = System.currentTimeMillis()) else chat
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(chats = chats)
+    }
+
+    fun createProject(
+        name: String,
+        role: String = "",
+        masterPrompt: String = "",
+        favorite: Boolean = false
+    ): String {
+        val project = Project(
+            id = UUID.randomUUID().toString(),
+            name = name.trim().ifBlank { "Новый проект" },
+            role = role.trim(),
+            masterPrompt = masterPrompt.trim(),
+            isFavorite = favorite
+        )
+        val projects = listOf(project) + _state.value.projects
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+        return project.id
+    }
+
+    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {
+        val now = System.currentTimeMillis()
+        val projects = _state.value.projects.map { project ->
+            if (project.id == id) project.copy(
+                name = name.trim().ifBlank { "Проект" },
+                role = role.trim(),
+                masterPrompt = masterPrompt.trim(),
+                isFavorite = favorite,
+                updatedAt = now
+            ) else project
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects, storageStats = storageRepository.stats())
+    }
+
+    fun setProjectFavorite(id: String, favorite: Boolean) {
+        val projects = _state.value.projects.map { project ->
+            if (project.id == id) project.copy(isFavorite = favorite, updatedAt = System.currentTimeMillis()) else project
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects)
+    }
+
+    fun toggleProjectSkill(projectId: String, skillId: String) {
+        val projects = _state.value.projects.map { project ->
+            if (project.id != projectId) project else {
+                val next = project.skillIds.toMutableSet().apply { if (!add(skillId)) remove(skillId) }
+                project.copy(skillIds = next, updatedAt = System.currentTimeMillis())
+            }
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects)
+    }
+
+    fun addProjectFile(projectId: String, uri: Uri) {
+        runCatching { projectsRepository.importFile(projectId, uri) }
+            .onSuccess { file ->
+                val projects = _state.value.projects.map { project ->
+                    if (project.id == projectId) project.copy(
+                        files = project.files + file,
+                        updatedAt = System.currentTimeMillis()
+                    ) else project
+                }
+                projectsRepository.save(projects)
+                _state.value = _state.value.copy(
+                    projects = projects,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Файл «${file.name}» добавлен в проект"
+                )
+            }
+            .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить файл") }
+    }
+
+    fun deleteProjectFile(projectId: String, fileId: String) {
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
+        val file = project.files.firstOrNull { it.id == fileId } ?: return
+        projectsRepository.deleteFile(file)
+        val projects = _state.value.projects.map {
+            if (it.id == projectId) it.copy(
+                files = it.files.filterNot { f -> f.id == fileId },
+                updatedAt = System.currentTimeMillis()
+            ) else it
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun importProjectPromptFile(projectId: String, uri: Uri) {
+        runCatching {
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                input.bufferedReader().readText()
+            } ?: error("Не удалось прочитать файл")
+        }.onSuccess { text ->
+            val current = _state.value.projects.firstOrNull { it.id == projectId } ?: return@onSuccess
+            updateProject(current.id, current.name, current.role, text, current.isFavorite)
+            _state.value = _state.value.copy(status = "Мастер-промпт загружен из файла")
+        }.onFailure {
+            _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить мастер-промпт")
+        }
+    }
+
+    fun deleteProject(projectId: String) {
+        if (_state.value.isLoading) return
+        projectsRepository.deleteProjectFiles(projectId)
+        val projects = _state.value.projects.filterNot { it.id == projectId }
+        projectsRepository.save(projects)
+
+        // Диалоги не уничтожаем: после удаления проекта они становятся обычными чатами.
+        val chats = _state.value.chats.map { chat ->
+            if (chat.projectId == projectId) chat.copy(projectId = null) else chat
+        }
+        chatsRepository.save(chats)
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        _state.value = _state.value.copy(
+            projects = projects,
+            chats = chats,
+            messages = current?.messages ?: _state.value.messages,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Проект удалён. Его чаты сохранены как обычные."
         )
     }
 
@@ -290,6 +453,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
 
         val chatId = _state.value.currentChatId
+        val currentChat = _state.value.chats.firstOrNull { it.id == chatId }
+        val currentProject = currentChat?.projectId?.let { id -> _state.value.projects.firstOrNull { it.id == id } }
         val before = _state.value.messages
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -324,19 +489,41 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillText = skills.promptFor(_state.value.activeSkillIds)
+                        val skillIds = _state.value.activeSkillIds + (currentProject?.skillIds ?: emptySet())
+                        val skillText = skills.promptFor(skillIds)
+                        val projectFiles = currentProject?.files.orEmpty().map { file ->
+                            PendingAttachment(
+                                uri = "project://${file.id}",
+                                name = file.name,
+                                mimeType = file.mimeType,
+                                size = file.size,
+                                localPath = file.localPath
+                            )
+                        }
                         api.chat(
                             key,
                             textModel,
                             before,
                             clean,
-                            pending,
-                            buildSystemPrompt(skillText),
+                            pending + projectFiles,
+                            buildSystemPrompt(skillText, currentProject, currentChat),
                             webSearchEnabled,
                             reasoningEnabled
                         )
                     }
-                    ChatMode.IMAGE -> api.generateImage(key, imageModel, clean, pending)
+                    ChatMode.IMAGE -> {
+                        val projectImages = currentProject?.files.orEmpty()
+                            .filter { it.mimeType.startsWith("image/") }
+                            .map { file -> PendingAttachment(
+                                uri = "project://${file.id}",
+                                name = file.name,
+                                mimeType = file.mimeType,
+                                size = file.size,
+                                localPath = file.localPath
+                            ) }
+                        val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
+                        api.generateImage(key, imageModel, listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n"), pending + projectImages)
+                    }
                 }
             }
 
@@ -482,8 +669,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private fun buildSystemPrompt(skillText: String): String = buildString {
+    private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
+        if (project != null) {
+            appendLine("\n===== ПРОЕКТ: ${project.name} =====")
+            if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
+            if (project.masterPrompt.isNotBlank()) {
+                appendLine("Мастер-инструкция проекта:")
+                appendLine(project.masterPrompt)
+            }
+            if (project.files.isNotEmpty()) {
+                appendLine("Постоянные файлы проекта приложены к текущему запросу. Используй их как рабочий контекст, когда они релевантны.")
+            }
+            appendLine("===== КОНЕЦ НАСТРОЕК ПРОЕКТА =====")
+        }
+        if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
+            appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
+            chat.assignedRole?.takeIf { it.isNotBlank() }?.let { appendLine("Роль диалога: $it") }
+            chat.masterPrompt?.takeIf { it.isNotBlank() }?.let {
+                appendLine("Мастер-инструкция диалога:")
+                appendLine(it)
+            }
+            appendLine("===== КОНЕЦ НАСТРОЕК ДИАЛОГА =====")
+        }
         appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
         appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")
         appendLine(":::copy")
@@ -499,6 +707,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
         }
     }
+
+    private fun buildImageProjectPrompt(project: Project?, chat: ChatSession?): String = buildString {
+        project?.let {
+            if (it.role.isNotBlank()) appendLine("Роль/стиль: ${it.role}")
+            if (it.masterPrompt.isNotBlank()) appendLine(it.masterPrompt)
+        }
+        chat?.assignedRole?.takeIf { it.isNotBlank() }?.let { appendLine("Роль: $it") }
+        chat?.masterPrompt?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
+    }.trim()
 
     private fun replaceChatMessages(
         chats: List<ChatSession>,
