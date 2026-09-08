@@ -8,6 +8,7 @@ import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.network.OpenRouterClient
@@ -32,61 +33,111 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = loadMessages(),
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
-            model = prefs.getString("model", "openrouter/auto") ?: "openrouter/auto",
+            mode = runCatching {
+                ChatMode.valueOf(prefs.getString("chat_mode", ChatMode.TEXT.name) ?: ChatMode.TEXT.name)
+            }.getOrDefault(ChatMode.TEXT),
+            textModel = prefs.getString("text_model", prefs.getString("model", "openrouter/auto")) ?: "openrouter/auto",
+            imageModel = prefs.getString("image_model", "bytedance-seed/seedream-4.5") ?: "bytedance-seed/seedream-4.5",
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank()
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
-    fun saveSettings(apiKey: String?, model: String) {
-        if (apiKey != null) secrets.saveApiKey(apiKey)
-        prefs.edit().putString("model", model.trim().ifBlank { "openrouter/auto" }).apply()
+    fun saveApiKey(apiKey: String?) {
+        if (!apiKey.isNullOrBlank()) secrets.saveApiKey(apiKey)
         _state.value = _state.value.copy(
-            model = model.trim().ifBlank { "openrouter/auto" },
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             status = "Настройки сохранены"
         )
     }
 
-    fun refreshModels() {
+    fun setMode(mode: ChatMode) {
+        prefs.edit().putString("chat_mode", mode.name).apply()
+        _state.value = _state.value.copy(mode = mode)
+    }
+
+    fun selectModel(mode: ChatMode, model: String) {
+        val clean = model.trim()
+        if (clean.isBlank()) return
+        when (mode) {
+            ChatMode.TEXT -> {
+                prefs.edit().putString("text_model", clean).apply()
+                _state.value = _state.value.copy(textModel = clean)
+            }
+            ChatMode.IMAGE -> {
+                prefs.edit().putString("image_model", clean).apply()
+                _state.value = _state.value.copy(imageModel = clean)
+            }
+        }
+    }
+
+    fun refreshModels(mode: ChatMode) {
         val key = secrets.getApiKey()
         if (key.isNullOrBlank()) {
             _state.value = _state.value.copy(status = "Сначала сохраните API-ключ OpenRouter")
             return
         }
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, status = null)
-            runCatching { api.models(key) }
-                .onSuccess { _state.value = _state.value.copy(availableModels = it, isLoading = false) }
-                .onFailure { _state.value = _state.value.copy(isLoading = false, status = it.message) }
+            _state.value = _state.value.copy(isLoading = true, busyLabel = "Загружаю модели…", status = null)
+            runCatching {
+                when (mode) {
+                    ChatMode.TEXT -> api.models(key)
+                    ChatMode.IMAGE -> api.imageModels(key)
+                }
+            }.onSuccess { ids ->
+                _state.value = when (mode) {
+                    ChatMode.TEXT -> _state.value.copy(
+                        availableTextModels = ids,
+                        isLoading = false,
+                        busyLabel = null
+                    )
+                    ChatMode.IMAGE -> _state.value.copy(
+                        availableImageModels = ids,
+                        isLoading = false,
+                        busyLabel = null
+                    )
+                }
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    busyLabel = null,
+                    status = it.message ?: "Не удалось загрузить модели"
+                )
+            }
         }
     }
 
     fun addAttachment(uri: Uri) {
         runCatching { api.attachmentFromUri(uri) }
-            .onSuccess { a ->
-                if (a.size > 25L * 1024 * 1024) {
+            .onSuccess { attachment ->
+                if (attachment.size > 25L * 1024 * 1024) {
                     _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
-                    _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + a)
+                    _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
                 }
             }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
 
     fun removeAttachment(uri: String) {
-        _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments.filterNot { it.uri == uri })
+        _state.value = _state.value.copy(
+            pendingAttachments = _state.value.pendingAttachments.filterNot { it.uri == uri }
+        )
     }
 
     fun importSkillFile(uri: Uri) {
         runCatching { skills.importFile(uri) }
-            .onSuccess { skill -> _state.value = _state.value.copy(skills = skills.list(), status = "Навык «${skill.name}» импортирован") }
+            .onSuccess { skill ->
+                _state.value = _state.value.copy(skills = skills.list(), status = "Навык «${skill.name}» импортирован")
+            }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
 
     fun importSkillTree(uri: Uri) {
         runCatching { skills.importTree(uri) }
-            .onSuccess { skill -> _state.value = _state.value.copy(skills = skills.list(), status = "Папка навыка «${skill.name}» импортирована") }
+            .onSuccess { skill ->
+                _state.value = _state.value.copy(skills = skills.list(), status = "Папка навыка «${skill.name}» импортирована")
+            }
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
 
@@ -109,41 +160,89 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Укажите API-ключ OpenRouter в настройках")
             return
         }
+
         val clean = text.trim()
         val pending = _state.value.pendingAttachments
         if (clean.isBlank() && pending.isEmpty()) return
         if (_state.value.isLoading) return
 
+        if (_state.value.mode == ChatMode.IMAGE && pending.any { !it.mimeType.startsWith("image/") }) {
+            _state.value = _state.value.copy(status = "В режиме изображений можно прикладывать только изображения-референсы")
+            return
+        }
+
         val before = _state.value.messages
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "user",
-            text = clean.ifBlank { "[Вложения]" },
+            text = clean.ifBlank {
+                if (_state.value.mode == ChatMode.IMAGE) "Создай вариант приложенного изображения" else "[Вложения]"
+            },
             attachmentNames = pending.map { it.name }
         )
         val next = before + user
-        _state.value = _state.value.copy(messages = next, pendingAttachments = emptyList(), isLoading = true, status = null)
+        _state.value = _state.value.copy(
+            messages = next,
+            pendingAttachments = emptyList(),
+            isLoading = true,
+            busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Модель думает…",
+            status = null
+        )
         persistMessages(next)
 
+        val mode = _state.value.mode
+        val textModel = _state.value.textModel
+        val imageModel = _state.value.imageModel
+
         viewModelScope.launch {
-            val skillText = skills.promptFor(_state.value.activeSkillIds)
-            val system = buildSystemPrompt(skillText)
-            runCatching {
-                api.chat(key, _state.value.model, before, clean, pending, system)
-            }.onSuccess { result ->
+            val operation = runCatching {
+                when (mode) {
+                    ChatMode.TEXT -> {
+                        val skillText = skills.promptFor(_state.value.activeSkillIds)
+                        api.chat(key, textModel, before, clean, pending, buildSystemPrompt(skillText))
+                    }
+                    ChatMode.IMAGE -> api.generateImage(key, imageModel, clean, pending)
+                }
+            }
+
+            operation.onSuccess { result ->
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
-                    text = result.text.ifBlank { if (result.files.isNotEmpty()) "Файл создан." else "Пустой ответ модели." },
+                    text = result.text.ifBlank {
+                        if (result.files.isNotEmpty()) "Готово." else "Пустой ответ модели."
+                    },
                     generatedFiles = result.files
                 )
                 val messages = _state.value.messages + assistant
-                _state.value = _state.value.copy(messages = messages, isLoading = false)
+                _state.value = _state.value.copy(
+                    messages = messages,
+                    isLoading = false,
+                    busyLabel = null
+                )
                 persistMessages(messages)
             }.onFailure {
-                _state.value = _state.value.copy(isLoading = false, status = it.message ?: "Ошибка запроса")
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    busyLabel = null,
+                    status = it.message ?: "Ошибка запроса"
+                )
             }
         }
+    }
+
+    fun exportMessage(message: ChatMessage): GeneratedFile {
+        val dir = File(context.cacheDir, "exports").apply { mkdirs() }
+        val name = "umnik_${message.timestamp}.md"
+        val file = File(dir, name)
+        file.writeText(message.text)
+        return GeneratedFile(
+            id = UUID.randomUUID().toString(),
+            name = name,
+            mimeType = "text/markdown",
+            localPath = file.absolutePath,
+            size = file.length()
+        )
     }
 
     fun clearChat() {
@@ -158,16 +257,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 context.contentResolver.openOutputStream(destination)?.use { output ->
                     File(file.localPath).inputStream().use { input -> input.copyTo(output) }
                 } ?: error("Не удалось открыть место сохранения")
-            }.onSuccess { _state.value = _state.value.copy(status = "${file.name} сохранён") }
-                .onFailure { _state.value = _state.value.copy(status = it.message) }
+            }.onSuccess {
+                _state.value = _state.value.copy(status = "${file.name} сохранён")
+            }.onFailure {
+                _state.value = _state.value.copy(status = it.message)
+            }
         }
     }
 
-    fun dismissStatus() { _state.value = _state.value.copy(status = null) }
+    fun dismissStatus() {
+        _state.value = _state.value.copy(status = null)
+    }
 
     private fun buildSystemPrompt(skillText: String): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
-        appendLine("У тебя есть локальный инструмент create_file. Когда пользователь просит создать файл для скачивания, готовый .md/.txt/.json или другой текстовый артефакт, используй create_file вместо имитации ссылки.")
+        appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
+        appendLine("Если даёшь отдельный текст, промпт, шаблон, код или фрагмент, который пользователю удобно копировать целиком, помещай его в fenced Markdown-блок с тройными обратными кавычками. Umnik покажет такой блок отдельно и добавит кнопку копирования.")
         appendLine("Подключённые навыки ниже выбраны пользователем. Следуй их инструкциям как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
         appendLine("Не утверждай, что исполнил код из папки навыка: Umnik передаёт навыкам только разрешённые текстовые материалы.")
         if (skillText.isNotBlank()) {
@@ -191,6 +296,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     class Factory(private val context: Context) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T = ChatViewModel(context.applicationContext) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>): T =
+            ChatViewModel(context.applicationContext) as T
     }
 }
