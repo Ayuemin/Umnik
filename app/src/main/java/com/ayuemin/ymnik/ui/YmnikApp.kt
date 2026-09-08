@@ -34,6 +34,7 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -43,18 +44,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.UiState
+import com.ayuemin.ymnik.tts.TtsController
 
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val tts = remember { TtsController(context) }
     var tab by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(tts) {
+        onDispose { tts.shutdown() }
+    }
 
     LaunchedEffect(state.status) {
         state.status?.let { snackbar.showSnackbar(it); viewModel.dismissStatus() }
@@ -73,7 +82,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (tab) {
-                    0 -> ChatScreen(state, viewModel)
+                    0 -> ChatScreen(state, viewModel, tts)
                     1 -> SkillsScreen(state, viewModel)
                     else -> SettingsScreen(state, viewModel)
                 }
@@ -86,7 +95,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
 }
 
 @Composable
-private fun ChatScreen(state: UiState, vm: ChatViewModel) {
+private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -117,7 +126,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel) {
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(state.messages, key = { it.id }) { message ->
-                MessageCard(message) { file ->
+                MessageCard(message, tts) { file ->
                     fileToSave = file
                     save.launch(file.name)
                 }
@@ -152,7 +161,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel) {
 }
 
 @Composable
-private fun MessageCard(message: ChatMessage, onSave: (GeneratedFile) -> Unit) {
+private fun MessageCard(message: ChatMessage, tts: TtsController, onSave: (GeneratedFile) -> Unit) {
     val user = message.role == "user"
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (user) Arrangement.End else Arrangement.Start) {
         Card(
@@ -164,6 +173,14 @@ private fun MessageCard(message: ChatMessage, onSave: (GeneratedFile) -> Unit) {
                 Spacer(Modifier.height(4.dp))
                 Text(message.text)
                 message.attachmentNames.forEach { Text("📎 $it", style = MaterialTheme.typography.bodySmall) }
+
+                if (!user && message.text.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(onClick = { tts.toggle(message.id, message.text) }) {
+                        Text(if (tts.speakingMessageId == message.id) "■ Стоп" else "🔊 Озвучить")
+                    }
+                }
+
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(8.dp))
                     OutlinedButton(onClick = { onSave(file) }, modifier = Modifier.fillMaxWidth()) {
