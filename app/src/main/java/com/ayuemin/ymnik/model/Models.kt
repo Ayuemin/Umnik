@@ -84,6 +84,7 @@ data class UiState(
     val textModel: String = "openrouter/auto",
     val imageModel: String = "bytedance-seed/seedream-4.5",
     val webSearchEnabled: Boolean = false,
+    val reasoningEnabled: Boolean = false,
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val busyLabel: String? = null,
