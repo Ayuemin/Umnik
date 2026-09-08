@@ -1,7 +1,11 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -10,6 +14,7 @@ import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.google.gson.Gson
@@ -38,7 +43,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.getOrDefault(ChatMode.TEXT),
             textModel = prefs.getString("text_model", prefs.getString("model", "openrouter/auto")) ?: "openrouter/auto",
             imageModel = prefs.getString("image_model", "bytedance-seed/seedream-4.5") ?: "bytedance-seed/seedream-4.5",
-            apiKeyConfigured = !secrets.getApiKey().isNullOrBlank()
+            apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
+            answerSoundEnabled = prefs.getBoolean("answer_sound", true),
+            themeChoice = runCatching {
+                ThemeChoice.valueOf(prefs.getString("theme_choice", ThemeChoice.DYNAMIC.name) ?: ThemeChoice.DYNAMIC.name)
+            }.getOrDefault(ThemeChoice.DYNAMIC)
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -69,6 +78,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(imageModel = clean)
             }
         }
+    }
+
+    fun setAnswerSoundEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("answer_sound", enabled).apply()
+        _state.value = _state.value.copy(answerSoundEnabled = enabled)
+        if (enabled) playReadySound()
+    }
+
+    fun setThemeChoice(choice: ThemeChoice) {
+        prefs.edit().putString("theme_choice", choice.name).apply()
+        _state.value = _state.value.copy(themeChoice = choice)
     }
 
     fun refreshModels(mode: ChatMode) {
@@ -221,6 +241,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     busyLabel = null
                 )
                 persistMessages(messages)
+                playReadySound()
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -269,10 +290,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(status = null)
     }
 
+    private fun playReadySound() {
+        if (!_state.value.answerSoundEnabled) return
+        runCatching {
+            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 28)
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
+            Handler(Looper.getMainLooper()).postDelayed({
+                runCatching { tone.release() }
+            }, 180)
+        }
+    }
+
     private fun buildSystemPrompt(skillText: String): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
-        appendLine("Если даёшь отдельный текст, промпт, шаблон, код или фрагмент, который пользователю удобно копировать целиком, помещай его в fenced Markdown-блок с тройными обратными кавычками. Umnik покажет такой блок отдельно и добавит кнопку копирования.")
+        appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")
+        appendLine(":::copy")
+        appendLine("текст блока")
+        appendLine(":::")
+        appendLine("Umnik распознаёт :::copy как отдельную карточку с кнопкой копирования. Не утверждай, что показал отдельный блок, если не использовал этот синтаксис.")
+        appendLine("Для кода используй обычные fenced Markdown-блоки с тройными обратными кавычками.")
         appendLine("Подключённые навыки ниже выбраны пользователем. Следуй их инструкциям как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
         appendLine("Не утверждай, что исполнил код из папки навыка: Umnik передаёт навыкам только разрешённые текстовые материалы.")
         if (skillText.isNotBlank()) {
