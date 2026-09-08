@@ -57,6 +57,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.getOrDefault(ChatMode.TEXT),
             textModel = prefs.getString("text_model", prefs.getString("model", "openrouter/auto")) ?: "openrouter/auto",
             imageModel = prefs.getString("image_model", "bytedance-seed/seedream-4.5") ?: "bytedance-seed/seedream-4.5",
+            webSearchEnabled = prefs.getBoolean("web_search", false),
+            reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             themeChoice = runCatching {
@@ -94,6 +96,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(imageModel = clean)
             }
         }
+    }
+
+    fun setWebSearchEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("web_search", enabled).apply()
+        _state.value = _state.value.copy(webSearchEnabled = enabled)
+    }
+
+    fun setReasoningEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
+        _state.value = _state.value.copy(reasoningEnabled = enabled)
     }
 
     fun setAnswerSoundEnabled(enabled: Boolean) {
@@ -305,13 +317,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val mode = _state.value.mode
         val textModel = _state.value.textModel
         val imageModel = _state.value.imageModel
+        val webSearchEnabled = _state.value.webSearchEnabled
+        val reasoningEnabled = _state.value.reasoningEnabled
 
         viewModelScope.launch {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
                         val skillText = skills.promptFor(_state.value.activeSkillIds)
-                        api.chat(key, textModel, before, clean, pending, buildSystemPrompt(skillText))
+                        api.chat(
+                            key,
+                            textModel,
+                            before,
+                            clean,
+                            pending,
+                            buildSystemPrompt(skillText),
+                            webSearchEnabled,
+                            reasoningEnabled
+                        )
                     }
                     ChatMode.IMAGE -> api.generateImage(key, imageModel, clean, pending)
                 }
