@@ -64,7 +64,9 @@ class OpenRouterClient(private val context: Context) {
         history: List<ChatMessage>,
         prompt: String,
         attachments: List<PendingAttachment>,
-        systemPrompt: String
+        systemPrompt: String,
+        webSearchEnabled: Boolean = false,
+        reasoningEnabled: Boolean = false
     ): Result = withContext(Dispatchers.IO) {
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
@@ -81,6 +83,23 @@ class OpenRouterClient(private val context: Context) {
                 add("messages", messages)
                 addProperty("max_tokens", 6000)
                 add("tools", tools())
+
+                if (webSearchEnabled) {
+                    add("plugins", JsonArray().apply {
+                        add(JsonObject().apply {
+                            addProperty("id", "web")
+                            addProperty("max_results", 5)
+                        })
+                    })
+                }
+
+                if (reasoningEnabled) {
+                    add("reasoning", JsonObject().apply {
+                        addProperty("enabled", true)
+                        addProperty("effort", "medium")
+                        addProperty("exclude", true)
+                    })
+                }
             }
             val responseMessage = requestCompletion(apiKey, payload)
             val toolCalls = responseMessage.getAsJsonArray("tool_calls")
