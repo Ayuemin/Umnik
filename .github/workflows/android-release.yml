@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write
 
+env:
+  VERSION: "0.1.1"
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -36,24 +39,27 @@ jobs:
         run: gradle --no-daemon :app:assembleRelease --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk Ymnik-v0.1.0.apk
+        run: cp app/build/outputs/apk/release/app-release.apk "Ymnik-v${VERSION}.apk"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Ymnik-v0.1.0
-          path: Ymnik-v0.1.0.apk
+          name: Ymnik-v${{ env.VERSION }}
+          path: Ymnik-v${{ env.VERSION }}.apk
 
       - name: Recreate GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete v0.1.0 --cleanup-tag -y || true
-          gh release create v0.1.0 Ymnik-v0.1.0.apk \
+          gh release delete "v${VERSION}" --cleanup-tag -y || true
+          gh release create "v${VERSION}" "Ymnik-v${VERSION}.apk" \
             --target "$GITHUB_SHA" \
-            --title "Умник v0.1.0" \
+            --title "Умник v${VERSION}" \
             --prerelease \
-            --notes "Первый рабочий релиз Android-приложения «Умник».
+            --notes "Исправление первой тестовой версии Android-приложения «Умник».
+
+          Исправлено:
+          - запросы к OpenRouter больше не падают из-за кириллицы в HTTP-заголовке X-Title
 
           Возможности:
           - OpenRouter чат и выбор модели
