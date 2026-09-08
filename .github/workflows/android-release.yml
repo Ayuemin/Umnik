@@ -21,16 +21,22 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
 
-      - name: Build debug APK
-        run: gradle --no-daemon :app:assembleDebug
+      - name: Build release APK
+        run: gradle --no-daemon :app:assembleRelease --stacktrace
 
       - name: Rename APK
-        run: cp app/build/outputs/apk/debug/app-debug.apk Ymnik-v0.1.0.apk
+        run: cp app/build/outputs/apk/release/app-release.apk Ymnik-v0.1.0.apk
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4
@@ -38,22 +44,22 @@ jobs:
           name: Ymnik-v0.1.0
           path: Ymnik-v0.1.0.apk
 
-      - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v0.1.0
-          target_commitish: ${{ github.sha }}
-          name: "Умник v0.1.0"
-          body: |
-            Первый рабочий релиз Android-приложения «Умник».
+      - name: Recreate GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete v0.1.0 --cleanup-tag -y || true
+          gh release create v0.1.0 Ymnik-v0.1.0.apk \
+            --target "$GITHUB_SHA" \
+            --title "Умник v0.1.0" \
+            --prerelease \
+            --notes "Первый рабочий релиз Android-приложения «Умник».
 
-            Возможности:
-            - OpenRouter чат и выбор модели
-            - локальные навыки SKILL.md/папки навыков
-            - прикрепление файлов
-            - tool calling
-            - создание и сохранение файлов через create_file
-            - зашифрованное хранение API-ключа
-          prerelease: true
-          overwrite_files: true
-          files: Ymnik-v0.1.0.apk
+          Возможности:
+          - OpenRouter чат и выбор модели
+          - локальные навыки SKILL.md и папки навыков
+          - прикрепление файлов
+          - tool calling
+          - создание и сохранение файлов через create_file
+          - зашифрованное хранение API-ключа
+          - озвучивание ответов модели через Android Text-to-Speech"
