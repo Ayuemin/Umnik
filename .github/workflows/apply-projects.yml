@@ -5,6 +5,7 @@ on:
     branches: [ "main" ]
     paths:
       - "scripts/add_projects.py"
+      - "scripts/project_migration_trigger.txt"
 
 permissions:
   contents: write
