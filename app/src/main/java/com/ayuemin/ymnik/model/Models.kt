@@ -171,6 +171,7 @@ data class UiState(
     val userProfileScope: UserProfileScope = UserProfileScope.OFF,
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
+    val requestActive: Boolean = false,
     val busyLabel: String? = null,
     val status: String? = null,
     val availableTextModels: List<ModelInfo> = emptyList(),

@@ -1,4 +1,4 @@
-// Umnik v0.6.5 chat-scoped files + model handoff
+// Umnik v0.6.6 stoppable model requests
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "0.6.5"
+        versionCode = 15
+        versionName = "0.6.6"
     }
 
     buildFeatures {

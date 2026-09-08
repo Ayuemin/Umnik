@@ -33,6 +33,7 @@ import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -50,6 +51,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val gson = Gson()
+    private var activeRequestJob: Job? = null
+    private var activeRequestPending: List<PendingAttachment> = emptyList()
+    private var requestGeneration: Long = 0L
 
     private val initialChats = loadInitialChats()
     private val initialChatId = prefs.getString("current_chat_id", null)
@@ -747,6 +751,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun stopGeneration() {
+        if (!_state.value.requestActive) return
+        requestGeneration += 1L
+        api.cancelActiveRequest()
+        activeRequestJob?.cancel()
+        activeRequestJob = null
+        val restore = activeRequestPending
+        activeRequestPending = emptyList()
+        _state.value = _state.value.copy(
+            pendingAttachments = restore,
+            isLoading = false,
+            requestActive = false,
+            busyLabel = null,
+            status = "Работа остановлена. Уточните запрос и отправьте снова."
+        )
+    }
+
     fun send(text: String) {
         val key = secrets.getApiKey()
         if (key.isNullOrBlank()) {
@@ -799,6 +820,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = nextChats,
             pendingAttachments = emptyList(),
             isLoading = true,
+            requestActive = true,
             busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Модель думает…",
             status = null,
             storageStats = storageRepository.stats()
@@ -809,8 +831,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
+        val requestId = ++requestGeneration
+        activeRequestPending = pending
 
-        viewModelScope.launch {
+        activeRequestJob = viewModelScope.launch {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
@@ -859,6 +883,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }
 
+            if (requestId != requestGeneration) {
+                return@launch
+            }
+
             operation.onSuccess { result ->
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
@@ -875,6 +903,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     messages = messages,
                     chats = chats,
                     isLoading = false,
+                    requestActive = false,
                     busyLabel = null,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
@@ -883,12 +912,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,
+                    requestActive = false,
                     busyLabel = null,
                     status = it.message ?: "Ошибка запроса"
                 )
             }
             cleanupTempAttachments(pending)
+            if (requestId == requestGeneration) {
+                activeRequestJob = null
+                activeRequestPending = emptyList()
+            }
         }
+    }
+
+    override fun onCleared() {
+        api.cancelActiveRequest()
+        activeRequestJob?.cancel()
+        super.onCleared()
     }
 
     fun exportMessage(message: ChatMessage): GeneratedFile {

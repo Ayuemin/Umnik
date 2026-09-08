@@ -58,6 +58,7 @@ import androidx.compose.material.icons.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
+import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
@@ -420,9 +421,6 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     value = text,
                     onValueChange = { text = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = {
-                        Text(if (state.mode == ChatMode.IMAGE) "Опишите изображение…" else "Сообщение…")
-                    },
                     trailingIcon = if (state.mode == ChatMode.TEXT) {
                         {
                             Row(
@@ -451,13 +449,22 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 
                 IconButton(
                     onClick = {
-                        vm.send(text)
-                        text = ""
+                        if (state.requestActive) {
+                            vm.stopGeneration()
+                        } else {
+                            vm.send(text)
+                            text = ""
+                        }
                     },
-                    enabled = !state.isLoading && (text.isNotBlank() || state.pendingAttachments.isNotEmpty()),
+                    enabled = state.requestActive || (!state.isLoading && (
+                        text.isNotBlank() || state.pendingAttachments.isNotEmpty() || currentChatFiles.isNotEmpty()
+                    )),
                     modifier = Modifier.size(42.dp)
                 ) {
-                    Icon(Icons.Outlined.Send, contentDescription = "Отправить")
+                    Icon(
+                        if (state.requestActive) Icons.Outlined.Stop else Icons.Outlined.Send,
+                        contentDescription = if (state.requestActive) "Остановить работу модели" else "Отправить"
+                    )
                 }
             }
         }
@@ -524,10 +531,6 @@ private fun ChatHeader(
                     modifier = Modifier.size(36.dp)
                 ) {
                     Icon(Icons.Outlined.Add, contentDescription = "Новый чат", modifier = Modifier.size(21.dp))
-                }
-
-                if (state.isLoading) {
-                    CircularProgressIndicator(modifier = Modifier.size(17.dp), strokeWidth = 2.dp)
                 }
 
                 Spacer(Modifier.weight(1f))

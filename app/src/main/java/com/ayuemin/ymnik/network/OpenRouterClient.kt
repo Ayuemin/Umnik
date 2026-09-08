@@ -14,6 +14,7 @@ import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -29,8 +30,25 @@ class OpenRouterClient(private val context: Context) {
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
         .build()
+    private val activeCallLock = Any()
+    @Volatile private var activeCall: Call? = null
 
     data class Result(val text: String, val files: List<GeneratedFile>)
+
+    fun cancelActiveRequest() {
+        synchronized(activeCallLock) { activeCall?.cancel() }
+        http.dispatcher.cancelAll()
+    }
+
+    private fun executeActive(request: Request): okhttp3.Response {
+        val call = http.newCall(request)
+        synchronized(activeCallLock) { activeCall = call }
+        return call.execute()
+    }
+
+    private fun clearActiveCall() {
+        synchronized(activeCallLock) { activeCall = null }
+    }
 
     suspend fun models(apiKey: String): List<ModelInfo> = withContext(Dispatchers.IO) {
         getModelInfos(apiKey, "https://openrouter.ai/api/v1/models")
@@ -200,12 +218,13 @@ class OpenRouterClient(private val context: Context) {
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
 
-        http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiError(response.code, body))
-            val root = gson.fromJson(body, JsonObject::class.java)
-            val data = root.getAsJsonArray("data") ?: error("OpenRouter не вернул изображение")
-            val files = data.mapIndexedNotNull { index, element ->
+        try {
+            executeActive(request).use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error(apiError(response.code, body))
+                val root = gson.fromJson(body, JsonObject::class.java)
+                val data = root.getAsJsonArray("data") ?: error("OpenRouter не вернул изображение")
+                val files = data.mapIndexedNotNull { index, element ->
                 if (!element.isJsonObject) return@mapIndexedNotNull null
                 val item = element.asJsonObject
                 val encoded = item.get("b64_json")?.asString?.takeIf { it.isNotBlank() }
@@ -213,8 +232,11 @@ class OpenRouterClient(private val context: Context) {
                 val mime = item.get("media_type")?.asString?.takeIf { it.startsWith("image/") } ?: "image/png"
                 saveGeneratedImage(encoded, mime, index)
             }
-            if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
-            Result("Изображение создано.", files)
+                if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
+                Result("Изображение создано.", files)
+            }
+        } finally {
+            clearActiveCall()
         }
     }
 
@@ -226,12 +248,16 @@ class OpenRouterClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
-        http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiError(response.code, body))
-            val root = gson.fromJson(body, JsonObject::class.java)
-            return root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
-                ?.getAsJsonObject("message") ?: error("OpenRouter вернул пустой ответ")
+        try {
+            executeActive(request).use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error(apiError(response.code, body))
+                val root = gson.fromJson(body, JsonObject::class.java)
+                return root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
+                    ?.getAsJsonObject("message") ?: error("OpenRouter вернул пустой ответ")
+            }
+        } finally {
+            clearActiveCall()
         }
     }
 
