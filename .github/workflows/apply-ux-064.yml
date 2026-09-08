@@ -1,4 +1,4 @@
-name: Apply Umnik 0.6.4 patch
+name: Apply Umnik 0.6.5 chat files
 
 on:
   push:
@@ -20,7 +20,9 @@ jobs:
           fetch-depth: 0
 
       - name: Apply patch
-        run: python3 scripts/patch_064.py
+        run: |
+          sed -i 's#// Umnik v0.6.4 quick per-chat model switching#// Umnik v0.6.4 per-chat model handoff#' scripts/patch_064.py
+          python3 scripts/patch_064.py
 
       - name: Commit app changes
         run: |
@@ -31,5 +33,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app
-          git commit -m "Add per-chat quick model switching"
+          git commit -m "Add chat-scoped persistent documents"
           git push
