@@ -111,7 +111,7 @@ class OpenRouterClient(private val context: Context) {
             .url("https://openrouter.ai/api/v1/chat/completions")
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
-            .header("X-Title", "Умник Android")
+            .header("X-Title", "Ymnik Android")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
         http.newCall(request).execute().use { response ->
