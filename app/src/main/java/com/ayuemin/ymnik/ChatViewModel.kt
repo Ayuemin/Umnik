@@ -66,7 +66,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { a ->
                 if (a.size > 25L * 1024 * 1024) {
-                    _state.value = _state.value.copy(status = "Для чата ограничение Умника сейчас 25 МБ на файл")
+                    _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
                     _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + a)
                 }
@@ -166,10 +166,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun dismissStatus() { _state.value = _state.value.copy(status = null) }
 
     private fun buildSystemPrompt(skillText: String): String = buildString {
-        appendLine("Ты работаешь внутри Android-приложения «Умник». Отвечай на языке пользователя, если он не попросил иначе.")
+        appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("У тебя есть локальный инструмент create_file. Когда пользователь просит создать файл для скачивания, готовый .md/.txt/.json или другой текстовый артефакт, используй create_file вместо имитации ссылки.")
         appendLine("Подключённые навыки ниже выбраны пользователем. Следуй их инструкциям как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
-        appendLine("Не утверждай, что исполнил код из папки навыка: Умник передаёт навыкам только разрешённые текстовые материалы.")
+        appendLine("Не утверждай, что исполнил код из папки навыка: Umnik передаёт навыкам только разрешённые текстовые материалы.")
         if (skillText.isNotBlank()) {
             appendLine("\n===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
             appendLine(skillText)
