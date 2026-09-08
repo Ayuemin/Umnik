@@ -5,6 +5,22 @@ enum class ChatMode {
     IMAGE
 }
 
+enum class UserProfileScope {
+    OFF,
+    PROJECTS,
+    EVERYWHERE
+}
+
+data class UserProfile(
+    val name: String = "",
+    val gender: String = "",
+    val age: String = "",
+    val occupation: String = "",
+    val note: String = ""
+) {
+    fun isEmpty(): Boolean = name.isBlank() && gender.isBlank() && age.isBlank() && occupation.isBlank() && note.isBlank()
+}
+
 enum class ReasoningEffort(val apiValue: String) {
     MINIMAL("minimal"),
     LOW("low"),
@@ -123,6 +139,8 @@ data class UiState(
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    val userProfile: UserProfile = UserProfile(),
+    val userProfileScope: UserProfileScope = UserProfileScope.OFF,
     val apiKeyConfigured: Boolean = false,
     val isLoading: Boolean = false,
     val busyLabel: String? = null,

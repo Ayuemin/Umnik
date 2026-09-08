@@ -36,6 +36,7 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.CameraAlt
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -105,6 +106,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
@@ -114,8 +116,10 @@ import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
+import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -205,10 +209,18 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var chatsOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
+    var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
+    val context = LocalContext.current
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
+    }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
+        cameraTarget?.let { target ->
+            if (ok) vm.addCameraAttachment(target.uri, target.file.absolutePath) else target.file.delete()
+        }
+        cameraTarget = null
     }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val file = fileToSave
@@ -257,7 +269,10 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         val file = vm.exportMessage(message)
                         fileToSave = file
                         save.launch(file.name)
-                    }
+                    },
+                    onRetry = if (message.role == "user" && message.text.isNotBlank() && message.attachmentNames.isEmpty()) {
+                        { vm.send(message.text) }
+                    } else null
                 )
             }
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
@@ -306,6 +321,21 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                     modifier = Modifier.size(42.dp)
                 ) {
                     Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
+                }
+
+                IconButton(
+                    onClick = {
+                        runCatching { createCameraTarget(context) }
+                            .onSuccess { target ->
+                                cameraTarget = target
+                                camera.launch(target.uri)
+                            }
+                            .onFailure { Toast.makeText(context, it.message ?: "Не удалось открыть камеру", Toast.LENGTH_SHORT).show() }
+                    },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(Icons.Outlined.CameraAlt, contentDescription = "Сделать фото")
                 }
 
                 if (state.mode == ChatMode.TEXT) {
@@ -699,7 +729,8 @@ private fun MessageCard(
     message: ChatMessage,
     tts: TtsController,
     onSaveGenerated: (GeneratedFile) -> Unit,
-    onExportText: () -> Unit
+    onExportText: () -> Unit,
+    onRetry: (() -> Unit)?
 ) {
     val context = LocalContext.current
     val user = message.role == "user"
@@ -742,6 +773,22 @@ private fun MessageCard(
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSaveGenerated)
+                }
+            }
+        }
+
+        if (user && message.text.isNotBlank()) {
+            Row(
+                modifier = Modifier.padding(end = 4.dp, top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = { copyText(context, message.text) }) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать своё сообщение")
+                }
+                if (onRetry != null) {
+                    IconButton(onClick = onRetry) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = "Спросить ещё раз")
+                    }
                 }
             }
         }
@@ -1000,8 +1047,14 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
     var key by remember { mutableStateOf("") }
     var storageOpen by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
+    var profileName by remember(state.userProfile.name) { mutableStateOf(state.userProfile.name) }
+    var profileGender by remember(state.userProfile.gender) { mutableStateOf(state.userProfile.gender) }
+    var profileAge by remember(state.userProfile.age) { mutableStateOf(state.userProfile.age) }
+    var profileOccupation by remember(state.userProfile.occupation) { mutableStateOf(state.userProfile.occupation) }
+    var profileNote by remember(state.userProfile.note) { mutableStateOf(state.userProfile.note) }
     val themes = ThemeChoice.entries
     val reasoningEfforts = ReasoningEffort.entries
+    val profileScopes = UserProfileScope.entries
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1121,6 +1174,60 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel) {
                                 label = { Text(themeLabel(choice)) }
                             )
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(22.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Коротко обо мне", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Необязательно. Передаётся модели только в выбранной области и только если поля заполнены.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedTextField(profileName, { profileName = it }, Modifier.fillMaxWidth(), label = { Text("Имя") }, singleLine = true)
+                    Spacer(Modifier.height(7.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        OutlinedTextField(profileGender, { profileGender = it }, Modifier.weight(1f), label = { Text("Пол") }, singleLine = true)
+                        OutlinedTextField(profileAge, { profileAge = it }, Modifier.weight(1f), label = { Text("Возраст") }, singleLine = true)
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    OutlinedTextField(profileOccupation, { profileOccupation = it }, Modifier.fillMaxWidth(), label = { Text("Род занятий") }, singleLine = true)
+                    Spacer(Modifier.height(7.dp))
+                    OutlinedTextField(
+                        profileNote,
+                        { profileNote = it.take(240) },
+                        Modifier.fillMaxWidth(),
+                        label = { Text("Короткая установка") },
+                        placeholder = { Text("Например: без заискивания, отвечай прямо") },
+                        minLines = 2,
+                        maxLines = 3
+                    )
+                    Spacer(Modifier.height(9.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        items(profileScopes) { scope ->
+                            FilterChip(
+                                selected = state.userProfileScope == scope,
+                                onClick = { vm.setUserProfileScope(scope) },
+                                label = { Text(profileScopeLabel(scope)) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = { vm.saveUserProfile(profileName, profileGender, profileAge, profileOccupation, profileNote) },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Сохранить профиль")
                     }
                 }
             }
@@ -1351,6 +1458,23 @@ private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort
     ReasoningEffort.MEDIUM -> "Средняя"
     ReasoningEffort.HIGH -> "Высокая"
     ReasoningEffort.XHIGH -> "Максимальная"
+}
+
+private data class CameraTarget(val uri: Uri, val file: File)
+
+private fun createCameraTarget(context: Context): CameraTarget {
+    val dir = File(context.cacheDir, "camera").apply { mkdirs() }
+    val cutoff = System.currentTimeMillis() - 24L * 60L * 60L * 1000L
+    dir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
+    val file = File(dir, "photo_${System.currentTimeMillis()}.jpg")
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+    return CameraTarget(uri, file)
+}
+
+private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
+    UserProfileScope.OFF -> "Выкл"
+    UserProfileScope.PROJECTS -> "Только проекты"
+    UserProfileScope.EVERYWHERE -> "Везде"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {

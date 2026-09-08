@@ -25,6 +25,8 @@ import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
+import com.ayuemin.ymnik.model.UserProfile
+import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -69,6 +71,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = runCatching {
                 ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
             }.getOrDefault(ReasoningEffort.MEDIUM),
+            userProfile = UserProfile(
+                name = prefs.getString("profile_name", "").orEmpty(),
+                gender = prefs.getString("profile_gender", "").orEmpty(),
+                age = prefs.getString("profile_age", "").orEmpty(),
+                occupation = prefs.getString("profile_occupation", "").orEmpty(),
+                note = prefs.getString("profile_note", "").orEmpty()
+            ),
+            userProfileScope = runCatching {
+                UserProfileScope.valueOf(prefs.getString("profile_scope", UserProfileScope.OFF.name) ?: UserProfileScope.OFF.name)
+            }.getOrDefault(UserProfileScope.OFF),
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             themeChoice = runCatching {
@@ -127,6 +139,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(reasoningEffort = effort)
     }
 
+    fun saveUserProfile(name: String, gender: String, age: String, occupation: String, note: String) {
+        val profile = UserProfile(
+            name = name.trim(),
+            gender = gender.trim(),
+            age = age.trim(),
+            occupation = occupation.trim(),
+            note = note.trim().take(240)
+        )
+        prefs.edit()
+            .putString("profile_name", profile.name)
+            .putString("profile_gender", profile.gender)
+            .putString("profile_age", profile.age)
+            .putString("profile_occupation", profile.occupation)
+            .putString("profile_note", profile.note)
+            .apply()
+        _state.value = _state.value.copy(userProfile = profile, status = "Профиль пользователя сохранён")
+    }
+
+    fun setUserProfileScope(scope: UserProfileScope) {
+        prefs.edit().putString("profile_scope", scope.name).apply()
+        _state.value = _state.value.copy(userProfileScope = scope)
+    }
+
     fun setAnswerSoundEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("answer_sound", enabled).apply()
         _state.value = _state.value.copy(answerSoundEnabled = enabled)
@@ -139,6 +174,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun createChat(projectId: String? = null): String {
+        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return _state.value.currentChatId
         val chat = ChatSession(
             id = UUID.randomUUID().toString(),
@@ -160,6 +196,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun switchChat(id: String) {
+        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val chat = _state.value.chats.firstOrNull { it.id == id } ?: return
         val nextMode = chat.mode ?: _state.value.mode
@@ -176,6 +213,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun deleteChat(id: String) {
+        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         if (_state.value.chats.none { it.id == id }) return
 
@@ -404,7 +442,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
 
+    fun addCameraAttachment(uri: Uri, localPath: String) {
+        runCatching { api.attachmentFromUri(uri).copy(localPath = localPath) }
+            .onSuccess { attachment ->
+                if (attachment.size > 25L * 1024 * 1024) {
+                    File(localPath).delete()
+                    _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
+                } else {
+                    _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+                }
+            }
+            .onFailure {
+                File(localPath).delete()
+                _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить фото")
+            }
+    }
+
     fun removeAttachment(uri: String) {
+        val removed = _state.value.pendingAttachments.firstOrNull { it.uri == uri }
+        cleanupTempAttachments(listOfNotNull(removed))
         _state.value = _state.value.copy(
             pendingAttachments = _state.value.pendingAttachments.filterNot { it.uri == uri }
         )
@@ -576,6 +632,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     status = it.message ?: "Ошибка запроса"
                 )
             }
+            cleanupTempAttachments(pending)
         }
     }
 
@@ -599,6 +656,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun clearChat() {
+        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val chats = replaceChatMessages(_state.value.chats, _state.value.currentChatId, emptyList(), "Новый чат")
         chatsRepository.save(chats)
@@ -678,6 +736,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(status = null)
     }
 
+    private fun cleanupTempAttachments(items: List<PendingAttachment>) {
+        val cameraRoot = File(context.cacheDir, "camera")
+        items.mapNotNull { it.localPath }.forEach { path ->
+            runCatching {
+                val file = File(path).canonicalFile
+                val root = cameraRoot.canonicalFile
+                if (file.path.startsWith(root.path + File.separator)) file.delete()
+            }
+        }
+    }
+
     private fun playReadySound() {
         if (!_state.value.answerSoundEnabled) return
         runCatching {
@@ -691,6 +760,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
+        val profile = _state.value.userProfile
+        val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
+            UserProfileScope.OFF -> false
+            UserProfileScope.PROJECTS -> project != null
+            UserProfileScope.EVERYWHERE -> true
+        }
+        if (useProfile) {
+            appendLine("\n===== КРАТКО О ПОЛЬЗОВАТЕЛЕ =====")
+            if (profile.name.isNotBlank()) appendLine("Имя: ${profile.name}")
+            if (profile.gender.isNotBlank()) appendLine("Пол: ${profile.gender}")
+            if (profile.age.isNotBlank()) appendLine("Возраст: ${profile.age}")
+            if (profile.occupation.isNotBlank()) appendLine("Род занятий: ${profile.occupation}")
+            if (profile.note.isNotBlank()) appendLine("Предпочтение в общении: ${profile.note}")
+            appendLine("Используй эти сведения только когда они полезны. Не пересказывай профиль пользователю без необходимости. Явный запрос и инструкции проекта важнее этого краткого профиля.")
+            appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
+        }
         if (project != null) {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
             if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
