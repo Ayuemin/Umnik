@@ -44,12 +44,13 @@ A local-first Android client for OpenRouter with multimodal chat, projects, skil
 
 ## Скачать
 
-Текущий релиз: **[Umnik v0.6.7 — Public Preview](https://github.com/Ayuemin/Umnik/releases/tag/v0.6.7)**.
+Текущий релиз: **[Umnik v0.7.0 — Permanent Signing Baseline](https://github.com/Ayuemin/Umnik/releases/tag/v0.7.0)**.
 
 В Assets релиза опубликованы:
 
-- `Umnik-v0.6.7.apk` — установочный APK;
-- `Umnik-v0.6.7.apk.sha256` — SHA-256 контрольная сумма.
+- `Umnik-v0.7.0.apk` — установочный APK;
+- `Umnik-v0.7.0.apk.sha256` — SHA-256 контрольная сумма APK;
+- `Umnik-signing-certificate-sha256.txt` — отпечаток сертификата постоянной подписи.
 
 Требования:
 
@@ -59,9 +60,15 @@ A local-first Android client for OpenRouter with multimodal chat, projects, skil
 
 После установки откройте **Настройки**, добавьте API-ключ, обновите список моделей и выберите основную модель.
 
-### Важно о v0.6.x
+### Постоянная подпись
 
-Сборки v0.6.x создавались в период активной разработки и подписывались тестовым ключом сборочной среды. Их следует считать preview-сборками. Новый публичный release pipeline уже подготовлен для постоянного release keystore, чтобы последующие версии можно было нормально обновлять поверх предыдущих.
+**v0.7.0 — базовая версия постоянной release-подписи Umnik.** Публичный APK собирается в GitHub Actions с отдельным release keystore, после чего подпись автоматически проверяется через Android `apksigner`, а сертификат APK сверяется с сертификатом постоянного ключа проекта.
+
+Сборки v0.6.x были подписаны временным тестовым ключом. Поэтому при переходе с v0.6.x на v0.7.0 Android может потребовать удалить старую установку. Начиная с v0.7.0 последующие официальные релизы, подписанные тем же ключом, должны устанавливаться поверх приложения обычным обновлением.
+
+SHA-256 сертификата постоянной подписи:
+
+`bc0c8bfe9031c29fc3148fdc52c1cb84d897682b83af73e37f3af670f047d79e`
 
 ## Как устроены файлы
 
@@ -102,13 +109,13 @@ Umnik не содержит встроенного API-ключа и не отп
 gradle :app:assembleDebug
 ```
 
-Локальный `assembleRelease` без release-ключа использует debug signing только для разработки. Публичные GitHub Releases должны собираться с постоянным ключом проекта.
+Локальный `assembleRelease` без release-ключа использует debug signing только для разработки. Публичные GitHub Releases собираются с постоянным ключом проекта.
 
 ## Релизы
 
 Обычные push в `main` только проходят CI и **не создают новый GitHub Release**.
 
-Публичный релиз создаётся из тега `vX.Y.Z`, который обязан совпадать с `versionName` приложения. Workflow собирает подписанный APK, создаёт SHA-256 checksum и формирует release notes из `CHANGELOG.md`.
+Публичный релиз создаётся из тега `vX.Y.Z`, который обязан совпадать с `versionName` приложения. Workflow восстанавливает release keystore из GitHub Secrets, собирает APK, проверяет его подпись и соответствие сертификату проекта, создаёт SHA-256 checksum и формирует release notes из `CHANGELOG.md`.
 
 Инструкция для сопровождающего: [docs/RELEASING.md](docs/RELEASING.md).
 
