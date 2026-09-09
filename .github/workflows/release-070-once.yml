@@ -114,7 +114,7 @@ jobs:
           )
           printf '%s\n' "$SIGNING_CERT_SHA256" > dist/Umnik-signing-certificate-sha256.txt
 
-          cat > dist/release-notes.md <<EOF
+          cat > dist/release-notes.md <<'EOF'
           ## Umnik v0.7.0 — Permanent Signing Baseline
 
           Эта версия открывает постоянную ветку подписи Umnik. APK собран GitHub Actions с отдельным release keystore и после сборки автоматически проверен через Android apksigner.
@@ -140,10 +140,11 @@ jobs:
           ### Проверка
 
           - SHA-256 APK: отдельный asset `Umnik-v0.7.0.apk.sha256`.
-          - SHA-256 сертификата подписи: `$SIGNING_CERT_SHA256`.
+          - SHA-256 сертификата подписи: `__CERT__`.
 
           Проект создан Александром (Ayuemin) в соавторстве с ChatGPT от OpenAI.
           EOF
+          sed -i "s/__CERT__/$SIGNING_CERT_SHA256/" dist/release-notes.md
 
       - name: Create tag
         shell: bash
@@ -153,7 +154,7 @@ jobs:
             echo "Tag v0.7.0 already exists."
             exit 1
           fi
-          git tag -a v0.7.0 "$GITHUB_SHA" -m "Umnik v0.7.0 - permanent signing baseline"
+          git tag v0.7.0 "$GITHUB_SHA"
           git push origin v0.7.0
 
       - name: Publish GitHub Release
