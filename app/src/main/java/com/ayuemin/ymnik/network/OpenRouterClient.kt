@@ -275,27 +275,35 @@ class OpenRouterClient(private val context: Context) {
         })
         attachments.forEach { attachment ->
             val bytes = readAttachment(attachment)
-            val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
             when {
-                attachment.mimeType.startsWith("image/") -> parts.add(JsonObject().apply {
-                    addProperty("type", "image_url")
-                    add("image_url", JsonObject().apply {
-                        addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                attachment.mimeType.startsWith("image/") -> {
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    parts.add(JsonObject().apply {
+                        addProperty("type", "image_url")
+                        add("image_url", JsonObject().apply {
+                            addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                        })
                     })
-                })
-                attachment.mimeType.startsWith("audio/") -> parts.add(JsonObject().apply {
-                    addProperty("type", "input_audio")
-                    add("input_audio", JsonObject().apply {
-                        addProperty("data", b64)
-                        addProperty("format", audioFormat(attachment))
+                }
+                attachment.mimeType.startsWith("audio/") -> {
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    parts.add(JsonObject().apply {
+                        addProperty("type", "input_audio")
+                        add("input_audio", JsonObject().apply {
+                            addProperty("data", b64)
+                            addProperty("format", audioFormat(attachment))
+                        })
                     })
-                })
-                attachment.mimeType.startsWith("video/") -> parts.add(JsonObject().apply {
-                    addProperty("type", "video_url")
-                    add("video_url", JsonObject().apply {
-                        addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                }
+                attachment.mimeType.startsWith("video/") -> {
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    parts.add(JsonObject().apply {
+                        addProperty("type", "video_url")
+                        add("video_url", JsonObject().apply {
+                            addProperty("url", "data:${attachment.mimeType};base64,$b64")
+                        })
                     })
-                })
+                }
                 attachment.mimeType.startsWith("text/") ||
                     attachment.name.endsWith(".md", true) ||
                     attachment.name.endsWith(".json", true) ||
@@ -309,13 +317,16 @@ class OpenRouterClient(private val context: Context) {
                         addProperty("text", "\n--- Вложение: ${attachment.name} ---\n$content\n--- Конец вложения ---")
                     })
                 }
-                else -> parts.add(JsonObject().apply {
-                    addProperty("type", "file")
-                    add("file", JsonObject().apply {
-                        addProperty("filename", attachment.name)
-                        addProperty("file_data", "data:${attachment.mimeType};base64,$b64")
+                else -> {
+                    val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                    parts.add(JsonObject().apply {
+                        addProperty("type", "file")
+                        add("file", JsonObject().apply {
+                            addProperty("filename", attachment.name)
+                            addProperty("file_data", "data:${attachment.mimeType};base64,$b64")
+                        })
                     })
-                })
+                }
             }
         }
         return JsonObject().apply {

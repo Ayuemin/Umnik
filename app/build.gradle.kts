@@ -1,4 +1,4 @@
-// Umnik v0.6.6 stoppable model requests + compact composer
+// Umnik v0.6.7 chat-file request visibility and preflight
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -13,8 +13,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 15
-        versionName = "0.6.6"
+        versionCode = 16
+        versionName = "0.6.7"
     }
 
     buildFeatures {

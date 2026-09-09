@@ -789,6 +789,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         if (clean.isBlank() && pending.isEmpty() && persistentChatFiles.isEmpty()) return
 
+        val missingChatFile = persistentChatFiles.firstOrNull { attachment ->
+            attachment.localPath?.takeIf { it.isNotBlank() }?.let { !File(it).isFile } == true
+        }
+        if (missingChatFile != null) {
+            _state.value = _state.value.copy(
+                status = "Файл чата «${missingChatFile.name}» не найден. Удалите его из контекста и прикрепите заново."
+            )
+            return
+        }
+
         val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
         if (invalidPending != null) {
             _state.value = _state.value.copy(status = attachmentAllowed(invalidPending).second ?: "Вложение не поддерживается выбранной моделью")
@@ -807,7 +817,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     else -> "[Вложения]"
                 }
             },
-            attachmentNames = pending.map { it.name }
+            attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct()
         )
         val nextMessages = before + user
         val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }

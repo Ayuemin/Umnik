@@ -285,7 +285,13 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
                         fileToSave = file
                         save.launch(file.name)
                     },
-                    onRetry = if (message.role == "user" && message.text.isNotBlank() && message.attachmentNames.isEmpty()) {
+                    onRetry = if (
+                        message.role == "user" &&
+                        message.text.isNotBlank() &&
+                        message.attachmentNames.all { name ->
+                            currentChatFiles.any { file -> file.name == name }
+                        }
+                    ) {
                         { vm.send(message.text) }
                     } else null
                 )
