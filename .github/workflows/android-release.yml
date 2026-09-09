@@ -49,7 +49,7 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Verify release signing secrets
+      - name: Restore permanent signing key
         shell: bash
         env:
           KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -65,6 +65,10 @@ jobs:
             fi
           done
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
+          keytool -list \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
 
       - name: Build signed release APK
         env:
@@ -73,6 +77,38 @@ jobs:
           UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Verify APK signature
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          KEY_CERT=$(keytool -list -v \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          test -n "$APK_CERT"
+          test -n "$KEY_CERT"
+          if [ "$APK_CERT" != "$KEY_CERT" ]; then
+            echo "APK signing certificate does not match the permanent Umnik release key."
+            exit 1
+          fi
+
+          echo "SIGNING_CERT_SHA256=$APK_CERT" >> "$GITHUB_ENV"
 
       - name: Prepare release assets
         shell: bash
@@ -84,6 +120,7 @@ jobs:
             cd dist
             sha256sum "Umnik-v${VERSION}.apk" > "Umnik-v${VERSION}.apk.sha256"
           )
+          printf '%s\n' "$SIGNING_CERT_SHA256" > dist/Umnik-signing-certificate-sha256.txt
 
           awk -v ver="v${VERSION}" '
             $0 == "## " ver { found=1; next }
@@ -105,6 +142,8 @@ jobs:
             echo "Скачайте **Umnik-v${VERSION}.apk** из Assets."
             echo
             echo "Контрольная сумма SHA-256 приложена отдельным файлом **Umnik-v${VERSION}.apk.sha256**."
+            echo
+            echo "SHA-256 сертификата постоянной подписи: \`${SIGNING_CERT_SHA256}\`."
           } > dist/release-notes.md
 
       - name: Publish GitHub Release
@@ -116,6 +155,7 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             "dist/Umnik-v${VERSION}.apk" \
             "dist/Umnik-v${VERSION}.apk.sha256" \
+            "dist/Umnik-signing-certificate-sha256.txt" \
             --verify-tag \
             --title "Umnik v${VERSION}" \
             --notes-file dist/release-notes.md \
