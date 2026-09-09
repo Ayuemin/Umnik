@@ -1,0 +1,83 @@
+name: Polish v0.6.7 Release
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/polish-v067.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  polish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download current APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download v0.6.7 \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "Umnik-v0.6.7.apk" \
+            --dir dist
+
+      - name: Create checksum and release notes
+        run: |
+          (cd dist && sha256sum Umnik-v0.6.7.apk > Umnik-v0.6.7.apk.sha256)
+          cat > release-notes.md <<'EOF'
+          ## Umnik v0.6.7 — Development Preview
+
+          Umnik — Android-клиент для OpenRouter с проектами, локальными навыками, мультимодальными вложениями и сменой моделей внутри одного чата.
+
+          ### Главное в этой версии
+
+          - постоянные текстовые файлы и PDF текущего чата доступны следующим запросам и другим моделям в том же диалоге;
+          - файл, реально отправляемый модели, теперь виден прямо в карточке пользовательского сообщения;
+          - добавлена быстрая смена текстовой модели без потери текстовой истории чата;
+          - изображения, аудио, видео и документы отправляются в формате, соответствующем возможностям выбранной модели;
+          - камера доступна только моделям с image input;
+          - reasoning включается вручную и доступен только поддерживающим его моделям;
+          - web search управляется отдельным ручным переключателем;
+          - активный запрос можно остановить кнопкой Stop;
+          - проекты поддерживают собственные инструкции, навыки и постоянные файлы;
+          - API-ключ OpenRouter хранится локально и шифруется через Android Keystore.
+
+          ### Исправления v0.6.7
+
+          - постоянные файлы чата отображаются в пользовательском сообщении, с которым они отправлены;
+          - перед запросом проверяется наличие локальной копии файла;
+          - убрано лишнее Base64-кодирование текстовых вложений;
+          - повторный запрос работает для сообщений, чьи постоянные файлы всё ещё находятся в контексте чата.
+
+          ### Установка
+
+          1. Скачайте **Umnik-v0.6.7.apk** из Assets.
+          2. Установите APK на Android 8.0 или новее.
+          3. В настройках Umnik укажите собственный API-ключ OpenRouter и выберите модель.
+
+          ### Важно
+
+          Это **Development Preview**. Сборки v0.6.x создавались в период активной разработки и подписывались тестовым ключом сборочной среды. При переходе между такими тестовыми APK Android может потребовать удалить предыдущую установку.
+
+          Для следующих публичных релизов в репозитории уже подготовлен отдельный release pipeline с постоянным signing key, проверкой версии, нормальными release notes и SHA-256 checksum.
+
+          ### Проверка файла
+
+          SHA-256 опубликован отдельным asset: **Umnik-v0.6.7.apk.sha256**.
+          EOF
+
+      - name: Update release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v0.6.7 \
+            --repo "$GITHUB_REPOSITORY" \
+            dist/Umnik-v0.6.7.apk.sha256 \
+            --clobber
+          gh release edit v0.6.7 \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Umnik v0.6.7 — Development Preview" \
+            --notes-file release-notes.md \
+            --prerelease
