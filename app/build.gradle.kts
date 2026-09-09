@@ -1,4 +1,4 @@
-// Umnik v0.6.7
+// Umnik v0.7.0
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,8 +24,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 16
-        versionName = "0.6.7"
+        versionCode = 17
+        versionName = "0.7.0"
     }
 
     buildFeatures {
@@ -50,8 +50,9 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Local release builds remain easy to test. Official GitHub Releases
-            // are required to provide the permanent project signing key.
+            // Official GitHub Releases are signed with the permanent project key.
+            // Local release builds without signing variables remain debug-signed
+            // for development/testing only and must not be published.
             signingConfig = if (releaseSigningConfigured) {
                 signingConfigs.getByName("release")
             } else {
