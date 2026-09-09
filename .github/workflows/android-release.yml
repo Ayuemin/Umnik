@@ -1,24 +1,35 @@
-name: Build Android APK and release
+name: Android Release
 
 on:
   push:
-    branches: [ "main" ]
-  workflow_dispatch:
+    tags:
+      - "v*"
 
 permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Resolve app version
+      - name: Validate version
+        shell: bash
         run: |
-          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
           test -n "$VERSION"
+          test -n "$APP_VERSION"
+          if [ "$VERSION" != "$APP_VERSION" ]; then
+            echo "Tag version ($VERSION) does not match app version ($APP_VERSION)."
+            exit 1
+          fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Set up JDK 17
@@ -38,27 +49,74 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Build release APK
+      - name: Verify release signing secrets
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!value:-}" ]; then
+              echo "Missing GitHub Actions secret: $value"
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
+
+      - name: Build signed release APK
+        env:
+          UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-release.jks
+          UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle --no-daemon :app:assembleRelease --stacktrace
 
-      - name: Rename APK
-        run: cp app/build/outputs/apk/release/app-release.apk "Umnik-v${VERSION}.apk"
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/Umnik-v${VERSION}.apk"
+          (
+            cd dist
+            sha256sum "Umnik-v${VERSION}.apk" > "Umnik-v${VERSION}.apk.sha256"
+          )
 
-      - name: Upload workflow artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Umnik-v${{ env.VERSION }}
-          path: Umnik-v${{ env.VERSION }}.apk
+          awk -v ver="v${VERSION}" '
+            $0 == "## " ver { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > dist/changelog-section.md
 
-      - name: Recreate GitHub release
+          {
+            echo "## Umnik v${VERSION}"
+            echo
+            if [ -s dist/changelog-section.md ]; then
+              cat dist/changelog-section.md
+            else
+              echo "Список изменений для этой версии см. в CHANGELOG.md."
+            fi
+            echo
+            echo "### Установка"
+            echo
+            echo "Скачайте **Umnik-v${VERSION}.apk** из Assets."
+            echo
+            echo "Контрольная сумма SHA-256 приложена отдельным файлом **Umnik-v${VERSION}.apk.sha256**."
+          } > dist/release-notes.md
+
+      - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          gh release delete "v${VERSION}" --cleanup-tag -y || true
-          gh release create "v${VERSION}" "Umnik-v${VERSION}.apk" \
-            --target "$GITHUB_SHA" \
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/Umnik-v${VERSION}.apk" \
+            "dist/Umnik-v${VERSION}.apk.sha256" \
+            --verify-tag \
             --title "Umnik v${VERSION}" \
-            --prerelease \
-            --notes "Umnik v${VERSION}.
-
-          Тестовая Android-сборка Umnik. Версия релиза автоматически берётся из app/build.gradle.kts."
+            --notes-file dist/release-notes.md \
+            --latest
