@@ -1,9 +1,20 @@
-// Umnik v0.6.7 chat-file request visibility and preflight
+// Umnik v0.6.7
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
+
+val releaseKeystorePath = System.getenv("UMNIK_KEYSTORE_PATH")
+val releaseKeystorePassword = System.getenv("UMNIK_KEYSTORE_PASSWORD")
+val releaseKeyAlias = System.getenv("UMNIK_KEY_ALIAS")
+val releaseKeyPassword = System.getenv("UMNIK_KEY_PASSWORD")
+val releaseSigningConfigured = listOf(
+    releaseKeystorePath,
+    releaseKeystorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.ayuemin.ymnik"
@@ -21,6 +32,17 @@ android {
         compose = true
     }
 
+    signingConfigs {
+        if (releaseSigningConfigured) {
+            create("release") {
+                storeFile = file(releaseKeystorePath!!)
+                storePassword = releaseKeystorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
@@ -28,7 +50,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            signingConfig = signingConfigs.getByName("debug")
+            // Local release builds remain easy to test. Official GitHub Releases
+            // are required to provide the permanent project signing key.
+            signingConfig = if (releaseSigningConfigured) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 
