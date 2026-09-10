@@ -1,0 +1,72 @@
+name: Finalize Umnik v0.7.5
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/finalize-075.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Clean temporary files and update README
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('README.md')
+          s = p.read_text(encoding='utf-8')
+          anchor = '- Android Text-to-Speech для ответов;\n'
+          line = '- собственный звук уведомления о готовом ответе: импорт аудиофайла с телефона, локальное хранение и регулировка громкости;\n'
+          if line not in s:
+              if anchor not in s:
+                  raise SystemExit('README anchor not found')
+              s = s.replace(anchor, anchor + line, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+          git rm -f \
+            .github/workflows/apply-075-sound.yml \
+            .github/workflows/fix-075-build.yml \
+            .github/workflows/verify-075.yml \
+            .github/workflows/verify-075b.yml \
+            .github/workflows/finalize-075.yml \
+            scripts/patch_075_sound.py \
+            scripts/fix_075_build.py
+
+      - name: Commit clean release state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --check
+          git commit -m "Finalize Umnik v0.7.5"
+          git push origin HEAD:main
+
+      - name: Tag and dispatch signed release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          VERSION="$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)"
+          if [ "$VERSION" != "0.7.5" ]; then
+            echo "Current version is $VERSION, expected 0.7.5"
+            exit 1
+          fi
+          git tag -a v0.7.5 HEAD -m "Umnik v0.7.5"
+          git push origin v0.7.5
+          gh workflow run android-release.yml -f tag=v0.7.5
