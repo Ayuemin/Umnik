@@ -1,0 +1,45 @@
+name: Trigger Umnik v0.7.4 release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/trigger-release-v074.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag on clean commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARGET="$(git rev-parse HEAD^)"
+          VERSION="$(git show "$TARGET:app/build.gradle.kts" | sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' | head -n1)"
+          if [ "$VERSION" != "0.7.4" ]; then
+            echo "Prepared commit has version $VERSION, expected 0.7.4"
+            exit 1
+          fi
+          if git rev-parse "refs/tags/v0.7.4" >/dev/null 2>&1; then
+            echo "Tag v0.7.4 already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a v0.7.4 "$TARGET" -m "Umnik v0.7.4"
+            git push origin v0.7.4
+          fi
+
+      - name: Dispatch signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-release.yml -f tag=v0.7.4
