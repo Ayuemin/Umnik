@@ -116,8 +116,13 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1078,7 +1083,7 @@ private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color)
         parts.forEach { part ->
             when (part.kind) {
                 MessagePartKind.PLAIN -> if (part.text.isNotBlank()) {
-                    SelectionContainer { Text(part.text.trim(), color = color) }
+                    MarkdownText(part.text.trim(), color)
                 }
                 MessagePartKind.CODE -> IsolatedBlock(
                     title = part.language.ifBlank { "Код" },
@@ -1095,6 +1100,147 @@ private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color)
             }
         }
     }
+}
+
+@Composable
+private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color) {
+    val lines = remember(text) { text.replace("\r\n", "\n").split("\n") }
+    val paragraph = mutableListOf<String>()
+
+    @Composable
+    fun paragraphBlock(raw: String) {
+        if (raw.isBlank()) return
+        SelectionContainer {
+            Text(
+                text = markdownInline(raw),
+                color = color,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+    }
+
+    @Composable
+    fun flushParagraph() {
+        if (paragraph.isNotEmpty()) {
+            paragraphBlock(paragraph.joinToString("\n").trim())
+            paragraph.clear()
+        }
+    }
+
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        lines.forEach { rawLine ->
+            val line = rawLine.trimEnd()
+            val heading = Regex("^(#{1,6})\\s+(.+)$").matchEntire(line.trimStart())
+            val unordered = Regex("^\\s*[-+*]\\s+(.+)$").matchEntire(line)
+            val ordered = Regex("^\\s*(\\d+)[.)]\\s+(.+)$").matchEntire(line)
+            val quote = Regex("^\\s*>\\s?(.*)$").matchEntire(line)
+            val horizontalRule = Regex("^\\s*((-{3,})|(\\*{3,})|(_{3,}))\\s*$").matches(line)
+
+            when {
+                line.isBlank() -> flushParagraph()
+                heading != null -> {
+                    flushParagraph()
+                    val level = heading.groupValues[1].length
+                    val style = when (level) {
+                        1 -> MaterialTheme.typography.headlineSmall
+                        2 -> MaterialTheme.typography.titleLarge
+                        3 -> MaterialTheme.typography.titleMedium
+                        else -> MaterialTheme.typography.titleSmall
+                    }
+                    SelectionContainer {
+                        Text(
+                            text = markdownInline(heading.groupValues[2]),
+                            color = color,
+                            style = style,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+                horizontalRule -> {
+                    flushParagraph()
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.35f))
+                }
+                unordered != null -> {
+                    flushParagraph()
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Text("•", color = color, modifier = Modifier.width(20.dp))
+                        SelectionContainer {
+                            Text(
+                                markdownInline(unordered.groupValues[1]),
+                                color = color,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                ordered != null -> {
+                    flushParagraph()
+                    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                        Text("${ordered.groupValues[1]}.", color = color, modifier = Modifier.width(30.dp))
+                        SelectionContainer {
+                            Text(
+                                markdownInline(ordered.groupValues[2]),
+                                color = color,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+                quote != null -> {
+                    flushParagraph()
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp)) {
+                            Text("│", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.Bold)
+                            Spacer(Modifier.width(8.dp))
+                            SelectionContainer {
+                                Text(
+                                    markdownInline(quote.groupValues[1]),
+                                    color = color,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                    }
+                }
+                else -> paragraph += line
+            }
+        }
+        flushParagraph()
+    }
+}
+
+private fun markdownInline(source: String) = buildAnnotatedString {
+    val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
+    var cursor = 0
+    regex.findAll(source).forEach { match ->
+        if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
+        when {
+            match.groupValues[1].isNotEmpty() -> withStyle(
+                SpanStyle(
+                    fontFamily = FontFamily.Monospace,
+                    background = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.16f)
+                )
+            ) { append(match.groupValues[1]) }
+            match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
+            match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
+            match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
+            match.groupValues[5].isNotEmpty() -> withStyle(
+                SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)
+            ) { append(match.groupValues[5]) }
+            match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
+            match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
+            else -> append(match.value)
+        }
+        cursor = match.range.last + 1
+    }
+    if (cursor < source.length) append(source.substring(cursor))
 }
 
 @Composable
