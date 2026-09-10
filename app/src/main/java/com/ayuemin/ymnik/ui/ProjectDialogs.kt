@@ -8,12 +8,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -28,7 +28,6 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -65,42 +64,38 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     val favorites = chats.filter { it.isFavorite }
     val others = chats.filterNot { it.isFavorite }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Чаты") },
-        text = {
-            Column {
-                FilledTonalButton(
-                    onClick = {
-                        vm.createChat()
-                        onDismiss()
-                    },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Новый чат")
-                }
-                Spacer(Modifier.height(10.dp))
-                LazyColumn(Modifier.heightIn(max = 470.dp)) {
-                    if (favorites.isNotEmpty()) {
-                        item { SectionTitle("Избранные") }
-                        items(favorites, key = { it.id }) { chat ->
-                            ChatHubRow(chat, state, vm, onDismiss, { editorId = chat.id }, { deleteTarget = chat })
-                        }
-                    }
-                    if (others.isNotEmpty()) {
-                        item { SectionTitle(if (favorites.isEmpty()) "Все чаты" else "Остальные") }
-                        items(others, key = { it.id }) { chat ->
-                            ChatHubRow(chat, state, vm, onDismiss, { editorId = chat.id }, { deleteTarget = chat })
-                        }
-                    }
+    FullScreenPanel(title = "История чатов", onBack = onDismiss) {
+        FilledTonalButton(
+            onClick = {
+                vm.createChat()
+                onDismiss()
+            },
+            enabled = !state.isLoading,
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Новый чат")
+        }
+
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            if (favorites.isNotEmpty()) {
+                item { SectionTitle("Избранные") }
+                items(favorites, key = { it.id }) { chat ->
+                    ChatHubRow(chat, state, vm, onDismiss, { editorId = chat.id }, { deleteTarget = chat })
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
-    )
+            if (others.isNotEmpty()) {
+                item { SectionTitle(if (favorites.isEmpty()) "Все чаты" else "Остальные") }
+                items(others, key = { it.id }) { chat ->
+                    ChatHubRow(chat, state, vm, onDismiss, { editorId = chat.id }, { deleteTarget = chat })
+                }
+            }
+        }
+    }
 
     state.chats.firstOrNull { it.id == editorId }?.let { chat ->
         ChatProfileDialog(chat, vm) { editorId = null }
@@ -139,7 +134,7 @@ private fun ChatHubRow(
                 onDismiss()
             },
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 5.dp, vertical = 8.dp)
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Text(
@@ -183,45 +178,47 @@ private fun ChatProfileDialog(chat: ChatSession, vm: ChatViewModel, onDismiss: (
     var prompt by remember(chat.id) { mutableStateOf(chat.masterPrompt.orEmpty()) }
     var favorite by remember(chat.id) { mutableStateOf(chat.isFavorite) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Настройки диалога") },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 520.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Название") }, singleLine = true)
-                }
-                item {
-                    OutlinedTextField(role, { role = it }, Modifier.fillMaxWidth(), label = { Text("Роль") }, placeholder = { Text("Например: главный редактор") })
-                }
-                item {
-                    OutlinedTextField(
-                        prompt,
-                        { prompt = it },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Мастер-промпт") },
-                        placeholder = { Text("Постоянная инструкция только для этого чата") },
-                        minLines = 5,
-                        maxLines = 12
-                    )
-                }
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Избранное", Modifier.weight(1f))
-                        Switch(favorite, { favorite = it })
-                    }
+    FullScreenPanel(title = "Настройки диалога", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                OutlinedTextField(title, { title = it }, Modifier.fillMaxWidth(), label = { Text("Название") }, singleLine = true)
+            }
+            item {
+                OutlinedTextField(role, { role = it }, Modifier.fillMaxWidth(), label = { Text("Роль") }, placeholder = { Text("Например: главный редактор") })
+            }
+            item {
+                OutlinedTextField(
+                    prompt,
+                    { prompt = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Мастер-промпт") },
+                    placeholder = { Text("Постоянная инструкция только для этого чата") },
+                    minLines = 6,
+                    maxLines = 16
+                )
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Избранное", Modifier.weight(1f))
+                    Switch(favorite, { favorite = it })
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
+        }
+        FilledTonalButton(
+            onClick = {
                 vm.updateChatProfile(chat.id, title, role, prompt)
                 vm.setChatFavorite(chat.id, favorite)
                 onDismiss()
-            }) { Text("Сохранить") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+            },
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Text("Сохранить")
+        }
+    }
 }
 
 @Composable
@@ -232,43 +229,42 @@ fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     val favorites = projects.filter { it.isFavorite }
     val others = projects.filterNot { it.isFavorite }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Проекты") },
-        text = {
-            Column {
-                FilledTonalButton(onClick = { createOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Новый проект")
+    FullScreenPanel(title = "Проекты", onBack = onDismiss) {
+        FilledTonalButton(
+            onClick = { createOpen = true },
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Icon(Icons.Outlined.Add, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Новый проект")
+        }
+
+        if (projects.isEmpty()) {
+            Text(
+                "Проект объединяет мастер-промпт, роль, постоянные файлы, навыки и несколько отдельных чатов.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(20.dp)
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                if (favorites.isNotEmpty()) {
+                    item { SectionTitle("Избранные") }
+                    items(favorites, key = { it.id }) { project ->
+                        ProjectRow(project, state, vm) { openProjectId = project.id }
+                    }
                 }
-                Spacer(Modifier.height(10.dp))
-                if (projects.isEmpty()) {
-                    Text(
-                        "Проект объединяет мастер-промпт, роль, постоянные файлы, навыки и несколько отдельных чатов.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 12.dp)
-                    )
-                } else {
-                    LazyColumn(Modifier.heightIn(max = 470.dp)) {
-                        if (favorites.isNotEmpty()) {
-                            item { SectionTitle("Избранные") }
-                            items(favorites, key = { it.id }) { project ->
-                                ProjectRow(project, state, vm) { openProjectId = project.id }
-                            }
-                        }
-                        if (others.isNotEmpty()) {
-                            item { SectionTitle(if (favorites.isEmpty()) "Все проекты" else "Остальные") }
-                            items(others, key = { it.id }) { project ->
-                                ProjectRow(project, state, vm) { openProjectId = project.id }
-                            }
-                        }
+                if (others.isNotEmpty()) {
+                    item { SectionTitle(if (favorites.isEmpty()) "Все проекты" else "Остальные") }
+                    items(others, key = { it.id }) { project ->
+                        ProjectRow(project, state, vm) { openProjectId = project.id }
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
-    )
+        }
+    }
 
     if (createOpen) {
         ProjectEditorDialog(project = null, onDismiss = { createOpen = false }) { name, role, prompt, favorite ->
@@ -304,7 +300,7 @@ private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOp
         TextButton(
             onClick = onOpen,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 5.dp, vertical = 9.dp)
+            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 11.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
                 Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -346,138 +342,128 @@ private fun ProjectDetailDialog(
         uri?.let { vm.importProjectPromptFile(project.id, it) }
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(project.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+    FullScreenPanel(title = project.name, onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (project.role.isNotBlank()) {
+                item { Text("Роль: ${project.role}", style = MaterialTheme.typography.bodyMedium) }
             }
-        },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 560.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (project.role.isNotBlank()) {
-                    item {
-                        Text("Роль: ${project.role}", style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-                if (project.masterPrompt.isNotBlank()) {
-                    item {
-                        Text(
-                            project.masterPrompt,
-                            maxLines = 4,
-                            overflow = TextOverflow.Ellipsis,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+            if (project.masterPrompt.isNotBlank()) {
                 item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(onClick = onCreateChat, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Outlined.Add, contentDescription = null)
-                            Spacer(Modifier.width(5.dp))
-                            Text("Новый чат")
-                        }
-                        IconButton(onClick = { editOpen = true }) {
-                            Icon(Icons.Outlined.Edit, contentDescription = "Настройки проекта")
-                        }
-                    }
+                    Text(
+                        project.masterPrompt,
+                        maxLines = 5,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
-
-                item { SectionTitle("Чаты проекта") }
-                if (projectChats.isEmpty()) {
-                    item { Text("Пока нет диалогов", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                } else {
-                    items(projectChats, key = { it.id }) { chat ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            TextButton(onClick = { onOpenChat(chat.id) }, modifier = Modifier.weight(1f)) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "${chat.messages.size} сообщ. · ${projectDate(chat.updatedAt)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            IconButton(onClick = { vm.setChatFavorite(chat.id, !chat.isFavorite) }) {
-                                Icon(
-                                    if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                                    contentDescription = "Избранное"
-                                )
-                            }
-                        }
+            }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilledTonalButton(onClick = onCreateChat, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Outlined.Add, contentDescription = null)
+                        Spacer(Modifier.width(5.dp))
+                        Text("Новый чат")
                     }
-                }
-
-                item { SectionTitle("Навыки проекта") }
-                if (state.skills.isEmpty()) {
-                    item { Text("Импортируйте навыки во вкладке с пазлом", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                } else {
-                    item {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(state.skills, key = { it.id }) { skill ->
-                                FilterChip(
-                                    selected = skill.id in project.skillIds,
-                                    onClick = { vm.toggleProjectSkill(project.id, skill.id) },
-                                    label = { Text(skill.name, maxLines = 1) },
-                                    leadingIcon = {
-                                        Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(17.dp))
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                item { SectionTitle("Постоянные файлы") }
-                if (project.files.isEmpty()) {
-                    item { Text("Нет файлов", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                } else {
-                    items(project.files, key = { it.id }) { file ->
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(Modifier.width(7.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                Text(projectSize(file.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            IconButton(onClick = { vm.deleteProjectFile(project.id, file.id) }) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл")
-                            }
-                        }
-                    }
-                }
-                item {
-                    FilledTonalButton(onClick = { addFiles.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.AttachFile, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Добавить постоянные файлы")
-                    }
-                }
-                item {
-                    TextButton(
-                        onClick = { importPrompt.launch(arrayOf("text/plain", "text/markdown", "application/json")) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Description, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Загрузить мастер-промпт из файла")
-                    }
-                }
-                item {
-                    TextButton(onClick = { deleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Удалить проект")
+                    IconButton(onClick = { editOpen = true }) {
+                        Icon(Icons.Outlined.Edit, contentDescription = "Настройки проекта")
                     }
                 }
             }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
-    )
+
+            item { SectionTitle("Чаты проекта") }
+            if (projectChats.isEmpty()) {
+                item { Text("Пока нет диалогов", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else {
+                items(projectChats, key = { it.id }) { chat ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(onClick = { onOpenChat(chat.id) }, modifier = Modifier.weight(1f)) {
+                            Column(Modifier.fillMaxWidth()) {
+                                Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${chat.messages.size} сообщ. · ${projectDate(chat.updatedAt)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        IconButton(onClick = { vm.setChatFavorite(chat.id, !chat.isFavorite) }) {
+                            Icon(
+                                if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                                contentDescription = "Избранное"
+                            )
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+
+            item { SectionTitle("Навыки проекта") }
+            if (state.skills.isEmpty()) {
+                item { Text("Импортируйте навыки через меню «Навыки»", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else {
+                item {
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        items(state.skills, key = { it.id }) { skill ->
+                            FilterChip(
+                                selected = skill.id in project.skillIds,
+                                onClick = { vm.toggleProjectSkill(project.id, skill.id) },
+                                label = { Text(skill.name, maxLines = 1) },
+                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(17.dp)) }
+                            )
+                        }
+                    }
+                }
+            }
+
+            item { SectionTitle("Постоянные файлы") }
+            if (project.files.isEmpty()) {
+                item { Text("Нет файлов", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else {
+                items(project.files, key = { it.id }) { file ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(20.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(projectSize(file.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { vm.deleteProjectFile(project.id, file.id) }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл")
+                        }
+                    }
+                }
+            }
+            item {
+                FilledTonalButton(onClick = { addFiles.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.AttachFile, contentDescription = null)
+                    Spacer(Modifier.width(7.dp))
+                    Text("Добавить постоянные файлы")
+                }
+            }
+            item {
+                TextButton(
+                    onClick = { importPrompt.launch(arrayOf("text/plain", "text/markdown", "application/json")) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.Description, contentDescription = null)
+                    Spacer(Modifier.width(7.dp))
+                    Text("Загрузить мастер-промпт из файла")
+                }
+            }
+            item {
+                TextButton(onClick = { deleteConfirm = true }, modifier = Modifier.fillMaxWidth()) {
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                    Spacer(Modifier.width(7.dp))
+                    Text("Удалить проект")
+                }
+            }
+        }
+    }
 
     if (editOpen) {
         ProjectEditorDialog(project, { editOpen = false }) { name, role, prompt, favorite ->
@@ -514,49 +500,50 @@ private fun ProjectEditorDialog(
     var prompt by remember(project?.id) { mutableStateOf(project?.masterPrompt.orEmpty()) }
     var favorite by remember(project?.id) { mutableStateOf(project?.isFavorite ?: false) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(if (project == null) "Новый проект" else "Настройки проекта") },
-        text = {
-            LazyColumn(Modifier.heightIn(max = 540.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                item {
-                    OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Название") }, singleLine = true)
-                }
-                item {
-                    OutlinedTextField(
-                        role,
-                        { role = it },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Роль") },
-                        placeholder = { Text("Например: главный редактор IT-канала") }
-                    )
-                }
-                item {
-                    OutlinedTextField(
-                        prompt,
-                        { prompt = it },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Мастер-промпт") },
-                        placeholder = { Text("Эта инструкция автоматически добавляется ко всем чатам проекта") },
-                        minLines = 6,
-                        maxLines = 14
-                    )
-                }
-                item {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Избранное", Modifier.weight(1f))
-                        Switch(favorite, { favorite = it })
-                    }
+    FullScreenPanel(title = if (project == null) "Новый проект" else "Настройки проекта", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Название") }, singleLine = true)
+            }
+            item {
+                OutlinedTextField(
+                    role,
+                    { role = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Роль") },
+                    placeholder = { Text("Например: главный редактор IT-канала") }
+                )
+            }
+            item {
+                OutlinedTextField(
+                    prompt,
+                    { prompt = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Мастер-промпт") },
+                    placeholder = { Text("Эта инструкция автоматически добавляется ко всем чатам проекта") },
+                    minLines = 8,
+                    maxLines = 18
+                )
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Избранное", Modifier.weight(1f))
+                    Switch(favorite, { favorite = it })
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = { onSave(name, role, prompt, favorite) }, enabled = name.isNotBlank()) {
-                Text("Сохранить")
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+        }
+        FilledTonalButton(
+            onClick = { onSave(name, role, prompt, favorite) },
+            enabled = name.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) {
+            Text("Сохранить")
+        }
+    }
 }
 
 @Composable
