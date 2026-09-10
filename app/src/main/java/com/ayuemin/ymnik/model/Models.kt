@@ -46,6 +46,7 @@ enum class ReasoningEffort(val apiValue: String) {
 
 enum class AnswerSoundChoice {
     DEFAULT,
+    CUSTOM,
     SOFT,
     BRIGHT,
     DOUBLE
@@ -153,10 +154,11 @@ data class StorageStats(
     val exportBytes: Long = 0L,
     val skillBytes: Long = 0L,
     val projectBytes: Long = 0L,
-    val chatBytes: Long = 0L
+    val chatBytes: Long = 0L,
+    val soundBytes: Long = 0L
 ) {
     val totalBytes: Long
-        get() = generatedBytes + exportBytes + skillBytes + projectBytes + chatBytes
+        get() = generatedBytes + exportBytes + skillBytes + projectBytes + chatBytes + soundBytes
 }
 
 data class UiState(
@@ -188,6 +190,8 @@ data class UiState(
     val answerSoundEnabled: Boolean = true,
     val answerSoundChoice: AnswerSoundChoice = AnswerSoundChoice.DEFAULT,
     val answerSoundVolume: Int = 28,
+    val answerSoundCustomPath: String? = null,
+    val answerSoundCustomName: String? = null,
     val themeChoice: ThemeChoice = ThemeChoice.DYNAMIC,
     val customThemeColor: Int = 0xFF6750A4.toInt(),
     val storedFiles: List<StoredFile> = emptyList(),

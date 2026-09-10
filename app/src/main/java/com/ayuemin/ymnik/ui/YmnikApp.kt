@@ -134,6 +134,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
+import com.ayuemin.ymnik.BuildConfig
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
@@ -1607,6 +1608,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
+    var soundExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var apiExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
     var customColorExpanded by remember { mutableStateOf(state.themeChoice == ThemeChoice.CUSTOM) }
@@ -1617,6 +1619,10 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var profileNote by remember(state.userProfile.note) { mutableStateOf(state.userProfile.note) }
     val themes = ThemeChoice.entries
     val profileScopes = UserProfileScope.entries
+    val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
+    val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importAnswerSound)
+    }
 
     Column(Modifier.fillMaxSize()) {
         PinnedBackHeader(title = "Настройки", onBack = onBack)
@@ -1677,56 +1683,71 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ExpandableSettingsCard(
+                    title = "Звук готового ответа",
+                    subtitle = when {
+                        !state.answerSoundEnabled -> "Выключен"
+                        state.answerSoundChoice == AnswerSoundChoice.CUSTOM -> state.answerSoundCustomName ?: "Свой звук"
+                        else -> "Основной сигнал"
+                    },
+                    icon = Icons.Outlined.VolumeUp,
+                    expanded = soundExpanded,
+                    onToggle = { soundExpanded = !soundExpanded }
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Звук готового ответа", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "Сигнал после завершения ответа модели",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
-                        }
-                        if (state.answerSoundEnabled) {
-                            Spacer(Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                            ) {
-                                AnswerSoundChoice.entries.forEach { choice ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Уведомлять после ответа", modifier = Modifier.weight(1f))
+                        Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
+                    }
+                    if (state.answerSoundEnabled) {
+                        Spacer(Modifier.height(10.dp))
+                        FilterChip(
+                            selected = state.answerSoundChoice == AnswerSoundChoice.DEFAULT,
+                            onClick = { vm.setAnswerSoundChoice(AnswerSoundChoice.DEFAULT) },
+                            label = { Text("Основной") },
+                            leadingIcon = if (state.answerSoundChoice == AnswerSoundChoice.DEFAULT) {
+                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null
+                        )
+                        if (importedSounds.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                items(importedSounds, key = { it.id }) { sound ->
                                     FilterChip(
-                                        selected = state.answerSoundChoice == choice,
-                                        onClick = { vm.setAnswerSoundChoice(choice) },
-                                        label = { Text(answerSoundLabel(choice)) },
-                                        leadingIcon = if (state.answerSoundChoice == choice) {
+                                        selected = state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM,
+                                        onClick = { vm.selectAnswerSound(sound) },
+                                        label = { Text(sound.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        leadingIcon = if (state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
                                             { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
                                         } else null
                                     )
                                 }
                             }
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Громкость", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                                Text("${state.answerSoundVolume}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
-                            Slider(
-                                value = state.answerSoundVolume.toFloat(),
-                                onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
-                                valueRange = 0f..100f
-                            )
                         }
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { soundPicker.launch(arrayOf("audio/*")) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Добавить звук с телефона")
+                        }
+                        Text(
+                            "Выбранный файл копируется в память Umnik и остаётся доступным, пока вы не удалите его в «Хранилище Umnik».",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 7.dp)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Громкость", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                            Text("${state.answerSoundVolume}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Slider(
+                            value = state.answerSoundVolume.toFloat(),
+                            onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
+                            valueRange = 0f..100f
+                        )
                     }
                 }
             }
@@ -1922,6 +1943,19 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     )
                 }
             }
+
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("Umnik", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "Версия ${BuildConfig.VERSION_NAME}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
         }
     }
 
@@ -2463,6 +2497,7 @@ private fun shareText(context: Context, text: String) {
 
 private fun answerSoundLabel(choice: AnswerSoundChoice): String = when (choice) {
     AnswerSoundChoice.DEFAULT -> "Основной"
+    AnswerSoundChoice.CUSTOM -> "Свой звук"
     AnswerSoundChoice.SOFT -> "Мягкий"
     AnswerSoundChoice.BRIGHT -> "Ясный"
     AnswerSoundChoice.DOUBLE -> "Двойной"

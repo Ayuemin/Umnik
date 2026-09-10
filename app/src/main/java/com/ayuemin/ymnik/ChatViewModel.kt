@@ -1,9 +1,12 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.ViewModel
@@ -100,8 +103,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     prefs.getString("answer_sound_choice", AnswerSoundChoice.DEFAULT.name)
                         ?: AnswerSoundChoice.DEFAULT.name
                 )
-            }.getOrDefault(AnswerSoundChoice.DEFAULT),
+            }.getOrDefault(AnswerSoundChoice.DEFAULT).let {
+                if (it == AnswerSoundChoice.CUSTOM) it else AnswerSoundChoice.DEFAULT
+            },
             answerSoundVolume = prefs.getInt("answer_sound_volume", 28).coerceIn(0, 100),
+            answerSoundCustomPath = prefs.getString("answer_sound_custom_path", null),
+            answerSoundCustomName = prefs.getString("answer_sound_custom_name", null),
             themeChoice = runCatching {
                 ThemeChoice.valueOf(prefs.getString("theme_choice", ThemeChoice.DYNAMIC.name) ?: ThemeChoice.DYNAMIC.name)
             }.getOrDefault(ThemeChoice.DYNAMIC),
@@ -317,9 +324,76 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setAnswerSoundChoice(choice: AnswerSoundChoice) {
-        prefs.edit().putString("answer_sound_choice", choice.name).apply()
-        _state.value = _state.value.copy(answerSoundChoice = choice)
+        val normalized = if (choice == AnswerSoundChoice.CUSTOM) choice else AnswerSoundChoice.DEFAULT
+        prefs.edit().putString("answer_sound_choice", normalized.name).apply()
+        _state.value = _state.value.copy(answerSoundChoice = normalized)
         playReadySound()
+    }
+
+    fun selectAnswerSound(file: StoredFile) {
+        if (file.category != "Звуки" || !File(file.localPath).isFile) return
+        prefs.edit()
+            .putString("answer_sound_choice", AnswerSoundChoice.CUSTOM.name)
+            .putString("answer_sound_custom_path", file.localPath)
+            .putString("answer_sound_custom_name", file.name)
+            .apply()
+        _state.value = _state.value.copy(
+            answerSoundChoice = AnswerSoundChoice.CUSTOM,
+            answerSoundCustomPath = file.localPath,
+            answerSoundCustomName = file.name
+        )
+        playReadySound()
+    }
+
+    fun importAnswerSound(uri: Uri) {
+        runCatching {
+            val resolver = context.contentResolver
+            val displayName = resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }.orEmpty().ifBlank { "sound_${System.currentTimeMillis()}" }
+            val safeName = displayName
+                .replace(Regex("[^\p{L}\p{N}._ ()-]"), "_")
+                .take(120)
+                .ifBlank { "sound_${System.currentTimeMillis()}" }
+            val dir = File(context.filesDir, "sounds").apply { mkdirs() }
+            val target = File(dir, "${UUID.randomUUID()}_$safeName")
+            resolver.openInputStream(uri)?.use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var total = 0L
+                    while (true) {
+                        val read = input.read(buffer)
+                        if (read <= 0) break
+                        total += read
+                        if (total > 20L * 1024L * 1024L) throw IllegalArgumentException("Звуковой файл больше 20 МБ")
+                        output.write(buffer, 0, read)
+                    }
+                }
+            } ?: throw IllegalArgumentException("Не удалось прочитать выбранный звук")
+            if (target.length() == 0L) {
+                target.delete()
+                throw IllegalArgumentException("Выбран пустой звуковой файл")
+            }
+            target
+        }.onSuccess { target ->
+            val displayName = target.name.substringAfter('_', target.name)
+            prefs.edit()
+                .putString("answer_sound_choice", AnswerSoundChoice.CUSTOM.name)
+                .putString("answer_sound_custom_path", target.absolutePath)
+                .putString("answer_sound_custom_name", displayName)
+                .apply()
+            _state.value = _state.value.copy(
+                answerSoundChoice = AnswerSoundChoice.CUSTOM,
+                answerSoundCustomPath = target.absolutePath,
+                answerSoundCustomName = displayName,
+                storedFiles = storageRepository.list(),
+                storageStats = storageRepository.stats(),
+                status = "Звук «$displayName» сохранён в Umnik"
+            )
+            playReadySound()
+        }.onFailure {
+            _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить звук")
+        }
     }
 
     fun setAnswerSoundVolume(volume: Int) {
@@ -1128,10 +1202,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
         removeFileReferences(setOf(file.localPath))
+        val removedSelectedSound = file.localPath == _state.value.answerSoundCustomPath
+        if (removedSelectedSound) {
+            prefs.edit()
+                .putString("answer_sound_choice", AnswerSoundChoice.DEFAULT.name)
+                .remove("answer_sound_custom_path")
+                .remove("answer_sound_custom_name")
+                .apply()
+        }
         _state.value = _state.value.copy(
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Файл удалён"
+            answerSoundChoice = if (removedSelectedSound) AnswerSoundChoice.DEFAULT else _state.value.answerSoundChoice,
+            answerSoundCustomPath = if (removedSelectedSound) null else _state.value.answerSoundCustomPath,
+            answerSoundCustomName = if (removedSelectedSound) null else _state.value.answerSoundCustomName,
+            status = if (removedSelectedSound) "Звук удалён. Выбран основной сигнал" else "Файл удалён"
         )
     }
 
@@ -1191,31 +1276,38 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun playReadySound() {
         val state = _state.value
         if (!state.answerSoundEnabled) return
+
+        if (state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
+            val custom = state.answerSoundCustomPath?.let(::File)
+            if (custom?.isFile == true) {
+                runCatching {
+                    val volume = state.answerSoundVolume.coerceIn(0, 100) / 100f
+                    val player = MediaPlayer().apply {
+                        setAudioAttributes(
+                            AudioAttributes.Builder()
+                                .setUsage(AudioAttributes.USAGE_NOTIFICATION)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                .build()
+                        )
+                        setDataSource(custom.absolutePath)
+                        setVolume(volume, volume)
+                        setOnPreparedListener { it.start() }
+                        setOnCompletionListener { it.release() }
+                        setOnErrorListener { mp, _, _ -> mp.release(); true }
+                        prepareAsync()
+                    }
+                    return
+                }
+            }
+        }
+
         runCatching {
             val tone = ToneGenerator(
                 AudioManager.STREAM_NOTIFICATION,
                 state.answerSoundVolume.coerceIn(0, 100)
             )
-            val handler = Handler(Looper.getMainLooper())
-            when (state.answerSoundChoice) {
-                AnswerSoundChoice.DEFAULT -> {
-                    tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
-                    handler.postDelayed({ runCatching { tone.release() } }, 180)
-                }
-                AnswerSoundChoice.SOFT -> {
-                    tone.startTone(ToneGenerator.TONE_PROP_BEEP, 70)
-                    handler.postDelayed({ runCatching { tone.release() } }, 160)
-                }
-                AnswerSoundChoice.BRIGHT -> {
-                    tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 90)
-                    handler.postDelayed({ runCatching { tone.release() } }, 180)
-                }
-                AnswerSoundChoice.DOUBLE -> {
-                    tone.startTone(ToneGenerator.TONE_PROP_ACK, 55)
-                    handler.postDelayed({ runCatching { tone.startTone(ToneGenerator.TONE_PROP_ACK, 55) } }, 105)
-                    handler.postDelayed({ runCatching { tone.release() } }, 260)
-                }
-            }
+            tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
+            Handler(Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 180)
         }
     }
 

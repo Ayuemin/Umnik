@@ -12,12 +12,14 @@ class StorageRepository(private val context: Context) {
     private val skillsRoot = File(context.filesDir, "skills").apply { mkdirs() }
     private val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
     private val chatFilesRoot = File(context.filesDir, "chat_files").apply { mkdirs() }
+    private val soundsRoot = File(context.filesDir, "sounds").apply { mkdirs() }
     private val chatsFile = File(File(context.filesDir, "chats"), "chats.json")
 
     fun list(): List<StoredFile> {
         val items = mutableListOf<StoredFile>()
         collect(generatedRoot, "Сгенерировано", true, items)
         collect(exportsRoot, "Экспорт", true, items)
+        collect(soundsRoot, "Звуки", true, items)
         collect(skillsRoot, "Навыки", false, items, skipName = "skills.json")
         collect(projectsRoot, "Проекты", false, items, skipName = "projects.json")
         collect(chatFilesRoot, "Файлы чатов", false, items)
@@ -29,12 +31,13 @@ class StorageRepository(private val context: Context) {
         exportBytes = sizeOf(exportsRoot),
         skillBytes = sizeOf(skillsRoot),
         projectBytes = sizeOf(projectsRoot),
-        chatBytes = (if (chatsFile.exists()) chatsFile.length() else 0L) + sizeOf(chatFilesRoot)
+        chatBytes = (if (chatsFile.exists()) chatsFile.length() else 0L) + sizeOf(chatFilesRoot),
+        soundBytes = sizeOf(soundsRoot)
     )
 
     fun delete(path: String): Boolean {
         val target = File(path)
-        if (!isInside(target, generatedRoot) && !isInside(target, exportsRoot)) return false
+        if (!isInside(target, generatedRoot) && !isInside(target, exportsRoot) && !isInside(target, soundsRoot)) return false
         return target.delete()
     }
 
@@ -95,6 +98,12 @@ class StorageRepository(private val context: Context) {
         "csv" -> "text/csv"
         "html", "htm" -> "text/html"
         "yaml", "yml" -> "application/yaml"
+        "mp3" -> "audio/mpeg"
+        "wav" -> "audio/wav"
+        "ogg" -> "audio/ogg"
+        "m4a" -> "audio/mp4"
+        "aac" -> "audio/aac"
+        "flac" -> "audio/flac"
         else -> "application/octet-stream"
     }
 }
