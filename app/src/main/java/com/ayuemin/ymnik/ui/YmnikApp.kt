@@ -511,10 +511,10 @@ private fun ChatScreen(
 private fun WorkingStopIcon() {
     val transition = rememberInfiniteTransition(label = "workingStop")
     val pulse by transition.animateFloat(
-        initialValue = 0.82f,
+        initialValue = 0.86f,
         targetValue = 1.08f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 720),
+            animation = tween(durationMillis = 520),
             repeatMode = RepeatMode.Reverse
         ),
         label = "workingStopPulse"
