@@ -81,6 +81,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = runCatching {
                 ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
             }.getOrDefault(ReasoningEffort.MEDIUM),
+            reasoningEffortsByModel = loadReasoningEffortsByModel(),
             userProfile = UserProfile(
                 name = prefs.getString("profile_name", "").orEmpty(),
                 gender = prefs.getString("profile_gender", "").orEmpty(),
@@ -131,12 +132,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ChatMode.TEXT -> {
                 val effectiveId = _state.value.currentChatTextModel ?: clean
                 val info = _state.value.availableTextModels.firstOrNull { it.id == effectiveId }
-                val keepReasoning = reasoningStillValid(info)
+                val effort = preferredReasoningEffort(effectiveId, info)
+                val keepReasoning = reasoningStillValid(info, effort)
                 prefs.edit()
                     .putString("text_model", clean)
+                    .putString("reasoning_effort", effort.name)
                     .putBoolean("reasoning_enabled", keepReasoning)
                     .apply()
-                _state.value = _state.value.copy(textModel = clean, reasoningEnabled = keepReasoning)
+                _state.value = _state.value.copy(
+                    textModel = clean,
+                    reasoningEffort = effort,
+                    reasoningEnabled = keepReasoning
+                )
             }
             ChatMode.IMAGE -> {
                 prefs.edit().putString("image_model", clean).apply()
@@ -167,7 +174,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val clean = model.trim()
         if (clean.isBlank()) return
         val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
-        val keepReasoning = reasoningStillValid(info)
+        val effort = preferredReasoningEffort(clean, info)
+        val keepReasoning = reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
                 textModelOverride = clean,
@@ -175,18 +183,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ) else chat
         }
         chatsRepository.save(chats)
-        prefs.edit().putBoolean("reasoning_enabled", keepReasoning).apply()
+        prefs.edit()
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
         _state.value = _state.value.copy(
             chats = chats,
             currentChatTextModel = clean,
+            reasoningEffort = effort,
             reasoningEnabled = keepReasoning
         )
     }
 
     fun useDefaultTextModelForChat() {
         if (_state.value.isLoading) return
-        val info = _state.value.availableTextModels.firstOrNull { it.id == _state.value.textModel }
-        val keepReasoning = reasoningStillValid(info)
+        val modelId = _state.value.textModel
+        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        val effort = preferredReasoningEffort(modelId, info)
+        val keepReasoning = reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
                 textModelOverride = null,
@@ -194,10 +208,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ) else chat
         }
         chatsRepository.save(chats)
-        prefs.edit().putBoolean("reasoning_enabled", keepReasoning).apply()
+        prefs.edit()
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
         _state.value = _state.value.copy(
             chats = chats,
             currentChatTextModel = null,
+            reasoningEffort = effort,
             reasoningEnabled = keepReasoning
         )
     }
@@ -210,28 +228,54 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun setReasoningEnabled(enabled: Boolean) {
         if (enabled) {
             val info = currentTextModelInfo()
+            val effort = preferredReasoningEffort(currentTextModelId(), info)
             if (info?.supportsReasoning != true) {
                 _state.value = _state.value.copy(status = "Выбранная модель не поддерживает размышление")
                 return
             }
-            if (info.reasoningEfforts.isNotEmpty() && _state.value.reasoningEffort.apiValue !in info.reasoningEfforts) {
+            if (info.supportsReasoningEffort && info.reasoningEfforts.isNotEmpty() && effort.apiValue !in info.reasoningEfforts) {
                 _state.value = _state.value.copy(status = "Выбранная сила размышления не поддерживается этой моделью")
                 return
             }
+            prefs.edit().putString("reasoning_effort", effort.name).apply()
+            _state.value = _state.value.copy(reasoningEffort = effort)
         }
         prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
         _state.value = _state.value.copy(reasoningEnabled = enabled)
     }
 
     fun setReasoningEffort(effort: ReasoningEffort) {
-        val info = currentTextModelInfo()
-        val keepReasoning = _state.value.reasoningEnabled && info?.supportsReasoning == true &&
-            (info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
-        prefs.edit()
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
-            .apply()
-        _state.value = _state.value.copy(reasoningEffort = effort, reasoningEnabled = keepReasoning)
+        setReasoningEffortForModel(currentTextModelId(), effort)
+    }
+
+    fun setReasoningEffortForModel(modelId: String, effort: ReasoningEffort) {
+        val clean = modelId.trim()
+        if (clean.isBlank()) return
+        val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+            ?: _state.value.availableImageModels.firstOrNull { it.id == clean }
+
+        if (info?.supportsReasoningEffort == true && info.reasoningEfforts.isNotEmpty() && effort.apiValue !in info.reasoningEfforts) {
+            _state.value = _state.value.copy(status = "${reasoningEffortName(effort)} не поддерживается моделью ${clean.substringAfter('/')}")
+            return
+        }
+
+        val nextMap = _state.value.reasoningEffortsByModel + (clean to effort)
+        prefs.edit().putString("reasoning_efforts_by_model_json", gson.toJson(nextMap)).apply()
+
+        if (clean == currentTextModelId()) {
+            val keepReasoning = reasoningStillValid(info, effort)
+            prefs.edit()
+                .putString("reasoning_effort", effort.name)
+                .putBoolean("reasoning_enabled", keepReasoning)
+                .apply()
+            _state.value = _state.value.copy(
+                reasoningEffortsByModel = nextMap,
+                reasoningEffort = effort,
+                reasoningEnabled = keepReasoning
+            )
+        } else {
+            _state.value = _state.value.copy(reasoningEffortsByModel = nextMap)
+        }
     }
 
     fun saveUserProfile(name: String, gender: String, age: String, occupation: String, note: String) {
@@ -278,13 +322,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             mode = _state.value.mode
         )
         val next = listOf(chat) + _state.value.chats
+        val modelId = _state.value.textModel
+        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        val effort = preferredReasoningEffort(modelId, info)
+        val keepReasoning = reasoningStillValid(info, effort)
         chatsRepository.save(next)
-        prefs.edit().putString("current_chat_id", chat.id).apply()
+        prefs.edit()
+            .putString("current_chat_id", chat.id)
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
         _state.value = _state.value.copy(
             chats = next,
             currentChatId = chat.id,
             messages = emptyList(),
             currentChatTextModel = null,
+            reasoningEffort = effort,
+            reasoningEnabled = keepReasoning,
             pendingAttachments = emptyList(),
             storageStats = storageRepository.stats()
         )
@@ -296,15 +350,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
         val chat = _state.value.chats.firstOrNull { it.id == id } ?: return
         val nextMode = chat.mode ?: _state.value.mode
+        val modelId = chat.textModelOverride ?: _state.value.textModel
+        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        val effort = preferredReasoningEffort(modelId, info)
+        val keepReasoning = reasoningStillValid(info, effort)
         prefs.edit()
             .putString("current_chat_id", id)
             .putString("chat_mode", nextMode.name)
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
         _state.value = _state.value.copy(
             currentChatId = id,
             messages = chat.messages,
             mode = nextMode,
             currentChatTextModel = chat.textModelOverride,
+            reasoningEffort = effort,
+            reasoningEnabled = keepReasoning,
             pendingAttachments = emptyList()
         )
     }
@@ -511,12 +573,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     ChatMode.TEXT -> {
                         val effectiveId = _state.value.currentChatTextModel ?: _state.value.textModel
                         val current = infos.firstOrNull { it.id == effectiveId }
-                        val keepReasoning = reasoningStillValid(current)
-                        if (!keepReasoning && _state.value.reasoningEnabled) {
-                            prefs.edit().putBoolean("reasoning_enabled", false).apply()
-                        }
+                        val effort = preferredReasoningEffort(effectiveId, current)
+                        val keepReasoning = reasoningStillValid(current, effort)
+                        prefs.edit()
+                            .putString("reasoning_effort", effort.name)
+                            .putBoolean("reasoning_enabled", keepReasoning)
+                            .apply()
                         _state.value.copy(
                             availableTextModels = infos,
+                            reasoningEffort = effort,
                             reasoningEnabled = keepReasoning,
                             isLoading = false,
                             busyLabel = null
@@ -547,10 +612,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (textInfos != null) {
                 val effectiveId = next.currentChatTextModel ?: next.textModel
                 val current = textInfos.firstOrNull { it.id == effectiveId }
-                val keepReasoning = next.reasoningEnabled && current?.supportsReasoning == true &&
-                    (current.reasoningEfforts.isEmpty() || next.reasoningEffort.apiValue in current.reasoningEfforts)
-                if (!keepReasoning && next.reasoningEnabled) prefs.edit().putBoolean("reasoning_enabled", false).apply()
-                next = next.copy(availableTextModels = textInfos, reasoningEnabled = keepReasoning)
+                val effort = preferredReasoningEffort(effectiveId, current)
+                val keepReasoning = reasoningStillValid(current, effort)
+                prefs.edit()
+                    .putString("reasoning_effort", effort.name)
+                    .putBoolean("reasoning_enabled", keepReasoning)
+                    .apply()
+                next = next.copy(
+                    availableTextModels = textInfos,
+                    reasoningEffort = effort,
+                    reasoningEnabled = keepReasoning
+                )
             }
             if (imageInfos != null) next = next.copy(availableImageModels = imageInfos)
             _state.value = next
@@ -562,9 +634,31 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun currentTextModelInfo(): ModelInfo? =
         _state.value.availableTextModels.firstOrNull { it.id == currentTextModelId() }
 
-    private fun reasoningStillValid(info: ModelInfo?): Boolean =
+    private fun reasoningStillValid(info: ModelInfo?, effort: ReasoningEffort = _state.value.reasoningEffort): Boolean =
         _state.value.reasoningEnabled && info?.supportsReasoning == true &&
-            (info.reasoningEfforts.isEmpty() || _state.value.reasoningEffort.apiValue in info.reasoningEfforts)
+            (!info.supportsReasoningEffort || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
+
+    private fun preferredReasoningEffort(modelId: String, info: ModelInfo?): ReasoningEffort {
+        val configured = _state.value.reasoningEffortsByModel[modelId] ?: _state.value.reasoningEffort
+        if (info?.supportsReasoningEffort != true || info.reasoningEfforts.isEmpty()) return configured
+        if (configured.apiValue in info.reasoningEfforts) return configured
+        val fallbackOrder = listOf(
+            ReasoningEffort.MEDIUM,
+            ReasoningEffort.LOW,
+            ReasoningEffort.HIGH,
+            ReasoningEffort.MINIMAL,
+            ReasoningEffort.XHIGH
+        )
+        return fallbackOrder.firstOrNull { it.apiValue in info.reasoningEfforts } ?: configured
+    }
+
+    private fun reasoningEffortName(effort: ReasoningEffort): String = when (effort) {
+        ReasoningEffort.MINIMAL -> "Минимальная сила"
+        ReasoningEffort.LOW -> "Низкая сила"
+        ReasoningEffort.MEDIUM -> "Средняя сила"
+        ReasoningEffort.HIGH -> "Высокая сила"
+        ReasoningEffort.XHIGH -> "Максимальная сила"
+    }
 
     private fun currentImageModelInfo(): ModelInfo? =
         _state.value.availableImageModels.firstOrNull { it.id == _state.value.imageModel }
@@ -1186,6 +1280,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .distinct()
             .take(10)
     }.getOrDefault(emptyList())
+
+    private fun loadReasoningEffortsByModel(): Map<String, ReasoningEffort> = runCatching {
+        val type = object : TypeToken<Map<String, ReasoningEffort>>() {}.type
+        gson.fromJson<Map<String, ReasoningEffort>>(
+            prefs.getString("reasoning_efforts_by_model_json", "{}") ?: "{}",
+            type
+        ).orEmpty()
+    }.getOrDefault(emptyMap())
 
     private fun loadInitialChats(): List<ChatSession> {
         val existing = chatsRepository.list()
