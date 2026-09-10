@@ -167,6 +167,7 @@ data class UiState(
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    val reasoningEffortsByModel: Map<String, ReasoningEffort> = emptyMap(),
     val userProfile: UserProfile = UserProfile(),
     val userProfileScope: UserProfileScope = UserProfileScope.OFF,
     val apiKeyConfigured: Boolean = false,
