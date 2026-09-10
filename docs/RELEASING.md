@@ -42,22 +42,28 @@ base64 < umnik-release.jks | tr -d '\n'
 
 1. обновить `versionCode`;
 2. обновить `versionName`;
-3. добавить секцию `## vX.Y.Z` в `CHANGELOG.md`;
+3. добавить секцию `## vX.Y.Z - YYYY-MM-DD` в `CHANGELOG.md`;
 4. убедиться, что Android CI зелёный;
 5. создать git tag, в точности совпадающий с `versionName`: `vX.Y.Z`.
 
+Релизный workflow всегда проверяет, что существующий тег указывает именно на собираемый commit, а версия тега совпадает с `versionName`.
+
 ## 4. Автоматическая публикация
 
-Push тега `v*` запускает `.github/workflows/android-release.yml`.
+Обычный push тега `v*` запускает `.github/workflows/android-release.yml`.
+
+Если тег уже существует, тот же workflow можно запустить вручную в **Actions → Android Release → Run workflow**, указав существующий тег, например `v0.7.2`. Это удобно, если тег был создан автоматизацией или обычный tag-push не запустил второй workflow.
 
 Workflow:
 
-- проверяет совпадение тега и `versionName`;
+- проверяет существование и формат тега;
+- проверяет совпадение тега, checkout commit и `versionName`;
 - требует постоянный release signing key;
 - собирает release APK;
+- проверяет подпись APK и сертификат;
 - вычисляет SHA-256;
 - берёт описание версии из `CHANGELOG.md`;
 - создаёт GitHub Release с APK и `.sha256` файлом;
 - отмечает релиз как latest.
 
-Workflow больше не удаляет и не пересоздаёт существующий релиз на каждый push.
+Обычные изменения в `main` не публикуют релизы.
