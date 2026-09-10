@@ -134,7 +134,6 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.ayuemin.ymnik.BuildConfig
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
@@ -1603,6 +1602,12 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
 
 @Composable
 private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val appVersion = remember(context) {
+        runCatching {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
+        }.getOrDefault("—")
+    }
     var key by remember { mutableStateOf("") }
     var storageOpen by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
@@ -1951,11 +1956,12 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                 ) {
                     Text("Umnik", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(
-                        "Версия ${BuildConfig.VERSION_NAME}",
+                        "Версия $appVersion",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+            }
         }
     }
 

@@ -352,7 +352,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }.orEmpty().ifBlank { "sound_${System.currentTimeMillis()}" }
             val safeName = displayName
-                .replace(Regex("[^\p{L}\p{N}._ ()-]"), "_")
+                .replace(Regex("[^\\p{L}\\p{N}._ ()-]"), "_")
                 .take(120)
                 .ifBlank { "sound_${System.currentTimeMillis()}" }
             val dir = File(context.filesDir, "sounds").apply { mkdirs() }
