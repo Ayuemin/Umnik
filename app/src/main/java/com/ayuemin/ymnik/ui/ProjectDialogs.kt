@@ -19,6 +19,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
@@ -402,17 +403,31 @@ private fun ProjectDetailDialog(
             }
 
             item { SectionTitle("Навыки проекта") }
+            item {
+                Text(
+                    "Отмеченный навык автоматически добавляет свои инструкции и текстовые материалы к каждому запросу в чатах этого проекта.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             if (state.skills.isEmpty()) {
                 item { Text("Импортируйте навыки через меню «Навыки»", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(state.skills, key = { it.id }) { skill ->
+                            val selected = skill.id in project.skillIds
                             FilterChip(
-                                selected = skill.id in project.skillIds,
+                                selected = selected,
                                 onClick = { vm.toggleProjectSkill(project.id, skill.id) },
                                 label = { Text(skill.name, maxLines = 1) },
-                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(17.dp)) }
+                                leadingIcon = {
+                                    Icon(
+                                        if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
+                                        contentDescription = if (selected) "Навык активен" else null,
+                                        modifier = Modifier.size(17.dp)
+                                    )
+                                }
                             )
                         }
                     }

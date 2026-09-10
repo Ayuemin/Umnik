@@ -97,6 +97,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             themeChoice = runCatching {
                 ThemeChoice.valueOf(prefs.getString("theme_choice", ThemeChoice.DYNAMIC.name) ?: ThemeChoice.DYNAMIC.name)
             }.getOrDefault(ThemeChoice.DYNAMIC),
+            customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats()
         )
@@ -310,6 +311,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun setThemeChoice(choice: ThemeChoice) {
         prefs.edit().putString("theme_choice", choice.name).apply()
         _state.value = _state.value.copy(themeChoice = choice)
+    }
+
+    fun setCustomThemeColor(color: Int) {
+        prefs.edit()
+            .putInt("custom_theme_color", color)
+            .putString("theme_choice", ThemeChoice.CUSTOM.name)
+            .apply()
+        _state.value = _state.value.copy(
+            customThemeColor = color,
+            themeChoice = ThemeChoice.CUSTOM
+        )
     }
 
     fun createChat(projectId: String? = null): String {

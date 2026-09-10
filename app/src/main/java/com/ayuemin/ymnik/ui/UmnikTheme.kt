@@ -10,11 +10,12 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import com.ayuemin.ymnik.model.ThemeChoice
 
 @Composable
-fun UmnikTheme(choice: ThemeChoice, content: @Composable () -> Unit) {
+fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
     val context = LocalContext.current
 
@@ -25,6 +26,7 @@ fun UmnikTheme(choice: ThemeChoice, content: @Composable () -> Unit) {
             dark -> graphiteDark()
             else -> graphiteLight()
         }
+        ThemeChoice.CUSTOM -> if (dark) customDark(Color(customColor)) else customLight(Color(customColor))
         ThemeChoice.GRAPHITE -> if (dark) graphiteDark() else graphiteLight()
         ThemeChoice.OCEAN -> if (dark) oceanDark() else oceanLight()
         ThemeChoice.FOREST -> if (dark) forestDark() else forestLight()
@@ -85,6 +87,25 @@ private fun baseDark(
     onSurfaceVariant = Color(0xFFC5C6CA),
     outline = Color(0xFF8F9095)
 )
+
+private fun customLight(primary: Color) = baseLight(
+    primary = primary,
+    primaryContainer = lerp(primary, Color.White, 0.82f),
+    onPrimaryContainer = lerp(primary, Color.Black, 0.78f),
+    secondary = lerp(primary, Color.Gray, 0.42f),
+    tertiary = lerp(primary, Color(0xFF7D5260), 0.38f)
+)
+
+private fun customDark(primary: Color): ColorScheme {
+    val bright = lerp(primary, Color.White, 0.46f)
+    return baseDark(
+        primary = bright,
+        primaryContainer = lerp(primary, Color.Black, 0.34f),
+        onPrimaryContainer = lerp(primary, Color.White, 0.82f),
+        secondary = lerp(primary, Color.White, 0.56f),
+        tertiary = lerp(primary, Color(0xFFFFD8E4), 0.45f)
+    )
+}
 
 private fun graphiteLight() = baseLight(
     primary = Color(0xFF55575C),

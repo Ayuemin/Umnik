@@ -36,12 +36,14 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.CameraAlt
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
@@ -74,6 +76,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -111,6 +114,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -164,7 +168,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
         }
     }
 
-    UmnikTheme(state.themeChoice) {
+    UmnikTheme(state.themeChoice, state.customThemeColor) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) }
@@ -1368,7 +1372,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
         ) {
             item {
                 Text(
-                    "SKILL.md и папки с текстовыми материалами. Подключённые навыки применяются в текстовом режиме.",
+                    "Навык — это постоянная инструкция и текстовые материалы для модели. После подключения Umnik добавляет их к каждому текстовому запросу. Навык сам ничего не запускает и не изменяет файлы.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
@@ -1416,7 +1420,13 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
                                 selected = skill.id in state.activeSkillIds,
                                 onClick = { vm.toggleSkill(skill.id) },
                                 label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") },
-                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp)) }
+                                leadingIcon = {
+                                    Icon(
+                                        if (skill.id in state.activeSkillIds) Icons.Outlined.Check else Icons.Outlined.Extension,
+                                        contentDescription = if (skill.id in state.activeSkillIds) "Навык активен" else null,
+                                        modifier = Modifier.size(18.dp)
+                                    )
+                                }
                             )
                             Spacer(Modifier.width(6.dp))
                             IconButton(onClick = { vm.deleteSkill(skill.id) }) {
@@ -1439,6 +1449,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var reasoningExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var apiExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
+    var customColorExpanded by remember { mutableStateOf(state.themeChoice == ThemeChoice.CUSTOM) }
     var profileName by remember(state.userProfile.name) { mutableStateOf(state.userProfile.name) }
     var profileGender by remember(state.userProfile.gender) { mutableStateOf(state.userProfile.gender) }
     var profileAge by remember(state.userProfile.age) { mutableStateOf(state.userProfile.age) }
@@ -1633,9 +1644,54 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             items(themes) { choice ->
                                 FilterChip(
                                     selected = state.themeChoice == choice,
-                                    onClick = { vm.setThemeChoice(choice) },
-                                    label = { Text(themeLabel(choice)) }
+                                    onClick = {
+                                        vm.setThemeChoice(choice)
+                                        if (choice == ThemeChoice.CUSTOM) customColorExpanded = true
+                                    },
+                                    label = { Text(themeLabel(choice)) },
+                                    leadingIcon = if (choice == ThemeChoice.CUSTOM) {
+                                        {
+                                            Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
+                                                listOf(0xFFE53935, 0xFF7E57C2, 0xFF1E88E5, 0xFF43A047).forEach { c ->
+                                                    Surface(shape = CircleShape, color = Color(c.toInt()), modifier = Modifier.size(5.dp)) {}
+                                                }
+                                            }
+                                        }
+                                    } else null
                                 )
+                            }
+                        }
+                        if (state.themeChoice == ThemeChoice.CUSTOM || customColorExpanded) {
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Свой цвет",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val palette = listOf(
+                                    0xFFD32F2F.toInt(), 0xFFF57C00.toInt(), 0xFFF9A825.toInt(),
+                                    0xFF388E3C.toInt(), 0xFF00897B.toInt(), 0xFF0288D1.toInt(),
+                                    0xFF1976D2.toInt(), 0xFF5E35B1.toInt(), 0xFF8E24AA.toInt(),
+                                    0xFFC2185B.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt()
+                                )
+                                items(palette) { colorValue ->
+                                    FilterChip(
+                                        selected = state.customThemeColor == colorValue,
+                                        onClick = { vm.setCustomThemeColor(colorValue) },
+                                        label = {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = Color(colorValue),
+                                                modifier = Modifier.size(22.dp)
+                                            ) {}
+                                        },
+                                        leadingIcon = if (state.customThemeColor == colorValue) {
+                                            { Icon(Icons.Outlined.Check, contentDescription = "Выбран") }
+                                        } else null
+                                    )
+                                }
                             }
                         }
                     }
@@ -1948,6 +2004,9 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
     var query by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<StoredFile?>(null) }
     var clearConfirm by remember { mutableStateOf(false) }
+    var deleteSelectedConfirm by remember { mutableStateOf(false) }
+    var protectedExpanded by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val file = fileToSave
@@ -1955,12 +2014,20 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
         fileToSave = null
     }
 
-    val filtered = remember(state.storedFiles, query) {
-        val q = query.trim()
-        if (q.isBlank()) state.storedFiles else state.storedFiles.filter {
-            it.name.contains(q, ignoreCase = true) || it.category.contains(q, ignoreCase = true)
+    val q = query.trim()
+    val workingFiles = remember(state.storedFiles, q) {
+        state.storedFiles.filter { file ->
+            file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
         }
     }
+    val protectedFiles = remember(state.storedFiles, q) {
+        state.storedFiles.filter { file ->
+            !file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
+        }
+    }
+    val protectedTotal = state.storedFiles.filterNot { it.deletable }
+    val protectedBytes = protectedTotal.sumOf { it.size }
+    val showProtectedContents = protectedExpanded || q.isNotBlank()
 
     FullScreenPanel(title = "Хранилище Umnik", onBack = onDismiss) {
         Text(
@@ -1979,38 +2046,58 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
         )
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+            horizontalArrangement = Arrangement.spacedBy(2.dp)
         ) {
             TextButton(onClick = vm::refreshStorage) {
                 Icon(Icons.Outlined.Refresh, contentDescription = null)
-                Spacer(Modifier.width(5.dp))
+                Spacer(Modifier.width(4.dp))
                 Text("Обновить")
             }
-            TextButton(onClick = { clearConfirm = true }, enabled = !state.isLoading) {
-                Icon(Icons.Outlined.DeleteForever, contentDescription = null)
-                Spacer(Modifier.width(5.dp))
-                Text("Очистить файлы")
+            if (selectedIds.isNotEmpty()) {
+                TextButton(onClick = { deleteSelectedConfirm = true }) {
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Удалить (${selectedIds.size})")
+                }
+            } else {
+                TextButton(onClick = { clearConfirm = true }, enabled = !state.isLoading && workingFiles.isNotEmpty()) {
+                    Icon(Icons.Outlined.DeleteForever, contentDescription = null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Очистить все")
+                }
             }
         }
 
-        if (filtered.isEmpty()) {
-            Text("Файлов не найдено", modifier = Modifier.padding(20.dp))
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                items(filtered, key = { it.id }) { file ->
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+        ) {
+            if (workingFiles.isEmpty()) {
+                item {
+                    Text(
+                        if (q.isBlank()) "Нет отдельных рабочих файлов" else "Рабочих файлов не найдено",
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 14.dp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                items(workingFiles, key = { it.id }) { file ->
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        Checkbox(
+                            checked = file.id in selectedIds,
+                            onCheckedChange = { checked ->
+                                selectedIds = if (checked) selectedIds + file.id else selectedIds - file.id
+                            }
+                        )
                         Icon(
                             if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.Description,
                             contentDescription = null,
                             modifier = Modifier.size(22.dp)
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(7.dp))
                         Column(Modifier.weight(1f)) {
                             Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
@@ -2025,26 +2112,109 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
                             fileToSave = file
                             save.launch(file.name)
                         }) { Icon(Icons.Outlined.Download, contentDescription = "Сохранить копию") }
-                        if (file.deletable) {
-                            IconButton(onClick = { vm.deleteStoredFile(file) }) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл")
-                            }
+                        IconButton(onClick = {
+                            vm.deleteStoredFile(file)
+                            selectedIds = selectedIds - file.id
+                        }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл")
                         }
                     }
                     HorizontalDivider()
                 }
             }
+
+            if (protectedTotal.isNotEmpty()) {
+                item {
+                    Spacer(Modifier.height(8.dp))
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                    ) {
+                        TextButton(
+                            onClick = { protectedExpanded = !protectedExpanded },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Системные данные", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Навыки, проекты и файлы чатов · ${protectedTotal.size} · ${humanSize(protectedBytes)}",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                if (showProtectedContents) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = if (showProtectedContents) "Свернуть" else "Развернуть"
+                            )
+                        }
+                    }
+                }
+                if (showProtectedContents) {
+                    if (protectedFiles.isEmpty()) {
+                        item { Text("В системных данных совпадений нет", modifier = Modifier.padding(12.dp)) }
+                    } else {
+                        items(protectedFiles, key = { "protected-${it.id}" }) { file ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(20.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(
+                                        "${file.category} · ${humanSize(file.size)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                                IconButton(onClick = {
+                                    fileToSave = file
+                                    save.launch(file.name)
+                                }) { Icon(Icons.Outlined.Download, contentDescription = "Сохранить копию") }
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
         }
+    }
+
+    if (deleteSelectedConfirm) {
+        AlertDialog(
+            onDismissRequest = { deleteSelectedConfirm = false },
+            title = { Text("Удалить выбранные файлы?") },
+            text = { Text("Будет удалено файлов: ${selectedIds.size}.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.storedFiles.filter { it.deletable && it.id in selectedIds }.forEach(vm::deleteStoredFile)
+                    selectedIds = emptySet()
+                    deleteSelectedConfirm = false
+                }) { Text("Удалить") }
+            },
+            dismissButton = { TextButton(onClick = { deleteSelectedConfirm = false }) { Text("Отмена") } }
+        )
     }
 
     if (clearConfirm) {
         AlertDialog(
             onDismissRequest = { clearConfirm = false },
             title = { Text("Очистить рабочие файлы?") },
-            text = { Text("Будут удалены сохранённые внутри Umnik изображения, сгенерированные файлы и экспорт. Тексты диалогов, API-ключ, проекты и навыки останутся.") },
+            text = { Text("Будут удалены сохранённые внутри Umnik изображения, сгенерированные файлы и экспорт. Чаты, проекты, навыки и API-ключ останутся.") },
             confirmButton = {
                 TextButton(onClick = {
                     vm.clearWorkingFiles()
+                    selectedIds = emptySet()
                     clearConfirm = false
                 }) { Text("Очистить") }
             },
@@ -2080,6 +2250,7 @@ private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {
     ThemeChoice.DYNAMIC -> "Material You"
+    ThemeChoice.CUSTOM -> "Свой цвет"
     ThemeChoice.GRAPHITE -> "Графит"
     ThemeChoice.OCEAN -> "Синяя"
     ThemeChoice.FOREST -> "Зелёная"
