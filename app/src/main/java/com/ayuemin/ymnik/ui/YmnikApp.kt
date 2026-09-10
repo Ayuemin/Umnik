@@ -49,6 +49,7 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
@@ -70,6 +71,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilledTonalIconButton
@@ -78,6 +80,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
@@ -154,7 +157,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = { SnackbarHost(snackbar) },
             bottomBar = {
-                if (!imeVisible) {
+                if (!imeVisible && tab != 0) {
                     NavigationBar(
                         modifier = Modifier.height(58.dp),
                         containerColor = MaterialTheme.colorScheme.surfaceContainer
@@ -198,7 +201,13 @@ fun YmnikApp(viewModel: ChatViewModel) {
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (tab) {
-                    0 -> ChatScreen(state, viewModel, tts)
+                    0 -> ChatScreen(
+                        state = state,
+                        vm = viewModel,
+                        tts = tts,
+                        onOpenSkills = { tab = 1 },
+                        onOpenSettings = { tab = 2 }
+                    )
                     1 -> SkillsScreen(state, viewModel)
                     else -> SettingsScreen(state, viewModel)
                 }
@@ -207,14 +216,21 @@ fun YmnikApp(viewModel: ChatViewModel) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
+private fun ChatScreen(
+    state: UiState,
+    vm: ChatViewModel,
+    tts: TtsController,
+    onOpenSkills: () -> Unit,
+    onOpenSettings: () -> Unit
+) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var chatsOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
+    var actionsOpen by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
-    var quickModelsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
     val activeTextModel = state.currentChatTextModel ?: state.textModel
@@ -253,9 +269,11 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
     Column(Modifier.fillMaxSize()) {
         ChatHeader(
             state = state,
+            vm = vm,
             onChats = { chatsOpen = true },
             onProjects = { projectsOpen = true },
-            onSelectMode = vm::setMode,
+            onOpenSkills = onOpenSkills,
+            onOpenSettings = onOpenSettings,
             onNewChat = {
                 val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
                 vm.createChat(projectId)
@@ -302,7 +320,7 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
         if (currentChatFiles.isNotEmpty() || state.pendingAttachments.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
@@ -335,141 +353,127 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 
         Surface(
             modifier = Modifier.imePadding(),
-            color = MaterialTheme.colorScheme.surfaceContainer,
-            tonalElevation = 3.dp
+            color = MaterialTheme.colorScheme.surface,
+            tonalElevation = 0.dp
         ) {
-            Row(
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 8.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.Bottom,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                leadingIcon = {
+                    IconButton(
+                        onClick = { actionsOpen = true },
+                        enabled = !state.isLoading
+                    ) {
+                        Icon(
+                            Icons.Outlined.Add,
+                            contentDescription = "Добавить и инструменты",
+                            tint = if (state.webSearchEnabled || state.reasoningEnabled || state.mode == ChatMode.IMAGE) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                },
+                trailingIcon = {
+                    IconButton(
+                        onClick = {
+                            if (state.requestActive) {
+                                vm.stopGeneration()
+                            } else {
+                                vm.send(text)
+                                text = ""
+                            }
+                        },
+                        enabled = state.requestActive || (!state.isLoading && (
+                            text.isNotBlank() || state.pendingAttachments.isNotEmpty() || currentChatFiles.isNotEmpty()
+                        ))
+                    ) {
+                        Icon(
+                            if (state.requestActive) Icons.Outlined.Stop else Icons.Outlined.Send,
+                            contentDescription = if (state.requestActive) "Остановить работу модели" else "Отправить"
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(28.dp),
+                maxLines = 6
+            )
+        }
+    }
+
+    if (actionsOpen) {
+        ModalBottomSheet(onDismissRequest = { actionsOpen = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 24.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
-                IconButton(
-                    onClick = {
-                        val types = if (state.mode == ChatMode.IMAGE) arrayOf("image/*") else arrayOf("*/*")
-                        attach.launch(types)
-                    },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.size(42.dp)
+                Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Icon(Icons.Outlined.AttachFile, contentDescription = "Прикрепить файл")
+                    ComposerActionTile(
+                        icon = Icons.Outlined.AttachFile,
+                        label = "Файл",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            val types = if (state.mode == ChatMode.IMAGE) arrayOf("image/*") else arrayOf("*/*")
+                            attach.launch(types)
+                        }
+                    )
+                    ComposerActionTile(
+                        icon = Icons.Outlined.CameraAlt,
+                        label = "Камера",
+                        enabled = !state.isLoading && cameraAvailable,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            runCatching { createCameraTarget(context) }
+                                .onSuccess { target ->
+                                    cameraTarget = target
+                                    camera.launch(target.uri)
+                                }
+                                .onFailure {
+                                    Toast.makeText(context, it.message ?: "Не удалось открыть камеру", Toast.LENGTH_SHORT).show()
+                                }
+                        }
+                    )
+                    ComposerActionTile(
+                        icon = if (state.mode == ChatMode.TEXT) Icons.Outlined.Image else Icons.Outlined.TextFields,
+                        label = if (state.mode == ChatMode.TEXT) "Изображение" else "Текст",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            vm.setMode(if (state.mode == ChatMode.TEXT) ChatMode.IMAGE else ChatMode.TEXT)
+                            actionsOpen = false
+                        }
+                    )
                 }
 
-                IconButton(
-                    onClick = {
-                        runCatching { createCameraTarget(context) }
-                            .onSuccess { target ->
-                                cameraTarget = target
-                                camera.launch(target.uri)
-                            }
-                            .onFailure { Toast.makeText(context, it.message ?: "Не удалось открыть камеру", Toast.LENGTH_SHORT).show() }
-                    },
-                    enabled = !state.isLoading && cameraAvailable,
-                    modifier = Modifier.size(42.dp)
-                ) {
-                    Icon(Icons.Outlined.CameraAlt, contentDescription = "Сделать фото")
-                }
+                HorizontalDivider()
 
                 if (state.mode == ChatMode.TEXT) {
-                    Box {
-                        IconButton(
-                            onClick = { quickModelsOpen = true },
-                            enabled = !state.isLoading,
-                            modifier = Modifier.size(42.dp)
-                        ) {
-                            Icon(Icons.Outlined.SwapHoriz, contentDescription = "Быстрая смена модели")
-                        }
-                        val quickCandidates = (listOf(activeTextModel, state.textModel) + state.quickTextModels)
-                            .filter { it.isNotBlank() }
-                            .distinct()
-                        DropdownMenu(
-                            expanded = quickModelsOpen,
-                            onDismissRequest = { quickModelsOpen = false }
-                        ) {
-                            quickCandidates.forEach { id ->
-                                val current = id == activeTextModel
-                                DropdownMenuItem(
-                                    text = {
-                                        Column {
-                                            Text(
-                                                id,
-                                                fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                                                maxLines = 2,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-                                            if (id == state.textModel) {
-                                                Text(
-                                                    if (state.currentChatTextModel == null && current) "По умолчанию · текущая" else "Модель по умолчанию",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            } else if (current) {
-                                                Text(
-                                                    "Текущая модель этого чата",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                                )
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        if (id == state.textModel) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(id)
-                                        quickModelsOpen = false
-                                    }
-                                )
-                            }
-                        }
-                    }
-                }
-
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    modifier = Modifier.weight(1f),
-                    trailingIcon = if (state.mode == ChatMode.TEXT) {
-                        {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(1.dp)
-                            ) {
-                                InlineComposerToggleIcon(
-                                    selected = state.webSearchEnabled,
-                                    icon = Icons.Outlined.Language,
-                                    description = if (state.webSearchEnabled) "Веб-поиск включён" else "Включить веб-поиск",
-                                    onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) }
-                                )
-                                InlineComposerToggleIcon(
-                                    selected = state.reasoningEnabled,
-                                    icon = Icons.Outlined.Psychology,
-                                    description = if (state.reasoningEnabled) "Размышление включено" else "Включить размышление",
-                                    enabled = reasoningAvailable,
-                                    onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) }
-                                )
-                            }
-                        }
-                    } else null,
-                    shape = RoundedCornerShape(24.dp),
-                    maxLines = 6
-                )
-
-                IconButton(
-                    onClick = {
-                        if (state.requestActive) {
-                            vm.stopGeneration()
-                        } else {
-                            vm.send(text)
-                            text = ""
-                        }
-                    },
-                    enabled = state.requestActive || (!state.isLoading && (
-                        text.isNotBlank() || state.pendingAttachments.isNotEmpty() || currentChatFiles.isNotEmpty()
-                    )),
-                    modifier = Modifier.size(42.dp)
-                ) {
-                    Icon(
-                        if (state.requestActive) Icons.Outlined.Stop else Icons.Outlined.Send,
-                        contentDescription = if (state.requestActive) "Остановить работу модели" else "Отправить"
+                    ComposerToolRow(
+                        icon = Icons.Outlined.Psychology,
+                        title = "Размышление",
+                        subtitle = if (reasoningAvailable) "Использовать reasoning выбранной модели" else "Модель не поддерживает",
+                        checked = state.reasoningEnabled,
+                        enabled = reasoningAvailable,
+                        onCheckedChange = vm::setReasoningEnabled
+                    )
+                    ComposerToolRow(
+                        icon = Icons.Outlined.Language,
+                        title = "Поиск в сети",
+                        subtitle = "OpenRouter web search",
+                        checked = state.webSearchEnabled,
+                        enabled = true,
+                        onCheckedChange = vm::setWebSearchEnabled
                     )
                 }
             }
@@ -496,96 +500,204 @@ private fun ChatScreen(state: UiState, vm: ChatViewModel, tts: TtsController) {
 @Composable
 private fun ChatHeader(
     state: UiState,
+    vm: ChatViewModel,
     onChats: () -> Unit,
     onProjects: () -> Unit,
-    onSelectMode: (ChatMode) -> Unit,
+    onOpenSkills: () -> Unit,
+    onOpenSettings: () -> Unit,
     onNewChat: () -> Unit,
     onClear: () -> Unit
 ) {
-    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 1.dp) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Text(
-                    "Umnik",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1
-                )
+    var quickModelsOpen by remember { mutableStateOf(false) }
+    var hubOpen by remember { mutableStateOf(false) }
+    val activeTextModel = state.currentChatTextModel ?: state.textModel
+    val displayedModel = if (state.mode == ChatMode.TEXT) activeTextModel else state.imageModel
+    val shortModelName = displayedModel.substringAfter('/').ifBlank { displayedModel }
+    val quickCandidates = (listOf(activeTextModel, state.textModel) + state.quickTextModels)
+        .filter { it.isNotBlank() }
+        .distinct()
 
-                Spacer(Modifier.width(5.dp))
-
-                CompactModeIcon(
-                    selected = state.mode == ChatMode.TEXT,
-                    icon = Icons.Outlined.TextFields,
-                    description = "Текстовый режим",
-                    onClick = { onSelectMode(ChatMode.TEXT) }
-                )
-                CompactModeIcon(
-                    selected = state.mode == ChatMode.IMAGE,
-                    icon = Icons.Outlined.Image,
-                    description = "Режим изображений",
-                    onClick = { onSelectMode(ChatMode.IMAGE) }
-                )
-
-                IconButton(
-                    onClick = onNewChat,
+    Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(modifier = Modifier.weight(1f)) {
+                TextButton(
+                    onClick = { if (state.mode == ChatMode.TEXT) quickModelsOpen = true },
                     enabled = !state.isLoading,
-                    modifier = Modifier.size(36.dp)
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
-                    Icon(Icons.Outlined.Add, contentDescription = "Новый чат", modifier = Modifier.size(21.dp))
-                }
-
-                Spacer(Modifier.weight(1f))
-
-                IconButton(
-                    onClick = onProjects,
-                    enabled = !state.isLoading,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
-                    Icon(
-                        Icons.Outlined.FolderOpen,
-                        contentDescription = "Проекты",
-                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    Text(
+                        shortModelName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
+                    if (state.mode == ChatMode.TEXT) {
+                        Spacer(Modifier.width(3.dp))
+                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(22.dp))
+                    }
                 }
 
-                IconButton(
-                    onClick = onChats,
-                    enabled = !state.isLoading,
-                    modifier = Modifier.size(36.dp)
+                DropdownMenu(
+                    expanded = quickModelsOpen,
+                    onDismissRequest = { quickModelsOpen = false }
                 ) {
-                    Icon(Icons.Outlined.History, contentDescription = "Чаты")
-                }
-
-                IconButton(
-                    onClick = onClear,
-                    enabled = state.messages.isNotEmpty() && !state.isLoading,
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(Icons.Outlined.DeleteSweep, contentDescription = "Очистить текущий чат")
-                }
-            }
-
-            if (state.mode == ChatMode.TEXT && state.activeSkillIds.isNotEmpty()) {
-                Spacer(Modifier.height(3.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(state.skills.filter { it.id in state.activeSkillIds }, key = { it.id }) { skill ->
-                        AssistChip(
-                            onClick = { },
-                            label = { Text(skill.name) },
-                            leadingIcon = {
-                                Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
+                    quickCandidates.forEach { id ->
+                        val current = id == activeTextModel
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(
+                                        id.substringAfter('/').ifBlank { id },
+                                        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        when {
+                                            current -> "Текущая модель"
+                                            id == state.textModel -> "По умолчанию"
+                                            else -> id
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
+                            onClick = {
+                                if (id == state.textModel) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(id)
+                                quickModelsOpen = false
                             }
                         )
                     }
                 }
             }
+
+            IconButton(
+                onClick = onNewChat,
+                enabled = !state.isLoading,
+                modifier = Modifier.size(42.dp)
+            ) {
+                Icon(Icons.Outlined.Add, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
+            }
+
+            Box {
+                FilledTonalButton(
+                    onClick = { hubOpen = true },
+                    enabled = !state.isLoading,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
+                    modifier = Modifier.height(40.dp)
+                ) {
+                    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+                    Icon(
+                        Icons.Outlined.FolderOpen,
+                        contentDescription = null,
+                        modifier = Modifier.size(19.dp),
+                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Меню")
+                }
+
+                DropdownMenu(
+                    expanded = hubOpen,
+                    onDismissRequest = { hubOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Проекты") },
+                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+                        onClick = { hubOpen = false; onProjects() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("История чатов") },
+                        leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
+                        onClick = { hubOpen = false; onChats() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Навыки") },
+                        leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
+                        onClick = { hubOpen = false; onOpenSkills() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Настройки") },
+                        leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                        onClick = { hubOpen = false; onOpenSettings() }
+                    )
+                    if (state.messages.isNotEmpty()) {
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Очистить чат") },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
+                            onClick = { hubOpen = false; onClear() }
+                        )
+                    }
+                }
+            }
         }
+    }
+}
+
+@Composable
+private fun ComposerActionTile(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    ElevatedCard(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier.height(96.dp),
+        shape = RoundedCornerShape(18.dp)
+    ) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(12.dp),
+            verticalArrangement = Arrangement.Center,
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.height(8.dp))
+            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+        }
+    }
+}
+
+@Composable
+private fun ComposerToolRow(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(25.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            enabled = enabled
+        )
     }
 }
 
