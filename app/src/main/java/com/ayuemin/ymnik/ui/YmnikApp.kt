@@ -9,6 +9,11 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -103,6 +108,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -392,10 +398,14 @@ private fun ChatScreen(
                             text.isNotBlank() || state.pendingAttachments.isNotEmpty() || currentChatFiles.isNotEmpty()
                         ))
                     ) {
-                        Icon(
-                            if (state.requestActive) Icons.Outlined.Stop else Icons.Outlined.Send,
-                            contentDescription = if (state.requestActive) "Остановить работу модели" else "Отправить"
-                        )
+                        if (state.requestActive) {
+                            WorkingStopIcon()
+                        } else {
+                            Icon(
+                                Icons.Outlined.Send,
+                                contentDescription = "Отправить"
+                            )
+                        }
                     }
                 },
                 shape = RoundedCornerShape(28.dp),
@@ -495,6 +505,27 @@ private fun ChatScreen(
             onDismiss = { projectsOpen = false }
         )
     }
+}
+
+@Composable
+private fun WorkingStopIcon() {
+    val transition = rememberInfiniteTransition(label = "workingStop")
+    val pulse by transition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 720),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "workingStopPulse"
+    )
+
+    Icon(
+        Icons.Outlined.Stop,
+        contentDescription = "Остановить работу модели",
+        modifier = Modifier.scale(pulse),
+        tint = MaterialTheme.colorScheme.primary
+    )
 }
 
 @Composable
