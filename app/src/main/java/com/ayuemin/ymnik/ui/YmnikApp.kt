@@ -15,6 +15,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -95,6 +97,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -132,6 +135,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
@@ -216,7 +220,12 @@ private fun ChatScreen(
     }
     val reasoningAvailable = state.mode == ChatMode.TEXT && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
-    val currentChatFiles = state.chats.firstOrNull { it.id == state.currentChatId }?.chatFiles.orEmpty()
+    val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
+    val currentChatFiles = currentChat?.chatFiles.orEmpty()
+    val currentProjectSkillIds = currentChat?.projectId
+        ?.let { projectId -> state.projects.firstOrNull { it.id == projectId }?.skillIds }
+        .orEmpty()
+    val activeSkillCount = (state.activeSkillIds + currentProjectSkillIds).size
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach(vm::addAttachment)
@@ -337,19 +346,40 @@ private fun ChatScreen(
                     .fillMaxWidth()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 leadingIcon = {
-                    IconButton(
-                        onClick = { actionsOpen = true },
-                        enabled = !state.isLoading
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(1.dp)
                     ) {
-                        Icon(
-                            Icons.Outlined.Add,
-                            contentDescription = "Добавить и инструменты",
-                            tint = if (state.webSearchEnabled || state.reasoningEnabled || state.mode == ChatMode.IMAGE) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
-                        )
+                        IconButton(
+                            onClick = { actionsOpen = true },
+                            enabled = !state.isLoading,
+                            modifier = Modifier.size(40.dp)
+                        ) {
+                            Icon(
+                                Icons.Outlined.Add,
+                                contentDescription = "Добавить и инструменты",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (activeSkillCount > 0) {
+                            ComposerInlineIndicator(
+                                icon = Icons.Outlined.Extension,
+                                description = "Активные навыки: $activeSkillCount",
+                                count = activeSkillCount
+                            )
+                        }
+                        if (state.reasoningEnabled) {
+                            ComposerInlineIndicator(
+                                icon = Icons.Outlined.Psychology,
+                                description = "Размышление включено"
+                            )
+                        }
+                        if (state.webSearchEnabled) {
+                            ComposerInlineIndicator(
+                                icon = Icons.Outlined.Language,
+                                description = "Поиск в сети включён"
+                            )
+                        }
                     }
                 },
                 trailingIcon = {
@@ -471,6 +501,50 @@ private fun ChatScreen(
             state = state,
             vm = vm,
             onDismiss = { projectsOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun ComposerInlineIndicator(
+    icon: ImageVector,
+    description: String,
+    count: Int? = null
+) {
+    Row(
+        modifier = Modifier.padding(horizontal = 1.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(1.dp)
+    ) {
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(15.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        if (count != null && count > 1) {
+            Text(
+                count.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+private fun CompactMessageAction(
+    icon: ImageVector,
+    description: String,
+    active: Boolean = false,
+    onClick: () -> Unit
+) {
+    IconButton(onClick = onClick, modifier = Modifier.size(34.dp)) {
+        Icon(
+            icon,
+            contentDescription = description,
+            modifier = Modifier.size(18.dp),
+            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -1032,13 +1106,17 @@ private fun MessageCard(
                 modifier = Modifier.padding(end = 4.dp, top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { copyText(context, message.text) }) {
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать своё сообщение")
-                }
+                CompactMessageAction(
+                    icon = Icons.Outlined.ContentCopy,
+                    description = "Копировать своё сообщение",
+                    onClick = { copyText(context, message.text) }
+                )
                 if (onRetry != null) {
-                    IconButton(onClick = onRetry) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = "Спросить ещё раз")
-                    }
+                    CompactMessageAction(
+                        icon = Icons.Outlined.Refresh,
+                        description = "Спросить ещё раз",
+                        onClick = onRetry
+                    )
                 }
             }
         }
@@ -1048,22 +1126,28 @@ private fun MessageCard(
                 modifier = Modifier.padding(start = 4.dp, top = 2.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { copyText(context, message.text) }) {
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать ответ")
-                }
-                IconButton(onClick = { shareText(context, message.text) }) {
-                    Icon(Icons.Outlined.Share, contentDescription = "Поделиться")
-                }
+                CompactMessageAction(
+                    icon = Icons.Outlined.ContentCopy,
+                    description = "Копировать ответ",
+                    onClick = { copyText(context, message.text) }
+                )
+                CompactMessageAction(
+                    icon = Icons.Outlined.Share,
+                    description = "Поделиться",
+                    onClick = { shareText(context, message.text) }
+                )
                 if (message.text.isNotBlank()) {
-                    IconButton(onClick = { tts.toggle(message.id, message.text) }) {
-                        Icon(
-                            if (tts.speakingMessageId == message.id) Icons.Outlined.StopCircle else Icons.Outlined.VolumeUp,
-                            contentDescription = if (tts.speakingMessageId == message.id) "Остановить озвучку" else "Озвучить"
-                        )
-                    }
-                    IconButton(onClick = onExportText) {
-                        Icon(Icons.Outlined.Download, contentDescription = "Сохранить ответ файлом")
-                    }
+                    CompactMessageAction(
+                        icon = if (tts.speakingMessageId == message.id) Icons.Outlined.StopCircle else Icons.Outlined.VolumeUp,
+                        description = if (tts.speakingMessageId == message.id) "Остановить озвучку" else "Озвучить",
+                        active = tts.speakingMessageId == message.id,
+                        onClick = { tts.toggle(message.id, message.text) }
+                    )
+                    CompactMessageAction(
+                        icon = Icons.Outlined.Download,
+                        description = "Сохранить ответ файлом",
+                        onClick = onExportText
+                    )
                 }
             }
         }
@@ -1132,15 +1216,33 @@ private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        lines.forEach { rawLine ->
+        var index = 0
+        while (index < lines.size) {
+            val rawLine = lines[index]
             val line = rawLine.trimEnd()
             val heading = Regex("^(#{1,6})\\s+(.+)$").matchEntire(line.trimStart())
             val unordered = Regex("^\\s*[-+*]\\s+(.+)$").matchEntire(line)
             val ordered = Regex("^\\s*(\\d+)[.)]\\s+(.+)$").matchEntire(line)
             val quote = Regex("^\\s*>\\s?(.*)$").matchEntire(line)
             val horizontalRule = Regex("^\\s*((-{3,})|(\\*{3,})|(_{3,}))\\s*$").matches(line)
+            val possibleHeader = markdownTableCells(line)
+            val tableStart = possibleHeader.size >= 2 && index + 1 < lines.size &&
+                isMarkdownTableSeparator(lines[index + 1], possibleHeader.size)
 
             when {
+                tableStart -> {
+                    flushParagraph()
+                    val rows = mutableListOf(possibleHeader)
+                    index += 2 // skip header separator
+                    while (index < lines.size) {
+                        val cells = markdownTableCells(lines[index])
+                        if (cells.size != possibleHeader.size) break
+                        rows += cells
+                        index++
+                    }
+                    MarkdownTable(rows = rows, color = color)
+                    continue
+                }
                 line.isBlank() -> flushParagraph()
                 heading != null -> {
                     flushParagraph()
@@ -1215,8 +1317,59 @@ private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color
                 }
                 else -> paragraph += line
             }
+            index++
         }
         flushParagraph()
+    }
+}
+
+private fun markdownTableCells(line: String): List<String> {
+    val trimmed = line.trim()
+    if (!trimmed.contains('|')) return emptyList()
+    val body = trimmed.removePrefix("|").removeSuffix("|")
+    val cells = body.split('|').map { it.trim() }
+    return if (cells.size >= 2) cells else emptyList()
+}
+
+private fun isMarkdownTableSeparator(line: String, columns: Int): Boolean {
+    val cells = markdownTableCells(line)
+    if (cells.size != columns) return false
+    return cells.all { Regex("^:?-{3,}:?$").matches(it.replace(" ", "")) }
+}
+
+@Composable
+private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.graphics.Color) {
+    if (rows.isEmpty()) return
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(vertical = 4.dp)
+        ) {
+            rows.forEachIndexed { rowIndex, row ->
+                Row {
+                    row.forEach { cell ->
+                        SelectionContainer {
+                            Text(
+                                text = markdownInline(cell),
+                                modifier = Modifier.width(160.dp).padding(horizontal = 9.dp, vertical = 8.dp),
+                                color = color,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = if (rowIndex == 0) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+                if (rowIndex < rows.lastIndex) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = if (rowIndex == 0) 0.45f else 0.22f))
+                }
+            }
+        }
     }
 }
 
@@ -1419,7 +1572,14 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
                             FilterChip(
                                 selected = skill.id in state.activeSkillIds,
                                 onClick = { vm.toggleSkill(skill.id) },
-                                label = { Text(if (skill.id in state.activeSkillIds) "Подключён" else "Подключить") },
+                                label = {
+                                    Text(
+                                        if (skill.id in state.activeSkillIds)
+                                            "Подключён к каждому чату"
+                                        else
+                                            "Подключить к каждому чату"
+                                    )
+                                },
                                 leadingIcon = {
                                     Icon(
                                         if (skill.id in state.activeSkillIds) Icons.Outlined.Check else Icons.Outlined.Extension,
@@ -1522,21 +1682,51 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     shape = RoundedCornerShape(22.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(16.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Звук готового ответа", fontWeight = FontWeight.Medium)
-                            Text(
-                                "Короткий сигнал после ответа модели",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Звук готового ответа", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "Сигнал после завершения ответа модели",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
+                        }
+                        if (state.answerSoundEnabled) {
+                            Spacer(Modifier.height(10.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                AnswerSoundChoice.entries.forEach { choice ->
+                                    FilterChip(
+                                        selected = state.answerSoundChoice == choice,
+                                        onClick = { vm.setAnswerSoundChoice(choice) },
+                                        label = { Text(answerSoundLabel(choice)) },
+                                        leadingIcon = if (state.answerSoundChoice == choice) {
+                                            { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Громкость", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text("${state.answerSoundVolume}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Slider(
+                                value = state.answerSoundVolume.toFloat(),
+                                onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
+                                valueRange = 0f..100f
                             )
                         }
-                        Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
                     }
                 }
             }
@@ -2269,6 +2459,13 @@ private fun shareText(context: Context, text: String) {
         putExtra(Intent.EXTRA_TEXT, text)
     }
     context.startActivity(Intent.createChooser(intent, "Поделиться ответом"))
+}
+
+private fun answerSoundLabel(choice: AnswerSoundChoice): String = when (choice) {
+    AnswerSoundChoice.DEFAULT -> "Основной"
+    AnswerSoundChoice.SOFT -> "Мягкий"
+    AnswerSoundChoice.BRIGHT -> "Ясный"
+    AnswerSoundChoice.DOUBLE -> "Двойной"
 }
 
 private fun formatDate(timestamp: Long): String =

@@ -15,6 +15,7 @@ import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
@@ -94,6 +95,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.getOrDefault(UserProfileScope.OFF),
             apiKeyConfigured = !secrets.getApiKey().isNullOrBlank(),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
+            answerSoundChoice = runCatching {
+                AnswerSoundChoice.valueOf(
+                    prefs.getString("answer_sound_choice", AnswerSoundChoice.DEFAULT.name)
+                        ?: AnswerSoundChoice.DEFAULT.name
+                )
+            }.getOrDefault(AnswerSoundChoice.DEFAULT),
+            answerSoundVolume = prefs.getInt("answer_sound_volume", 28).coerceIn(0, 100),
             themeChoice = runCatching {
                 ThemeChoice.valueOf(prefs.getString("theme_choice", ThemeChoice.DYNAMIC.name) ?: ThemeChoice.DYNAMIC.name)
             }.getOrDefault(ThemeChoice.DYNAMIC),
@@ -306,6 +314,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         prefs.edit().putBoolean("answer_sound", enabled).apply()
         _state.value = _state.value.copy(answerSoundEnabled = enabled)
         if (enabled) playReadySound()
+    }
+
+    fun setAnswerSoundChoice(choice: AnswerSoundChoice) {
+        prefs.edit().putString("answer_sound_choice", choice.name).apply()
+        _state.value = _state.value.copy(answerSoundChoice = choice)
+        playReadySound()
+    }
+
+    fun setAnswerSoundVolume(volume: Int) {
+        val clean = volume.coerceIn(0, 100)
+        prefs.edit().putInt("answer_sound_volume", clean).apply()
+        _state.value = _state.value.copy(answerSoundVolume = clean)
     }
 
     fun setThemeChoice(choice: ThemeChoice) {
@@ -1169,13 +1189,33 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun playReadySound() {
-        if (!_state.value.answerSoundEnabled) return
+        val state = _state.value
+        if (!state.answerSoundEnabled) return
         runCatching {
-            val tone = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 28)
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
-            Handler(Looper.getMainLooper()).postDelayed({
-                runCatching { tone.release() }
-            }, 180)
+            val tone = ToneGenerator(
+                AudioManager.STREAM_NOTIFICATION,
+                state.answerSoundVolume.coerceIn(0, 100)
+            )
+            val handler = Handler(Looper.getMainLooper())
+            when (state.answerSoundChoice) {
+                AnswerSoundChoice.DEFAULT -> {
+                    tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
+                    handler.postDelayed({ runCatching { tone.release() } }, 180)
+                }
+                AnswerSoundChoice.SOFT -> {
+                    tone.startTone(ToneGenerator.TONE_PROP_BEEP, 70)
+                    handler.postDelayed({ runCatching { tone.release() } }, 160)
+                }
+                AnswerSoundChoice.BRIGHT -> {
+                    tone.startTone(ToneGenerator.TONE_PROP_BEEP2, 90)
+                    handler.postDelayed({ runCatching { tone.release() } }, 180)
+                }
+                AnswerSoundChoice.DOUBLE -> {
+                    tone.startTone(ToneGenerator.TONE_PROP_ACK, 55)
+                    handler.postDelayed({ runCatching { tone.startTone(ToneGenerator.TONE_PROP_ACK, 55) } }, 105)
+                    handler.postDelayed({ runCatching { tone.release() } }, 260)
+                }
+            }
         }
     }
 

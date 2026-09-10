@@ -44,6 +44,13 @@ enum class ReasoningEffort(val apiValue: String) {
     XHIGH("xhigh")
 }
 
+enum class AnswerSoundChoice {
+    DEFAULT,
+    SOFT,
+    BRIGHT,
+    DOUBLE
+}
+
 enum class ThemeChoice {
     DYNAMIC,
     CUSTOM,
@@ -179,6 +186,8 @@ data class UiState(
     val availableTextModels: List<ModelInfo> = emptyList(),
     val availableImageModels: List<ModelInfo> = emptyList(),
     val answerSoundEnabled: Boolean = true,
+    val answerSoundChoice: AnswerSoundChoice = AnswerSoundChoice.DEFAULT,
+    val answerSoundVolume: Int = 28,
     val themeChoice: ThemeChoice = ThemeChoice.DYNAMIC,
     val customThemeColor: Int = 0xFF6750A4.toInt(),
     val storedFiles: List<StoredFile> = emptyList(),
