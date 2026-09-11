@@ -142,8 +142,10 @@ import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
+import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
@@ -214,6 +216,9 @@ private fun ChatScreen(
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
+        ?: state.connectionProfiles.first()
+    val openRouterProfile = activeProfile.type == ProviderType.OPENROUTER
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
@@ -461,7 +466,7 @@ onBranch = if (message.role == "assistant") {
                     ComposerActionTile(
                         icon = if (state.mode == ChatMode.TEXT) Icons.Outlined.Image else Icons.Outlined.TextFields,
                         label = if (state.mode == ChatMode.TEXT) "Создать" else "Текст",
-                        enabled = !state.isLoading,
+                        enabled = !state.isLoading && (state.mode == ChatMode.IMAGE || openRouterProfile),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             vm.setMode(if (state.mode == ChatMode.TEXT) ChatMode.IMAGE else ChatMode.TEXT)
@@ -484,9 +489,9 @@ onBranch = if (message.role == "assistant") {
                     ComposerToolRow(
                         icon = Icons.Outlined.Language,
                         title = "Поиск в сети",
-                        subtitle = "OpenRouter web search",
+                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого профиля",
                         checked = state.webSearchEnabled,
-                        enabled = true,
+                        enabled = openRouterProfile,
                         onCheckedChange = vm::setWebSearchEnabled
                     )
                 }
@@ -1637,7 +1642,6 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
         }.getOrDefault("—")
     }
-    var key by remember { mutableStateOf("") }
     var storageOpen by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
@@ -1647,7 +1651,13 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
-    var apiExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
+    var connectionsExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
+    var editingProfileId by remember(state.activeConnectionProfileId) { mutableStateOf(state.activeConnectionProfileId) }
+    val editingProfile = state.connectionProfiles.firstOrNull { it.id == editingProfileId }
+        ?: state.connectionProfiles.first()
+    var connectionName by remember(editingProfile.id, editingProfile.name) { mutableStateOf(editingProfile.name) }
+    var connectionUrl by remember(editingProfile.id, editingProfile.baseUrl) { mutableStateOf(editingProfile.baseUrl) }
+    var connectionKey by remember(editingProfile.id) { mutableStateOf("") }
     var customColorText by remember(state.customThemeColor) {
         mutableStateOf("#%06X".format(state.customThemeColor and 0xFFFFFF))
     }
@@ -1944,35 +1954,136 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
 
             item {
                 ExpandableSettingsCard(
-                    title = "API-ключ OpenRouter",
-                    subtitle = if (state.apiKeyConfigured) "Сохранён и зашифрован" else "Ключ ещё не задан",
-                    icon = Icons.Outlined.Settings,
-                    expanded = apiExpanded,
-                    onToggle = { apiExpanded = !apiExpanded }
+                    title = "Профили подключения",
+                    subtitle = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }?.let { profile ->
+                        profile.name + if (state.apiKeyConfigured) " · готов" else " · настройте"
+                    } ?: "OpenRouter",
+                    icon = Icons.Outlined.Language,
+                    expanded = connectionsExpanded,
+                    onToggle = { connectionsExpanded = !connectionsExpanded }
                 ) {
+                    Text(
+                        "OpenRouter сохраняет все расширенные возможности Umnik. Другой профиль использует стандартные /models и /chat/completions и включает только подтверждённые возможности.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(9.dp))
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                        items(state.connectionProfiles, key = { it.id }) { profile ->
+                            FilterChip(
+                                selected = state.activeConnectionProfileId == profile.id,
+                                onClick = {
+                                    editingProfileId = profile.id
+                                    connectionName = profile.name
+                                    connectionUrl = profile.baseUrl
+                                    connectionKey = ""
+                                    vm.selectConnectionProfile(profile.id)
+                                },
+                                label = { Text(profile.name, maxLines = 1) },
+                                leadingIcon = if (state.activeConnectionProfileId == profile.id) {
+                                    { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                } else null
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = {
+                            val id = vm.addCompatibleProfile()
+                            editingProfileId = id
+                            connectionName = "Другой API"
+                            connectionUrl = ""
+                            connectionKey = ""
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Добавить другой")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        if (editingProfile.type == ProviderType.OPENROUTER) "OpenRouter" else "OpenAI-совместимый профиль",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (editingProfile.type != ProviderType.OPENROUTER) {
+                        Spacer(Modifier.height(7.dp))
+                        OutlinedTextField(
+                            value = connectionName,
+                            onValueChange = { connectionName = it.take(60) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Название") },
+                            singleLine = true
+                        )
+                    }
+                    Spacer(Modifier.height(7.dp))
                     OutlinedTextField(
-                        value = key,
-                        onValueChange = { key = it },
+                        value = connectionUrl,
+                        onValueChange = { connectionUrl = it.trim().take(240) },
                         modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text(if (state.apiKeyConfigured) "Новый ключ" else "sk-or-v1-…") },
+                        label = { Text("Адрес API") },
+                        placeholder = {
+                            Text(if (editingProfile.type == ProviderType.OPENROUTER) "https://openrouter.ai/api/v1" else "https://example.com/v1")
+                        },
+                        singleLine = true
+                    )
+                    Text(
+                        if (editingProfile.type == ProviderType.OPENROUTER)
+                            "Адрес можно изменить, если OpenRouter перенесёт API. Обычно менять его не нужно."
+                        else
+                            "Umnik добавит /models и /chat/completions к этому адресу. Для первого варианта используйте HTTPS-адрес.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 5.dp)
+                    )
+                    Spacer(Modifier.height(7.dp))
+                    OutlinedTextField(
+                        value = connectionKey,
+                        onValueChange = { connectionKey = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("API-ключ") },
+                        placeholder = { Text(if (state.apiKeyConfigured && editingProfile.id == state.activeConnectionProfileId) "Ключ уже сохранён · введите только для замены" else "Необязательно для локального API") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true
                     )
                     Spacer(Modifier.height(8.dp))
                     FilledTonalButton(
                         onClick = {
-                            vm.saveApiKey(key.takeIf { it.isNotBlank() })
-                            key = ""
-                            apiExpanded = false
+                            vm.saveConnectionProfile(
+                                editingProfile.id,
+                                connectionName,
+                                connectionUrl,
+                                connectionKey.takeIf { it.isNotBlank() }
+                            )
+                            connectionKey = ""
                         },
-                        enabled = key.isNotBlank(),
+                        enabled = connectionUrl.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Сохранить ключ") }
-                    Spacer(Modifier.height(6.dp))
+                    ) { Text("Сохранить профиль") }
+                    if (editingProfile.type != ProviderType.OPENROUTER) {
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(
+                            onClick = {
+                                vm.deleteConnectionProfile(editingProfile.id)
+                                editingProfileId = "openrouter"
+                                val openRouter = state.connectionProfiles.first { it.id == "openrouter" }
+                                connectionName = openRouter.name
+                                connectionUrl = openRouter.baseUrl
+                                connectionKey = ""
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Удалить этот профиль")
+                        }
+                    }
                     Text(
-                        "Ключ хранится локально и шифруется через Android Keystore.",
+                        "Ключи хранятся локально и шифруются через Android Keystore.",
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                 }
             }

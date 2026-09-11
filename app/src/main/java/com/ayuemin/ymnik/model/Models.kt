@@ -11,6 +11,18 @@ enum class UserProfileScope {
     EVERYWHERE
 }
 
+enum class ProviderType {
+    OPENROUTER,
+    OPENAI_COMPATIBLE
+}
+
+data class ConnectionProfile(
+    val id: String,
+    val name: String,
+    val type: ProviderType,
+    val baseUrl: String
+)
+
 data class UserProfile(
     val name: String = "",
     val gender: String = "",
@@ -170,6 +182,10 @@ data class UiState(
     val skills: List<Skill> = emptyList(),
     val activeSkillIds: Set<String> = emptySet(),
     val mode: ChatMode = ChatMode.TEXT,
+    val connectionProfiles: List<ConnectionProfile> = listOf(
+        ConnectionProfile("openrouter", "OpenRouter", ProviderType.OPENROUTER, "https://openrouter.ai/api/v1")
+    ),
+    val activeConnectionProfileId: String = "openrouter",
     val textModel: String = "openrouter/auto",
     val currentChatTextModel: String? = null,
     val quickTextModels: List<String> = emptyList(),

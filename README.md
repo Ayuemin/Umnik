@@ -1,6 +1,6 @@
 # Umnik
 
-**Umnik** — Android-клиент для OpenRouter: мультимодальный чат, проекты, навыки, файлы и быстрая смена моделей без потери контекста.
+**Umnik** — Android-клиент для OpenRouter и OpenAI-совместимых API: мультимодальный чат, проекты, навыки, файлы и быстрая смена моделей без потери контекста.
 
 [![Android CI](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Ayuemin/Umnik?display_name=tag)](https://github.com/Ayuemin/Umnik/releases/latest)
@@ -33,6 +33,8 @@ A local-first Android client for OpenRouter with multimodal chat, projects, skil
 ## Возможности
 
 - OpenRouter `chat/completions` и выбор моделей;
+- профили подключения: OpenRouter с полным набором возможностей и дополнительные OpenAI-совместимые API;
+- настраиваемый базовый адрес OpenRouter на случай изменения API endpoint;
 - быстрая смена текстовой модели внутри текущего чата без потери текстовой истории;
 - компактный главный экран с быстрым выбором модели, новым чатом и единым меню;
 - панель действий по кнопке `+`: файл, камера, создание изображений, web search и reasoning;

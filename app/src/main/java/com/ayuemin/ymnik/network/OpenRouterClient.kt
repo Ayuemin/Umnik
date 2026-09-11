@@ -50,12 +50,12 @@ class OpenRouterClient(private val context: Context) {
         synchronized(activeCallLock) { activeCall = null }
     }
 
-    suspend fun models(apiKey: String): List<ModelInfo> = withContext(Dispatchers.IO) {
-        getModelInfos(apiKey, "https://openrouter.ai/api/v1/models")
+    suspend fun models(apiKey: String, baseUrl: String = DEFAULT_BASE_URL): List<ModelInfo> = withContext(Dispatchers.IO) {
+        getModelInfos(apiKey, endpoint(baseUrl, "models"))
     }
 
-    suspend fun imageModels(apiKey: String): List<ModelInfo> = withContext(Dispatchers.IO) {
-        getModelInfos(apiKey, "https://openrouter.ai/api/v1/images/models")
+    suspend fun imageModels(apiKey: String, baseUrl: String = DEFAULT_BASE_URL): List<ModelInfo> = withContext(Dispatchers.IO) {
+        getModelInfos(apiKey, endpoint(baseUrl, "images/models"))
     }
 
     private fun getModelInfos(apiKey: String, url: String): List<ModelInfo> {
@@ -112,7 +112,8 @@ class OpenRouterClient(private val context: Context) {
         webSearchEnabled: Boolean = false,
         reasoningEnabled: Boolean = false,
         reasoningEffort: String? = "medium",
-        toolsEnabled: Boolean = true
+        toolsEnabled: Boolean = true,
+        baseUrl: String = DEFAULT_BASE_URL
     ): Result = withContext(Dispatchers.IO) {
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
@@ -147,7 +148,7 @@ class OpenRouterClient(private val context: Context) {
                     })
                 }
             }
-            val responseMessage = requestCompletion(apiKey, payload)
+            val responseMessage = requestCompletion(apiKey, baseUrl, payload)
             val toolCalls = responseMessage.getAsJsonArray("tool_calls")
             if (toolCalls == null || toolCalls.size() == 0) {
                 return@withContext Result(extractText(responseMessage.get("content")), created)
@@ -190,7 +191,8 @@ class OpenRouterClient(private val context: Context) {
         apiKey: String,
         model: String,
         prompt: String,
-        attachments: List<PendingAttachment>
+        attachments: List<PendingAttachment>,
+        baseUrl: String = DEFAULT_BASE_URL
     ): Result = withContext(Dispatchers.IO) {
         val payload = JsonObject().apply {
             addProperty("model", model)
@@ -211,7 +213,7 @@ class OpenRouterClient(private val context: Context) {
         }
 
         val request = Request.Builder()
-            .url("https://openrouter.ai/api/v1/images")
+            .url(endpoint(baseUrl, "images"))
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .header("X-Title", "Umnik Android")
@@ -240,9 +242,9 @@ class OpenRouterClient(private val context: Context) {
         }
     }
 
-    private fun requestCompletion(apiKey: String, payload: JsonObject): JsonObject {
+    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject): JsonObject {
         val request = Request.Builder()
-            .url("https://openrouter.ai/api/v1/chat/completions")
+            .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .header("X-Title", "Umnik Android")
@@ -443,4 +445,14 @@ class OpenRouterClient(private val context: Context) {
         val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
         return PendingAttachment(uri.toString(), name, mime, size)
     }
+
+    private fun endpoint(baseUrl: String, path: String): String {
+        val root = baseUrl.trim().trimEnd('/').ifBlank { DEFAULT_BASE_URL }
+        return "$root/${path.trimStart('/')}"
+    }
+
+    companion object {
+        const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+    }
+
 }
