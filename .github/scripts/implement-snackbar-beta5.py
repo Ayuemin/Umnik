@@ -29,8 +29,8 @@ vm_path = Path("app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
 vm = vm_path.read_text()
 vm = replace_once(
     vm,
-    '''            status = "${clean.substringAfterLast('/')} · ${profile.name}"\n''',
-    '''            status = null\n''',
+    '''            reasoningEnabled = keepReasoning,\n            apiKeyConfigured = isProfileConfigured(profile),\n            status = "${clean.substringAfterLast('/')} · ${profile.name}"\n        )\n        refreshModelCapabilities()\n''',
+    '''            reasoningEnabled = keepReasoning,\n            apiKeyConfigured = isProfileConfigured(profile),\n            status = null\n        )\n        refreshModelCapabilities()\n''',
     "remove quick model snackbar",
 )
 vm_path.write_text(vm)
