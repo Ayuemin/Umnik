@@ -1612,11 +1612,16 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var storageOpen by remember { mutableStateOf(false) }
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
+    var modelsExpanded by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
+    var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
+    var themeExpanded by remember { mutableStateOf(false) }
     var apiExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
-    var customColorExpanded by remember { mutableStateOf(state.themeChoice == ThemeChoice.CUSTOM) }
+    var customColorText by remember(state.customThemeColor) {
+        mutableStateOf("#%06X".format(state.customThemeColor and 0xFFFFFF))
+    }
     var profileName by remember(state.userProfile.name) { mutableStateOf(state.userProfile.name) }
     var profileGender by remember(state.userProfile.gender) { mutableStateOf(state.userProfile.gender) }
     var profileAge by remember(state.userProfile.age) { mutableStateOf(state.userProfile.age) }
@@ -1637,42 +1642,40 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ExpandableSettingsCard(
+                    title = "Модели",
+                    subtitle = state.textModel.substringAfterLast('/'),
+                    icon = Icons.Outlined.TextFields,
+                    expanded = modelsExpanded,
+                    onToggle = { modelsExpanded = !modelsExpanded }
                 ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Модели", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(9.dp))
-                        FilledTonalButton(onClick = { modelPicker = ChatMode.TEXT }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Outlined.TextFields, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Текстовая по умолчанию", fontWeight = FontWeight.Medium)
-                                Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
+                    FilledTonalButton(onClick = { modelPicker = ChatMode.TEXT }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.TextFields, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Текстовая по умолчанию", fontWeight = FontWeight.Medium)
+                            Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
-                        Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(onClick = { quickModelsSettingsOpen = true }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Быстрые модели", fontWeight = FontWeight.Medium)
-                                Text(
-                                    if (state.quickTextModels.isEmpty()) "Только модель по умолчанию" else "Добавлено: ${state.quickTextModels.size}",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(onClick = { quickModelsSettingsOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Быстрые модели", fontWeight = FontWeight.Medium)
+                            Text(
+                                if (state.quickTextModels.isEmpty()) "Только модель по умолчанию" else "Добавлено: ${state.quickTextModels.size}",
+                                style = MaterialTheme.typography.bodySmall
+                            )
                         }
-                        Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(onClick = { modelPicker = ChatMode.IMAGE }, modifier = Modifier.fillMaxWidth()) {
-                            Icon(Icons.Outlined.Image, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Генерация изображений", fontWeight = FontWeight.Medium)
-                                Text(state.imageModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            }
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(onClick = { modelPicker = ChatMode.IMAGE }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(Icons.Outlined.Image, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Генерация изображений", fontWeight = FontWeight.Medium)
+                            Text(state.imageModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                 }
@@ -1758,36 +1761,23 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ExpandableSettingsCard(
+                    title = "Хранилище Umnik",
+                    subtitle = "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
+                    icon = Icons.Outlined.Storage,
+                    expanded = storageExpanded,
+                    onToggle = { storageExpanded = !storageExpanded }
                 ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Storage, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Хранилище Umnik", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Text(
-                                    "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        FilledTonalButton(
-                            onClick = {
-                                vm.refreshStorage()
-                                storageOpen = true
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Открыть хранилище")
-                        }
+                    FilledTonalButton(
+                        onClick = {
+                            vm.refreshStorage()
+                            storageOpen = true
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Открыть хранилище")
                     }
                 }
             }
@@ -1844,72 +1834,81 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ExpandableSettingsCard(
+                    title = "Цветовая схема",
+                    subtitle = if (state.themeChoice == ThemeChoice.CUSTOM) {
+                        "Свой цвет · #%06X".format(state.customThemeColor and 0xFFFFFF)
+                    } else {
+                        themeLabel(state.themeChoice)
+                    },
+                    icon = Icons.Outlined.Palette,
+                    expanded = themeExpanded,
+                    onToggle = { themeExpanded = !themeExpanded }
                 ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Palette, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Text("Цветовая схема", fontWeight = FontWeight.Medium)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(themes) { choice ->
+                            FilterChip(
+                                selected = state.themeChoice == choice,
+                                onClick = { vm.setThemeChoice(choice) },
+                                label = { Text(themeLabel(choice)) },
+                                leadingIcon = if (choice == ThemeChoice.CUSTOM) {
+                                    {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = Color(state.customThemeColor),
+                                            modifier = Modifier.size(14.dp)
+                                        ) {}
+                                    }
+                                } else null
+                            )
+                        }
+                    }
+                    if (state.themeChoice == ThemeChoice.CUSTOM) {
+                        Spacer(Modifier.height(10.dp))
+                        val cleanHex = customColorText.trim().removePrefix("#")
+                        val parsedColor = cleanHex
+                            .takeIf { value ->
+                                value.length == 6 && value.all { ch -> ch.isDigit() || ch.uppercaseChar() in 'A'..'F' }
+                            }
+                            ?.toLongOrNull(16)
+                            ?.let { rgb -> (0xFF000000L or rgb).toInt() }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = CircleShape,
+                                color = Color(parsedColor ?: state.customThemeColor),
+                                modifier = Modifier.size(38.dp)
+                            ) {}
+                            OutlinedTextField(
+                                value = customColorText,
+                                onValueChange = { customColorText = it.trim().uppercase().take(7) },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("HEX-код") },
+                                placeholder = { Text("#6750A4") },
+                                singleLine = true,
+                                isError = customColorText.isNotBlank() && parsedColor == null
+                            )
                         }
                         Spacer(Modifier.height(8.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(themes) { choice ->
-                                FilterChip(
-                                    selected = state.themeChoice == choice,
-                                    onClick = {
-                                        vm.setThemeChoice(choice)
-                                        if (choice == ThemeChoice.CUSTOM) customColorExpanded = true
-                                    },
-                                    label = { Text(themeLabel(choice)) },
-                                    leadingIcon = if (choice == ThemeChoice.CUSTOM) {
-                                        {
-                                            Row(horizontalArrangement = Arrangement.spacedBy(1.dp)) {
-                                                listOf(0xFFE53935, 0xFF7E57C2, 0xFF1E88E5, 0xFF43A047).forEach { c ->
-                                                    Surface(shape = CircleShape, color = Color(c.toInt()), modifier = Modifier.size(5.dp)) {}
-                                                }
-                                            }
-                                        }
-                                    } else null
-                                )
-                            }
+                        FilledTonalButton(
+                            onClick = { parsedColor?.let(vm::setCustomThemeColor) },
+                            enabled = parsedColor != null,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Check, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Применить цвет")
                         }
-                        if (state.themeChoice == ThemeChoice.CUSTOM || customColorExpanded) {
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                "Свой цвет",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(6.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                val palette = listOf(
-                                    0xFFD32F2F.toInt(), 0xFFF57C00.toInt(), 0xFFF9A825.toInt(),
-                                    0xFF388E3C.toInt(), 0xFF00897B.toInt(), 0xFF0288D1.toInt(),
-                                    0xFF1976D2.toInt(), 0xFF5E35B1.toInt(), 0xFF8E24AA.toInt(),
-                                    0xFFC2185B.toInt(), 0xFF6D4C41.toInt(), 0xFF546E7A.toInt()
-                                )
-                                items(palette) { colorValue ->
-                                    FilterChip(
-                                        selected = state.customThemeColor == colorValue,
-                                        onClick = { vm.setCustomThemeColor(colorValue) },
-                                        label = {
-                                            Surface(
-                                                shape = CircleShape,
-                                                color = Color(colorValue),
-                                                modifier = Modifier.size(22.dp)
-                                            ) {}
-                                        },
-                                        leadingIcon = if (state.customThemeColor == colorValue) {
-                                            { Icon(Icons.Outlined.Check, contentDescription = "Выбран") }
-                                        } else null
-                                    )
-                                }
-                            }
-                        }
+                        Text(
+                            "Введите стандартный HEX-код цвета, например #1E88E5.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
                     }
                 }
             }
