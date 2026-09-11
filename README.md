@@ -4,6 +4,7 @@
 
 [![Android CI](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Ayuemin/Umnik?display_name=tag)](https://github.com/Ayuemin/Umnik/releases/latest)
+[![License: GPL v3+](https://img.shields.io/badge/License-GPLv3%2B-blue.svg)](LICENSE)
 
 > Проект создан Александром ([@Ayuemin](https://github.com/Ayuemin)) **в соавторстве с ChatGPT от OpenAI**. Александр определяет идею, требования, UX и тестирует приложение; ChatGPT участвует в проектировании, реализации, отладке и документации. Это описание совместной разработки и не означает, что OpenAI является владельцем, издателем или спонсором проекта.
 
@@ -146,4 +147,8 @@ gradle :app:assembleDebug
 
 ## Лицензия
 
-Лицензия проекта пока не выбрана. До появления файла `LICENSE` публикация исходного кода сама по себе не предоставляет разрешение на копирование, модификацию или распространение проекта за пределами прав, предусмотренных законом.
+Umnik распространяется на условиях **GNU General Public License v3.0 or later** (`GPL-3.0-or-later`). Полный текст лицензии находится в [LICENSE](LICENSE).
+
+Если в конкретном файле явно не указано иное, эти условия распространяются на исходный код, документацию и графические материалы репозитория, включая логотип и скриншоты.
+
+Если вы распространяете изменённую версию Umnik, необходимо соблюдать требования GPL, в том числе предоставить соответствующий исходный код на условиях совместимой версии GNU GPL.
