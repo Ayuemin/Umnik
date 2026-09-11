@@ -1,0 +1,80 @@
+name: Implement image params beta6 once
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/implement-image-params-beta6-once.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  implement:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply beta6 image parameter changes
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/implement-image-params-beta6.py
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Commit implementation
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Ayuemin"
+          git config user.email "105455063+Ayuemin@users.noreply.github.com"
+          git add \
+            app/src/main/java/com/ayuemin/ymnik/model/Models.kt \
+            app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt \
+            app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+            app/build.gradle.kts \
+            CHANGELOG.md
+          git diff --cached --check
+          git diff --cached --quiet && { echo "No implementation changes to commit"; exit 1; }
+          git commit -m "Add model-aware image parameters"
+          git push origin HEAD:main
+
+      - name: Tag beta release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n1)" = "1.2.0-beta.6"
+          if git rev-parse -q --verify refs/tags/v1.2.0-beta.6 >/dev/null; then
+            echo "Tag v1.2.0-beta.6 already exists"
+            exit 1
+          fi
+          git tag v1.2.0-beta.6
+          git push origin v1.2.0-beta.6
+
+      - name: Dispatch signed prerelease build
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-release.yml -R "${{ github.repository }}" -f tag=v1.2.0-beta.6
