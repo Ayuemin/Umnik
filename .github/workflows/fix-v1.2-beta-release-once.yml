@@ -1,0 +1,61 @@
+name: Fix v1.2 beta release once
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/fix-v1.2-beta-release-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Mark beta as prerelease and restore stable latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          NOTES=$(cat <<'EOF'
+          ## Umnik v1.2.0-beta.1
+
+          **Тестовая версия. Не помечена как стабильная.**
+
+          В этой версии переработана работа с подключениями к моделям:
+
+          - раздел «Профили подключения» заменён на более понятный раздел **«Подключения»**;
+          - можно добавлять несколько OpenAI-совместимых подключений, включать и отключать их независимо и удалять ненужные;
+          - встроенный OpenRouter можно отключить, но нельзя удалить;
+          - для OpenRouter теперь можно изменить не только API-ключ, но и адрес API;
+          - быстрые модели могут быть закреплены из разных подключений;
+          - при выборе быстрой модели Umnik сам выбирает нужное подключение, без дополнительного переключателя в чате;
+          - чат запоминает связку подключения и модели;
+          - расширенные возможности OpenRouter (фото, reasoning, web search, tools и генерация изображений) сохранены за OpenRouter, а произвольные OpenAI-совместимые подключения работают через стандартные `/models` и `/chat/completions`.
+
+          ### Что особенно проверить
+
+          Переключение быстрых моделей между разными подключениями, включение/отключение подключений, удаление добавленного подключения, открытие старых чатов и работу фото/reasoning через OpenRouter.
+
+          ### Установка
+
+          Скачайте **Umnik-v1.2.0-beta.1.apk** из Assets. Это APK с постоянной подписью Umnik, поэтому он должен устанавливаться поверх предыдущей версии приложения.
+          EOF
+          )
+
+          BETA_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.2.0-beta.1" --jq '.id')
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$BETA_ID" \
+            -f name='Umnik v1.2.0-beta.1 (тестовая)' \
+            -F prerelease=true \
+            -f make_latest=false \
+            -f body="$NOTES" >/dev/null
+
+          STABLE_ID=$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.0.0" --jq '.id')
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$STABLE_ID" \
+            -f make_latest=true >/dev/null
+
+          gh api "repos/$GITHUB_REPOSITORY/releases/tags/v1.2.0-beta.1" \
+            --jq '{name: .name, prerelease: .prerelease, tag: .tag_name}'
