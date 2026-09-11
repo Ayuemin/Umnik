@@ -49,6 +49,7 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.CropFree
 import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -271,7 +272,7 @@ private fun ChatScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             if (state.messages.isEmpty()) {
-                item { EmptyChatCard(state.mode) }
+                item { EmptyChatWelcome(Modifier.fillParentMaxHeight()) }
             }
             items(state.messages, key = { it.id }) { message ->
                 MessageCard(
@@ -656,7 +657,7 @@ private fun ChatHeader(
                 enabled = !state.isLoading,
                 modifier = Modifier.size(42.dp)
             ) {
-                Icon(Icons.Outlined.Add, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
+                Icon(Icons.Outlined.CropFree, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
             }
 
             Box {
