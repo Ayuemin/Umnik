@@ -1,5 +1,6 @@
 name: Apply Umnik UI refresh
 
+# One-time helper. Remove after the verified UI patch lands.
 on:
   push:
     branches: [ "main" ]
