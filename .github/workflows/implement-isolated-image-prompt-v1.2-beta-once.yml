@@ -1,3 +1,4 @@
+# retry after compile fix
 name: Implement isolated image prompt v1.2 beta once
 
 on:
