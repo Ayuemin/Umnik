@@ -22,6 +22,26 @@ jobs:
       - name: Apply beta3 changes
         run: |
           set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/implement-image-connections-sound-beta3.py')
+          text = path.read_text(encoding='utf-8')
+          needle = 'imageModel = loadImageModelForProfile("openrouter")'
+          replacement = 'imageModel = loadImageModelForProfile(_state.value.imageConnectionProfileId)'
+          indexes = []
+          start = 0
+          while True:
+              i = text.find(needle, start)
+              if i < 0:
+                  break
+              indexes.append(i)
+              start = i + len(needle)
+          if len(indexes) < 3:
+              raise RuntimeError(f'Expected at least 3 helper occurrences, found {len(indexes)}')
+          for i in reversed(indexes[-2:]):
+              text = text[:i] + replacement + text[i + len(needle):]
+          path.write_text(text, encoding='utf-8')
+          PY
           python3 .github/scripts/implement-image-connections-sound-beta3.py
 
       - name: Set up JDK 17
