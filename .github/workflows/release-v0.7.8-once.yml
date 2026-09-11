@@ -20,104 +20,30 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Apply UI refinements and bump version
+      - name: Patch chat screen
         shell: bash
         run: |
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-
-          # Make the empty-state welcome smaller, subtler and truly centered.
-          welcome = Path("app/src/main/java/com/ayuemin/ymnik/ui/EmptyChatWelcome.kt")
-          welcome.write_text('''package com.ayuemin.ymnik.ui
-
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.size
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.unit.dp
-import com.ayuemin.ymnik.R
-
-@Composable
-internal fun EmptyChatWelcome(modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Icon(
-            painter = painterResource(R.drawable.ic_umnik_mark),
-            contentDescription = null,
-            modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = "Чем могу помочь?",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
-}
-''', encoding="utf-8")
-
-          # Replace the ambiguous crop-frame icon with an explicit new-chat icon,
-          # and let the welcome block fill the whole empty chat viewport.
-          app = Path("app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt")
-          text = app.read_text(encoding="utf-8")
-          text = text.replace(
-              "import androidx.compose.material.icons.outlined.CropFree\n",
-              "import androidx.compose.material.icons.outlined.AddComment\n",
-              1,
-          )
-          text = text.replace(
-              "item { EmptyChatWelcome(Modifier.fillParentMaxHeight()) }",
-              "item { EmptyChatWelcome(Modifier.fillParentMaxSize()) }",
-              1,
-          )
-          text = text.replace(
-              'Icon(Icons.Outlined.CropFree, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))',
-              'Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))',
-              1,
-          )
-          if "Icons.Outlined.CropFree" in text:
-              raise SystemExit("Old new-chat icon is still present")
-          if "fillParentMaxHeight()" in text and "EmptyChatWelcome" in text:
-              raise SystemExit("Empty state was not fully centered")
-          app.write_text(text, encoding="utf-8")
-
-          # Version bump.
-          gradle = Path("app/build.gradle.kts")
-          text = gradle.read_text(encoding="utf-8")
-          text = text.replace("// Umnik v0.7.7", "// Umnik v0.7.8", 1)
-          text = text.replace("versionCode = 24", "versionCode = 25", 1)
-          text = text.replace('versionName = "0.7.7"', 'versionName = "0.7.8"', 1)
-          gradle.write_text(text, encoding="utf-8")
-
-          # Changelog entry.
-          changelog = Path("CHANGELOG.md")
-          text = changelog.read_text(encoding="utf-8")
-          marker = "## Unreleased\n"
-          entry = '''## Unreleased
-
-## v0.7.8 - 2026-09-11
-
-- Логотип и вопрос «Чем могу помочь?» на пустом экране уменьшены и сделаны менее акцентными.
-- Пустое состояние теперь центрируется одновременно по ширине и по высоте свободной области чата.
-- Значок нового чата заменён на понятную иконку сообщения с плюсом.
-'''
-          if marker not in text:
-              raise SystemExit("CHANGELOG marker not found")
-          text = text.replace(marker, entry, 1)
-          changelog.write_text(text, encoding="utf-8")
+          path = Path("app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt")
+          text = path.read_text(encoding="utf-8")
+          old_import = "import androidx.compose.material.icons.outlined.CropFree\n"
+          new_import = "import androidx.compose.material.icons.outlined.AddComment\n"
+          if old_import not in text:
+              raise SystemExit("CropFree import not found")
+          text = text.replace(old_import, new_import, 1)
+          old_empty = "item { EmptyChatWelcome(Modifier.fillParentMaxHeight()) }"
+          new_empty = "item { EmptyChatWelcome(Modifier.fillParentMaxSize()) }"
+          if old_empty not in text:
+              raise SystemExit("Empty chat modifier not found")
+          text = text.replace(old_empty, new_empty, 1)
+          old_icon = 'Icon(Icons.Outlined.CropFree, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))'
+          new_icon = 'Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))'
+          if old_icon not in text:
+              raise SystemExit("New chat icon call not found")
+          text = text.replace(old_icon, new_icon, 1)
+          path.write_text(text, encoding="utf-8")
           PY
 
       - name: Set up JDK 17
@@ -140,16 +66,14 @@ internal fun EmptyChatWelcome(modifier: Modifier = Modifier) {
       - name: Verify debug build
         run: gradle --no-daemon :app:assembleDebug --stacktrace
 
-      - name: Commit release changes
+      - name: Commit UI change
         shell: bash
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ayuemin/ymnik/ui/EmptyChatWelcome.kt \
-                  app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
-                  app/build.gradle.kts CHANGELOG.md
-          git commit -m "Refine empty chat UI for v0.7.8"
+          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
+          git commit -m "Center empty chat and clarify new chat action"
           git push origin HEAD:main
 
       - name: Create v0.7.8 tag
