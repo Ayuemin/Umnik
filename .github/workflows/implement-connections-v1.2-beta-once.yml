@@ -46,12 +46,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -f .github/workflows/implement-connections-v1.2-beta-once.yml
-          rm -f .github/scripts/implement-connections-v1.2.py
-          rm -f .github/workflows/release-v1.1.1-once.yml
           git config user.name "Ayuemin"
           git config user.email "105455063+Ayuemin@users.noreply.github.com"
-          git add -A
+          git add \
+            app/src/main/java/com/ayuemin/ymnik/model/Models.kt \
+            app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+            app/build.gradle.kts
           git commit -m "Add multi-connection quick model routing"
           git push origin HEAD:main
 
