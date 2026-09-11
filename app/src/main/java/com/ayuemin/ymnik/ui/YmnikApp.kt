@@ -1,8 +1,10 @@
 package com.ayuemin.ymnik.ui
 
+import android.Manifest
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
@@ -62,6 +64,7 @@ import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
@@ -135,8 +138,10 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
@@ -225,6 +230,14 @@ private fun ChatScreen(
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
+    val voiceRecorder = remember(context) { WavRecorder(context) }
+    var isRecording by remember { mutableStateOf(false) }
+    var recordingStartedAt by remember { mutableStateOf(0L) }
+    var recordingSeconds by remember { mutableIntStateOf(0) }
+
+    DisposableEffect(voiceRecorder) {
+        onDispose { voiceRecorder.cancel() }
+    }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
         ?: state.connectionProfiles.first()
     val openRouterProfile = activeProfile.type == ProviderType.OPENROUTER
@@ -233,6 +246,7 @@ private fun ChatScreen(
     val imageConnectionAvailable = imageProfile.id !in state.disabledConnectionIds
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
+    val microphoneAvailable = !imagePromptMode && activeProfile.type == ProviderType.OPENROUTER && textModelInfo?.accepts("audio") == true
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
     val cameraAvailable = if (imagePromptMode) {
         imageProfile.type == ProviderType.OPENROUTER && imageModelInfo?.accepts("image") != false
@@ -247,6 +261,38 @@ private fun ChatScreen(
         ?.let { projectId -> state.projects.firstOrNull { it.id == projectId }?.skillIds }
         .orEmpty()
     val activeSkillCount = (state.activeSkillIds + currentProjectSkillIds).size
+
+    fun startVoiceRecording() {
+        if (!microphoneAvailable || state.isLoading || state.requestActive || imagePromptMode) return
+        runCatching { voiceRecorder.start() }
+            .onSuccess {
+                recordingStartedAt = System.currentTimeMillis()
+                recordingSeconds = 0
+                isRecording = true
+            }
+            .onFailure {
+                Toast.makeText(context, it.message ?: "Не удалось начать запись", Toast.LENGTH_SHORT).show()
+            }
+    }
+
+    val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startVoiceRecording()
+        else Toast.makeText(context, "Для голосового сообщения нужен доступ к микрофону", Toast.LENGTH_SHORT).show()
+    }
+
+    LaunchedEffect(isRecording, recordingStartedAt) {
+        while (isRecording) {
+            recordingSeconds = ((System.currentTimeMillis() - recordingStartedAt) / 1000L).toInt().coerceAtLeast(0)
+            if (recordingSeconds >= 600) {
+                val file = voiceRecorder.stop()
+                isRecording = false
+                file?.let { vm.addVoiceRecording(it.absolutePath) }
+                Toast.makeText(context, "Достигнут максимум записи 10 минут", Toast.LENGTH_SHORT).show()
+                break
+            }
+            delay(250)
+        }
+    }
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         uris.forEach { uri -> vm.addAttachment(uri, imagePromptMode) }
@@ -405,6 +451,18 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
+                if (isRecording) {
+                    RecordingStatusBar(
+                        seconds = recordingSeconds,
+                        onCancel = {
+                            voiceRecorder.cancel()
+                            isRecording = false
+                            recordingStartedAt = 0L
+                            recordingSeconds = 0
+                        }
+                    )
+                }
+
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -449,31 +507,81 @@ onBranch = if (message.role == "assistant") {
                         }
                     },
                     trailingIcon = {
-                        IconButton(
-                            onClick = {
-                                if (state.requestActive) {
-                                    vm.stopGeneration()
-                                } else if (imagePromptMode) {
-                                    if (vm.sendImagePrompt(text)) {
-                                        text = ""
-                                        imagePromptMode = false
-                                    }
-                                } else {
-                                    vm.send(text)
-                                    text = ""
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (!imagePromptMode) {
+                                IconButton(
+                                    onClick = {
+                                        if (isRecording) {
+                                            val file = voiceRecorder.stop()
+                                            isRecording = false
+                                            recordingStartedAt = 0L
+                                            recordingSeconds = 0
+                                            file?.let { vm.addVoiceRecording(it.absolutePath) }
+                                        } else if (microphoneAvailable) {
+                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                                startVoiceRecording()
+                                            } else {
+                                                microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                            }
+                                        }
+                                    },
+                                    enabled = isRecording || (!state.isLoading && !state.requestActive && microphoneAvailable),
+                                    modifier = Modifier.size(42.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Mic,
+                                        contentDescription = when {
+                                            isRecording -> "Остановить запись и прикрепить"
+                                            microphoneAvailable -> "Записать голосовое сообщение"
+                                            else -> "Выбранная модель не поддерживает аудио"
+                                        },
+                                        tint = when {
+                                            isRecording -> MaterialTheme.colorScheme.error
+                                            microphoneAvailable -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
+                                        }
+                                    )
                                 }
-                            },
-                            enabled = state.requestActive || (!state.isLoading && (
-                                text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
-                            ))
-                        ) {
-                            if (state.requestActive) {
-                                WorkingStopIcon()
-                            } else {
-                                Icon(
-                                    Icons.Outlined.Send,
-                                    contentDescription = if (imagePromptMode) "Создать изображение" else "Отправить"
-                                )
+                            }
+                            IconButton(
+                                onClick = {
+                                    if (state.requestActive) {
+                                        vm.stopGeneration()
+                                    } else if (isRecording) {
+                                        val file = voiceRecorder.stop()
+                                        isRecording = false
+                                        recordingStartedAt = 0L
+                                        recordingSeconds = 0
+                                        if (file != null && vm.addVoiceRecording(file.absolutePath)) {
+                                            vm.send(text)
+                                            text = ""
+                                        }
+                                    } else if (imagePromptMode) {
+                                        if (vm.sendImagePrompt(text)) {
+                                            text = ""
+                                            imagePromptMode = false
+                                        }
+                                    } else {
+                                        vm.send(text)
+                                        text = ""
+                                    }
+                                },
+                                enabled = state.requestActive || isRecording || (!state.isLoading && (
+                                    text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
+                                ))
+                            ) {
+                                if (state.requestActive) {
+                                    WorkingStopIcon()
+                                } else {
+                                    Icon(
+                                        Icons.Outlined.Send,
+                                        contentDescription = when {
+                                            isRecording -> "Остановить запись и отправить"
+                                            imagePromptMode -> "Создать изображение"
+                                            else -> "Отправить"
+                                        }
+                                    )
+                                }
                             }
                         }
                     },
@@ -578,6 +686,48 @@ onBranch = if (message.role == "assistant") {
         )
     }
 }
+
+@Composable
+private fun RecordingStatusBar(seconds: Int, onCancel: () -> Unit) {
+    val transition = rememberInfiniteTransition(label = "voiceRecording")
+    val pulse by transition.animateFloat(
+        initialValue = 0.82f,
+        targetValue = 1.12f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 620),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "voicePulse"
+    )
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.62f)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.Mic,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp).scale(pulse),
+                tint = MaterialTheme.colorScheme.error
+            )
+            Spacer(Modifier.width(9.dp))
+            Text(
+                "Запись ${formatRecordingDuration(seconds)}",
+                modifier = Modifier.weight(1f),
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            TextButton(onClick = onCancel) { Text("Отмена") }
+        }
+    }
+}
+
+private fun formatRecordingDuration(seconds: Int): String =
+    "%02d:%02d".format(seconds.coerceAtLeast(0) / 60, seconds.coerceAtLeast(0) % 60)
 
 @Composable
 private fun ComposerInlineIndicator(

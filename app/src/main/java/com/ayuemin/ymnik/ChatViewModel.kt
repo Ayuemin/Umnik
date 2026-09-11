@@ -1273,7 +1273,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             else false to "PDF через произвольный совместимый API пока не включён: его формат передачи зависит от сервера"
         }
         if (mime.startsWith("image/")) return if (info?.accepts("image") == true) true to null else false to "Выбранная модель не принимает изображения"
-        if (mime.startsWith("audio/")) return if (info?.accepts("audio") == true) true to null else false to "Выбранная модель не принимает аудио"
+        if (mime.startsWith("audio/")) return if (activeConnectionProfile().type == ProviderType.OPENROUTER && info?.accepts("audio") == true) true to null else false to "Выбранная модель не принимает аудио"
         if (mime.startsWith("video/")) return if (info?.accepts("video") == true) true to null else false to "Выбранная модель не принимает видео"
         return if (info?.accepts("file") == true) true to null else false to "Выбранная модель не принимает этот тип файла"
     }
@@ -1385,6 +1385,39 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 File(localPath).delete()
                 _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить фото")
             }
+    }
+
+    fun addVoiceRecording(localPath: String): Boolean {
+        if (_state.value.isLoading || _state.value.requestActive) {
+            File(localPath).delete()
+            return false
+        }
+        val file = File(localPath)
+        if (!file.isFile || file.length() <= 44L) {
+            file.delete()
+            _state.value = _state.value.copy(status = "Голосовое сообщение не записалось")
+            return false
+        }
+        if (file.length() > 25L * 1024L * 1024L) {
+            file.delete()
+            _state.value = _state.value.copy(status = "Голосовое сообщение превышает ограничение 25 МБ")
+            return false
+        }
+        val attachment = PendingAttachment(
+            uri = "voice://${UUID.randomUUID()}",
+            name = "Голосовое сообщение.wav",
+            mimeType = "audio/wav",
+            size = file.length(),
+            localPath = file.absolutePath
+        )
+        val (allowed, reason) = attachmentAllowed(attachment)
+        if (!allowed) {
+            file.delete()
+            _state.value = _state.value.copy(status = reason ?: "Выбранная модель не принимает голос")
+            return false
+        }
+        _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+        return true
     }
 
     fun removeAttachment(uri: String) {
@@ -1525,6 +1558,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             text = clean.ifBlank {
                 when {
                     mode == ChatMode.IMAGE -> "Создай вариант приложенного изображения"
+                    pending.isNotEmpty() && pending.all { it.mimeType.startsWith("audio/") } && persistentChatFiles.isEmpty() -> "Голосовое сообщение"
                     persistentChatFiles.isNotEmpty() -> "[Файлы чата]"
                     else -> "[Вложения]"
                 }
@@ -1912,12 +1946,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun cleanupTempAttachments(items: List<PendingAttachment>) {
-        val cameraRoot = File(context.cacheDir, "camera")
+        val tempRoots = listOf(File(context.cacheDir, "camera"), File(context.cacheDir, "voice"))
+            .mapNotNull { runCatching { it.canonicalFile }.getOrNull() }
         items.mapNotNull { it.localPath }.forEach { path ->
             runCatching {
                 val file = File(path).canonicalFile
-                val root = cameraRoot.canonicalFile
-                if (file.path.startsWith(root.path + File.separator)) file.delete()
+                if (tempRoots.any { root -> file.path.startsWith(root.path + File.separator) }) file.delete()
             }
         }
     }

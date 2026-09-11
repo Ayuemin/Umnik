@@ -271,9 +271,14 @@ class OpenRouterClient(private val context: Context) {
     private fun userMessage(text: String, attachments: List<PendingAttachment>): JsonObject {
         if (attachments.isEmpty()) return message("user", text)
         val parts = JsonArray()
+        val fallbackText = if (attachments.isNotEmpty() && attachments.all { it.mimeType.startsWith("audio/") }) {
+            "Ответь на голосовое сообщение."
+        } else {
+            "Изучи вложения и помоги мне с ними."
+        }
         parts.add(JsonObject().apply {
             addProperty("type", "text")
-            addProperty("text", text.ifBlank { "Изучи вложения и помоги мне с ними." })
+            addProperty("text", text.ifBlank { fallbackText })
         })
         attachments.forEach { attachment ->
             val bytes = readAttachment(attachment)
