@@ -182,6 +182,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_KIND=(--prerelease)
+          else
+            RELEASE_KIND=(--latest)
+          fi
           gh release create "$RELEASE_TAG" \
             "dist/Umnik-v${VERSION}.apk" \
             "dist/Umnik-v${VERSION}.apk.sha256" \
@@ -189,4 +194,4 @@ jobs:
             --verify-tag \
             --title "Umnik v${VERSION}" \
             --notes-file dist/release-notes.md \
-            --latest
+            "${RELEASE_KIND[@]}"
