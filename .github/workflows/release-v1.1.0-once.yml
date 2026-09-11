@@ -20,11 +20,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply provider profiles patch
-        shell: bash
-        run: |
-          set -euo pipefail
-          base64 -d .github/patches/v1.1.0.b64 | gzip -d > /tmp/prepare_v1_1_0.py
-          python3 /tmp/prepare_v1_1_0.py
+        run: python3 .github/patches/prepare-v1.1.0.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
