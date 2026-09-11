@@ -1,0 +1,39 @@
+name: Add GPL-3.0-or-later license
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/add-gpl-license-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  add-license:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download official GNU GPL v3 text
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            https://www.gnu.org/licenses/gpl-3.0.txt \
+            --output LICENSE
+          grep -q "GNU GENERAL PUBLIC LICENSE" LICENSE
+          grep -q "Version 3, 29 June 2007" LICENSE
+
+      - name: Commit license
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add LICENSE
+          git commit -m "Add GPL-3.0-or-later license"
+          git push origin HEAD:main
