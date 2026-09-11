@@ -20,7 +20,10 @@ jobs:
           fetch-depth: 0
 
       - name: Apply provider profiles patch
-        run: python3 .github/patches/prepare-v1.1.0.py
+        run: |
+          python3 .github/patches/fix-prepare-v1.1.0.py
+          python3 .github/patches/prepare-v1.1.0.py
+          python3 .github/patches/finish-v1.1.0.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
