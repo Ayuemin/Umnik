@@ -25,33 +25,20 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           from pathlib import Path
-          from textwrap import dedent
+          from textwrap import dedent, indent
 
           app = Path("app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt")
           text = app.read_text(encoding="utf-8")
 
-          call_old = dedent('''
-                              onExportText = {
-                                  val file = vm.exportMessage(message)
-                                  fileToSave = file
-                                  save.launch(file.name)
-                              },
-                              onRetry = if (
-          ''').lstrip('\n')
-          call_new = dedent('''
-                              onExportText = {
-                                  val file = vm.exportMessage(message)
-                                  fileToSave = file
-                                  save.launch(file.name)
-                              },
+          retry_marker = "                    onRetry = if ("
+          branch_call = dedent('''
                               onBranch = if (message.role == "assistant") {
                                   { vm.branchFromMessage(message.id) }
                               } else null,
-                              onRetry = if (
           ''').lstrip('\n')
-          if call_old not in text:
-              raise SystemExit("MessageCard call marker not found")
-          text = text.replace(call_old, call_new, 1)
+          if retry_marker not in text:
+              raise SystemExit("onRetry call marker not found")
+          text = text.replace(retry_marker, branch_call + retry_marker, 1)
 
           start_marker = '@Composable\nprivate fun MessageCard('
           end_marker = '\nprivate enum class MessagePartKind'
@@ -201,8 +188,7 @@ jobs:
           if switch_marker not in vm_text:
               raise SystemExit("switchChat marker not found")
 
-          branch_method = dedent(r'''
-
+          branch_body = dedent(r'''
               fun branchFromMessage(messageId: String): String? {
                   cleanupTempAttachments(_state.value.pendingAttachments)
                   if (_state.value.isLoading) return null
@@ -275,12 +261,15 @@ jobs:
                   )
                   return branch.id
               }
-          ''')
+          ''').strip('\n')
+          branch_method = '\n' + indent(branch_body, '    ') + '\n'
           vm_text = vm_text.replace(switch_marker, branch_method + switch_marker, 1)
           vm.write_text(vm_text, encoding="utf-8")
 
           gradle = Path("app/build.gradle.kts")
           g = gradle.read_text(encoding="utf-8")
+          if 'versionName = "0.7.8"' not in g:
+              raise SystemExit("Expected v0.7.8 before release bump")
           g = g.replace("// Umnik v0.7.8", "// Umnik v0.7.9", 1)
           g = g.replace("versionCode = 25", "versionCode = 26", 1)
           g = g.replace('versionName = "0.7.8"', 'versionName = "0.7.9"', 1)
