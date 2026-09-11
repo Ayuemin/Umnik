@@ -171,6 +171,11 @@ private fun quickModelConnectionId(ref: String, fallback: String = "openrouter")
 private fun quickModelId(ref: String): String =
     if (QUICK_MODEL_SEPARATOR in ref) ref.substringAfter(QUICK_MODEL_SEPARATOR) else ref
 
+private fun imageParameterSummary(state: UiState): String =
+    listOfNotNull(state.imageAspectRatio, state.imageResolution)
+        .ifEmpty { listOf("Авто") }
+        .joinToString(" · ")
+
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
@@ -447,7 +452,7 @@ onBranch = if (message.role == "assistant") {
                             Column(Modifier.weight(1f)) {
                                 Text("Генерация изображения", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "Опишите задачу. Модель: ${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · ${imageProfile.name}",
+                                    "Опишите задачу · ${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · ${imageParameterSummary(state)}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 2,
@@ -1918,6 +1923,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
+    var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
     var storageExpanded by remember { mutableStateOf(false) }
@@ -2008,6 +2014,23 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             Text("Выбрать модель", fontWeight = FontWeight.Medium)
                             Text(
                                 state.imageModel,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(
+                        onClick = { imageParametersOpen = true },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Settings, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Параметры изображения", fontWeight = FontWeight.Medium)
+                            Text(
+                                imageParameterSummary(state),
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
@@ -2432,6 +2455,89 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     if (quickModelsSettingsOpen) {
         QuickModelsSettingsDialog(state = state, vm = vm, onDismiss = { quickModelsSettingsOpen = false })
     }
+    if (imageParametersOpen) {
+        ImageParametersDialog(state = state, vm = vm, onDismiss = { imageParametersOpen = false })
+    }
+}
+
+@Composable
+private fun ImageParametersDialog(
+    state: UiState,
+    vm: ChatViewModel,
+    onDismiss: () -> Unit
+) {
+    val info = state.availableImageModels.firstOrNull { it.id == state.imageModel }
+    val aspectRatios = info?.parameterValues("aspect_ratio").orEmpty()
+    val resolutions = info?.parameterValues("resolution").orEmpty()
+    val imageProfile = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }
+
+    LaunchedEffect(state.imageConnectionProfileId, state.imageModel) {
+        if (state.imageModel.isNotBlank() && info == null && !state.isLoading) {
+            vm.refreshModels(ChatMode.IMAGE)
+        }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Параметры изображения") },
+        text = {
+            Column {
+                Text(
+                    "${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · ${imageProfile?.name ?: "Подключение"}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(14.dp))
+                Text("Соотношение сторон", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(listOf("Авто") + aspectRatios) { option ->
+                        val auto = option == "Авто"
+                        FilterChip(
+                            selected = if (auto) state.imageAspectRatio == null else state.imageAspectRatio == option,
+                            onClick = { vm.setImageAspectRatio(if (auto) null else option) },
+                            label = { Text(option) }
+                        )
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Text("Разрешение", fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(6.dp))
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    items(listOf("Авто") + resolutions) { option ->
+                        val auto = option == "Авто"
+                        FilterChip(
+                            selected = if (auto) state.imageResolution == null else state.imageResolution == option,
+                            onClick = { vm.setImageResolution(if (auto) null else option) },
+                            label = { Text(option) }
+                        )
+                    }
+                }
+                if (aspectRatios.isEmpty() && resolutions.isEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        if (imageProfile?.type == ProviderType.OPENROUTER)
+                            "Модель не сообщила доступные параметры размера. Umnik оставит режим «Авто»."
+                        else
+                            "Совместимый API не сообщает Umnik единый список параметров размера. Для него используется режим «Авто».",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Готово") }
+        },
+        dismissButton = {
+            if (state.imageAspectRatio != null || state.imageResolution != null) {
+                TextButton(onClick = {
+                    vm.setImageAspectRatio(null)
+                    vm.setImageResolution(null)
+                }) { Text("Сбросить") }
+            }
+        }
+    )
 }
 
 @Composable

@@ -37,9 +37,11 @@ data class ModelInfo(
     val id: String,
     val inputModalities: Set<String> = setOf("text"),
     val supportedParameters: Set<String> = emptySet(),
-    val reasoningEfforts: Set<String> = emptySet()
+    val reasoningEfforts: Set<String> = emptySet(),
+    val parameterOptions: Map<String, List<String>> = emptyMap()
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
+    fun parameterValues(parameter: String): List<String> = parameterOptions[parameter.lowercase()].orEmpty()
     val supportsReasoning: Boolean
         get() = "reasoning" in supportedParameters || "reasoning_effort" in supportedParameters
     val supportsReasoningEffort: Boolean
@@ -194,6 +196,8 @@ data class UiState(
     val quickTextModels: List<String> = emptyList(),
     val imageConnectionProfileId: String = "openrouter",
     val imageModel: String = "bytedance-seed/seedream-4.5",
+    val imageAspectRatio: String? = null,
+    val imageResolution: String? = null,
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,

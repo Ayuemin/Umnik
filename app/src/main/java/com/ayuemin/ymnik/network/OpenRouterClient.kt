@@ -94,7 +94,34 @@ class OpenRouterClient(private val context: Context) {
                         ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
                         ?.toSet()
                         .orEmpty()
-                    ModelInfo(id, inputModalities, supportedParameters, reasoningEfforts)
+                    val parameterOptions = item.get("supported_parameters")
+                        ?.takeIf { it.isJsonObject }
+                        ?.asJsonObject
+                        ?.entrySet()
+                        ?.mapNotNull { (name, descriptor) ->
+                            val values = descriptor.takeIf { it.isJsonObject }
+                                ?.asJsonObject
+                                ?.get("values")
+                                ?.takeIf { it.isJsonArray }
+                                ?.asJsonArray
+                                ?.mapNotNull { value ->
+                                    value.takeIf { it.isJsonPrimitive }
+                                        ?.asString
+                                        ?.takeIf { it.isNotBlank() }
+                                }
+                                .orEmpty()
+                                .distinct()
+                            if (values.isEmpty()) null else name.lowercase() to values
+                        }
+                        ?.toMap()
+                        .orEmpty()
+                    ModelInfo(
+                        id = id,
+                        inputModalities = inputModalities,
+                        supportedParameters = supportedParameters,
+                        reasoningEfforts = reasoningEfforts,
+                        parameterOptions = parameterOptions
+                    )
                 }
                 ?.distinctBy { it.id }
                 ?.sortedBy { it.id }
@@ -192,11 +219,15 @@ class OpenRouterClient(private val context: Context) {
         model: String,
         prompt: String,
         attachments: List<PendingAttachment>,
-        baseUrl: String = DEFAULT_BASE_URL
+        baseUrl: String = DEFAULT_BASE_URL,
+        aspectRatio: String? = null,
+        resolution: String? = null
     ): Result = withContext(Dispatchers.IO) {
         val payload = JsonObject().apply {
             addProperty("model", model)
             addProperty("prompt", prompt.ifBlank { "Создай вариант приложенного изображения." })
+            aspectRatio?.takeIf { it.isNotBlank() }?.let { addProperty("aspect_ratio", it) }
+            resolution?.takeIf { it.isNotBlank() }?.let { addProperty("resolution", it) }
 
             val references = JsonArray()
             attachments.filter { it.mimeType.startsWith("image/") }.forEach { attachment ->

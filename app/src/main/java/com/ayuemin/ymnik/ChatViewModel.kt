@@ -85,6 +85,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ?: "openrouter"
     private val initialImageProfile = initialProfiles.firstOrNull { it.id == initialImageProfileId }
         ?: defaultOpenRouterProfile()
+    private val initialImageModel = loadImageModelForProfile(initialImageProfile.id)
+    private val initialImageAspectRatio = loadImageParameter("aspect_ratio", initialImageProfile.id, initialImageModel)
+    private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
 
     private val _state = MutableStateFlow(
         UiState(
@@ -102,7 +105,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatTextModel = initialChat.textModelOverride.takeIf { initialChat.connectionProfileId == null || initialChat.connectionProfileId == initialProfileId },
             quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
             imageConnectionProfileId = initialImageProfileId,
-            imageModel = loadImageModelForProfile(initialImageProfile.id),
+            imageModel = initialImageModel,
+            imageAspectRatio = initialImageAspectRatio,
+            imageResolution = initialImageResolution,
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
             reasoningEffort = runCatching {
@@ -251,9 +256,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             } ?: _state.value.connectionProfiles.firstOrNull { it.id !in disabled && it.id != profileId }
             if (fallbackImage != null) {
                 prefs.edit().putString("image_connection_profile", fallbackImage.id).apply()
+                val fallbackImageModel = loadImageModelForProfile(fallbackImage.id)
                 _state.value = _state.value.copy(
                     imageConnectionProfileId = fallbackImage.id,
-                    imageModel = loadImageModelForProfile(fallbackImage.id),
+                    imageModel = fallbackImageModel,
+                    imageAspectRatio = loadImageParameter("aspect_ratio", fallbackImage.id, fallbackImageModel),
+                    imageResolution = loadImageParameter("resolution", fallbackImage.id, fallbackImageModel),
                     availableImageModels = emptyList()
                 )
                 if (isProfileConfigured(fallbackImage)) refreshModelCapabilities()
@@ -311,13 +319,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         saveConnectionProfiles(profiles)
         prefs.edit().putStringSet("disabled_connection_profiles", disabled).apply()
         chatsRepository.save(chats)
+        val nextImageModel = loadImageModelForProfile(nextImageProfileId)
         _state.value = _state.value.copy(
             connectionProfiles = profiles,
             disabledConnectionIds = disabled,
             chats = chats,
             quickTextModels = loadAllQuickTextModels(profiles, disabled),
             imageConnectionProfileId = nextImageProfileId,
-            imageModel = loadImageModelForProfile(nextImageProfileId),
+            imageModel = nextImageModel,
+            imageAspectRatio = loadImageParameter("aspect_ratio", nextImageProfileId, nextImageModel),
+            imageResolution = loadImageParameter("resolution", nextImageProfileId, nextImageModel),
             availableImageModels = if (nextImageProfileId != _state.value.imageConnectionProfileId) emptyList() else _state.value.availableImageModels,
             modelCatalogConnectionId = null,
             modelCatalog = emptyList(),
@@ -405,12 +416,47 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .putString("image_connection_profile", profile.id)
             .putString(profilePrefKey("image_model", profile.id), clean)
             .apply()
+        val available = if (_state.value.modelCatalogConnectionId == profile.id) _state.value.modelCatalog else emptyList()
+        val info = available.firstOrNull { it.id == clean }
         _state.value = _state.value.copy(
             imageConnectionProfileId = profile.id,
             imageModel = clean,
-            availableImageModels = if (_state.value.modelCatalogConnectionId == profile.id) _state.value.modelCatalog else emptyList(),
+            imageAspectRatio = validatedImageParameter("aspect_ratio", profile.id, clean, info),
+            imageResolution = validatedImageParameter("resolution", profile.id, clean, info),
+            availableImageModels = available,
             status = "${clean.substringAfterLast('/')} · ${profile.name}"
         )
+    }
+
+    fun setImageAspectRatio(value: String?) {
+        setImageParameter("aspect_ratio", value)
+    }
+
+    fun setImageResolution(value: String?) {
+        setImageParameter("resolution", value)
+    }
+
+    private fun setImageParameter(parameter: String, value: String?) {
+        val profile = imageConnectionProfile()
+        val model = _state.value.imageModel
+        if (model.isBlank()) return
+        val clean = value?.trim()?.takeIf { it.isNotBlank() }
+        if (clean != null) {
+            val allowed = currentImageModelInfo()?.parameterValues(parameter).orEmpty()
+            if (allowed.isEmpty() || clean !in allowed) {
+                _state.value = _state.value.copy(status = "Выбранная модель не поддерживает параметр $clean")
+                return
+            }
+        }
+        val key = imageParameterPrefKey(parameter, profile.id, model)
+        prefs.edit().apply {
+            if (clean == null) remove(key) else putString(key, clean)
+        }.apply()
+        _state.value = when (parameter) {
+            "aspect_ratio" -> _state.value.copy(imageAspectRatio = clean)
+            "resolution" -> _state.value.copy(imageResolution = clean)
+            else -> _state.value
+        }
     }
 
     fun toggleQuickTextModelForConnection(profileId: String, model: String) {
@@ -1137,13 +1183,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             busyLabel = null
                         )
                     }
-                    ChatMode.IMAGE -> _state.value.copy(
-                        availableImageModels = infos,
-                        imageConnectionProfileId = profile.id,
-                        imageModel = loadImageModelForProfile(profile.id),
-                        isLoading = false,
-                        busyLabel = null
-                    )
+                    ChatMode.IMAGE -> {
+                        val selectedModel = loadImageModelForProfile(profile.id)
+                        val info = infos.firstOrNull { it.id == selectedModel }
+                        _state.value.copy(
+                            availableImageModels = infos,
+                            imageConnectionProfileId = profile.id,
+                            imageModel = selectedModel,
+                            imageAspectRatio = validatedImageParameter("aspect_ratio", profile.id, selectedModel, info),
+                            imageResolution = validatedImageParameter("resolution", profile.id, selectedModel, info),
+                            isLoading = false,
+                            busyLabel = null
+                        )
+                    }
                 }
             }.onFailure {
                 _state.value = _state.value.copy(
@@ -1198,10 +1250,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             } else {
                 next = next.copy(availableTextModels = emptyList(), reasoningEnabled = false)
             }
+            val selectedImageModel = loadImageModelForProfile(imageProfile.id)
+            val selectedImageInfo = imageInfos?.firstOrNull { it.id == selectedImageModel }
             next = next.copy(
                 availableImageModels = imageInfos ?: emptyList(),
                 imageConnectionProfileId = imageProfile.id,
-                imageModel = loadImageModelForProfile(imageProfile.id),
+                imageModel = selectedImageModel,
+                imageAspectRatio = validatedImageParameter("aspect_ratio", imageProfile.id, selectedImageModel, selectedImageInfo),
+                imageResolution = validatedImageParameter("resolution", imageProfile.id, selectedImageModel, selectedImageInfo),
                 quickTextModels = loadAllQuickTextModels(next.connectionProfiles, next.disabledConnectionIds)
             )
             _state.value = next
@@ -1584,6 +1640,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val textModel = currentTextModelId()
         val imageModel = _state.value.imageModel
+        val imageAspectRatio = _state.value.imageAspectRatio
+        val imageResolution = _state.value.imageResolution
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
@@ -1650,7 +1708,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
                         val imagePrompt = listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n")
                         if (profile.type == ProviderType.OPENROUTER) {
-                            api.generateImage(key, imageModel, imagePrompt, pending + projectImages, profile.baseUrl)
+                            api.generateImage(
+                                key,
+                                imageModel,
+                                imagePrompt,
+                                pending + projectImages,
+                                profile.baseUrl,
+                                imageAspectRatio,
+                                imageResolution
+                            )
                         } else {
                             compatibleApi.generateImage(key, profile.baseUrl, imageModel, imagePrompt)
                         }
@@ -1752,6 +1818,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
         val imageModel = _state.value.imageModel
+        val imageAspectRatio = _state.value.imageAspectRatio
+        val imageResolution = _state.value.imageResolution
         val requestId = ++requestGeneration
         activeRequestPending = pending
 
@@ -1763,7 +1831,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         model = imageModel,
                         prompt = prompt,
                         attachments = pending,
-                        baseUrl = profile.baseUrl
+                        baseUrl = profile.baseUrl,
+                        aspectRatio = imageAspectRatio,
+                        resolution = imageResolution
                     )
                 } else {
                     compatibleApi.generateImage(
@@ -2200,6 +2270,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun loadImageModelForProfile(profileId: String): String {
         val fallback = if (profileId == "openrouter") "bytedance-seed/seedream-4.5" else ""
         return prefs.getString(profilePrefKey("image_model", profileId), fallback) ?: fallback
+    }
+
+    private fun imageParameterPrefKey(parameter: String, profileId: String, modelId: String): String =
+        "image_parameter_${parameter}_${profileId}_${modelId}"
+
+    private fun loadImageParameter(parameter: String, profileId: String, modelId: String): String? =
+        prefs.getString(imageParameterPrefKey(parameter, profileId, modelId), null)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+
+    private fun validatedImageParameter(
+        parameter: String,
+        profileId: String,
+        modelId: String,
+        info: ModelInfo?
+    ): String? {
+        val stored = loadImageParameter(parameter, profileId, modelId) ?: return null
+        if (info == null) return stored
+        return stored.takeIf { it in info.parameterValues(parameter) }
     }
 
     private fun loadReasoningEffortsByModel(): Map<String, ReasoningEffort> = runCatching {
