@@ -1,0 +1,20 @@
+name: Dispatch Umnik v1.0.0 signed release
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/dispatch-v1.0.0-once.yml"
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-release.yml -R "${{ github.repository }}" -f tag=v1.0.0
