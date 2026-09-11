@@ -72,3 +72,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run android-release.yml -R "${{ github.repository }}" -f tag=v1.2.0-beta.5
+
+# retry 2
