@@ -1,4 +1,4 @@
-name: Create v0.7.7 tag once
+name: Publish v0.7.7 once
 
 on:
   push:
@@ -8,9 +8,10 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
-  tag:
+  publish:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -18,11 +19,22 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Create release tag
+      - name: Ensure release tag exists
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag v0.7.7
-          git push origin v0.7.7
+          git fetch --tags --force
+          if git rev-parse -q --verify "refs/tags/v0.7.7" >/dev/null; then
+            echo "Tag v0.7.7 already exists"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag v0.7.7
+            git push origin v0.7.7
+          fi
+
+      - name: Dispatch signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: gh workflow run android-release.yml -f tag=v0.7.7
