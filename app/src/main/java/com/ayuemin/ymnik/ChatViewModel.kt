@@ -451,6 +451,79 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return chat.id
     }
 
+    fun branchFromMessage(messageId: String): String? {
+        cleanupTempAttachments(_state.value.pendingAttachments)
+        if (_state.value.isLoading) return null
+
+        val source = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return null
+        val messageIndex = source.messages.indexOfFirst { it.id == messageId }
+        if (messageIndex < 0) return null
+
+        val branchId = UUID.randomUUID().toString()
+        val now = System.currentTimeMillis()
+        val branchedMessages = source.messages
+            .take(messageIndex + 1)
+            .map { message -> message.copy(id = UUID.randomUUID().toString()) }
+
+        val copiedFiles = source.chatFiles.orEmpty().mapNotNull { file ->
+            runCatching {
+                chatFilesRepository.importFile(
+                    branchId,
+                    PendingAttachment(
+                        uri = "branch://${file.id}",
+                        name = file.name,
+                        mimeType = file.mimeType,
+                        size = file.size,
+                        localPath = file.localPath
+                    )
+                )
+            }.getOrNull()
+        }
+
+        val branchTitle = "Ветка: ${source.title}".take(80)
+        val branch = ChatSession(
+            id = branchId,
+            title = branchTitle,
+            messages = branchedMessages,
+            projectId = source.projectId,
+            mode = source.mode ?: _state.value.mode,
+            textModelOverride = source.textModelOverride,
+            chatFiles = copiedFiles,
+            assignedRole = source.assignedRole,
+            masterPrompt = source.masterPrompt,
+            createdAt = now,
+            updatedAt = now
+        )
+        val chats = listOf(branch) + _state.value.chats
+        val modelId = branch.textModelOverride ?: _state.value.textModel
+        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        val effort = preferredReasoningEffort(modelId, info)
+        val keepReasoning = reasoningStillValid(info, effort)
+
+        chatsRepository.save(chats)
+        prefs.edit()
+            .putString("current_chat_id", branch.id)
+            .putString("chat_mode", (branch.mode ?: _state.value.mode).name)
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
+
+        _state.value = _state.value.copy(
+            chats = chats,
+            currentChatId = branch.id,
+            messages = branchedMessages,
+            mode = branch.mode ?: _state.value.mode,
+            currentChatTextModel = branch.textModelOverride,
+            reasoningEffort = effort,
+            reasoningEnabled = keepReasoning,
+            pendingAttachments = emptyList(),
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Ветка открыта в новом чате"
+        )
+        return branch.id
+    }
+
     fun switchChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return

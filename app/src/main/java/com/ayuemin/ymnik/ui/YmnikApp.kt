@@ -287,6 +287,9 @@ private fun ChatScreen(
                         fileToSave = file
                         save.launch(file.name)
                     },
+onBranch = if (message.role == "assistant") {
+    { vm.branchFromMessage(message.id) }
+} else null,
                     onRetry = if (
                         message.role == "user" &&
                         message.text.isNotBlank() &&
@@ -1055,46 +1058,56 @@ private fun MessageCard(
     tts: TtsController,
     onSaveGenerated: (GeneratedFile) -> Unit,
     onExportText: () -> Unit,
+    onBranch: (() -> Unit)?,
     onRetry: (() -> Unit)?
 ) {
     val context = LocalContext.current
     val user = message.role == "user"
-    val container = if (user) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
-    val content = if (user) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+    val content = MaterialTheme.colorScheme.onSurface
 
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (user) Alignment.End else Alignment.Start
     ) {
-        ElevatedCard(
-            modifier = Modifier.fillMaxWidth(0.92f),
-            shape = RoundedCornerShape(
-                topStart = 22.dp,
-                topEnd = 22.dp,
-                bottomStart = if (user) 22.dp else 6.dp,
-                bottomEnd = if (user) 6.dp else 22.dp
-            ),
-            colors = CardDefaults.elevatedCardColors(containerColor = container)
-        ) {
-            Column(Modifier.padding(horizontal = 15.dp, vertical = 12.dp)) {
-                Text(
-                    if (user) "Вы" else "Umnik",
-                    fontWeight = FontWeight.Bold,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = content
-                )
-                Spacer(Modifier.height(6.dp))
-                MessageBody(message.text, content)
-
-                message.attachmentNames.forEach { name ->
-                    Spacer(Modifier.height(7.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(17.dp), tint = content)
-                        Spacer(Modifier.width(5.dp))
-                        Text(name, style = MaterialTheme.typography.bodySmall, color = content)
+        if (user) {
+            Surface(
+                modifier = Modifier.fillMaxWidth(0.86f),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(18.dp),
+                tonalElevation = 0.dp
+            ) {
+                Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
+                    if (message.text.isNotBlank()) {
+                        MessageBody(message.text, content)
+                    }
+                    message.attachmentNames.forEach { name ->
+                        Spacer(Modifier.height(7.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Outlined.AttachFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(17.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(5.dp))
+                            Text(
+                                name,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
-
+            }
+        } else {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 4.dp)
+            ) {
+                if (message.text.isNotBlank()) {
+                    MessageBody(message.text, content)
+                }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSaveGenerated)
@@ -1149,6 +1162,21 @@ private fun MessageCard(
                         description = "Сохранить ответ файлом",
                         onClick = onExportText
                     )
+                }
+                if (onBranch != null) {
+                    TextButton(
+                        onClick = onBranch,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.AddComment,
+                            contentDescription = null,
+                            modifier = Modifier.size(17.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Ветка в новом чате", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
         }
