@@ -523,7 +523,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning,
             apiKeyConfigured = isProfileConfigured(profile),
-            status = "${clean.substringAfterLast('/')} · ${profile.name}"
+            status = null
         )
         refreshModelCapabilities()
     }

@@ -101,6 +101,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -192,7 +193,19 @@ fun YmnikApp(viewModel: ChatViewModel) {
     UmnikTheme(state.themeChoice, state.customThemeColor) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.surface,
-            snackbarHost = { SnackbarHost(snackbar) }
+            snackbarHost = {
+                SnackbarHost(
+                    hostState = snackbar,
+                    modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 86.dp)
+                ) { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        shape = RoundedCornerShape(14.dp),
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+                        contentColor = MaterialTheme.colorScheme.onSurface
+                    )
+                }
+            }
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
                 when (screen) {
