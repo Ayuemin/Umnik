@@ -22,7 +22,7 @@ jobs:
       - name: Apply beta4 voice changes
         run: |
           set -euo pipefail
-          python3 .github/scripts/implement-voice-beta4.py
+          python3 .github/scripts/implement-voice-beta4-wrapper.py
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
