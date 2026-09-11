@@ -124,6 +124,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
@@ -136,6 +137,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
@@ -1164,18 +1166,16 @@ private fun MessageCard(
                     )
                 }
                 if (onBranch != null) {
-                    TextButton(
+                    IconButton(
                         onClick = onBranch,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(34.dp)
+                        modifier = Modifier.size(34.dp)
                     ) {
                         Icon(
-                            Icons.Outlined.AddComment,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp)
+                            painter = painterResource(R.drawable.ic_branch_chat),
+                            contentDescription = "Ветка в новом чате",
+                            modifier = Modifier.size(19.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Ветка в новом чате", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }
