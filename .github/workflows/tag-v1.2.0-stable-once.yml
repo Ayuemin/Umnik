@@ -1,0 +1,42 @@
+name: Tag v1.2.0 stable once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/tag-v1.2.0-stable-once.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Tag clean stable commit
+        shell: bash
+        env:
+          TARGET_SHA: 67eb90de1bdf90a359d7ef8b9aadfe20d865a3d7
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+          test "$(git show "$TARGET_SHA:app/build.gradle.kts" | sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' | head -n1)" = "1.2.0"
+          if git rev-parse -q --verify refs/tags/v1.2.0 >/dev/null; then
+            echo "Tag v1.2.0 already exists"
+            exit 1
+          fi
+          git config user.name "Ayuemin"
+          git config user.email "105455063+Ayuemin@users.noreply.github.com"
+          git tag -a v1.2.0 "$TARGET_SHA" -m "Umnik v1.2.0"
+          git push origin refs/tags/v1.2.0
+
+      - name: Dispatch signed stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-release.yml -f tag=v1.2.0
