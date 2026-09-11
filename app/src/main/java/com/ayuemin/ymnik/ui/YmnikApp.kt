@@ -220,6 +220,8 @@ private fun ChatScreen(
     var chatsOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
     var actionsOpen by remember { mutableStateOf(false) }
+    var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
+    var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
     val context = LocalContext.current
@@ -230,11 +232,12 @@ private fun ChatScreen(
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
-    val cameraAvailable = when (state.mode) {
-        ChatMode.TEXT -> textModelInfo?.accepts("image") == true
-        ChatMode.IMAGE -> imageModelInfo?.accepts("image") == true
+    val cameraAvailable = if (imagePromptMode) {
+        imageModelInfo?.accepts("image") != false
+    } else {
+        textModelInfo?.accepts("image") == true
     }
-    val reasoningAvailable = state.mode == ChatMode.TEXT && textModelInfo?.supportsReasoning == true &&
+    val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentChatFiles = currentChat?.chatFiles.orEmpty()
@@ -244,13 +247,14 @@ private fun ChatScreen(
     val activeSkillCount = (state.activeSkillIds + currentProjectSkillIds).size
 
     val attach = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        uris.forEach(vm::addAttachment)
+        uris.forEach { uri -> vm.addAttachment(uri, imagePromptMode) }
     }
     val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { ok ->
         cameraTarget?.let { target ->
-            if (ok) vm.addCameraAttachment(target.uri, target.file.absolutePath) else target.file.delete()
+            if (ok) vm.addCameraAttachment(target.uri, target.file.absolutePath, cameraForImageGeneration) else target.file.delete()
         }
         cameraTarget = null
+        cameraForImageGeneration = false
     }
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
         val file = fileToSave
@@ -306,6 +310,7 @@ onBranch = if (message.role == "assistant") {
     { vm.branchFromMessage(message.id) }
 } else null,
                     onRetry = if (
+                        !message.imageGeneration &&
                         message.role == "user" &&
                         message.text.isNotBlank() &&
                         message.attachmentNames.all { name ->
@@ -319,23 +324,25 @@ onBranch = if (message.role == "assistant") {
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
 
-        if (currentChatFiles.isNotEmpty() || state.pendingAttachments.isNotEmpty()) {
+        if ((!imagePromptMode && currentChatFiles.isNotEmpty()) || state.pendingAttachments.isNotEmpty()) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
-                        AssistChip(
-                            onClick = { vm.removeChatFile(file.id) },
-                            label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = {
-                                Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            trailingIcon = {
-                                Icon(Icons.Outlined.Close, contentDescription = "Убрать файл из контекста чата", modifier = Modifier.size(18.dp))
-                            }
-                        )
+                    if (!imagePromptMode) {
+                        items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
+                            AssistChip(
+                                onClick = { vm.removeChatFile(file.id) },
+                                label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                leadingIcon = {
+                                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
+                                },
+                                trailingIcon = {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл из контекста чата", modifier = Modifier.size(18.dp))
+                                }
+                            )
+                        }
                     }
                     items(state.pendingAttachments, key = { "pending-${it.uri}" }) { attachment ->
                         AssistChip(
@@ -358,76 +365,121 @@ onBranch = if (message.role == "assistant") {
             color = MaterialTheme.colorScheme.surface,
             tonalElevation = 0.dp
         ) {
-            OutlinedTextField(
-                value = text,
-                onValueChange = { text = it },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                leadingIcon = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(1.dp)
+            Column {
+                if (imagePromptMode) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
                     ) {
-                        IconButton(
-                            onClick = { actionsOpen = true },
-                            enabled = !state.isLoading,
-                            modifier = Modifier.size(40.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 8.dp, bottom = 8.dp, end = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                Icons.Outlined.Add,
-                                contentDescription = "Добавить и инструменты",
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                Icons.Outlined.Image,
+                                contentDescription = null,
+                                modifier = Modifier.size(22.dp),
+                                tint = MaterialTheme.colorScheme.primary
                             )
-                        }
-                        if (activeSkillCount > 0) {
-                            ComposerInlineIndicator(
-                                icon = Icons.Outlined.Extension,
-                                description = "Активные навыки: $activeSkillCount",
-                                count = activeSkillCount
-                            )
-                        }
-                        if (state.reasoningEnabled) {
-                            ComposerInlineIndicator(
-                                icon = Icons.Outlined.Psychology,
-                                description = "Размышление включено"
-                            )
-                        }
-                        if (state.webSearchEnabled) {
-                            ComposerInlineIndicator(
-                                icon = Icons.Outlined.Language,
-                                description = "Поиск в сети включён"
-                            )
-                        }
-                    }
-                },
-                trailingIcon = {
-                    IconButton(
-                        onClick = {
-                            if (state.requestActive) {
-                                vm.stopGeneration()
-                            } else {
-                                vm.send(text)
-                                text = ""
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Генерация изображения", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Опишите задачу. Модель: ${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
-                        },
-                        enabled = state.requestActive || (!state.isLoading && (
-                            text.isNotBlank() || state.pendingAttachments.isNotEmpty() || currentChatFiles.isNotEmpty()
-                        ))
-                    ) {
-                        if (state.requestActive) {
-                            WorkingStopIcon()
-                        } else {
-                            Icon(
-                                Icons.Outlined.Send,
-                                contentDescription = "Отправить"
-                            )
+                            IconButton(
+                                onClick = { imagePromptMode = false },
+                                enabled = !state.requestActive
+                            ) {
+                                Icon(Icons.Outlined.Close, contentDescription = "Отменить генерацию изображения")
+                            }
                         }
                     }
-                },
-                shape = RoundedCornerShape(28.dp),
-                maxLines = 6
-            )
+                }
+
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    leadingIcon = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(1.dp)
+                        ) {
+                            IconButton(
+                                onClick = { actionsOpen = true },
+                                enabled = !state.isLoading,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Add,
+                                    contentDescription = "Добавить и инструменты",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (!imagePromptMode && activeSkillCount > 0) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Extension,
+                                    description = "Активные навыки: $activeSkillCount",
+                                    count = activeSkillCount
+                                )
+                            }
+                            if (!imagePromptMode && state.reasoningEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Psychology,
+                                    description = "Размышление включено"
+                                )
+                            }
+                            if (!imagePromptMode && state.webSearchEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Language,
+                                    description = "Поиск в сети включён"
+                                )
+                            }
+                        }
+                    },
+                    trailingIcon = {
+                        IconButton(
+                            onClick = {
+                                if (state.requestActive) {
+                                    vm.stopGeneration()
+                                } else if (imagePromptMode) {
+                                    if (vm.sendImagePrompt(text)) {
+                                        text = ""
+                                        imagePromptMode = false
+                                    }
+                                } else {
+                                    vm.send(text)
+                                    text = ""
+                                }
+                            },
+                            enabled = state.requestActive || (!state.isLoading && (
+                                text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
+                            ))
+                        ) {
+                            if (state.requestActive) {
+                                WorkingStopIcon()
+                            } else {
+                                Icon(
+                                    Icons.Outlined.Send,
+                                    contentDescription = if (imagePromptMode) "Создать изображение" else "Отправить"
+                                )
+                            }
+                        }
+                    },
+                    placeholder = if (imagePromptMode) { { Text("Опишите изображение") } } else null,
+                    shape = RoundedCornerShape(28.dp),
+                    maxLines = 6
+                )
+            }
         }
     }
 
@@ -450,7 +502,7 @@ onBranch = if (message.role == "assistant") {
                         modifier = Modifier.weight(1f),
                         onClick = {
                             actionsOpen = false
-                            val types = if (state.mode == ChatMode.IMAGE) arrayOf("image/*") else arrayOf("*/*")
+                            val types = if (imagePromptMode) arrayOf("image/*") else arrayOf("*/*")
                             attach.launch(types)
                         }
                     )
@@ -463,6 +515,7 @@ onBranch = if (message.role == "assistant") {
                             actionsOpen = false
                             runCatching { createCameraTarget(context) }
                                 .onSuccess { target ->
+                                    cameraForImageGeneration = imagePromptMode
                                     cameraTarget = target
                                     camera.launch(target.uri)
                                 }
@@ -472,20 +525,20 @@ onBranch = if (message.role == "assistant") {
                         }
                     )
                     ComposerActionTile(
-                        icon = if (state.mode == ChatMode.TEXT) Icons.Outlined.Image else Icons.Outlined.TextFields,
-                        label = if (state.mode == ChatMode.TEXT) "Создать" else "Текст",
-                        enabled = !state.isLoading && (state.mode == ChatMode.IMAGE || openRouterAvailable),
+                        icon = Icons.Outlined.Image,
+                        label = "Создать",
+                        enabled = !state.isLoading && openRouterAvailable,
                         modifier = Modifier.weight(1f),
                         onClick = {
-                            vm.setMode(if (state.mode == ChatMode.TEXT) ChatMode.IMAGE else ChatMode.TEXT)
                             actionsOpen = false
+                            if (vm.prepareImageGeneration()) imagePromptMode = true
                         }
                     )
                 }
 
                 HorizontalDivider()
 
-                if (state.mode == ChatMode.TEXT) {
+                if (!imagePromptMode) {
                     ComposerToolRow(
                         icon = Icons.Outlined.Psychology,
                         title = "Размышление",
@@ -603,8 +656,7 @@ private fun ChatHeader(
     var quickModelsOpen by remember { mutableStateOf(false) }
     var hubOpen by remember { mutableStateOf(false) }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
-    val displayedModel = if (state.mode == ChatMode.TEXT) activeTextModel else state.imageModel
-    val shortModelName = displayedModel.substringAfter('/').ifBlank { displayedModel }
+    val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
     val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
     val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
     val quickCandidates = (listOf(currentRef, defaultRef) + state.quickTextModels)
@@ -618,7 +670,7 @@ private fun ChatHeader(
         ) {
             Box(modifier = Modifier.weight(1f)) {
                 TextButton(
-                    onClick = { if (state.mode == ChatMode.TEXT) quickModelsOpen = true },
+                    onClick = { quickModelsOpen = true },
                     enabled = !state.isLoading,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
                 ) {
@@ -629,10 +681,8 @@ private fun ChatHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    if (state.mode == ChatMode.TEXT) {
-                        Spacer(Modifier.width(3.dp))
-                        Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(22.dp))
-                    }
+                    Spacer(Modifier.width(3.dp))
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(22.dp))
                 }
 
                 DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
@@ -1649,6 +1699,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
+    var imageModelsExpanded by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
     var storageExpanded by remember { mutableStateOf(false) }
@@ -1711,13 +1762,37 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             )
                         }
                     }
-                    Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(onClick = { modelPicker = ChatMode.IMAGE }, modifier = Modifier.fillMaxWidth()) {
+                }
+            }
+
+            item {
+                ExpandableSettingsCard(
+                    title = "Генерация изображений",
+                    subtitle = state.imageModel.substringAfterLast('/').ifBlank { state.imageModel },
+                    icon = Icons.Outlined.Image,
+                    expanded = imageModelsExpanded,
+                    onToggle = { imageModelsExpanded = !imageModelsExpanded }
+                ) {
+                    Text(
+                        "Модель используется только для «+ → Создать». Обычная модель чата не меняется.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(9.dp))
+                    FilledTonalButton(
+                        onClick = { modelPicker = ChatMode.IMAGE },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
                         Icon(Icons.Outlined.Image, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Генерация изображений", fontWeight = FontWeight.Medium)
-                            Text(state.imageModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text("Выбрать модель", fontWeight = FontWeight.Medium)
+                            Text(
+                                state.imageModel,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }

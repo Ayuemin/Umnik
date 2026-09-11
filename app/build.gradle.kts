@@ -1,4 +1,4 @@
-// Umnik v1.2.0-beta.1
+// Umnik v1.2.0-beta.2
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,8 +24,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 30
-        versionName = "1.2.0-beta.1"
+        versionCode = 31
+        versionName = "1.2.0-beta.2"
     }
 
     buildFeatures {

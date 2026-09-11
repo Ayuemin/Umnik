@@ -87,9 +87,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = initialChatId,
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
-            mode = initialChat.mode ?: runCatching {
-                ChatMode.valueOf(prefs.getString("chat_mode", ChatMode.TEXT.name) ?: ChatMode.TEXT.name)
-            }.getOrDefault(ChatMode.TEXT),
+            mode = ChatMode.TEXT,
             connectionProfiles = initialProfiles,
             activeConnectionProfileId = initialProfileId,
             disabledConnectionIds = initialDisabledConnectionIds,
@@ -162,7 +160,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (chat.id == _state.value.currentChatId) chat.copy(
                 connectionProfileId = profile.id,
                 textModelOverride = null,
-                mode = if (chat.mode == ChatMode.IMAGE && profile.type != ProviderType.OPENROUTER) ChatMode.TEXT else chat.mode,
+                mode = ChatMode.TEXT,
                 updatedAt = System.currentTimeMillis()
             ) else chat
         }
@@ -175,7 +173,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
             imageModel = loadImageModelForProfile("openrouter"),
             availableTextModels = emptyList(),
-            mode = if (profile.type == ProviderType.OPENROUTER) _state.value.mode else ChatMode.TEXT,
+            mode = ChatMode.TEXT,
             webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
             reasoningEnabled = false,
             apiKeyConfigured = isProfileConfigured(profile),
@@ -669,7 +667,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             id = UUID.randomUUID().toString(),
             title = "Новый чат",
             projectId = projectId,
-            mode = _state.value.mode,
+            mode = ChatMode.TEXT,
             connectionProfileId = _state.value.activeConnectionProfileId
         )
         val next = listOf(chat) + _state.value.chats
@@ -731,7 +729,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             title = branchTitle,
             messages = branchedMessages,
             projectId = source.projectId,
-            mode = source.mode ?: _state.value.mode,
+            mode = ChatMode.TEXT,
             connectionProfileId = source.connectionProfileId ?: _state.value.activeConnectionProfileId,
             textModelOverride = source.textModelOverride,
             chatFiles = copiedFiles,
@@ -749,7 +747,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatsRepository.save(chats)
         prefs.edit()
             .putString("current_chat_id", branch.id)
-            .putString("chat_mode", (branch.mode ?: _state.value.mode).name)
+            .putString("chat_mode", ChatMode.TEXT.name)
             .putString("reasoning_effort", effort.name)
             .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
@@ -758,7 +756,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = chats,
             currentChatId = branch.id,
             messages = branchedMessages,
-            mode = branch.mode ?: _state.value.mode,
+            mode = ChatMode.TEXT,
             currentChatTextModel = branch.textModelOverride,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning,
@@ -783,17 +781,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             it.id !in _state.value.disabledConnectionIds && isProfileConfigured(it)
         } ?: _state.value.connectionProfiles.firstOrNull { it.id !in _state.value.disabledConnectionIds }
             ?: openRouterProfile()
-        val migrated = profile.id != requestedProfileId || original.connectionProfileId == null
+        val migrated = profile.id != requestedProfileId || original.connectionProfileId == null || original.mode == ChatMode.IMAGE
         val chat = if (migrated) original.copy(
             connectionProfileId = profile.id,
             textModelOverride = if (profile.id == requestedProfileId) original.textModelOverride else null,
+            mode = ChatMode.TEXT,
             updatedAt = System.currentTimeMillis()
         ) else original
         val chats = if (migrated) _state.value.chats.map { if (it.id == id) chat else it } else _state.value.chats
         if (migrated) chatsRepository.save(chats)
-        val openRouter = openRouterProfile()
-        val canImage = openRouter.id !in _state.value.disabledConnectionIds && isProfileConfigured(openRouter)
-        val nextMode = if ((chat.mode ?: ChatMode.TEXT) == ChatMode.IMAGE && !canImage) ChatMode.TEXT else (chat.mode ?: ChatMode.TEXT)
+        val nextMode = ChatMode.TEXT
         val defaultModel = loadTextModelForProfile(profile)
         val modelId = chat.textModelOverride ?: defaultModel
         val info = if (profile.id == _state.value.activeConnectionProfileId) {
@@ -1157,6 +1154,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun currentImageModelInfo(): ModelInfo? =
         _state.value.availableImageModels.firstOrNull { it.id == _state.value.imageModel }
 
+    private fun imageAttachmentAllowed(attachment: PendingAttachment): Pair<Boolean, String?> {
+        if (!attachment.mimeType.startsWith("image/")) {
+            return false to "Для генерации изображения можно добавить только изображение-референс"
+        }
+        val info = currentImageModelInfo()
+        return if (info == null || info.accepts("image")) true to null
+        else false to "Выбранная модель изображений не принимает изображения-референсы"
+    }
+
     private fun attachmentAllowed(attachment: PendingAttachment): Pair<Boolean, String?> {
         if (_state.value.mode == ChatMode.IMAGE) {
             if (!attachment.mimeType.startsWith("image/")) return false to "В режиме изображений можно добавлять только изображения-референсы"
@@ -1249,16 +1255,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
-    fun addAttachment(uri: Uri) {
+    fun addAttachment(uri: Uri, forImageGeneration: Boolean = false) {
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
                 if (attachment.size > 25L * 1024 * 1024) {
                     _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
-                    val (allowed, reason) = attachmentAllowed(attachment)
+                    val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
                         _state.value = _state.value.copy(status = reason)
-                    } else if (shouldPersistInChat(attachment)) {
+                    } else if (!forImageGeneration && shouldPersistInChat(attachment)) {
                         persistChatAttachment(attachment)
                     } else {
                         _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
@@ -1268,14 +1274,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .onFailure { _state.value = _state.value.copy(status = it.message) }
     }
 
-    fun addCameraAttachment(uri: Uri, localPath: String) {
+    fun addCameraAttachment(uri: Uri, localPath: String, forImageGeneration: Boolean = false) {
         runCatching { api.attachmentFromUri(uri).copy(localPath = localPath) }
             .onSuccess { attachment ->
                 if (attachment.size > 25L * 1024 * 1024) {
                     File(localPath).delete()
                     _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
                 } else {
-                    val (allowed, reason) = attachmentAllowed(attachment)
+                    val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
                         File(localPath).delete()
                         _state.value = _state.value.copy(status = reason)
@@ -1358,6 +1364,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             busyLabel = null,
             status = "Работа остановлена. Уточните запрос и отправьте снова."
         )
+    }
+
+    fun prepareImageGeneration(): Boolean {
+        if (_state.value.isLoading) return false
+        val openRouter = openRouterProfile()
+        if (openRouter.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Для генерации изображений включите подключение OpenRouter")
+            return false
+        }
+        if (!isProfileConfigured(openRouter)) {
+            _state.value = _state.value.copy(status = connectionSetupMessage(openRouter))
+            return false
+        }
+        if (_state.value.availableImageModels.isEmpty()) refreshModels(ChatMode.IMAGE)
+        return true
     }
 
     fun send(text: String) {
@@ -1548,6 +1569,114 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 activeRequestPending = emptyList()
             }
         }
+    }
+
+    fun sendImagePrompt(text: String): Boolean {
+        if (_state.value.isLoading) return false
+        val profile = openRouterProfile()
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Для генерации изображений включите подключение OpenRouter")
+            return false
+        }
+        if (!isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+            return false
+        }
+
+        val clean = text.trim()
+        val pending = _state.value.pendingAttachments
+        if (clean.isBlank() && pending.isEmpty()) return false
+
+        val invalidPending = pending.firstOrNull { !imageAttachmentAllowed(it).first }
+        if (invalidPending != null) {
+            _state.value = _state.value.copy(
+                status = imageAttachmentAllowed(invalidPending).second ?: "Вложение не подходит для генерации изображения"
+            )
+            return false
+        }
+
+        val prompt = clean.ifBlank { "Создай вариант приложенного изображения" }
+        val chatId = _state.value.currentChatId
+        val before = _state.value.messages
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = prompt,
+            attachmentNames = pending.map { it.name }.distinct(),
+            imageGeneration = true
+        )
+        val nextMessages = before + user
+        val title = if (before.isEmpty()) makeChatTitle(prompt, pending.map { it.name }) else null
+        val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
+        chatsRepository.save(nextChats)
+
+        _state.value = _state.value.copy(
+            messages = nextMessages,
+            chats = nextChats,
+            pendingAttachments = emptyList(),
+            isLoading = true,
+            requestActive = true,
+            busyLabel = "Генерирую изображение…",
+            status = null,
+            storageStats = storageRepository.stats()
+        )
+
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        val imageModel = _state.value.imageModel
+        val requestId = ++requestGeneration
+        activeRequestPending = pending
+
+        activeRequestJob = viewModelScope.launch {
+            val operation = runCatching {
+                api.generateImage(
+                    apiKey = key,
+                    model = imageModel,
+                    prompt = prompt,
+                    attachments = pending,
+                    baseUrl = profile.baseUrl
+                )
+            }
+
+            if (requestId != requestGeneration) return@launch
+
+            operation.onSuccess { result ->
+                val assistant = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "assistant",
+                    text = result.text.ifBlank {
+                        if (result.files.isNotEmpty()) "Готово." else "Пустой ответ модели."
+                    },
+                    generatedFiles = result.files,
+                    imageGeneration = true
+                )
+                val messages = _state.value.messages + assistant
+                val chats = replaceChatMessages(_state.value.chats, chatId, messages, null)
+                chatsRepository.save(chats)
+                _state.value = _state.value.copy(
+                    messages = messages,
+                    chats = chats,
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
+                )
+                playReadySound()
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    status = it.message ?: "Ошибка генерации изображения"
+                )
+            }
+            cleanupTempAttachments(pending)
+            if (requestId == requestGeneration) {
+                activeRequestJob = null
+                activeRequestPending = emptyList()
+            }
+        }
+        return true
     }
 
     override fun onCleared() {

@@ -132,6 +132,7 @@ data class ChatMessage(
     val text: String,
     val attachmentNames: List<String> = emptyList(),
     val generatedFiles: List<GeneratedFile> = emptyList(),
+    val imageGeneration: Boolean = false,
     val timestamp: Long = System.currentTimeMillis()
 )
 
