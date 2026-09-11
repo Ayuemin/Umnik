@@ -1708,14 +1708,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
                         val imagePrompt = listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n")
                         if (profile.type == ProviderType.OPENROUTER) {
-                            api.generateImage(
-                                key,
-                                imageModel,
-                                imagePrompt,
-                                pending + projectImages,
-                                profile.baseUrl,
-                                imageAspectRatio,
-                                imageResolution
+                            generateOpenRouterImageWithResolutionFallback(
+                                profileId = profile.id,
+                                apiKey = key,
+                                model = imageModel,
+                                prompt = imagePrompt,
+                                attachments = pending + projectImages,
+                                baseUrl = profile.baseUrl,
+                                aspectRatio = imageAspectRatio,
+                                resolution = imageResolution
                             )
                         } else {
                             compatibleApi.generateImage(key, profile.baseUrl, imageModel, imagePrompt)
@@ -1826,7 +1827,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         activeRequestJob = viewModelScope.launch {
             val operation = runCatching {
                 if (profile.type == ProviderType.OPENROUTER) {
-                    api.generateImage(
+                    generateOpenRouterImageWithResolutionFallback(
+                        profileId = profile.id,
                         apiKey = key,
                         model = imageModel,
                         prompt = prompt,
@@ -1885,6 +1887,53 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
         return true
+    }
+
+    private suspend fun generateOpenRouterImageWithResolutionFallback(
+        profileId: String,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        attachments: List<PendingAttachment>,
+        baseUrl: String,
+        aspectRatio: String?,
+        resolution: String?
+    ): OpenRouterClient.Result {
+        try {
+            return api.generateImage(
+                apiKey = apiKey,
+                model = model,
+                prompt = prompt,
+                attachments = attachments,
+                baseUrl = baseUrl,
+                aspectRatio = aspectRatio,
+                resolution = resolution
+            )
+        } catch (first: Throwable) {
+            val message = first.message.orEmpty().lowercase()
+            val canRetryWithoutResolution = !resolution.isNullOrBlank() &&
+                "output pixels" in message &&
+                ("omit resolution" in message || "larger resolution" in message)
+            if (!canRetryWithoutResolution) throw first
+
+            val result = api.generateImage(
+                apiKey = apiKey,
+                model = model,
+                prompt = prompt,
+                attachments = attachments,
+                baseUrl = baseUrl,
+                aspectRatio = aspectRatio,
+                resolution = null
+            )
+            prefs.edit()
+                .remove(imageParameterPrefKey("resolution", profileId, model))
+                .apply()
+            _state.value = _state.value.copy(
+                imageResolution = null,
+                status = "Выбранное разрешение несовместимо с этим форматом. Umnik переключил разрешение на «Авто», сохранив ${aspectRatio ?: "соотношение сторон"}."
+            )
+            return result
+        }
     }
 
     override fun onCleared() {
