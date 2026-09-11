@@ -1,0 +1,28 @@
+name: Create v0.7.7 tag once
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/tag-v0.7.7-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Create release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag v0.7.7
+          git push origin v0.7.7
