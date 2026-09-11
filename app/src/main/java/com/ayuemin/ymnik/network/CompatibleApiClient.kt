@@ -2,7 +2,9 @@ package com.ayuemin.ymnik.network
 
 import android.content.Context
 import android.net.Uri
+import android.util.Base64
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.google.gson.Gson
@@ -17,6 +19,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class CompatibleApiClient(private val context: Context) {
@@ -96,6 +99,82 @@ class CompatibleApiClient(private val context: Context) {
         } finally {
             activeCall = null
         }
+    }
+
+    suspend fun generateImage(
+        apiKey: String,
+        baseUrl: String,
+        model: String,
+        prompt: String
+    ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
+        val payload = JsonObject().apply {
+            addProperty("model", model)
+            addProperty("prompt", prompt.ifBlank { "Создай изображение." })
+        }
+        val builder = Request.Builder()
+            .url(endpoint(baseUrl, "images/generations"))
+            .header("Content-Type", "application/json")
+            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+        if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+        val call = http.newCall(builder.build())
+        activeCall = call
+        try {
+            call.execute().use { response ->
+                val body = response.body?.string().orEmpty()
+                if (!response.isSuccessful) error(apiError(response.code, body))
+                val root = gson.fromJson(body, JsonObject::class.java)
+                val data = root.getAsJsonArray("data") ?: root.getAsJsonArray("images")
+                    ?: error("Совместимый API не вернул изображение")
+                val files = data.mapIndexedNotNull { index, element ->
+                    val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapIndexedNotNull null
+                    val mime = item.get("media_type")?.takeIf { it.isJsonPrimitive }?.asString
+                        ?.takeIf { it.startsWith("image/") }
+                    val encoded = item.get("b64_json")?.takeIf { it.isJsonPrimitive }?.asString
+                        ?.takeIf { it.isNotBlank() }
+                    if (encoded != null) {
+                        saveGeneratedImageBytes(Base64.decode(encoded.substringAfter("base64,", encoded), Base64.DEFAULT), mime ?: "image/png", index)
+                    } else {
+                        val url = item.get("url")?.takeIf { it.isJsonPrimitive }?.asString
+                            ?.takeIf { it.isNotBlank() } ?: return@mapIndexedNotNull null
+                        downloadGeneratedImage(url, mime, index)
+                    }
+                }
+                if (files.isEmpty()) error("Совместимый API вернул ответ без данных изображения")
+                OpenRouterClient.Result("Изображение создано.", files)
+            }
+        } finally {
+            activeCall = null
+        }
+    }
+
+    private fun saveGeneratedImageBytes(bytes: ByteArray, mimeType: String, index: Int): GeneratedFile {
+        val extension = when (mimeType.lowercase()) {
+            "image/jpeg", "image/jpg" -> "jpg"
+            "image/webp" -> "webp"
+            else -> "png"
+        }
+        val dir = File(context.filesDir, "generated").apply { mkdirs() }
+        val name = "umnik_image_${System.currentTimeMillis()}_${index + 1}.$extension"
+        val file = File(dir, "${UUID.randomUUID()}_$name")
+        file.writeBytes(bytes)
+        return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
+    }
+
+    private fun downloadGeneratedImage(url: String, hintedMime: String?, index: Int): GeneratedFile? {
+        if (url.startsWith("data:image/")) {
+            val mime = url.substringAfter("data:").substringBefore(';').takeIf { it.startsWith("image/") } ?: hintedMime ?: "image/png"
+            val bytes = Base64.decode(url.substringAfter("base64,", ""), Base64.DEFAULT)
+            return saveGeneratedImageBytes(bytes, mime, index)
+        }
+        return runCatching {
+            http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val bytes = response.body?.bytes() ?: return@use null
+                val mime = response.header("Content-Type")?.substringBefore(';')
+                    ?.takeIf { it.startsWith("image/") } ?: hintedMime ?: "image/png"
+                saveGeneratedImageBytes(bytes, mime, index)
+            }
+        }.getOrNull()
     }
 
     private fun userText(prompt: String, attachments: List<PendingAttachment>): String = buildString {

@@ -228,12 +228,14 @@ private fun ChatScreen(
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
         ?: state.connectionProfiles.first()
     val openRouterProfile = activeProfile.type == ProviderType.OPENROUTER
-    val openRouterAvailable = "openrouter" !in state.disabledConnectionIds
+    val imageProfile = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }
+        ?: state.connectionProfiles.first()
+    val imageConnectionAvailable = imageProfile.id !in state.disabledConnectionIds
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
     val cameraAvailable = if (imagePromptMode) {
-        imageModelInfo?.accepts("image") != false
+        imageProfile.type == ProviderType.OPENROUTER && imageModelInfo?.accepts("image") != false
     } else {
         textModelInfo?.accepts("image") == true
     }
@@ -386,7 +388,7 @@ onBranch = if (message.role == "assistant") {
                             Column(Modifier.weight(1f)) {
                                 Text("Генерация изображения", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "Опишите задачу. Модель: ${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }}",
+                                    "Опишите задачу. Модель: ${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · ${imageProfile.name}",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 2,
@@ -527,7 +529,7 @@ onBranch = if (message.role == "assistant") {
                     ComposerActionTile(
                         icon = Icons.Outlined.Image,
                         label = "Создать",
-                        enabled = !state.isLoading && openRouterAvailable,
+                        enabled = !state.isLoading && imageConnectionAvailable,
                         modifier = Modifier.weight(1f),
                         onClick = {
                             actionsOpen = false
@@ -1012,11 +1014,27 @@ private fun ModelPickerDialog(
     onDismiss: () -> Unit
 ) {
     var query by remember(mode) { mutableStateOf("") }
-    val models = if (mode == ChatMode.TEXT) state.availableTextModels else state.availableImageModels
+    val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
+    var selectedImageConnectionId by remember(mode, enabledConnections.map { it.id }) {
+        mutableStateOf(
+            state.imageConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
+                ?: enabledConnections.firstOrNull()?.id
+        )
+    }
+    val selectedImageConnection = enabledConnections.firstOrNull { it.id == selectedImageConnectionId }
+    val models = if (mode == ChatMode.TEXT) {
+        state.availableTextModels
+    } else {
+        if (state.modelCatalogConnectionId == selectedImageConnectionId) state.modelCatalog else emptyList()
+    }
     val current = if (mode == ChatMode.TEXT) state.textModel else state.imageModel
 
-    LaunchedEffect(mode) {
-        if (models.isEmpty()) vm.refreshModels(mode)
+    LaunchedEffect(mode, selectedImageConnectionId) {
+        if (mode == ChatMode.TEXT) {
+            if (models.isEmpty()) vm.refreshModels(mode)
+        } else {
+            selectedImageConnectionId?.let(vm::loadImageConnectionModels)
+        }
     }
 
     val filtered = remember(models, query) {
@@ -1028,13 +1046,46 @@ private fun ModelPickerDialog(
         onBack = onDismiss
     ) {
         Text(
-            "Сейчас: $current",
+            if (mode == ChatMode.TEXT) "Сейчас: $current" else "Сейчас: ${state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"} · $current",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
+        if (mode == ChatMode.IMAGE) {
+            if (enabledConnections.isEmpty()) {
+                Text(
+                    "Нет включённых подключений.",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    items(enabledConnections, key = { it.id }) { connection ->
+                        FilterChip(
+                            selected = selectedImageConnectionId == connection.id,
+                            onClick = {
+                                selectedImageConnectionId = connection.id
+                                query = ""
+                            },
+                            label = { Text(connection.name, maxLines = 1) }
+                        )
+                    }
+                }
+                if (selectedImageConnection?.type == ProviderType.OPENAI_COMPATIBLE) {
+                    Text(
+                        "Для совместимого API показан общий список /models. Выберите модель, которая умеет генерацию изображений; запрос отправится на /images/generations.",
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -1047,7 +1098,10 @@ private fun ModelPickerDialog(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
             horizontalArrangement = Arrangement.End
         ) {
-            TextButton(onClick = { vm.refreshModels(mode) }) {
+            TextButton(onClick = {
+                if (mode == ChatMode.TEXT) vm.refreshModels(mode)
+                else selectedImageConnectionId?.let(vm::loadImageConnectionModels)
+            }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = null)
                 Spacer(Modifier.width(5.dp))
                 Text("Обновить")
@@ -1067,7 +1121,8 @@ private fun ModelPickerDialog(
                 items(filtered, key = { it.id }) { modelInfo ->
                     TextButton(
                         onClick = {
-                            vm.selectModel(mode, modelInfo.id)
+                            if (mode == ChatMode.TEXT) vm.selectModel(mode, modelInfo.id)
+                            else selectedImageConnectionId?.let { vm.selectImageModel(it, modelInfo.id) }
                             onDismiss()
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -1766,9 +1821,10 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
+                val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
                 ExpandableSettingsCard(
                     title = "Генерация изображений",
-                    subtitle = state.imageModel.substringAfterLast('/').ifBlank { state.imageModel },
+                    subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · $imageConnectionName",
                     icon = Icons.Outlined.Image,
                     expanded = imageModelsExpanded,
                     onToggle = { imageModelsExpanded = !imageModelsExpanded }
@@ -1873,6 +1929,14 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
                             valueRange = 0f..100f
                         )
+                        FilledTonalButton(
+                            onClick = vm::previewAnswerSound,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Проверить звук")
+                        }
                     }
                 }
             }

@@ -192,6 +192,7 @@ data class UiState(
     val textModel: String = "openrouter/auto",
     val currentChatTextModel: String? = null,
     val quickTextModels: List<String> = emptyList(),
+    val imageConnectionProfileId: String = "openrouter",
     val imageModel: String = "bytedance-seed/seedream-4.5",
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
