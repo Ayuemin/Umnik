@@ -2,7 +2,6 @@ package com.ayuemin.ymnik.network
 
 import android.content.Context
 import android.net.Uri
-import android.util.Base64
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
@@ -49,21 +48,10 @@ class CompatibleApiClient(private val context: Context) {
             data.mapNotNull { element ->
                 val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
                 val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                // Generic /models normally does not advertise multimodal/reasoning capabilities.
-                // Stay conservative: text is enabled, everything else remains disabled unless
-                // a compatible server exposes OpenRouter-style metadata.
-                val modalities = item.getAsJsonObject("architecture")
-                    ?.getAsJsonArray("input_modalities")
-                    ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                    ?.toSet().orEmpty().ifEmpty { setOf("text") }
-                val supported = item.getAsJsonArray("supported_parameters")
-                    ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                    ?.toSet().orEmpty()
-                val efforts = item.getAsJsonObject("reasoning")
-                    ?.getAsJsonArray("supported_efforts")
-                    ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                    ?.toSet().orEmpty()
-                ModelInfo(id, modalities, supported, efforts)
+                // The generic transport currently implements text chat only.
+                // Do not enable vision/reasoning/tools merely because a server reports them:
+                // those wire formats differ between providers and get dedicated adapters later.
+                ModelInfo(id)
             }.distinctBy { it.id }.sortedBy { it.id }
         }
     }
