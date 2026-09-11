@@ -49,6 +49,7 @@ import java.io.File
 import java.util.UUID
 
 class ChatViewModel(private val context: Context) : ViewModel() {
+    private companion object { const val QUICK_MODEL_SEPARATOR = "\u001F" }
     private val prefs = context.getSharedPreferences("ymnik", Context.MODE_PRIVATE)
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
@@ -64,15 +65,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private var requestGeneration: Long = 0L
 
     private val initialProfiles = loadConnectionProfiles()
-    private val initialProfileId = prefs.getString("active_connection_profile", "openrouter")
-        ?.takeIf { id -> initialProfiles.any { it.id == id } }
-        ?: "openrouter"
-    private val initialProfile = initialProfiles.first { it.id == initialProfileId }
+    private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialChats = loadInitialChats()
     private val initialChatId = prefs.getString("current_chat_id", null)
         ?.takeIf { id -> initialChats.any { it.id == id } }
         ?: initialChats.first().id
     private val initialChat = initialChats.first { it.id == initialChatId }
+    private val initialProfileId = (initialChat.connectionProfileId
+        ?: prefs.getString("active_connection_profile", "openrouter"))
+        ?.takeIf { id -> initialProfiles.any { it.id == id } && id !in initialDisabledConnectionIds }
+        ?: initialProfiles.firstOrNull { it.id !in initialDisabledConnectionIds }?.id
+        ?: "openrouter"
+    private val initialProfile = initialProfiles.firstOrNull { it.id == initialProfileId }
+        ?: defaultOpenRouterProfile()
 
     private val _state = MutableStateFlow(
         UiState(
@@ -82,15 +87,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = initialChatId,
             skills = skills.list(),
             activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
-            mode = (initialChat.mode ?: runCatching {
+            mode = initialChat.mode ?: runCatching {
                 ChatMode.valueOf(prefs.getString("chat_mode", ChatMode.TEXT.name) ?: ChatMode.TEXT.name)
-            }.getOrDefault(ChatMode.TEXT)).let { if (initialProfile.type == ProviderType.OPENROUTER) it else ChatMode.TEXT },
+            }.getOrDefault(ChatMode.TEXT),
             connectionProfiles = initialProfiles,
             activeConnectionProfileId = initialProfileId,
+            disabledConnectionIds = initialDisabledConnectionIds,
             textModel = loadTextModelForProfile(initialProfile),
-            currentChatTextModel = initialChat.textModelOverride,
-            quickTextModels = loadQuickTextModels(initialProfileId),
-            imageModel = loadImageModelForProfile(initialProfileId),
+            currentChatTextModel = initialChat.textModelOverride.takeIf { initialChat.connectionProfileId == null || initialChat.connectionProfileId == initialProfileId },
+            quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
+            imageModel = loadImageModelForProfile("openrouter"),
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
             reasoningEffort = runCatching {
@@ -131,7 +137,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
-        if (isProfileConfigured(initialProfile)) refreshModelCapabilities()
+        if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
     }
 
     fun saveApiKey(apiKey: String?) {
@@ -147,26 +153,33 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun selectConnectionProfile(profileId: String) {
         if (_state.value.isLoading) return
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            return
+        }
         prefs.edit().putString("active_connection_profile", profile.id).apply()
         val chats = _state.value.chats.map { chat ->
-            if (chat.id == _state.value.currentChatId) chat.copy(textModelOverride = null) else chat
+            if (chat.id == _state.value.currentChatId) chat.copy(
+                connectionProfileId = profile.id,
+                textModelOverride = null,
+                mode = if (chat.mode == ChatMode.IMAGE && profile.type != ProviderType.OPENROUTER) ChatMode.TEXT else chat.mode,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
         }
         chatsRepository.save(chats)
         _state.value = _state.value.copy(
-            connectionProfiles = _state.value.connectionProfiles,
             activeConnectionProfileId = profile.id,
             chats = chats,
             currentChatTextModel = null,
             textModel = loadTextModelForProfile(profile),
-            quickTextModels = loadQuickTextModels(profile.id),
-            imageModel = loadImageModelForProfile(profile.id),
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+            imageModel = loadImageModelForProfile("openrouter"),
             availableTextModels = emptyList(),
-            availableImageModels = emptyList(),
             mode = if (profile.type == ProviderType.OPENROUTER) _state.value.mode else ChatMode.TEXT,
-            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) _state.value.webSearchEnabled else false,
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
             reasoningEnabled = false,
             apiKeyConfigured = isProfileConfigured(profile),
-            status = "Профиль «${profile.name}» выбран"
+            status = "Подключение «${profile.name}» выбрано для текущего чата"
         )
         if (isProfileConfigured(profile)) refreshModelCapabilities()
     }
@@ -176,8 +189,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = ConnectionProfile(id, "Другой API", ProviderType.OPENAI_COMPATIBLE, "")
         val profiles = _state.value.connectionProfiles + profile
         saveConnectionProfiles(profiles)
-        _state.value = _state.value.copy(connectionProfiles = profiles)
-        selectConnectionProfile(id)
+        _state.value = _state.value.copy(
+            connectionProfiles = profiles,
+            quickTextModels = loadAllQuickTextModels(profiles, _state.value.disabledConnectionIds),
+            status = "Подключение добавлено. Укажите адрес API."
+        )
         return id
     }
 
@@ -195,30 +211,152 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profiles = _state.value.connectionProfiles.map { if (it.id == profileId) updated else it }
         saveConnectionProfiles(profiles)
         if (!apiKey.isNullOrBlank()) secrets.saveProfileApiKey(profileId, apiKey)
+        val active = _state.value.activeConnectionProfileId == profileId
         _state.value = _state.value.copy(
             connectionProfiles = profiles,
-            apiKeyConfigured = if (_state.value.activeConnectionProfileId == profileId) isProfileConfigured(updated) else _state.value.apiKeyConfigured,
-            availableTextModels = if (_state.value.activeConnectionProfileId == profileId) emptyList() else _state.value.availableTextModels,
-            availableImageModels = if (_state.value.activeConnectionProfileId == profileId) emptyList() else _state.value.availableImageModels,
-            status = "Профиль сохранён"
+            apiKeyConfigured = if (active) isProfileConfigured(updated) else _state.value.apiKeyConfigured,
+            availableTextModels = if (active) emptyList() else _state.value.availableTextModels,
+            availableImageModels = if (profileId == "openrouter") emptyList() else _state.value.availableImageModels,
+            modelCatalogConnectionId = null,
+            modelCatalog = emptyList(),
+            status = "Подключение сохранено"
         )
-        if (_state.value.activeConnectionProfileId == profileId && isProfileConfigured(updated)) refreshModelCapabilities()
+        if (active && profileId !in _state.value.disabledConnectionIds && isProfileConfigured(updated)) refreshModelCapabilities()
+    }
+
+    fun setConnectionEnabled(profileId: String, enabled: Boolean) {
+        if (_state.value.isLoading) return
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        val disabled = _state.value.disabledConnectionIds.toMutableSet().apply {
+            if (enabled) remove(profileId) else add(profileId)
+        }.toSet()
+        prefs.edit().putStringSet("disabled_connection_profiles", disabled).apply()
+        _state.value = _state.value.copy(
+            disabledConnectionIds = disabled,
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, disabled),
+            modelCatalogConnectionId = null,
+            modelCatalog = emptyList(),
+            status = if (enabled) "Подключение «${profile.name}» включено" else "Подключение «${profile.name}» выключено"
+        )
+
+        if (!enabled && _state.value.activeConnectionProfileId == profileId) {
+            val fallback = _state.value.connectionProfiles.firstOrNull {
+                it.id !in disabled && isProfileConfigured(it)
+            } ?: _state.value.connectionProfiles.firstOrNull { it.id !in disabled }
+            if (fallback != null) {
+                selectConnectionProfile(fallback.id)
+            } else {
+                _state.value = _state.value.copy(
+                    mode = ChatMode.TEXT,
+                    availableTextModels = emptyList(),
+                    availableImageModels = emptyList(),
+                    reasoningEnabled = false,
+                    webSearchEnabled = false,
+                    status = "Все подключения выключены"
+                )
+            }
+        } else if (enabled && profileId == "openrouter" && isProfileConfigured(profile)) {
+            refreshModelCapabilities()
+        }
     }
 
     fun deleteConnectionProfile(profileId: String) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.type == ProviderType.OPENROUTER) return
         secrets.deleteProfileApiKey(profileId)
+        prefs.edit()
+            .remove(profilePrefKey("text_model", profileId))
+            .remove(profilePrefKey("image_model", profileId))
+            .remove(profilePrefKey("quick_text_models_json", profileId))
+            .apply()
         val profiles = _state.value.connectionProfiles.filterNot { it.id == profileId }
+        val disabled = _state.value.disabledConnectionIds - profileId
+        val fallback = profiles.firstOrNull { it.id !in disabled && isProfileConfigured(it) }
+            ?: profiles.firstOrNull { it.id !in disabled }
+            ?: profiles.first()
+        val chats = _state.value.chats.map { chat ->
+            if (chat.connectionProfileId == profileId) chat.copy(
+                connectionProfileId = fallback.id,
+                textModelOverride = null,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
         saveConnectionProfiles(profiles)
-        _state.value = _state.value.copy(connectionProfiles = profiles)
-        if (_state.value.activeConnectionProfileId == profileId) selectConnectionProfile("openrouter")
+        prefs.edit().putStringSet("disabled_connection_profiles", disabled).apply()
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            connectionProfiles = profiles,
+            disabledConnectionIds = disabled,
+            chats = chats,
+            quickTextModels = loadAllQuickTextModels(profiles, disabled),
+            modelCatalogConnectionId = null,
+            modelCatalog = emptyList(),
+            status = "Подключение «${profile.name}» удалено"
+        )
+        if (_state.value.activeConnectionProfileId == profileId) selectConnectionProfile(fallback.id)
+    }
+
+    fun loadConnectionModels(profileId: String) {
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
+            return
+        }
+        if (!isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+            return
+        }
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, busyLabel = "Загружаю модели…", status = null)
+            runCatching {
+                if (profile.type == ProviderType.OPENROUTER) api.models(key, profile.baseUrl)
+                else compatibleApi.models(key, profile.baseUrl)
+            }.onSuccess { infos ->
+                _state.value = _state.value.copy(
+                    modelCatalogConnectionId = profile.id,
+                    modelCatalog = infos,
+                    isLoading = false,
+                    busyLabel = null
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    busyLabel = null,
+                    status = it.message ?: "Не удалось загрузить модели подключения"
+                )
+            }
+        }
+    }
+
+    fun toggleQuickTextModelForConnection(profileId: String, model: String) {
+        val clean = model.trim()
+        if (clean.isBlank()) return
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        val stored = loadQuickTextModels(profileId)
+        val alreadySelected = clean in stored
+        if (!alreadySelected && totalStoredQuickModels(_state.value.connectionProfiles) >= 10) {
+            _state.value = _state.value.copy(status = "Можно закрепить до 10 быстрых моделей")
+            return
+        }
+        val nextForProfile = if (alreadySelected) stored.filterNot { it == clean } else stored + clean
+        prefs.edit().putString(
+            profilePrefKey("quick_text_models_json", profileId),
+            gson.toJson(nextForProfile.distinct().take(10))
+        ).apply()
+        _state.value = _state.value.copy(
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+            status = if (!alreadySelected) "Модель добавлена в быстрые · ${profile.name}" else "Модель убрана из быстрых"
+        )
     }
 
     fun setMode(mode: ChatMode) {
-        if (mode == ChatMode.IMAGE && activeConnectionProfile().type != ProviderType.OPENROUTER) {
-            _state.value = _state.value.copy(status = "Генерация изображений сейчас доступна через профиль OpenRouter")
-            return
+        if (mode == ChatMode.IMAGE) {
+            val openRouter = openRouterProfile()
+            if (openRouter.id in _state.value.disabledConnectionIds || !isProfileConfigured(openRouter)) {
+                _state.value = _state.value.copy(status = "Для создания изображений включите и настройте подключение OpenRouter")
+                return
+            }
         }
         prefs.edit().putString("chat_mode", mode.name).apply()
         val chats = _state.value.chats.map { chat ->
@@ -226,6 +364,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         chatsRepository.save(chats)
         _state.value = _state.value.copy(mode = mode, chats = chats)
+        if (mode == ChatMode.IMAGE && _state.value.availableImageModels.isEmpty()) refreshModels(ChatMode.IMAGE)
     }
 
     fun selectModel(mode: ChatMode, model: String) {
@@ -249,64 +388,77 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 )
             }
             ChatMode.IMAGE -> {
-                prefs.edit().putString(profilePrefKey("image_model", _state.value.activeConnectionProfileId), clean).apply()
+                prefs.edit().putString(profilePrefKey("image_model", "openrouter"), clean).apply()
                 _state.value = _state.value.copy(imageModel = clean)
             }
         }
     }
 
     fun toggleQuickTextModel(model: String) {
-        val clean = model.trim()
-        if (clean.isBlank()) return
-        val current = _state.value.quickTextModels
-        val next = if (clean in current) {
-            current.filterNot { it == clean }
-        } else {
-            if (current.size >= 10) {
-                _state.value = _state.value.copy(status = "Можно закрепить до 10 быстрых моделей")
-                return
-            }
-            current + clean
-        }
-        prefs.edit().putString(profilePrefKey("quick_text_models_json", _state.value.activeConnectionProfileId), gson.toJson(next)).apply()
-        _state.value = _state.value.copy(quickTextModels = next)
+        toggleQuickTextModelForConnection(_state.value.activeConnectionProfileId, model)
     }
 
-    fun selectQuickTextModel(model: String) {
+    fun selectQuickTextModel(modelRef: String) {
         if (_state.value.isLoading) return
-        val clean = model.trim()
+        val (profileId, modelId) = decodeQuickModelRef(modelRef, _state.value.activeConnectionProfileId)
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            return
+        }
+        if (!isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+            return
+        }
+        val clean = modelId.trim()
         if (clean.isBlank()) return
-        val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+        val sameProfile = profile.id == _state.value.activeConnectionProfileId
+        val info = if (sameProfile) _state.value.availableTextModels.firstOrNull { it.id == clean } else null
         val effort = preferredReasoningEffort(clean, info)
-        val keepReasoning = reasoningStillValid(info, effort)
+        val keepReasoning = sameProfile && reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
+                connectionProfileId = profile.id,
                 textModelOverride = clean,
+                mode = ChatMode.TEXT,
                 updatedAt = System.currentTimeMillis()
             ) else chat
         }
         chatsRepository.save(chats)
         prefs.edit()
+            .putString("active_connection_profile", profile.id)
             .putString("reasoning_effort", effort.name)
             .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
         _state.value = _state.value.copy(
             chats = chats,
+            activeConnectionProfileId = profile.id,
+            textModel = loadTextModelForProfile(profile),
             currentChatTextModel = clean,
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+            mode = ChatMode.TEXT,
+            availableTextModels = if (sameProfile) _state.value.availableTextModels else emptyList(),
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
             reasoningEffort = effort,
-            reasoningEnabled = keepReasoning
+            reasoningEnabled = keepReasoning,
+            apiKeyConfigured = isProfileConfigured(profile),
+            status = "${clean.substringAfterLast('/')} · ${profile.name}"
         )
+        refreshModelCapabilities()
     }
 
     fun useDefaultTextModelForChat() {
         if (_state.value.isLoading) return
+        val profile = activeConnectionProfile()
         val modelId = _state.value.textModel
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
+                connectionProfileId = profile.id,
                 textModelOverride = null,
+                mode = ChatMode.TEXT,
                 updatedAt = System.currentTimeMillis()
             ) else chat
         }
@@ -318,14 +470,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(
             chats = chats,
             currentChatTextModel = null,
+            mode = ChatMode.TEXT,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning
         )
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
-        if (enabled && activeConnectionProfile().type != ProviderType.OPENROUTER) {
-            _state.value = _state.value.copy(status = "Поиск в сети сейчас поддерживается профилем OpenRouter")
+        if (enabled && (activeConnectionProfile().type != ProviderType.OPENROUTER || "openrouter" in _state.value.disabledConnectionIds)) {
+            _state.value = _state.value.copy(status = "Поиск в сети сейчас поддерживается подключением OpenRouter")
             return
         }
         prefs.edit().putBoolean("web_search", enabled).apply()
@@ -516,7 +669,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             id = UUID.randomUUID().toString(),
             title = "Новый чат",
             projectId = projectId,
-            mode = _state.value.mode
+            mode = _state.value.mode,
+            connectionProfileId = _state.value.activeConnectionProfileId
         )
         val next = listOf(chat) + _state.value.chats
         val modelId = _state.value.textModel
@@ -578,6 +732,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = branchedMessages,
             projectId = source.projectId,
             mode = source.mode ?: _state.value.mode,
+            connectionProfileId = source.connectionProfileId ?: _state.value.activeConnectionProfileId,
             textModelOverride = source.textModelOverride,
             chatFiles = copiedFiles,
             assignedRole = source.assignedRole,
@@ -618,27 +773,58 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun switchChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
-        val chat = _state.value.chats.firstOrNull { it.id == id } ?: return
-        val nextMode = chat.mode ?: _state.value.mode
-        val modelId = chat.textModelOverride ?: _state.value.textModel
-        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        val original = _state.value.chats.firstOrNull { it.id == id } ?: return
+        val requestedProfileId = original.connectionProfileId
+            ?: prefs.getString("active_connection_profile", "openrouter")
+            ?: "openrouter"
+        val profile = _state.value.connectionProfiles.firstOrNull {
+            it.id == requestedProfileId && it.id !in _state.value.disabledConnectionIds
+        } ?: _state.value.connectionProfiles.firstOrNull {
+            it.id !in _state.value.disabledConnectionIds && isProfileConfigured(it)
+        } ?: _state.value.connectionProfiles.firstOrNull { it.id !in _state.value.disabledConnectionIds }
+            ?: openRouterProfile()
+        val migrated = profile.id != requestedProfileId || original.connectionProfileId == null
+        val chat = if (migrated) original.copy(
+            connectionProfileId = profile.id,
+            textModelOverride = if (profile.id == requestedProfileId) original.textModelOverride else null,
+            updatedAt = System.currentTimeMillis()
+        ) else original
+        val chats = if (migrated) _state.value.chats.map { if (it.id == id) chat else it } else _state.value.chats
+        if (migrated) chatsRepository.save(chats)
+        val openRouter = openRouterProfile()
+        val canImage = openRouter.id !in _state.value.disabledConnectionIds && isProfileConfigured(openRouter)
+        val nextMode = if ((chat.mode ?: ChatMode.TEXT) == ChatMode.IMAGE && !canImage) ChatMode.TEXT else (chat.mode ?: ChatMode.TEXT)
+        val defaultModel = loadTextModelForProfile(profile)
+        val modelId = chat.textModelOverride ?: defaultModel
+        val info = if (profile.id == _state.value.activeConnectionProfileId) {
+            _state.value.availableTextModels.firstOrNull { it.id == modelId }
+        } else null
         val effort = preferredReasoningEffort(modelId, info)
-        val keepReasoning = reasoningStillValid(info, effort)
         prefs.edit()
             .putString("current_chat_id", id)
+            .putString("active_connection_profile", profile.id)
             .putString("chat_mode", nextMode.name)
             .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
+            .putBoolean("reasoning_enabled", false)
             .apply()
         _state.value = _state.value.copy(
+            chats = chats,
             currentChatId = id,
             messages = chat.messages,
             mode = nextMode,
+            activeConnectionProfileId = profile.id,
+            textModel = defaultModel,
             currentChatTextModel = chat.textModelOverride,
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+            imageModel = loadImageModelForProfile("openrouter"),
+            availableTextModels = emptyList(),
             reasoningEffort = effort,
-            reasoningEnabled = keepReasoning,
+            reasoningEnabled = false,
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
+            apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
+        if (profile.id !in _state.value.disabledConnectionIds && isProfileConfigured(profile)) refreshModelCapabilities()
     }
 
     fun deleteChat(id: String) {
@@ -649,27 +835,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatFilesRepository.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
-            remaining = listOf(ChatSession(UUID.randomUUID().toString(), "Новый чат", mode = _state.value.mode))
+            remaining = listOf(
+                ChatSession(
+                    UUID.randomUUID().toString(),
+                    "Новый чат",
+                    mode = ChatMode.TEXT,
+                    connectionProfileId = _state.value.activeConnectionProfileId
+                )
+            )
         }
-
         val selected = if (_state.value.currentChatId == id) remaining.first() else
             remaining.firstOrNull { it.id == _state.value.currentChatId } ?: remaining.first()
-
         chatsRepository.save(remaining)
-        prefs.edit().putString("current_chat_id", selected.id).apply()
+        _state.value = _state.value.copy(chats = remaining, pendingAttachments = emptyList())
+        switchChat(selected.id)
         _state.value = _state.value.copy(
-            chats = remaining,
-            currentChatId = selected.id,
-            messages = selected.messages,
-            mode = selected.mode ?: _state.value.mode,
-            currentChatTextModel = selected.textModelOverride,
-            pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
             status = "Диалог удалён"
         )
     }
-
 
     fun updateChatProfile(id: String, title: String, role: String, masterPrompt: String) {
         if (_state.value.isLoading) return
@@ -826,13 +1011,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun refreshModels(mode: ChatMode) {
-        val profile = activeConnectionProfile()
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+        val profile = if (mode == ChatMode.IMAGE) openRouterProfile() else activeConnectionProfile()
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
             return
         }
-        if (mode == ChatMode.IMAGE && profile.type != ProviderType.OPENROUTER) {
-            _state.value = _state.value.copy(status = "Этот профиль пока поддерживает только текстовый OpenAI-совместимый API")
+        if (!isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
             return
         }
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
@@ -874,6 +1059,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
                     ChatMode.IMAGE -> _state.value.copy(
                         availableImageModels = infos,
+                        imageModel = loadImageModelForProfile("openrouter"),
                         isLoading = false,
                         busyLabel = null
                     )
@@ -890,19 +1076,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun refreshModelCapabilities() {
         val profile = activeConnectionProfile()
-        if (!isProfileConfigured(profile)) return
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        val openRouter = openRouterProfile()
         viewModelScope.launch {
-            val textInfos = runCatching {
-                if (profile.type == ProviderType.OPENROUTER) api.models(key, profile.baseUrl)
-                else compatibleApi.models(key, profile.baseUrl)
-            }.getOrNull()
-            val imageInfos = if (profile.type == ProviderType.OPENROUTER) {
-                runCatching { api.imageModels(key, profile.baseUrl) }.getOrNull()
+            val textInfos = if (profile.id !in _state.value.disabledConnectionIds && isProfileConfigured(profile)) {
+                val key = secrets.getProfileApiKey(profile.id).orEmpty()
+                runCatching {
+                    if (profile.type == ProviderType.OPENROUTER) api.models(key, profile.baseUrl)
+                    else compatibleApi.models(key, profile.baseUrl)
+                }.getOrNull()
+            } else null
+            val imageInfos = if (openRouter.id !in _state.value.disabledConnectionIds && isProfileConfigured(openRouter)) {
+                val key = secrets.getProfileApiKey(openRouter.id).orEmpty()
+                runCatching { api.imageModels(key, openRouter.baseUrl) }.getOrNull()
             } else emptyList()
             var next = _state.value
             if (textInfos != null) {
-                var selectedModel = next.textModel
+                var selectedModel = loadTextModelForProfile(profile)
                 if (profile.type == ProviderType.OPENAI_COMPATIBLE && textInfos.none { it.id == selectedModel }) {
                     selectedModel = textInfos.firstOrNull()?.id.orEmpty()
                     if (selectedModel.isNotBlank()) prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
@@ -922,8 +1111,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     reasoningEffort = effort,
                     reasoningEnabled = keepReasoning
                 )
+            } else {
+                next = next.copy(availableTextModels = emptyList(), reasoningEnabled = false)
             }
-            next = next.copy(availableImageModels = imageInfos ?: emptyList())
+            next = next.copy(
+                availableImageModels = imageInfos ?: emptyList(),
+                imageModel = loadImageModelForProfile("openrouter"),
+                quickTextModels = loadAllQuickTextModels(next.connectionProfiles, next.disabledConnectionIds)
+            )
             _state.value = next
         }
     }
@@ -1166,7 +1361,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun send(text: String) {
-        val profile = activeConnectionProfile()
+        val profile = if (_state.value.mode == ChatMode.IMAGE) openRouterProfile() else activeConnectionProfile()
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            return
+        }
         if (!isProfileConfigured(profile)) {
             _state.value = _state.value.copy(status = connectionSetupMessage(profile))
             return
@@ -1642,6 +1841,35 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .take(10)
     }.getOrDefault(emptyList())
 
+    private fun quickModelRef(profileId: String, modelId: String): String =
+        profileId + QUICK_MODEL_SEPARATOR + modelId
+
+    private fun decodeQuickModelRef(ref: String, fallbackProfileId: String): Pair<String, String> {
+        val index = ref.indexOf(QUICK_MODEL_SEPARATOR)
+        return if (index > 0) {
+            ref.substring(0, index) to ref.substring(index + QUICK_MODEL_SEPARATOR.length)
+        } else {
+            fallbackProfileId to ref
+        }
+    }
+
+    private fun loadAllQuickTextModels(
+        profiles: List<ConnectionProfile>,
+        disabled: Set<String>
+    ): List<String> = profiles
+        .asSequence()
+        .filter { it.id !in disabled }
+        .flatMap { profile -> loadQuickTextModels(profile.id).asSequence().map { quickModelRef(profile.id, it) } }
+        .distinct()
+        .take(10)
+        .toList()
+
+    private fun totalStoredQuickModels(profiles: List<ConnectionProfile>): Int =
+        profiles.sumOf { loadQuickTextModels(it.id).size }
+
+    private fun loadDisabledConnectionIds(): Set<String> =
+        prefs.getStringSet("disabled_connection_profiles", emptySet())?.toSet() ?: emptySet()
+
     private fun defaultOpenRouterProfile() = ConnectionProfile(
         id = "openrouter",
         name = "OpenRouter",
@@ -1667,10 +1895,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         prefs.edit().putString("connection_profiles_json", gson.toJson(profiles)).apply()
     }
 
+    private fun openRouterProfile(): ConnectionProfile =
+        _state.value.connectionProfiles.firstOrNull { it.id == "openrouter" } ?: defaultOpenRouterProfile()
+
     private fun activeConnectionProfile(): ConnectionProfile =
         _state.value.connectionProfiles.firstOrNull { it.id == _state.value.activeConnectionProfileId }
-            ?: _state.value.connectionProfiles.firstOrNull { it.id == "openrouter" }
-            ?: defaultOpenRouterProfile()
+            ?: openRouterProfile()
 
     private fun normalizeBaseUrl(value: String): String = value.trim().trimEnd('/')
 
@@ -1680,8 +1910,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun connectionSetupMessage(profile: ConnectionProfile): String = when (profile.type) {
-        ProviderType.OPENROUTER -> "Откройте «Профили подключения» и сохраните адрес и API-ключ OpenRouter"
-        ProviderType.OPENAI_COMPATIBLE -> "Откройте «Профили подключения» и укажите адрес совместимого API"
+        ProviderType.OPENROUTER -> "Откройте «Подключения» и сохраните адрес и API-ключ OpenRouter"
+        ProviderType.OPENAI_COMPATIBLE -> "Откройте «Подключения» и укажите адрес совместимого API"
     }
 
     private fun profilePrefKey(base: String, profileId: String): String =

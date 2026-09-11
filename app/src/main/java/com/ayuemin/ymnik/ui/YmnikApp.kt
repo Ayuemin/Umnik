@@ -158,6 +158,13 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private const val QUICK_MODEL_SEPARATOR = "\u001F"
+private fun quickModelRef(connectionId: String, modelId: String): String = connectionId + QUICK_MODEL_SEPARATOR + modelId
+private fun quickModelConnectionId(ref: String, fallback: String = "openrouter"): String =
+    if (QUICK_MODEL_SEPARATOR in ref) ref.substringBefore(QUICK_MODEL_SEPARATOR) else fallback
+private fun quickModelId(ref: String): String =
+    if (QUICK_MODEL_SEPARATOR in ref) ref.substringAfter(QUICK_MODEL_SEPARATOR) else ref
+
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
@@ -219,6 +226,7 @@ private fun ChatScreen(
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
         ?: state.connectionProfiles.first()
     val openRouterProfile = activeProfile.type == ProviderType.OPENROUTER
+    val openRouterAvailable = "openrouter" !in state.disabledConnectionIds
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
@@ -466,7 +474,7 @@ onBranch = if (message.role == "assistant") {
                     ComposerActionTile(
                         icon = if (state.mode == ChatMode.TEXT) Icons.Outlined.Image else Icons.Outlined.TextFields,
                         label = if (state.mode == ChatMode.TEXT) "Создать" else "Текст",
-                        enabled = !state.isLoading && (state.mode == ChatMode.IMAGE || openRouterProfile),
+                        enabled = !state.isLoading && (state.mode == ChatMode.IMAGE || openRouterAvailable),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             vm.setMode(if (state.mode == ChatMode.TEXT) ChatMode.IMAGE else ChatMode.TEXT)
@@ -489,7 +497,7 @@ onBranch = if (message.role == "assistant") {
                     ComposerToolRow(
                         icon = Icons.Outlined.Language,
                         title = "Поиск в сети",
-                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого профиля",
+                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
                         checked = state.webSearchEnabled,
                         enabled = openRouterProfile,
                         onCheckedChange = vm::setWebSearchEnabled
@@ -597,8 +605,10 @@ private fun ChatHeader(
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val displayedModel = if (state.mode == ChatMode.TEXT) activeTextModel else state.imageModel
     val shortModelName = displayedModel.substringAfter('/').ifBlank { displayedModel }
-    val quickCandidates = (listOf(activeTextModel, state.textModel) + state.quickTextModels)
-        .filter { it.isNotBlank() }
+    val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
+    val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
+    val quickCandidates = (listOf(currentRef, defaultRef) + state.quickTextModels)
+        .filter { quickModelId(it).isNotBlank() }
         .distinct()
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
@@ -625,12 +635,12 @@ private fun ChatHeader(
                     }
                 }
 
-                DropdownMenu(
-                    expanded = quickModelsOpen,
-                    onDismissRequest = { quickModelsOpen = false }
-                ) {
-                    quickCandidates.forEach { id ->
-                        val current = id == activeTextModel
+                DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
+                    quickCandidates.forEach { ref ->
+                        val id = quickModelId(ref)
+                        val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
+                        val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
+                        val current = ref == currentRef
                         DropdownMenuItem(
                             text = {
                                 Column {
@@ -643,8 +653,8 @@ private fun ChatHeader(
                                     Text(
                                         when {
                                             current -> "Текущая модель"
-                                            id == state.textModel -> "По умолчанию"
-                                            else -> id
+                                            ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
+                                            else -> connection?.name ?: id
                                         },
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -654,7 +664,7 @@ private fun ChatHeader(
                                 }
                             },
                             onClick = {
-                                if (id == state.textModel) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(id)
+                                if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
                                 quickModelsOpen = false
                             }
                         )
@@ -662,11 +672,7 @@ private fun ChatHeader(
                 }
             }
 
-            IconButton(
-                onClick = onNewChat,
-                enabled = !state.isLoading,
-                modifier = Modifier.size(42.dp)
-            ) {
+            IconButton(onClick = onNewChat, enabled = !state.isLoading, modifier = Modifier.size(42.dp)) {
                 Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
             }
 
@@ -688,10 +694,7 @@ private fun ChatHeader(
                     Text("Меню")
                 }
 
-                DropdownMenu(
-                    expanded = hubOpen,
-                    onDismissRequest = { hubOpen = false }
-                ) {
+                DropdownMenu(expanded = hubOpen, onDismissRequest = { hubOpen = false }) {
                     DropdownMenuItem(
                         text = { Text("Проекты") },
                         leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
@@ -1651,8 +1654,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
-    var connectionsExpanded by remember(state.apiKeyConfigured) { mutableStateOf(!state.apiKeyConfigured) }
-    var editingProfileId by remember(state.activeConnectionProfileId) { mutableStateOf(state.activeConnectionProfileId) }
+    var connectionsExpanded by remember { mutableStateOf(false) }
+    var editingProfileId by remember { mutableStateOf("openrouter") }
     val editingProfile = state.connectionProfiles.firstOrNull { it.id == editingProfileId }
         ?: state.connectionProfiles.first()
     var connectionName by remember(editingProfile.id, editingProfile.name) { mutableStateOf(editingProfile.name) }
@@ -1953,38 +1956,54 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
+                val enabledCount = state.connectionProfiles.count { it.id !in state.disabledConnectionIds }
                 ExpandableSettingsCard(
-                    title = "Профили подключения",
-                    subtitle = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }?.let { profile ->
-                        profile.name + if (state.apiKeyConfigured) " · готов" else " · настройте"
-                    } ?: "OpenRouter",
+                    title = "Подключения",
+                    subtitle = "Включено: $enabledCount из ${state.connectionProfiles.size}",
                     icon = Icons.Outlined.Language,
                     expanded = connectionsExpanded,
                     onToggle = { connectionsExpanded = !connectionsExpanded }
                 ) {
                     Text(
-                        "OpenRouter сохраняет все расширенные возможности Umnik. Другой профиль использует стандартные /models и /chat/completions и включает только подтверждённые возможности.",
+                        "Включённые подключения доступны Umnik. Быстрая модель сама выбирает нужное подключение, поэтому отдельно переключать сервис перед запросом не нужно.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(9.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        items(state.connectionProfiles, key = { it.id }) { profile ->
-                            FilterChip(
-                                selected = state.activeConnectionProfileId == profile.id,
+                    state.connectionProfiles.forEach { profile ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(
                                 onClick = {
                                     editingProfileId = profile.id
                                     connectionName = profile.name
                                     connectionUrl = profile.baseUrl
                                     connectionKey = ""
-                                    vm.selectConnectionProfile(profile.id)
                                 },
-                                label = { Text(profile.name, maxLines = 1) },
-                                leadingIcon = if (state.activeConnectionProfileId == profile.id) {
-                                    { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                } else null
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 7.dp)
+                            ) {
+                                Column(Modifier.fillMaxWidth()) {
+                                    Text(
+                                        profile.name,
+                                        fontWeight = if (editingProfileId == profile.id) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                    Text(
+                                        if (profile.type == ProviderType.OPENROUTER) "OpenRouter" else "OpenAI-совместимое",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = profile.id !in state.disabledConnectionIds,
+                                onCheckedChange = { vm.setConnectionEnabled(profile.id, it) }
                             )
                         }
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
                     }
                     Spacer(Modifier.height(8.dp))
                     FilledTonalButton(
@@ -1999,11 +2018,11 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
-                        Text("Добавить другой")
+                        Text("Добавить подключение")
                     }
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        if (editingProfile.type == ProviderType.OPENROUTER) "OpenRouter" else "OpenAI-совместимый профиль",
+                        if (editingProfile.type == ProviderType.OPENROUTER) "OpenRouter" else "Настройка подключения",
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -2030,9 +2049,9 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     )
                     Text(
                         if (editingProfile.type == ProviderType.OPENROUTER)
-                            "Адрес можно изменить, если OpenRouter перенесёт API. Обычно менять его не нужно."
+                            "Адрес можно изменить на случай изменения API у провайдера. Обычно оставьте значение по умолчанию."
                         else
-                            "Umnik добавит /models и /chat/completions к этому адресу. Для первого варианта используйте HTTPS-адрес.",
+                            "Umnik использует стандартные /models и /chat/completions. Для удалённого сервера используйте HTTPS.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 5.dp)
@@ -2043,7 +2062,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         onValueChange = { connectionKey = it },
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("API-ключ") },
-                        placeholder = { Text(if (state.apiKeyConfigured && editingProfile.id == state.activeConnectionProfileId) "Ключ уже сохранён · введите только для замены" else "Необязательно для локального API") },
+                        placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true
                     )
@@ -2060,7 +2079,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         },
                         enabled = connectionUrl.isNotBlank(),
                         modifier = Modifier.fillMaxWidth()
-                    ) { Text("Сохранить профиль") }
+                    ) { Text("Сохранить подключение") }
                     if (editingProfile.type != ProviderType.OPENROUTER) {
                         Spacer(Modifier.height(4.dp))
                         TextButton(
@@ -2076,7 +2095,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         ) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Удалить этот профиль")
+                            Text("Удалить подключение")
                         }
                     }
                     Text(
@@ -2165,7 +2184,10 @@ private fun ReasoningSettingsCard(
     onToggle: () -> Unit
 ) {
     val currentId = state.currentChatTextModel ?: state.textModel
-    val modelIds = (listOf(currentId, state.textModel) + state.quickTextModels)
+    val activeQuickModels = state.quickTextModels
+        .filter { quickModelConnectionId(it, state.activeConnectionProfileId) == state.activeConnectionProfileId }
+        .map(::quickModelId)
+    val modelIds = (listOf(currentId, state.textModel) + activeQuickModels)
         .filter { it.isNotBlank() }
         .distinct()
     val imageInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
@@ -2317,52 +2339,93 @@ private fun reasoningEffortShortLabel(effort: ReasoningEffort): String = when (e
 
 @Composable
 private fun QuickModelsSettingsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
+    val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
+    var selectedConnectionId by remember(enabledConnections.map { it.id }) {
+        mutableStateOf(
+            state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
+                ?: enabledConnections.firstOrNull()?.id
+        )
+    }
     var query by remember { mutableStateOf("") }
 
-    LaunchedEffect(Unit) {
-        if (state.availableTextModels.isEmpty()) vm.refreshModels(ChatMode.TEXT)
+    LaunchedEffect(selectedConnectionId) {
+        selectedConnectionId?.let(vm::loadConnectionModels)
     }
 
-    val filtered = remember(state.availableTextModels, query) {
-        state.availableTextModels
-            .filter { it.id.contains(query.trim(), ignoreCase = true) }
-            .take(300)
+    val selectedConnection = enabledConnections.firstOrNull { it.id == selectedConnectionId }
+    val models = if (state.modelCatalogConnectionId == selectedConnectionId) state.modelCatalog else emptyList()
+    val filtered = remember(models, query) {
+        models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(300)
     }
 
     FullScreenPanel(title = "Быстрые модели", onBack = onDismiss) {
         Text(
-            "Модель по умолчанию доступна всегда. Можно закрепить до 10 дополнительных моделей для мгновенной смены в чате.",
+            "Закрепите до 10 моделей из разных подключений. В чате Umnik сам выберет нужное подключение при нажатии на модель.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            placeholder = { Text("Поиск модели") }
-        )
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-        ) {
-            items(filtered, key = { it.id }) { modelInfo ->
-                FilterChip(
-                    selected = modelInfo.id in state.quickTextModels,
-                    onClick = { vm.toggleQuickTextModel(modelInfo.id) },
-                    label = {
-                        Text(
-                            modelInfo.id,
-                            modifier = Modifier.fillMaxWidth(),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth()
+        if (enabledConnections.isEmpty()) {
+            Text(
+                "Нет включённых подключений. Включите хотя бы одно в разделе «Подключения».",
+                modifier = Modifier.padding(16.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                items(enabledConnections, key = { it.id }) { connection ->
+                    FilterChip(
+                        selected = selectedConnectionId == connection.id,
+                        onClick = {
+                            selectedConnectionId = connection.id
+                            query = ""
+                        },
+                        label = { Text(connection.name, maxLines = 1) }
+                    )
+                }
+            }
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                placeholder = { Text("Поиск модели") }
+            )
+            if (filtered.isEmpty()) {
+                Text(
+                    if (state.isLoading) "Загрузка списка…" else "Модели не найдены или подключение ещё не настроено",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(5.dp))
+            } else {
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    items(filtered, key = { it.id }) { modelInfo ->
+                        val ref = selectedConnection?.let { quickModelRef(it.id, modelInfo.id) }.orEmpty()
+                        FilterChip(
+                            selected = ref in state.quickTextModels,
+                            onClick = {
+                                selectedConnection?.let { vm.toggleQuickTextModelForConnection(it.id, modelInfo.id) }
+                            },
+                            label = {
+                                Text(
+                                    modelInfo.id,
+                                    modifier = Modifier.fillMaxWidth(),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(5.dp))
+                    }
+                }
             }
         }
     }
