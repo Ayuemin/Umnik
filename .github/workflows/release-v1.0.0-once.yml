@@ -27,80 +27,72 @@ jobs:
 
           app = Path("app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt")
           text = app.read_text(encoding="utf-8")
-          old = '''                if (onBranch != null) {
-                    TextButton(
-                        onClick = onBranch,
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                        modifier = Modifier.height(34.dp)
-                    ) {
-                        Icon(
-                            Icons.Outlined.AddComment,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text("Ветка в новом чате", style = MaterialTheme.typography.labelMedium)
-                    }
-                }
-'''
-          new = '''                if (onBranch != null) {
-                    IconButton(
-                        onClick = onBranch,
-                        modifier = Modifier.size(34.dp)
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_branch_chat),
-                            contentDescription = "Ветка в новом чате",
-                            modifier = Modifier.size(19.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-'''
-          if old not in text:
-              raise SystemExit("Branch button block not found")
-          text = text.replace(old, new, 1)
+          start = text.index("                if (onBranch != null) {\n                    TextButton(")
+          end_marker = "                }\n            }\n        }\n    }\n}\n\nprivate enum class MessagePartKind"
+          end = text.index(end_marker, start)
+          old_block = text[start:end + len("                }\n")]
+          new_block = (
+              "                if (onBranch != null) {\n"
+              "                    IconButton(\n"
+              "                        onClick = onBranch,\n"
+              "                        modifier = Modifier.size(34.dp)\n"
+              "                    ) {\n"
+              "                        Icon(\n"
+              "                            painter = painterResource(R.drawable.ic_branch_chat),\n"
+              "                            contentDescription = \"Ветка в новом чате\",\n"
+              "                            modifier = Modifier.size(19.dp),\n"
+              "                            tint = MaterialTheme.colorScheme.onSurfaceVariant\n"
+              "                        )\n"
+              "                    }\n"
+              "                }\n"
+          )
+          text = text[:start] + new_block + text[start + len(old_block):]
           app.write_text(text, encoding="utf-8")
 
           vector = Path("app/src/main/res/drawable/ic_branch_chat.xml")
-          vector.write_text('''<?xml version="1.0" encoding="utf-8"?>
-          <vector xmlns:android="http://schemas.android.com/apk/res/android"
-              android:width="24dp"
-              android:height="24dp"
-              android:viewportWidth="24"
-              android:viewportHeight="24">
-              <path
-                  android:fillColor="@android:color/transparent"
-                  android:strokeColor="#FFFFFFFF"
-                  android:strokeWidth="1.9"
-                  android:strokeLineCap="round"
-                  android:strokeLineJoin="round"
-                  android:pathData="M4,6 H17 M14,3 L17,6 L14,9 M8,6 C8,11 10.5,15 15,15 H17 M14,12 L17,15 L14,18" />
-          </vector>
-          ''', encoding="utf-8")
+          vector.write_text("\n".join([
+              '<?xml version="1.0" encoding="utf-8"?>',
+              '<vector xmlns:android="http://schemas.android.com/apk/res/android"',
+              '    android:width="24dp"',
+              '    android:height="24dp"',
+              '    android:viewportWidth="24"',
+              '    android:viewportHeight="24">',
+              '    <path',
+              '        android:fillColor="@android:color/transparent"',
+              '        android:strokeColor="#FFFFFFFF"',
+              '        android:strokeWidth="1.9"',
+              '        android:strokeLineCap="round"',
+              '        android:strokeLineJoin="round"',
+              '        android:pathData="M4,6 H17 M14,3 L17,6 L14,9 M8,6 C8,11 10.5,15 15,15 H17 M14,12 L17,15 L14,18" />',
+              '</vector>',
+              ''
+          ]), encoding="utf-8")
 
           gradle = Path("app/build.gradle.kts")
           g = gradle.read_text(encoding="utf-8")
-          g = g.replace("// Umnik v0.7.9", "// Umnik v1.0.0", 1)
-          g = g.replace("versionCode = 26", "versionCode = 27", 1)
-          g = g.replace('versionName = "0.7.9"', 'versionName = "1.0.0"', 1)
+          for old, new in [
+              ("// Umnik v0.7.9", "// Umnik v1.0.0"),
+              ("versionCode = 26", "versionCode = 27"),
+              ('versionName = "0.7.9"', 'versionName = "1.0.0"')
+          ]:
+              if old not in g:
+                  raise SystemExit(f"Missing version marker: {old}")
+              g = g.replace(old, new, 1)
           gradle.write_text(g, encoding="utf-8")
 
           changelog = Path("CHANGELOG.md")
           c = changelog.read_text(encoding="utf-8")
           marker = "## Unreleased\n"
-          entry = '''## Unreleased
-
-## v1.0.0 - 2026-09-11
-
-- Первая стабильная версия Umnik 1.0.0.
-- Действие «Ветка в новом чате» под ответом модели теперь отображается компактным нейтральным значком без длинной подписи и акцентного цвета.
-- Сохранена возможность создавать независимую ветку диалога от любого ответа модели.
-'''
+          entry = (
+              "## Unreleased\n\n"
+              "## v1.0.0 - 2026-09-11\n\n"
+              "- Первая стабильная версия Umnik 1.0.0.\n"
+              "- Действие «Ветка в новом чате» под ответом модели теперь отображается компактным нейтральным значком без длинной подписи и акцентного цвета.\n"
+              "- Сохранена возможность создавать независимую ветку диалога от любого ответа модели.\n"
+          )
           if marker not in c:
               raise SystemExit("CHANGELOG marker not found")
-          c = c.replace(marker, entry, 1)
-          changelog.write_text(c, encoding="utf-8")
+          changelog.write_text(c.replace(marker, entry, 1), encoding="utf-8")
           PY
 
       - name: Set up JDK 17
