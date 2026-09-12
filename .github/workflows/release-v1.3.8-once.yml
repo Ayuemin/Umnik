@@ -1,0 +1,80 @@
+name: Prepare Umnik 1.3.8 once
+
+on:
+  push:
+    paths:
+      - ".github/run-v1.3.8"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Compile debug APK
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Add changelog and tag release
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("CHANGELOG.md")
+          text = p.read_text(encoding="utf-8")
+          if "## v1.3.8 - 2026-09-12" not in text:
+              section = """## v1.3.8 - 2026-09-12
+
+          - Диагностика NVIDIA стала подробной по сетевым фазам: DNS, подключение TCP, TLS, завершение отправки тела запроса, начало и окончание заголовков/тела ответа, завершение, отмена и сетевая ошибка.
+          - В подробный сетевой лог по-прежнему не попадают API-ключи, заголовки авторизации, query-параметры, тексты запросов и содержимое ответов.
+          - Для NVIDIA Text API включён диагностически минимальный JSON: `model`, `messages`, `stream=false`; необязательный `max_tokens` временно не отправляется. Это помогает отделить зависание hosted NIM от проблем параметров запроса.
+          - Для NVIDIA явно запрашивается `Accept: application/json`; обычные OpenAI-compatible подключения сохраняют прежний лимит `max_tokens=4096`.
+          - Версия диагностического релиза: 1.3.8 / versionCode 50.
+
+          """
+              marker = "## Unreleased\n\n"
+              if marker not in text:
+                  raise SystemExit("Unreleased marker not found")
+              text = text.replace(marker, marker + section, 1)
+              p.write_text(text, encoding="utf-8")
+          PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if ! git diff --quiet -- CHANGELOG.md; then
+            git add CHANGELOG.md
+            git commit -m "Document Umnik v1.3.8"
+            git push origin main
+          fi
+
+          TAG="v1.3.8"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "$TAG already exists"
+            exit 1
+          fi
+          git tag "$TAG" HEAD
+          git push origin "$TAG"
