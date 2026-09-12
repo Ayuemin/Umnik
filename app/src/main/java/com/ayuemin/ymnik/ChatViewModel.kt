@@ -528,10 +528,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
             return
         }
-        prefs.edit()
+        val saved = prefs.edit()
             .putString("image_connection_profile", profile.id)
             .putString(profilePrefKey("image_model", profile.id), clean)
-            .apply()
+            .commit()
+        if (!saved) {
+            _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели изображений")
+            return
+        }
         val available = if (_state.value.modelCatalogConnectionId == profile.id) _state.value.modelCatalog else emptyList()
         val info = available.firstOrNull { it.id == clean }
         _state.value = _state.value.copy(
@@ -651,16 +655,44 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) return
         if (!isProfileConfigured(profile)) return
-        prefs.edit().putString(profilePrefKey("text_model", profile.id), clean).apply()
+        val saved = prefs.edit().putString(profilePrefKey("text_model", profile.id), clean).commit()
+        if (!saved) {
+            _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели")
+            return
+        }
         if (profile.id == _state.value.activeConnectionProfileId) {
-            val effectiveId = _state.value.currentChatTextModel ?: clean
-            val info = _state.value.availableTextModels.firstOrNull { it.id == effectiveId }
-            val effort = preferredReasoningEffort(effectiveId, info)
+            val chats = _state.value.chats.map { chat ->
+                if (chat.id == _state.value.currentChatId) chat.copy(
+                    connectionProfileId = profile.id,
+                    textModelOverride = null,
+                    mode = ChatMode.TEXT,
+                    updatedAt = System.currentTimeMillis()
+                ) else chat
+            }
+            chatsRepository.save(chats)
+            val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+                ?: _state.value.modelCatalog
+                    .takeIf { _state.value.modelCatalogConnectionId == profile.id }
+                    ?.firstOrNull { it.id == clean }
+            val effort = preferredReasoningEffort(clean, info)
             val keepReasoning = reasoningStillValid(info, effort)
-            prefs.edit().putString("reasoning_effort", effort.name).putBoolean("reasoning_enabled", keepReasoning).apply()
-            _state.value = _state.value.copy(textModel=clean, reasoningEffort=effort, reasoningEnabled=keepReasoning, status="Модель по умолчанию · ${profile.name}: ${clean.substringAfterLast('/')}")
+            prefs.edit()
+                .putString("reasoning_effort", effort.name)
+                .putBoolean("reasoning_enabled", keepReasoning)
+                .apply()
+            _state.value = _state.value.copy(
+                chats = chats,
+                textModel = clean,
+                currentChatTextModel = null,
+                mode = ChatMode.TEXT,
+                reasoningEffort = effort,
+                reasoningEnabled = keepReasoning,
+                status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
+            )
         } else {
-            _state.value = _state.value.copy(status="Модель по умолчанию · ${profile.name}: ${clean.substringAfterLast('/')}")
+            _state.value = _state.value.copy(
+                status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий чат не переключён"
+            )
         }
     }
 

@@ -609,7 +609,7 @@ onBranch = if (message.role == "assistant") {
                                 enabled = state.requestActive || isRecording || (!state.isLoading && (
                                     text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
                                 )),
-                                modifier = Modifier.size(if (state.requestActive) 58.dp else 48.dp)
+                                modifier = Modifier.size(if (state.requestActive) 50.dp else 48.dp)
                             ) {
                                 if (state.requestActive) {
                                     WorkingStopTimer(requestElapsedSeconds)
@@ -818,9 +818,9 @@ private fun CompactMessageAction(
 private fun WorkingStopTimer(seconds: Int) {
     Box(
         modifier = Modifier
-            .size(52.dp)
+            .size(44.dp)
             .border(
-                width = 2.dp,
+                width = 1.5.dp,
                 color = MaterialTheme.colorScheme.primary,
                 shape = RoundedCornerShape(4.dp)
             ),
@@ -828,7 +828,7 @@ private fun WorkingStopTimer(seconds: Int) {
     ) {
         Text(
             text = formatRequestDuration(seconds),
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.bodyMedium,
             fontWeight = FontWeight.Medium,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1
@@ -1306,6 +1306,7 @@ private fun ModelPickerDialog(
         selectedImageConnectionId?.let(vm::defaultImageModelForConnection).orEmpty()
     }
     var manualImageModel by remember(selectedImageConnectionId, current) { mutableStateOf(current) }
+    var pendingModel by remember(mode, selectedConnectionId, current) { mutableStateOf(current) }
 
     LaunchedEffect(mode, selectedTextConnectionId, selectedImageConnectionId) {
         if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
@@ -1366,7 +1367,7 @@ private fun ModelPickerDialog(
                 )
             } else {
                 Text(
-                    "У каждого подключения своя модель по умолчанию. Выбор здесь не переключает текущий чат на другой сервис.",
+                    "Нажмите модель, затем «Сохранить выбор». Для текущего подключения модель сразу применяется к этому и новым чатам. Для другого подключения сохраняется его модель по умолчанию без переключения сервиса текущего чата.",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1390,7 +1391,7 @@ private fun ModelPickerDialog(
                 },
                 enabled = manualImageModel.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            ) { Text("Использовать эту модель") }
+            ) { Text("Сохранить модель") }
         }
 
         if (!customImageConnection) {
@@ -1416,6 +1417,27 @@ private fun ModelPickerDialog(
                 Text("Обновить")
             }
         }
+        if (!customImageConnection) {
+            FilledTonalButton(
+                onClick = {
+                    val chosen = pendingModel.trim()
+                    if (chosen.isNotBlank()) {
+                        if (mode == ChatMode.TEXT) {
+                            selectedTextConnectionId?.let { vm.selectDefaultTextModel(it, chosen) }
+                        } else {
+                            selectedImageConnectionId?.let { vm.selectImageModel(it, chosen) }
+                        }
+                        onDismiss()
+                    }
+                },
+                enabled = pendingModel.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)
+            ) {
+                Icon(Icons.Outlined.Check, contentDescription = null)
+                Spacer(Modifier.width(7.dp))
+                Text("Сохранить выбор")
+            }
+        }
         if (filtered.isEmpty()) {
             if (!customImageConnection) {
                 Text(
@@ -1430,21 +1452,27 @@ private fun ModelPickerDialog(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 items(filtered, key = { it.id }) { modelInfo ->
+                    val selected = pendingModel == modelInfo.id
                     TextButton(
-                        onClick = {
-                            if (mode == ChatMode.TEXT) selectedTextConnectionId?.let { vm.selectDefaultTextModel(it, modelInfo.id) }
-                            else selectedImageConnectionId?.let { vm.selectImageModel(it, modelInfo.id) }
-                            onDismiss()
-                        },
+                        onClick = { pendingModel = modelInfo.id },
                         modifier = Modifier.fillMaxWidth(),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp)
                     ) {
                         Text(
                             modelInfo.id,
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier.weight(1f),
                             maxLines = 2,
                             overflow = TextOverflow.Ellipsis
                         )
+                        if (selected) {
+                            Spacer(Modifier.width(8.dp))
+                            Icon(
+                                Icons.Outlined.Check,
+                                contentDescription = "Выбрано",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
                     HorizontalDivider()
                 }
