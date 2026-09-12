@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Base64
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
@@ -28,6 +29,7 @@ class CompatibleApiClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "Compatible text/image"))
+        .eventListenerFactory { DiagnosticNetworkEventListener(context, "Compatible text/image") }
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -81,21 +83,26 @@ class CompatibleApiClient(private val context: Context) {
             .forEach { item -> messages.add(message(item.role, item.text)) }
         messages.add(message("user", userText(prompt, attachments)))
 
+        val isNvidia = baseUrl.contains("nvidia.com", ignoreCase = true)
+        val providerLabel = if (isNvidia) "NVIDIA" else "Compatible API"
         val payload = JsonObject().apply {
             addProperty("model", model)
             add("messages", messages)
-            addProperty("max_tokens", 4096)
+            // Keep NVIDIA requests deliberately minimal while diagnosing hosted NIM
+            // hangs: model + messages + explicit non-streaming mode only. max_tokens
+            // is optional in NVIDIA's schema and the service can use its model default.
+            if (!isNvidia) addProperty("max_tokens", 4096)
             addProperty("stream", false)
         }
-        val providerLabel = if (baseUrl.contains("nvidia.com", ignoreCase = true)) "NVIDIA" else "Compatible API"
         DiagnosticLog.record(
             context,
             "TEXT REQUEST",
-            "$providerLabel start; model=$model; history=${history.size}; sentMessages=${messages.size()}; promptChars=${prompt.length}; attachments=${attachments.size}"
+            "$providerLabel start; model=$model; history=${history.size}; sentMessages=${messages.size()}; promptChars=${prompt.length}; attachments=${attachments.size}; minimalPayload=$isNvidia"
         )
         val builder = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
         if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
         val call = http.newCall(builder.build())
