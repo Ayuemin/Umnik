@@ -5,10 +5,10 @@ import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.google.gson.Gson
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.util.concurrent.TimeUnit
 
 class ProviderRegistry(context: Context) {
@@ -27,7 +27,7 @@ class ProviderRegistry(context: Context) {
     )
 
     data class RegistryDocument(
-        val version: Int = 4,
+        val version: Int = 5,
         val providers: Map<String, ProviderDefinition> = emptyMap()
     )
 
@@ -44,11 +44,8 @@ class ProviderRegistry(context: Context) {
 
     fun textBaseUrl(type: ProviderType): String? = provider(type)?.textBaseUrl?.trim()?.takeIf { it.isNotBlank() }
 
-    /**
-     * A deliberately conservative list for provider catalogues that mix chat,
-     * embeddings, rerankers and models that are no longer exposed by the hosted API.
-     * The remote registry can be updated without publishing a new APK.
-     */
+    // Kept for future provider metadata. NVIDIA text models are discovered live from
+    // /v1/models and are no longer restricted by a hard-coded allowlist.
     fun textModels(type: ProviderType): List<ModelInfo> = provider(type)?.textModels.orEmpty()
         .map(String::trim)
         .filter(String::isNotBlank)
@@ -61,6 +58,7 @@ class ProviderRegistry(context: Context) {
         .filter { it.id.isNotBlank() }
         .map { definition ->
             val options = definition.parameterOptions
+                .mapKeys { (key, _) -> key.lowercase() }
                 .mapValues { (_, values) -> values.map(String::trim).filter(String::isNotBlank).distinct() }
                 .filterValues { it.isNotEmpty() }
             ModelInfo(
@@ -118,13 +116,12 @@ class ProviderRegistry(context: Context) {
             openRouter?.textBaseUrl?.startsWith("https://") == true &&
             openRouter.imageBaseUrl.startsWith("https://") &&
             nvidia?.textBaseUrl?.startsWith("https://") == true &&
-            nvidia.textModels.any { it.isNotBlank() } &&
             nvidia.imageBaseUrl.startsWith("https://") &&
             nvidia.imageModels.any { it.id.isNotBlank() }
     }
 
     private fun fallback(): RegistryDocument = RegistryDocument(
-        version = 4,
+        version = 5,
         providers = mapOf(
             "openrouter" to ProviderDefinition(
                 textBaseUrl = DEFAULT_OPENROUTER_BASE_URL,
@@ -133,13 +130,18 @@ class ProviderRegistry(context: Context) {
             ),
             "nvidia" to ProviderDefinition(
                 textBaseUrl = DEFAULT_NVIDIA_TEXT_BASE_URL,
-                // Ordered on purpose: the first surviving model becomes a safe default
-                // when an old saved NVIDIA model disappears from the hosted service.
-                textModels = VERIFIED_NVIDIA_TEXT_MODELS,
+                textModels = emptyList(),
                 imageBaseUrl = DEFAULT_NVIDIA_IMAGE_BASE_URL,
                 imageProtocol = "NVIDIA_NIM",
                 imageModels = listOf(
-                    ImageModelDefinition("black-forest-labs/flux.2-klein-4b"),
+                    ImageModelDefinition(
+                        "black-forest-labs/flux.2-klein-4b",
+                        parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
+                    ),
+                    ImageModelDefinition(
+                        "black-forest-labs/flux.1-schnell",
+                        parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
+                    ),
                     ImageModelDefinition(
                         "black-forest-labs/flux.1-dev",
                         parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
@@ -155,39 +157,10 @@ class ProviderRegistry(context: Context) {
         const val DEFAULT_NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1/genai"
         const val REMOTE_URL = "https://raw.githubusercontent.com/Ayuemin/Umnik/main/docs/provider-registry.json"
 
-        private const val MIN_REGISTRY_VERSION = 4
+        private const val MIN_REGISTRY_VERSION = 5
         private const val KEY_JSON = "registry_json"
         private const val KEY_LAST_CHECK = "registry_last_check"
         private const val REFRESH_INTERVAL_MS = 24L * 60L * 60L * 1000L
         private val COMMON_RATIOS = listOf("1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3")
-
-        // NVIDIA's hosted /v1/models currently contains entries from several NIM
-        // families and may also retain entries that return 404 for a particular
-        // account. Keep only chat-capable candidates we actively want to expose.
-        // The list is also mirrored in docs/provider-registry.json so it can be
-        // corrected remotely as NVIDIA changes the hosted catalogue.
-        private val VERIFIED_NVIDIA_TEXT_MODELS = listOf(
-            "z-ai/glm-5.3-flash",
-            "z-ai/glm-5.2",
-            "openai/gpt-oss-20b",
-            "openai/gpt-oss-120b",
-            "deepseek-ai/deepseek-v4-pro-0813",
-            "deepseek-ai/deepseek-v4-pro",
-            "deepseek-ai/deepseek-v4-flash-0731",
-            "mistralai/mistral-large-3-675b-instruct-2512",
-            "mistralai/mistral-small-4-119b-2603",
-            "meta/llama-3.1-8b-instruct",
-            "meta/llama-3.1-70b-instruct",
-            "meta/llama-3.3-70b-instruct",
-            "nvidia/llama-3.3-nemotron-super-49b-v1.5",
-            "qwen/qwen3-next-80b-a3b-instruct",
-            "qwen/qwen3-next-80b-a3b-thinking",
-            "qwen/qwen3-32b",
-            "qwen/qwen2.5-coder-32b-instruct",
-            "moonshotai/kimi-k3",
-            "moonshotai/kimi-k2.6",
-            "sarvamai/sarvam-m",
-            "stockmark/stockmark-2-100b-instruct"
-        )
     }
 }
