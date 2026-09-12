@@ -1,0 +1,67 @@
+name: Release Umnik 1.2.2 once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/release-1.2.2-once.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply v1.2.2 changes
+        run: |
+          python3 .github/scripts/patch-text-models-1.2.2.py
+          python3 .github/scripts/patch-text-model-picker-1.2.2.py
+          python3 .github/scripts/patch-release-1.2.2.py
+          git diff --check
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Commit and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "Ayuemin"
+          git config user.email "105455063+Ayuemin@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
+                  app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+                  app/build.gradle.kts CHANGELOG.md
+          git diff --cached --check
+          git commit -m "Support default text models per connection"
+          git push origin HEAD:main
+          git tag v1.2.2
+          git push origin v1.2.2
+
+      - name: Publish signed stable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run android-release.yml -f tag=v1.2.2
