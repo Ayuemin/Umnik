@@ -21,6 +21,4 @@ s=s.replace('''                if (mode == ChatMode.TEXT) vm.refreshModels(mode)
 
 s=s.replace('''                            if (mode == ChatMode.TEXT) vm.selectModel(mode, modelInfo.id)\n                            else selectedImageConnectionId?.let { vm.selectImageModel(it, modelInfo.id) }\n''','''                            if (mode == ChatMode.TEXT) selectedTextConnectionId?.let { vm.selectDefaultTextModel(it, modelInfo.id) }\n                            else selectedImageConnectionId?.let { vm.selectImageModel(it, modelInfo.id) }\n''',1)
 
-s=s.replace('''                            overflow = TextOverflow.Ellipsis\n                        )\n''','''                            overflow = TextOverflow.Ellipsis,\n                            fontWeight = if (modelInfo.id == current) FontWeight.SemiBold else FontWeight.Normal\n                        )\n''',1)
-
 p.write_text(s)
