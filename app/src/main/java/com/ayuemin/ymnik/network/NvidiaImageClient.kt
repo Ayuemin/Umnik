@@ -23,8 +23,8 @@ class NvidiaImageClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(240, TimeUnit.SECONDS)
-        .writeTimeout(240, TimeUnit.SECONDS)
+        .readTimeout(600, TimeUnit.SECONDS)
+        .writeTimeout(600, TimeUnit.SECONDS)
         .build()
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
@@ -104,13 +104,13 @@ class NvidiaImageClient(private val context: Context) {
         }
         model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
         model.contains("flux.1-schnell") -> JsonObject().apply {
+            // Keep the hosted trial request identical to NVIDIA's current official
+            // cloud example. In particular, do not send width/height here: the
+            // hosted FLUX.1-schnell validator currently behaves more reliably with
+            // its default 1024x1024 output.
             addProperty("prompt", prompt)
             addProperty("seed", 0)
             addProperty("steps", 4)
-            flux1Dimensions(aspectRatio)?.let { (width, height) ->
-                addProperty("width", width)
-                addProperty("height", height)
-            }
         }
         model.contains("flux.1-dev") -> JsonObject().apply {
             addProperty("prompt", prompt)
@@ -216,7 +216,7 @@ class NvidiaImageClient(private val context: Context) {
     private fun downloadImage(url: String, index: Int): GeneratedFile {
         val connection = URL(url).openConnection().apply {
             connectTimeout = 30_000
-            readTimeout = 120_000
+            readTimeout = 300_000
         }
         val mime = connection.contentType
         val bytes = connection.getInputStream().use { it.readBytes() }

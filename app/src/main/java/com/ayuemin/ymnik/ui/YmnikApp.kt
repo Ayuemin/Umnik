@@ -17,6 +17,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -66,6 +67,7 @@ import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.Menu
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Refresh
@@ -121,6 +123,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -138,6 +141,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -258,6 +262,7 @@ private fun ChatScreen(
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
     var requestElapsedSeconds by remember { mutableIntStateOf(0) }
+    var menuSwipeSignal by remember { mutableIntStateOf(0) }
 
     DisposableEffect(voiceRecorder) {
         onDispose { voiceRecorder.cancel() }
@@ -355,10 +360,41 @@ private fun ChatScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
+    val edgeSwipeWidthPx = with(LocalDensity.current) { 36.dp.toPx() }
+    val edgeSwipeTriggerPx = with(LocalDensity.current) { 96.dp.toPx() }
+
+    Column(
+        Modifier
+            .fillMaxSize()
+            .pointerInput(edgeSwipeWidthPx, edgeSwipeTriggerPx) {
+                var startedAtLeftEdge = false
+                var horizontalDistance = 0f
+                detectHorizontalDragGestures(
+                    onDragStart = { offset ->
+                        startedAtLeftEdge = offset.x <= edgeSwipeWidthPx
+                        horizontalDistance = 0f
+                    },
+                    onHorizontalDrag = { _, dragAmount ->
+                        if (startedAtLeftEdge) horizontalDistance += dragAmount
+                    },
+                    onDragEnd = {
+                        if (startedAtLeftEdge && horizontalDistance >= edgeSwipeTriggerPx) {
+                            menuSwipeSignal += 1
+                        }
+                        startedAtLeftEdge = false
+                        horizontalDistance = 0f
+                    },
+                    onDragCancel = {
+                        startedAtLeftEdge = false
+                        horizontalDistance = 0f
+                    }
+                )
+            }
+    ) {
         ChatHeader(
             state = state,
             vm = vm,
+            openMenuSignal = menuSwipeSignal,
             onChats = { chatsOpen = true },
             onProjects = { projectsOpen = true },
             onOpenSkills = onOpenSkills,
@@ -609,10 +645,10 @@ onBranch = if (message.role == "assistant") {
                                 enabled = state.requestActive || isRecording || (!state.isLoading && (
                                     text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
                                 )),
-                                modifier = Modifier.size(if (state.requestActive) 50.dp else 48.dp)
+                                modifier = Modifier.size(48.dp)
                             ) {
                                 if (state.requestActive) {
-                                    WorkingStopTimer(requestElapsedSeconds)
+                                    WorkingStopIcon()
                                 } else {
                                     Icon(
                                         Icons.Outlined.Send,
@@ -626,7 +662,18 @@ onBranch = if (message.role == "assistant") {
                             }
                         }
                     },
-                    placeholder = if (imagePromptMode) { { Text("Опишите изображение") } } else null,
+                    placeholder = {
+                        when {
+                            state.requestActive -> Text(
+                                text = formatRequestDuration(requestElapsedSeconds),
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
+                            )
+                            imagePromptMode -> Text("Опишите изображение")
+                        }
+                    },
                     shape = RoundedCornerShape(28.dp),
                     maxLines = 6
                 )
@@ -815,25 +862,24 @@ private fun CompactMessageAction(
 }
 
 @Composable
-private fun WorkingStopTimer(seconds: Int) {
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .border(
-                width = 1.5.dp,
-                color = MaterialTheme.colorScheme.primary,
-                shape = RoundedCornerShape(4.dp)
-            ),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = formatRequestDuration(seconds),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary,
-            maxLines = 1
-        )
-    }
+private fun WorkingStopIcon() {
+    val transition = rememberInfiniteTransition(label = "workingStop")
+    val pulse by transition.animateFloat(
+        initialValue = 0.86f,
+        targetValue = 1.08f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 520),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "workingStopPulse"
+    )
+
+    Icon(
+        Icons.Outlined.Stop,
+        contentDescription = "Остановить работу модели",
+        modifier = Modifier.scale(pulse),
+        tint = MaterialTheme.colorScheme.primary
+    )
 }
 
 private fun formatRequestDuration(seconds: Int): String {
@@ -845,6 +891,7 @@ private fun formatRequestDuration(seconds: Int): String {
 private fun ChatHeader(
     state: UiState,
     vm: ChatViewModel,
+    openMenuSignal: Int,
     onChats: () -> Unit,
     onProjects: () -> Unit,
     onOpenSkills: () -> Unit,
@@ -855,6 +902,7 @@ private fun ChatHeader(
     var quickModelsOpen by remember { mutableStateOf(false) }
     var hubOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
+    var clearConfirm by remember { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
@@ -864,21 +912,97 @@ private fun ChatHeader(
     val quickCandidates = (listOf(currentRef, defaultRef) + state.quickTextModels)
         .filter { quickModelId(it).isNotBlank() }
         .distinct()
+    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+
+    LaunchedEffect(openMenuSignal) {
+        if (openMenuSignal > 0) hubOpen = true
+    }
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Row(
-                modifier = Modifier.weight(1f),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(modifier = Modifier.weight(1f, fill = false)) {
+            Box {
+                IconButton(
+                    onClick = { hubOpen = true },
+                    enabled = !state.isLoading,
+                    modifier = Modifier.size(42.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Menu,
+                        contentDescription = "Меню",
+                        modifier = Modifier.size(25.dp),
+                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                DropdownMenu(expanded = hubOpen, onDismissRequest = { hubOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("Проекты") },
+                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
+                        onClick = { hubOpen = false; onProjects() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("История чатов") },
+                        leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
+                        onClick = { hubOpen = false; onChats() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Навыки") },
+                        leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
+                        onClick = { hubOpen = false; onOpenSkills() }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Настройки") },
+                        leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                        onClick = { hubOpen = false; onOpenSettings() }
+                    )
+                    if (state.messages.isNotEmpty()) {
+                        HorizontalDivider()
+                        DropdownMenuItem(
+                            text = { Text("Очистить чат") },
+                            leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
+                            onClick = {
+                                hubOpen = false
+                                clearConfirm = true
+                            }
+                        )
+                    }
+                }
+            }
+
+            IconButton(onClick = onNewChat, enabled = !state.isLoading, modifier = Modifier.size(42.dp)) {
+                Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
+            }
+
+            activeUsage?.let { usage ->
+                Spacer(Modifier.width(2.dp))
+                Surface(
+                    onClick = {
+                        usageOpen = true
+                        vm.refreshProviderUsage()
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh
+                ) {
+                    Text(
+                        formatUsd(usage.daily),
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+            }
+
+            Box(modifier = Modifier.weight(1f)) {
                 TextButton(
                     onClick = { quickModelsOpen = true },
                     enabled = !state.isLoading,
-                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
                 ) {
                     Text(
                         shortModelName,
@@ -926,82 +1050,25 @@ private fun ChatHeader(
                         )
                     }
                 }
-                }
-                activeUsage?.let { usage ->
-                    Spacer(Modifier.width(4.dp))
-                    Surface(
-                        onClick = {
-                            usageOpen = true
-                            vm.refreshProviderUsage()
-                        },
-                        shape = RoundedCornerShape(10.dp),
-                        color = MaterialTheme.colorScheme.surfaceContainerHigh
-                    ) {
-                        Text(
-                            formatUsd(usage.daily),
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1
-                        )
-                    }
-                }
-            }
-
-            IconButton(onClick = onNewChat, enabled = !state.isLoading, modifier = Modifier.size(42.dp)) {
-                Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
-            }
-
-            Box {
-                FilledTonalButton(
-                    onClick = { hubOpen = true },
-                    enabled = !state.isLoading,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp),
-                    modifier = Modifier.height(40.dp)
-                ) {
-                    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
-                    Icon(
-                        Icons.Outlined.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(19.dp),
-                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text("Меню")
-                }
-
-                DropdownMenu(expanded = hubOpen, onDismissRequest = { hubOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Проекты") },
-                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
-                        onClick = { hubOpen = false; onProjects() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("История чатов") },
-                        leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
-                        onClick = { hubOpen = false; onChats() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Навыки") },
-                        leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                        onClick = { hubOpen = false; onOpenSkills() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Настройки") },
-                        leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-                        onClick = { hubOpen = false; onOpenSettings() }
-                    )
-                    if (state.messages.isNotEmpty()) {
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Очистить чат") },
-                            leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
-                            onClick = { hubOpen = false; onClear() }
-                        )
-                    }
-                }
             }
         }
+    }
+
+    if (clearConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearConfirm = false },
+            title = { Text("Очистить текущий чат?") },
+            text = { Text("Переписка и файлы контекста этого чата будут удалены. Сгенерированные файлы в хранилище Umnik останутся.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    clearConfirm = false
+                    onClear()
+                }) { Text("Очистить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearConfirm = false }) { Text("Отмена") }
+            }
+        )
     }
 
     if (usageOpen && activeUsage != null) {
@@ -1950,41 +2017,82 @@ private fun splitRichBlocks(text: String): List<MessagePart> {
 
 @Composable
 private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Unit) {
-    if (file.mimeType.startsWith("image/")) {
-        val bitmap = remember(file.localPath) { BitmapFactory.decodeFile(file.localPath) }
-        if (bitmap != null) {
-            ComposeImage(
-                bitmap = bitmap.asImageBitmap(),
-                contentDescription = file.name,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat())
-                    .clip(RoundedCornerShape(14.dp)),
-                contentScale = ContentScale.Fit
-            )
-            Spacer(Modifier.height(7.dp))
-        }
+    val context = LocalContext.current
+    val isImage = file.mimeType.startsWith("image/")
+    val bitmap = remember(file.localPath, file.mimeType) {
+        if (isImage && file.mimeType.lowercase() != "image/svg+xml") {
+            BitmapFactory.decodeFile(file.localPath)
+        } else null
     }
 
-    FilledTonalButton(
-        onClick = { onSave(file) },
+    if (bitmap != null) {
+        ComposeImage(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = file.name,
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat())
+                .clip(RoundedCornerShape(14.dp)),
+            contentScale = ContentScale.Fit
+        )
+        Spacer(Modifier.height(7.dp))
+    } else {
+        Surface(
+            modifier = Modifier.fillMaxWidth().heightIn(min = 112.dp),
+            shape = RoundedCornerShape(14.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerLow
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Icon(
+                    if (isImage) Icons.Outlined.Image else Icons.Outlined.Description,
+                    contentDescription = null,
+                    modifier = Modifier.size(34.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    if (file.mimeType.lowercase() == "image/svg+xml") "Векторное изображение SVG" else "Предпросмотр недоступен",
+                    fontWeight = FontWeight.SemiBold
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "${file.name} · ${file.mimeType.ifBlank { "неизвестный формат" }} · ${humanSize(file.size)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+        Spacer(Modifier.height(7.dp))
+    }
+
+    Row(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Icon(
-            if (file.mimeType.startsWith("image/")) Icons.Outlined.Image else Icons.Outlined.Description,
-            contentDescription = null,
-            modifier = Modifier.size(18.dp)
-        )
-        Spacer(Modifier.width(8.dp))
-        Text(
-            "${file.name} · ${humanSize(file.size)}",
+        FilledTonalButton(
+            onClick = { onSave(file) },
             modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
-        )
-        Spacer(Modifier.width(8.dp))
-        Icon(Icons.Outlined.Download, contentDescription = "Сохранить")
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Скачать", maxLines = 1)
+        }
+        FilledTonalButton(
+            onClick = { shareGeneratedFile(context, file) },
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Поделиться", maxLines = 1)
+        }
     }
 }
 
@@ -3424,9 +3532,58 @@ private fun copyText(context: Context, text: String) {
 private fun shareText(context: Context, text: String) {
     val intent = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
-        putExtra(Intent.EXTRA_TEXT, text)
+        putExtra(Intent.EXTRA_TEXT, markdownToShareText(text))
     }
     context.startActivity(Intent.createChooser(intent, "Поделиться ответом"))
+}
+
+private fun markdownToShareText(markdown: String): String {
+    val tableSeparator = Regex("^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?\\s*$")
+    var inCodeFence = false
+    return markdown
+        .replace("\\r\\n", "\\n")
+        .lineSequence()
+        .mapNotNull { raw ->
+            val trimmed = raw.trim()
+            if (trimmed.startsWith("```")) {
+                inCodeFence = !inCodeFence
+                return@mapNotNull null
+            }
+            if (!inCodeFence && tableSeparator.matches(raw)) return@mapNotNull null
+            if (inCodeFence) return@mapNotNull raw
+
+            var line = raw
+            line = Regex("^\\s*#{1,6}\\s+").replace(line, "")
+            line = Regex("^\\s*>\\s?").replace(line, "")
+            line = Regex("^\\s*[-+*]\\s+").replace(line, "• ")
+            line = Regex("^\\s*(\\d+)[.)]\\s+").replace(line, "$1. ")
+            if (Regex("^\\s*((-{3,})|(\\*{3,})|(_{3,}))\\s*$").matches(line)) {
+                return@mapNotNull "────────"
+            }
+            line = Regex("\\[([^]\\n]+)]\\(([^)\\n]+)\\)").replace(line, "$1 ($2)")
+            line = line.replace("**", "").replace("__", "").replace("~~", "")
+            line = Regex("(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)").replace(line, "$1")
+            line = Regex("(?<!_)_([^_\\n]+)_(?!_)").replace(line, "$1")
+            line = Regex("`([^`\\n]+)`").replace(line, "$1")
+            line
+        }
+        .joinToString("\\n")
+        .trim()
+}
+
+private fun shareGeneratedFile(context: Context, file: GeneratedFile) {
+    val localFile = File(file.localPath)
+    if (!localFile.isFile) {
+        Toast.makeText(context, "Файл больше недоступен", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", localFile)
+    val intent = Intent(Intent.ACTION_SEND).apply {
+        type = file.mimeType.ifBlank { "application/octet-stream" }
+        putExtra(Intent.EXTRA_STREAM, uri)
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    context.startActivity(Intent.createChooser(intent, "Поделиться файлом"))
 }
 
 private fun answerSoundLabel(choice: AnswerSoundChoice): String = when (choice) {

@@ -293,7 +293,7 @@ class OpenRouterClient(private val context: Context) {
                 val item = element.asJsonObject
                 val encoded = item.get("b64_json")?.asString?.takeIf { it.isNotBlank() }
                     ?: return@mapIndexedNotNull null
-                val mime = item.get("media_type")?.asString?.takeIf { it.startsWith("image/") } ?: "image/png"
+                val mime = item.get("media_type")?.asString?.takeIf { it.isNotBlank() } ?: "image/png"
                 saveGeneratedImage(encoded, mime, index)
             }
                 if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
@@ -442,9 +442,14 @@ class OpenRouterClient(private val context: Context) {
     private fun saveGeneratedImage(encoded: String, mimeType: String, index: Int): GeneratedFile {
         val bytes = Base64.decode(encoded.substringAfter("base64,", encoded), Base64.DEFAULT)
         val extension = when (mimeType.lowercase()) {
+            "image/png" -> "png"
             "image/jpeg", "image/jpg" -> "jpg"
             "image/webp" -> "webp"
-            else -> "png"
+            "image/gif" -> "gif"
+            "image/svg+xml" -> "svg"
+            "application/pdf" -> "pdf"
+            else -> mimeType.substringAfter('/', "bin").substringBefore('+').lowercase()
+                .takeIf { it.matches(Regex("[a-z0-9]{1,8}")) } ?: "bin"
         }
         val dir = File(context.filesDir, "generated").apply { mkdirs() }
         val name = "umnik_image_${System.currentTimeMillis()}_${index + 1}.$extension"
