@@ -1250,26 +1250,34 @@ private fun ModelPickerDialog(
 ) {
     var query by remember(mode) { mutableStateOf("") }
     val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
+    var selectedTextConnectionId by remember(mode, enabledConnections.map { it.id }) {
+        mutableStateOf(
+            state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
+                ?: enabledConnections.firstOrNull()?.id
+        )
+    }
     var selectedImageConnectionId by remember(mode, enabledConnections.map { it.id }) {
         mutableStateOf(
             state.imageConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
                 ?: enabledConnections.firstOrNull()?.id
         )
     }
+    val selectedTextConnection = enabledConnections.firstOrNull { it.id == selectedTextConnectionId }
     val selectedImageConnection = enabledConnections.firstOrNull { it.id == selectedImageConnectionId }
-    val models = if (mode == ChatMode.TEXT) {
-        state.availableTextModels
-    } else {
-        if (state.modelCatalogConnectionId == selectedImageConnectionId) state.modelCatalog else emptyList()
+    val selectedConnectionId = if (mode == ChatMode.TEXT) selectedTextConnectionId else selectedImageConnectionId
+    val selectedConnection = if (mode == ChatMode.TEXT) selectedTextConnection else selectedImageConnection
+    val models = when {
+        state.modelCatalogConnectionId == selectedConnectionId -> state.modelCatalog
+        mode == ChatMode.TEXT && selectedConnectionId == state.activeConnectionProfileId -> state.availableTextModels
+        else -> emptyList()
     }
-    val current = if (mode == ChatMode.TEXT) state.textModel else state.imageModel
+    val current = if (mode == ChatMode.TEXT) {
+        selectedTextConnectionId?.let(vm::defaultTextModelForConnection).orEmpty()
+    } else state.imageModel
 
-    LaunchedEffect(mode, selectedImageConnectionId) {
-        if (mode == ChatMode.TEXT) {
-            if (models.isEmpty()) vm.refreshModels(mode)
-        } else {
-            selectedImageConnectionId?.let(vm::loadImageConnectionModels)
-        }
+    LaunchedEffect(mode, selectedTextConnectionId, selectedImageConnectionId) {
+        if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
+        else selectedImageConnectionId?.let(vm::loadImageConnectionModels)
     }
 
     val filtered = remember(models, query) {
@@ -1281,44 +1289,51 @@ private fun ModelPickerDialog(
         onBack = onDismiss
     ) {
         Text(
-            if (mode == ChatMode.TEXT) "Сейчас: $current" else "Сейчас: ${state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"} · $current",
+            "Сейчас: ${selectedConnection?.name ?: "Подключение"} · ${current.ifBlank { "не выбрана" }}",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        if (mode == ChatMode.IMAGE) {
-            if (enabledConnections.isEmpty()) {
-                Text(
-                    "Нет включённых подключений.",
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.spacedBy(7.dp)
-                ) {
-                    items(enabledConnections, key = { it.id }) { connection ->
-                        FilterChip(
-                            selected = selectedImageConnectionId == connection.id,
-                            onClick = {
-                                selectedImageConnectionId = connection.id
-                                query = ""
-                            },
-                            label = { Text(connection.name, maxLines = 1) }
-                        )
-                    }
-                }
-                if (selectedImageConnection?.type == ProviderType.OPENAI_COMPATIBLE) {
-                    Text(
-                        "Для совместимого API показан общий список /models. Выберите модель, которая умеет генерацию изображений; запрос отправится на /images/generations.",
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+        if (enabledConnections.isEmpty()) {
+            Text(
+                "Нет включённых подключений.",
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                items(enabledConnections, key = { it.id }) { connection ->
+                    FilterChip(
+                        selected = selectedConnectionId == connection.id,
+                        onClick = {
+                            if (mode == ChatMode.TEXT) selectedTextConnectionId = connection.id
+                            else selectedImageConnectionId = connection.id
+                            query = ""
+                        },
+                        label = { Text(connection.name, maxLines = 1) }
                     )
                 }
+            }
+            if (mode == ChatMode.IMAGE && selectedConnection?.type == ProviderType.OPENAI_COMPATIBLE) {
+                Text(
+                    "Для совместимого API показан общий список /models. Выберите модель, которая умеет генерацию изображений; запрос отправится на /images/generations.",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (mode == ChatMode.TEXT) {
+                Text(
+                    "У каждого подключения своя модель по умолчанию. Выбор здесь не переключает текущий чат на другой сервис.",
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         OutlinedTextField(
@@ -1334,7 +1349,7 @@ private fun ModelPickerDialog(
             horizontalArrangement = Arrangement.End
         ) {
             TextButton(onClick = {
-                if (mode == ChatMode.TEXT) vm.refreshModels(mode)
+                if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
                 else selectedImageConnectionId?.let(vm::loadImageConnectionModels)
             }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = null)
@@ -1356,7 +1371,7 @@ private fun ModelPickerDialog(
                 items(filtered, key = { it.id }) { modelInfo ->
                     TextButton(
                         onClick = {
-                            if (mode == ChatMode.TEXT) vm.selectModel(mode, modelInfo.id)
+                            if (mode == ChatMode.TEXT) selectedTextConnectionId?.let { vm.selectDefaultTextModel(it, modelInfo.id) }
                             else selectedImageConnectionId?.let { vm.selectImageModel(it, modelInfo.id) }
                             onDismiss()
                         },

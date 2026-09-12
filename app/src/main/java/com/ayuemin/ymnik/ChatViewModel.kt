@@ -501,26 +501,35 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (mode == ChatMode.IMAGE && _state.value.availableImageModels.isEmpty()) refreshModels(ChatMode.IMAGE)
     }
 
+    fun defaultTextModelForConnection(profileId: String): String {
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return ""
+        return loadTextModelForProfile(profile)
+    }
+
+    fun selectDefaultTextModel(profileId: String, model: String) {
+        val clean = model.trim()
+        if (clean.isBlank()) return
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (profile.id in _state.value.disabledConnectionIds) return
+        if (!isProfileConfigured(profile)) return
+        prefs.edit().putString(profilePrefKey("text_model", profile.id), clean).apply()
+        if (profile.id == _state.value.activeConnectionProfileId) {
+            val effectiveId = _state.value.currentChatTextModel ?: clean
+            val info = _state.value.availableTextModels.firstOrNull { it.id == effectiveId }
+            val effort = preferredReasoningEffort(effectiveId, info)
+            val keepReasoning = reasoningStillValid(info, effort)
+            prefs.edit().putString("reasoning_effort", effort.name).putBoolean("reasoning_enabled", keepReasoning).apply()
+            _state.value = _state.value.copy(textModel=clean, reasoningEffort=effort, reasoningEnabled=keepReasoning, status="Модель по умолчанию · ${profile.name}: ${clean.substringAfterLast('/')}")
+        } else {
+            _state.value = _state.value.copy(status="Модель по умолчанию · ${profile.name}: ${clean.substringAfterLast('/')}")
+        }
+    }
+
     fun selectModel(mode: ChatMode, model: String) {
         val clean = model.trim()
         if (clean.isBlank()) return
         when (mode) {
-            ChatMode.TEXT -> {
-                val effectiveId = _state.value.currentChatTextModel ?: clean
-                val info = _state.value.availableTextModels.firstOrNull { it.id == effectiveId }
-                val effort = preferredReasoningEffort(effectiveId, info)
-                val keepReasoning = reasoningStillValid(info, effort)
-                prefs.edit()
-                    .putString(profilePrefKey("text_model", _state.value.activeConnectionProfileId), clean)
-                    .putString("reasoning_effort", effort.name)
-                    .putBoolean("reasoning_enabled", keepReasoning)
-                    .apply()
-                _state.value = _state.value.copy(
-                    textModel = clean,
-                    reasoningEffort = effort,
-                    reasoningEnabled = keepReasoning
-                )
-            }
+            ChatMode.TEXT -> selectDefaultTextModel(_state.value.activeConnectionProfileId, clean)
             ChatMode.IMAGE -> selectImageModel(_state.value.imageConnectionProfileId, clean)
         }
     }
