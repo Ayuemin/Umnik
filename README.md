@@ -13,10 +13,14 @@ A local-first Android client for OpenRouter and OpenAI-compatible APIs with mult
 ## Скриншоты
 
 <p align="center">
-  <img src="docs/screenshots/umnik-1.0.0-overview.jpg" alt="Umnik 1.0.0: главный экран, панель добавления, меню, настройки и чат" width="100%">
+  <img src="docs/screenshots/umnik-v1.2.1-01.jpg" alt="Umnik v1.2.1 — экран 1" width="47%">
+  <img src="docs/screenshots/umnik-v1.2.1-02.jpg" alt="Umnik v1.2.1 — экран 2" width="47%">
+  <br>
+  <img src="docs/screenshots/umnik-v1.2.1-03.jpg" alt="Umnik v1.2.1 — экран 3" width="47%">
+  <img src="docs/screenshots/umnik-v1.2.1-04.jpg" alt="Umnik v1.2.1 — экран 4" width="47%">
 </p>
 
-Главный экран, панель действий по кнопке `+`, меню, настройки и пример диалога в Umnik 1.0.0.
+Актуальные экраны Umnik v1.2.1.
 
 ## Зачем Umnik
 
