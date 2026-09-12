@@ -1367,7 +1367,7 @@ private fun ModelPickerDialog(
                 )
             } else {
                 Text(
-                    "Нажмите модель, затем «Сохранить выбор». Для текущего подключения модель сразу применяется к этому и новым чатам. Для другого подключения сохраняется его модель по умолчанию без переключения сервиса текущего чата.",
+                    "Выберите поставщика и модель, затем нажмите «Сохранить выбор». Выбранный поставщик и модель сразу применятся к текущему чату и станут значениями по умолчанию для новых чатов.",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant

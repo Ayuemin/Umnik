@@ -25,7 +25,7 @@ class ProviderRegistry(context: Context) {
     )
 
     data class RegistryDocument(
-        val version: Int = 1,
+        val version: Int = 2,
         val providers: Map<String, ProviderDefinition> = emptyMap()
     )
 
@@ -100,7 +100,7 @@ class ProviderRegistry(context: Context) {
     }.getOrNull()?.takeIf { doc ->
         val openRouter = doc.providers["openrouter"]
         val nvidia = doc.providers["nvidia"]
-        doc.version >= 1 &&
+        doc.version >= MIN_REGISTRY_VERSION &&
             openRouter?.textBaseUrl?.startsWith("https://") == true &&
             openRouter.imageBaseUrl.startsWith("https://") &&
             nvidia?.textBaseUrl?.startsWith("https://") == true &&
@@ -109,7 +109,7 @@ class ProviderRegistry(context: Context) {
     }
 
     private fun fallback(): RegistryDocument = RegistryDocument(
-        version = 1,
+        version = 2,
         providers = mapOf(
             "openrouter" to ProviderDefinition(
                 textBaseUrl = DEFAULT_OPENROUTER_BASE_URL,
@@ -129,12 +129,7 @@ class ProviderRegistry(context: Context) {
                     ImageModelDefinition(
                         "black-forest-labs/flux.1-dev",
                         parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
-                    ),
-                    ImageModelDefinition(
-                        "stabilityai/stable-diffusion-3-medium",
-                        parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
-                    ),
-                    ImageModelDefinition("stabilityai/stable-diffusion-xl")
+                    )
                 )
             )
         )
@@ -146,6 +141,7 @@ class ProviderRegistry(context: Context) {
         const val DEFAULT_NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1/genai"
         const val REMOTE_URL = "https://raw.githubusercontent.com/Ayuemin/Umnik/main/docs/provider-registry.json"
 
+        private const val MIN_REGISTRY_VERSION = 2
         private const val KEY_JSON = "registry_json"
         private const val KEY_LAST_CHECK = "registry_last_check"
         private const val REFRESH_INTERVAL_MS = 24L * 60L * 60L * 1000L

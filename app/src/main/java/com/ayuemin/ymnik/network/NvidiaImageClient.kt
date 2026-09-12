@@ -61,8 +61,7 @@ class NvidiaImageClient(private val context: Context) {
             // unrelated validation errors.
             if (
                 !response.successful &&
-                response.code == 422 &&
-                isExtraInputValidation(response.body) &&
+                response.code in setOf(400, 422) &&
                 gson.toJson(primaryPayload) != gson.toJson(minimalPayload)
             ) {
                 response = execute(url, apiKey, minimalPayload)
@@ -104,7 +103,16 @@ class NvidiaImageClient(private val context: Context) {
             aspectRatio?.takeIf { it in COMMON_RATIOS }?.let { addProperty("aspect_ratio", it) }
         }
         model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
-        model.contains("flux.1-schnell") || model.contains("flux.1-dev") -> JsonObject().apply {
+        model.contains("flux.1-schnell") -> JsonObject().apply {
+            addProperty("prompt", prompt)
+            addProperty("seed", 0)
+            addProperty("steps", 4)
+            flux1Dimensions(aspectRatio)?.let { (width, height) ->
+                addProperty("width", width)
+                addProperty("height", height)
+            }
+        }
+        model.contains("flux.1-dev") -> JsonObject().apply {
             addProperty("prompt", prompt)
             flux1Dimensions(aspectRatio)?.let { (width, height) ->
                 addProperty("width", width)
@@ -119,12 +127,15 @@ class NvidiaImageClient(private val context: Context) {
         }
     }
 
-    private fun minimalPayload(model: String, prompt: String): JsonObject =
-        if (model.endsWith("stable-diffusion-xl")) {
-            stableDiffusionXlPayload(prompt)
-        } else {
-            JsonObject().apply { addProperty("prompt", prompt) }
+    private fun minimalPayload(model: String, prompt: String): JsonObject = when {
+        model.contains("flux.1-schnell") -> JsonObject().apply {
+            addProperty("prompt", prompt)
+            addProperty("seed", 0)
+            addProperty("steps", 4)
         }
+        model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
+        else -> JsonObject().apply { addProperty("prompt", prompt) }
+    }
 
     private fun stableDiffusionXlPayload(prompt: String): JsonObject = JsonObject().apply {
         add("text_prompts", JsonArray().apply {

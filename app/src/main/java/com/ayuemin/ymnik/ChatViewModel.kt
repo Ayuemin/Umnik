@@ -655,45 +655,54 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) return
         if (!isProfileConfigured(profile)) return
-        val saved = prefs.edit().putString(profilePrefKey("text_model", profile.id), clean).commit()
+
+        val saved = prefs.edit()
+            .putString(profilePrefKey("text_model", profile.id), clean)
+            .putString("active_connection_profile", profile.id)
+            .commit()
         if (!saved) {
             _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели")
             return
         }
-        if (profile.id == _state.value.activeConnectionProfileId) {
-            val chats = _state.value.chats.map { chat ->
-                if (chat.id == _state.value.currentChatId) chat.copy(
-                    connectionProfileId = profile.id,
-                    textModelOverride = null,
-                    mode = ChatMode.TEXT,
-                    updatedAt = System.currentTimeMillis()
-                ) else chat
-            }
-            chatsRepository.save(chats)
-            val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
-                ?: _state.value.modelCatalog
-                    .takeIf { _state.value.modelCatalogConnectionId == profile.id }
-                    ?.firstOrNull { it.id == clean }
-            val effort = preferredReasoningEffort(clean, info)
-            val keepReasoning = reasoningStillValid(info, effort)
-            prefs.edit()
-                .putString("reasoning_effort", effort.name)
-                .putBoolean("reasoning_enabled", keepReasoning)
-                .apply()
-            _state.value = _state.value.copy(
-                chats = chats,
-                textModel = clean,
-                currentChatTextModel = null,
-                mode = ChatMode.TEXT,
-                reasoningEffort = effort,
-                reasoningEnabled = keepReasoning,
-                status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
-            )
-        } else {
-            _state.value = _state.value.copy(
-                status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий чат не переключён"
-            )
+
+        val catalog = when {
+            _state.value.modelCatalogConnectionId == profile.id -> _state.value.modelCatalog
+            _state.value.activeConnectionProfileId == profile.id -> _state.value.availableTextModels
+            else -> emptyList()
         }
+        val info = catalog.firstOrNull { it.id == clean }
+        val effort = preferredReasoningEffort(clean, info)
+        val keepReasoning = reasoningStillValid(info, effort)
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == _state.value.currentChatId) chat.copy(
+                connectionProfileId = profile.id,
+                textModelOverride = null,
+                mode = ChatMode.TEXT,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+        prefs.edit()
+            .putString("reasoning_effort", effort.name)
+            .putBoolean("reasoning_enabled", keepReasoning)
+            .apply()
+
+        _state.value = _state.value.copy(
+            chats = chats,
+            activeConnectionProfileId = profile.id,
+            textModel = clean,
+            currentChatTextModel = null,
+            mode = ChatMode.TEXT,
+            availableTextModels = catalog,
+            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
+            reasoningEffort = effort,
+            reasoningEnabled = keepReasoning,
+            apiKeyConfigured = isProfileConfigured(profile),
+            status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
+        )
+        refreshModelCapabilities()
+        if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
 
     fun selectModel(mode: ChatMode, model: String) {
