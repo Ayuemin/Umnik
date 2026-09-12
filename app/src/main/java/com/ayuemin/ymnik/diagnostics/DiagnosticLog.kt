@@ -99,13 +99,13 @@ object DiagnosticLog {
     private fun sanitize(value: String): String {
         var safe = value
         safe = Regex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s,}]+")
-            .replace(safe, "$1<redacted>")
+            .replace(safe, "\$1<redacted>")
         safe = Regex("(?i)(api[_-]?key\\s*[:=]\\s*)[^\\s,}]+")
-            .replace(safe, "$1<redacted>")
+            .replace(safe, "\$1<redacted>")
         safe = Regex("\\b(?:sk-[A-Za-z0-9_-]{12,}|nvapi-[A-Za-z0-9_-]{12,})\\b")
             .replace(safe, "<redacted-key>")
         safe = Regex("(?i)([?&](?:key|token|api_key)=)[^&\\s]+")
-            .replace(safe, "$1<redacted>")
+            .replace(safe, "\$1<redacted>")
         return safe.replace('\n', ' ').replace('\r', ' ').take(8000)
     }
 }
