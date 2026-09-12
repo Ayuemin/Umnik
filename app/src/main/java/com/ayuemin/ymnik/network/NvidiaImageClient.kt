@@ -29,6 +29,12 @@ class NvidiaImageClient(private val context: Context) {
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
+    private data class RawResponse(
+        val successful: Boolean,
+        val code: Int,
+        val body: String
+    )
+
     fun cancelActiveRequest() {
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
@@ -41,73 +47,99 @@ class NvidiaImageClient(private val context: Context) {
         prompt: String,
         aspectRatio: String? = null
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
+        val url = modelEndpoint(baseUrl, model)
+        val primaryPayload = payload(model, prompt, aspectRatio)
+        val minimalPayload = minimalPayload(model, prompt)
+
+        try {
+            var response = execute(url, apiKey, primaryPayload)
+
+            // NIM schemas occasionally differ between the published reference and the
+            // deployed validation layer. If an optional field is rejected as an extra
+            // input, retry once with only the model's required fields. This keeps old
+            // app versions resilient to provider-side schema tightening without hiding
+            // unrelated validation errors.
+            if (
+                !response.successful &&
+                response.code == 422 &&
+                isExtraInputValidation(response.body) &&
+                gson.toJson(primaryPayload) != gson.toJson(minimalPayload)
+            ) {
+                response = execute(url, apiKey, minimalPayload)
+            }
+
+            if (!response.successful) error(apiError(response.code, response.body))
+            val root = gson.fromJson(response.body, JsonObject::class.java)
+            val files = extractImages(root)
+            if (files.isEmpty()) error("NVIDIA NIM вернул ответ без изображения")
+            OpenRouterClient.Result("Изображение создано.", files)
+        } finally {
+            synchronized(activeCallLock) { activeCall = null }
+        }
+    }
+
+    private fun execute(url: String, apiKey: String, payload: JsonObject): RawResponse {
         val request = Request.Builder()
-            .url(modelEndpoint(baseUrl, model))
+            .url(url)
             .header("Authorization", "Bearer $apiKey")
             .header("Accept", "application/json")
             .header("Content-Type", "application/json")
-            .post(gson.toJson(payload(model, prompt, aspectRatio)).toRequestBody("application/json".toMediaType()))
+            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
-
         val call = http.newCall(request)
         synchronized(activeCallLock) { activeCall = call }
-        try {
-            call.execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) error(apiError(response.code, body))
-                val root = gson.fromJson(body, JsonObject::class.java)
-                val files = extractImages(root)
-                if (files.isEmpty()) error("NVIDIA NIM вернул ответ без изображения")
-                OpenRouterClient.Result("Изображение создано.", files)
-            }
-        } finally {
-            synchronized(activeCallLock) { activeCall = null }
+        return call.execute().use { response ->
+            RawResponse(
+                successful = response.isSuccessful,
+                code = response.code,
+                body = response.body?.string().orEmpty()
+            )
         }
     }
 
     private fun payload(model: String, prompt: String, aspectRatio: String?): JsonObject = when {
         model.endsWith("stable-diffusion-3-medium") -> JsonObject().apply {
             addProperty("prompt", prompt)
-            addProperty("mode", "text-to-image")
-            addProperty("model", "sd3")
             addProperty("output_format", "jpeg")
             aspectRatio?.takeIf { it in COMMON_RATIOS }?.let { addProperty("aspect_ratio", it) }
         }
-        model.endsWith("stable-diffusion-xl") -> JsonObject().apply {
-            add("text_prompts", JsonArray().apply {
-                add(JsonObject().apply {
-                    addProperty("text", prompt)
-                    addProperty("weight", 1)
-                })
-            })
-        }
-        else -> JsonObject().apply {
+        model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
+        model.contains("flux.1-schnell") || model.contains("flux.1-dev") -> JsonObject().apply {
             addProperty("prompt", prompt)
-            when {
-                model.contains("flux.2-klein-4b") -> {
-                    addProperty("mode", "Image Generation")
-                    addProperty("seed", 0)
-                    addProperty("steps", 4)
-                }
-                model.contains("flux.1-schnell") -> {
-                    addProperty("mode", "base")
-                    addProperty("seed", 0)
-                    addProperty("steps", 4)
-                    flux1Dimensions(aspectRatio)?.let { (width, height) ->
-                        addProperty("width", width)
-                        addProperty("height", height)
-                    }
-                }
-                model.contains("flux.1-dev") -> {
-                    addProperty("mode", "base")
-                    addProperty("seed", 0)
-                    flux1Dimensions(aspectRatio)?.let { (width, height) ->
-                        addProperty("width", width)
-                        addProperty("height", height)
-                    }
-                }
+            flux1Dimensions(aspectRatio)?.let { (width, height) ->
+                addProperty("width", width)
+                addProperty("height", height)
             }
         }
+        else -> JsonObject().apply {
+            // For FLUX.2 Klein and future text-to-image NIMs, send only the required
+            // prompt. Optional mode/seed/steps fields have defaults and are the most
+            // likely fields to drift between deployed NIM schema revisions.
+            addProperty("prompt", prompt)
+        }
+    }
+
+    private fun minimalPayload(model: String, prompt: String): JsonObject =
+        if (model.endsWith("stable-diffusion-xl")) {
+            stableDiffusionXlPayload(prompt)
+        } else {
+            JsonObject().apply { addProperty("prompt", prompt) }
+        }
+
+    private fun stableDiffusionXlPayload(prompt: String): JsonObject = JsonObject().apply {
+        add("text_prompts", JsonArray().apply {
+            add(JsonObject().apply {
+                addProperty("text", prompt)
+                addProperty("weight", 1)
+            })
+        })
+    }
+
+    private fun isExtraInputValidation(body: String): Boolean {
+        val normalized = body.lowercase()
+        return "extra_forbidden" in normalized ||
+            "extra inputs are not permitted" in normalized ||
+            "extra fields not permitted" in normalized
     }
 
     private fun flux1Dimensions(aspectRatio: String?): Pair<Int, Int>? = when (aspectRatio) {
