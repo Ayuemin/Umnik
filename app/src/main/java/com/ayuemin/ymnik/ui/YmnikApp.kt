@@ -17,6 +17,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
@@ -256,6 +257,7 @@ private fun ChatScreen(
     var isRecording by remember { mutableStateOf(false) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
+    var requestElapsedSeconds by remember { mutableIntStateOf(0) }
 
     DisposableEffect(voiceRecorder) {
         onDispose { voiceRecorder.cancel() }
@@ -312,6 +314,20 @@ private fun ChatScreen(
                 Toast.makeText(context, "Достигнут максимум записи 10 минут", Toast.LENGTH_SHORT).show()
                 break
             }
+            delay(250)
+        }
+    }
+
+    LaunchedEffect(state.requestActive) {
+        if (!state.requestActive) {
+            requestElapsedSeconds = 0
+            return@LaunchedEffect
+        }
+        val startedAt = System.currentTimeMillis()
+        while (true) {
+            requestElapsedSeconds = ((System.currentTimeMillis() - startedAt) / 1000L)
+                .toInt()
+                .coerceAtLeast(0)
             delay(250)
         }
     }
@@ -592,10 +608,11 @@ onBranch = if (message.role == "assistant") {
                                 },
                                 enabled = state.requestActive || isRecording || (!state.isLoading && (
                                     text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
-                                ))
+                                )),
+                                modifier = Modifier.size(if (state.requestActive) 58.dp else 48.dp)
                             ) {
                                 if (state.requestActive) {
-                                    WorkingStopIcon()
+                                    WorkingStopTimer(requestElapsedSeconds)
                                 } else {
                                     Icon(
                                         Icons.Outlined.Send,
@@ -798,24 +815,30 @@ private fun CompactMessageAction(
 }
 
 @Composable
-private fun WorkingStopIcon() {
-    val transition = rememberInfiniteTransition(label = "workingStop")
-    val pulse by transition.animateFloat(
-        initialValue = 0.86f,
-        targetValue = 1.08f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 520),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "workingStopPulse"
-    )
+private fun WorkingStopTimer(seconds: Int) {
+    Box(
+        modifier = Modifier
+            .size(52.dp)
+            .border(
+                width = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+                shape = RoundedCornerShape(4.dp)
+            ),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = formatRequestDuration(seconds),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1
+        )
+    }
+}
 
-    Icon(
-        Icons.Outlined.Stop,
-        contentDescription = "Остановить работу модели",
-        modifier = Modifier.scale(pulse),
-        tint = MaterialTheme.colorScheme.primary
-    )
+private fun formatRequestDuration(seconds: Int): String {
+    val safe = seconds.coerceAtLeast(0)
+    return "%d:%02d".format(Locale.US, safe / 60, safe % 60)
 }
 
 @Composable
