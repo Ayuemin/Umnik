@@ -30,6 +30,7 @@ import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
 import com.ayuemin.ymnik.model.ProviderType
+import com.ayuemin.ymnik.model.ProviderUsage
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
@@ -149,6 +150,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     init {
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
+        refreshProviderUsage()
     }
 
     fun saveApiKey(apiKey: String?) {
@@ -233,6 +235,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             status = "Подключение сохранено"
         )
         if ((active || profileId == _state.value.imageConnectionProfileId) && profileId !in _state.value.disabledConnectionIds && isProfileConfigured(updated)) refreshModelCapabilities()
+        if (updated.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
 
     fun setConnectionEnabled(profileId: String, enabled: Boolean) {
@@ -1207,6 +1210,30 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    fun refreshProviderUsage() {
+        val profile = _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
+            ?: return
+        if (profile.id in _state.value.disabledConnectionIds || !isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(providerUsage = null)
+            return
+        }
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        viewModelScope.launch {
+            runCatching { api.keyUsage(key, profile.baseUrl) }
+                .onSuccess { usage ->
+                    _state.value = _state.value.copy(
+                        providerUsage = ProviderUsage(
+                            providerName = "OpenRouter",
+                            daily = usage.daily,
+                            weekly = usage.weekly,
+                            monthly = usage.monthly,
+                            total = usage.total
+                        )
+                    )
+                }
+        }
+    }
+
     private fun refreshModelCapabilities() {
         val profile = activeConnectionProfile()
         val imageProfile = imageConnectionProfile()
@@ -1751,6 +1778,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     storageStats = storageRepository.stats()
                 )
                 playReadySound()
+                if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -1872,6 +1900,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     storageStats = storageRepository.stats()
                 )
                 playReadySound()
+                if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,

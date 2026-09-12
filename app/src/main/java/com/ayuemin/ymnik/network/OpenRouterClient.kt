@@ -35,6 +35,13 @@ class OpenRouterClient(private val context: Context) {
 
     data class Result(val text: String, val files: List<GeneratedFile>)
 
+    data class KeyUsage(
+        val daily: Double,
+        val weekly: Double,
+        val monthly: Double,
+        val total: Double
+    )
+
     fun cancelActiveRequest() {
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
@@ -56,6 +63,30 @@ class OpenRouterClient(private val context: Context) {
 
     suspend fun imageModels(apiKey: String, baseUrl: String = DEFAULT_BASE_URL): List<ModelInfo> = withContext(Dispatchers.IO) {
         getModelInfos(apiKey, endpoint(baseUrl, "images/models"))
+    }
+
+    suspend fun keyUsage(apiKey: String, baseUrl: String = DEFAULT_BASE_URL): KeyUsage = withContext(Dispatchers.IO) {
+        val request = Request.Builder()
+            .url(endpoint(baseUrl, "key"))
+            .header("Authorization", "Bearer $apiKey")
+            .header("X-Title", "Umnik Android")
+            .get()
+            .build()
+        http.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) error(apiError(response.code, body))
+            val root = gson.fromJson(body, JsonObject::class.java)
+            val data = root.getAsJsonObject("data") ?: error("OpenRouter не вернул статистику ключа")
+            fun value(name: String): Double = runCatching {
+                data.get(name)?.takeUnless { it.isJsonNull }?.asDouble ?: 0.0
+            }.getOrDefault(0.0)
+            KeyUsage(
+                daily = value("usage_daily"),
+                weekly = value("usage_weekly"),
+                monthly = value("usage_monthly"),
+                total = value("usage")
+            )
+        }
     }
 
     private fun getModelInfos(apiKey: String, url: String): List<ModelInfo> {

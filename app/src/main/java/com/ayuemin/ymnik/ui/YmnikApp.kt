@@ -176,6 +176,9 @@ private fun imageParameterSummary(state: UiState): String =
         .ifEmpty { listOf("Авто") }
         .joinToString(" · ")
 
+private fun formatUsd(value: Double): String =
+    "$" + "%.2f".format(Locale.US, value.coerceAtLeast(0.0))
+
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
@@ -825,6 +828,9 @@ private fun ChatHeader(
 ) {
     var quickModelsOpen by remember { mutableStateOf(false) }
     var hubOpen by remember { mutableStateOf(false) }
+    var usageOpen by remember { mutableStateOf(false) }
+    val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
+    val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
     val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
@@ -838,21 +844,26 @@ private fun ChatHeader(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(modifier = Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(modifier = Modifier.weight(1f)) {
                 TextButton(
                     onClick = { quickModelsOpen = true },
                     enabled = !state.isLoading,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
                 ) {
                     Text(
                         shortModelName,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Spacer(Modifier.width(3.dp))
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(22.dp))
+                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(20.dp))
                 }
 
                 DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
@@ -887,6 +898,26 @@ private fun ChatHeader(
                                 if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
                                 quickModelsOpen = false
                             }
+                        )
+                    }
+                }
+                }
+                activeUsage?.let { usage ->
+                    Spacer(Modifier.width(4.dp))
+                    Surface(
+                        onClick = {
+                            usageOpen = true
+                            vm.refreshProviderUsage()
+                        },
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHigh
+                    ) {
+                        Text(
+                            "Сегодня ${formatUsd(usage.daily)}",
+                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1
                         )
                     }
                 }
@@ -946,6 +977,43 @@ private fun ChatHeader(
                 }
             }
         }
+    }
+
+    if (usageOpen && activeUsage != null) {
+        AlertDialog(
+            onDismissRequest = { usageOpen = false },
+            title = { Text(activeUsage.providerName) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    listOf(
+                        "Сегодня" to activeUsage.daily,
+                        "Неделя" to activeUsage.weekly,
+                        "Месяц" to activeUsage.monthly,
+                        "Всего этим ключом" to activeUsage.total
+                    ).forEach { (label, value) ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                    Text(
+                        "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { usageOpen = false }) { Text("Закрыть") }
+            },
+            dismissButton = {
+                TextButton(onClick = { vm.refreshProviderUsage() }) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Обновить")
+                }
+            }
+        )
     }
 }
 

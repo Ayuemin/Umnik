@@ -16,6 +16,15 @@ enum class ProviderType {
     OPENAI_COMPATIBLE
 }
 
+data class ProviderUsage(
+    val providerName: String,
+    val daily: Double,
+    val weekly: Double,
+    val monthly: Double,
+    val total: Double,
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
 data class ConnectionProfile(
     val id: String,
     val name: String,
@@ -213,6 +222,7 @@ data class UiState(
     val availableImageModels: List<ModelInfo> = emptyList(),
     val modelCatalogConnectionId: String? = null,
     val modelCatalog: List<ModelInfo> = emptyList(),
+    val providerUsage: ProviderUsage? = null,
     val answerSoundEnabled: Boolean = true,
     val answerSoundChoice: AnswerSoundChoice = AnswerSoundChoice.DEFAULT,
     val answerSoundVolume: Int = 28,
