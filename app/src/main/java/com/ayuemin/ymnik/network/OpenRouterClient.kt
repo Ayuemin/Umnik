@@ -310,6 +310,8 @@ class OpenRouterClient(private val context: Context) {
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .header("X-Title", "Umnik Android")
+            .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
+            .header("X-OpenRouter-Metadata", "enabled")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
         try {
@@ -493,11 +495,25 @@ class OpenRouterClient(private val context: Context) {
     }
 
     private fun apiError(code: Int, body: String): String {
-        val message = runCatching {
-            val root = gson.fromJson(body, JsonObject::class.java)
-            root.getAsJsonObject("error")?.get("message")?.asString
+        val root = runCatching { gson.fromJson(body, JsonObject::class.java) }.getOrNull()
+        val message = runCatching { root?.getAsJsonObject("error")?.get("message")?.asString }.getOrNull()
+        val guardrailSummary = runCatching {
+            root?.getAsJsonObject("openrouter_metadata")
+                ?.getAsJsonArray("pipeline")
+                ?.mapNotNull { stage ->
+                    stage.takeIf { it.isJsonObject }?.asJsonObject?.takeIf {
+                        it.get("type")?.asString == "guardrail"
+                    }?.get("summary")?.takeIf { it.isJsonPrimitive }?.asString
+                }
+                ?.firstOrNull()
         }.getOrNull()
-        return "OpenRouter $code: ${message ?: body.take(500)}"
+
+        return when {
+            !guardrailSummary.isNullOrBlank() -> "OpenRouter $code: ${message ?: "запрос заблокирован"}. $guardrailSummary"
+            code == 403 && message?.contains("security policy", ignoreCase = true) == true ->
+                "OpenRouter 403: запрос отклонён политикой безопасности OpenRouter или провайдера. Попробуйте другую модель; если ошибка повторится, проверьте Privacy / Guardrails в OpenRouter."
+            else -> "OpenRouter $code: ${message ?: body.take(500)}"
+        }
     }
 
     fun attachmentFromUri(uri: Uri): PendingAttachment {

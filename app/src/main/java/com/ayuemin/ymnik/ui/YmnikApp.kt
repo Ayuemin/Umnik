@@ -848,12 +848,11 @@ private fun ChatHeader(
                 modifier = Modifier.weight(1f),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(modifier = Modifier.weight(1f)) {
+                Box(modifier = Modifier.weight(1f, fill = false)) {
                 TextButton(
                     onClick = { quickModelsOpen = true },
                     enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 4.dp, vertical = 2.dp)
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
                 ) {
                     Text(
                         shortModelName,
@@ -913,8 +912,8 @@ private fun ChatHeader(
                         color = MaterialTheme.colorScheme.surfaceContainerHigh
                     ) {
                         Text(
-                            "Сегодня ${formatUsd(usage.daily)}",
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                            formatUsd(usage.daily),
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 5.dp),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1
