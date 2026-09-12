@@ -17,7 +17,8 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -123,6 +124,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -360,35 +362,45 @@ private fun ChatScreen(
         }
     }
 
-    val edgeSwipeWidthPx = with(LocalDensity.current) { 36.dp.toPx() }
-    val edgeSwipeTriggerPx = with(LocalDensity.current) { 96.dp.toPx() }
+    val menuSwipeTriggerPx = with(LocalDensity.current) { 76.dp.toPx() }
 
     Column(
         Modifier
             .fillMaxSize()
-            .pointerInput(edgeSwipeWidthPx, edgeSwipeTriggerPx) {
-                var startedAtLeftEdge = false
-                var horizontalDistance = 0f
-                detectHorizontalDragGestures(
-                    onDragStart = { offset ->
-                        startedAtLeftEdge = offset.x <= edgeSwipeWidthPx
-                        horizontalDistance = 0f
-                    },
-                    onHorizontalDrag = { _, dragAmount ->
-                        if (startedAtLeftEdge) horizontalDistance += dragAmount
-                    },
-                    onDragEnd = {
-                        if (startedAtLeftEdge && horizontalDistance >= edgeSwipeTriggerPx) {
+            .pointerInput(menuSwipeTriggerPx) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    var horizontalDistance = 0f
+                    var verticalDistance = 0f
+                    var blockedByChild = false
+                    var opened = false
+
+                    while (true) {
+                        // Final pass lets nested horizontally scrollable content consume
+                        // the gesture first. A Markdown table therefore scrolls instead
+                        // of opening the menu, while an ordinary chat area still swipes.
+                        val event = awaitPointerEvent(PointerEventPass.Final)
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.isConsumed) blockedByChild = true
+
+                        horizontalDistance += change.position.x - change.previousPosition.x
+                        verticalDistance += change.position.y - change.previousPosition.y
+
+                        if (
+                            !blockedByChild &&
+                            !opened &&
+                            horizontalDistance >= menuSwipeTriggerPx &&
+                            horizontalDistance > kotlin.math.abs(verticalDistance) * 1.25f
+                        ) {
                             menuSwipeSignal += 1
+                            opened = true
                         }
-                        startedAtLeftEdge = false
-                        horizontalDistance = 0f
-                    },
-                    onDragCancel = {
-                        startedAtLeftEdge = false
-                        horizontalDistance = 0f
+
+                        if (!change.pressed) break
+                        if (horizontalDistance <= -menuSwipeTriggerPx) break
+                        if (kotlin.math.abs(verticalDistance) > menuSwipeTriggerPx * 1.35f) break
                     }
-                )
+                }
             }
     ) {
         ChatHeader(
@@ -1424,7 +1436,7 @@ private fun ModelPickerDialog(
                 Text(
                     when (selectedConnection?.type) {
                         ProviderType.OPENROUTER -> "Показаны только модели OpenRouter Image API."
-                        ProviderType.NVIDIA -> "Показаны только генераторы изображений NVIDIA NIM из обновляемого реестра Umnik."
+                        ProviderType.NVIDIA -> "Показаны только проверенные генераторы NVIDIA NIM. Модели с нестабильным hosted endpoint временно скрываются реестром Umnik."
                         ProviderType.OPENAI_COMPATIBLE -> "У произвольного API нет универсального каталога генераторов. Укажите ID image-модели вручную; Umnik не будет выдавать общий /models за список генераторов."
                         null -> ""
                     },

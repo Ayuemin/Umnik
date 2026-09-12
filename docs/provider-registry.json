@@ -21,17 +21,6 @@
           "parameterOptions": {}
         },
         {
-          "id": "black-forest-labs/flux.1-schnell",
-          "inputModalities": [
-            "text"
-          ],
-          "parameterOptions": {
-            "aspect_ratio": [
-              "1:1"
-            ]
-          }
-        },
-        {
           "id": "black-forest-labs/flux.1-dev",
           "inputModalities": [
             "text"

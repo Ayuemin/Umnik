@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.DeleteForever
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
@@ -60,6 +61,7 @@ import java.util.Locale
 fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var editorId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
+    var clearAllConfirm by remember { mutableStateOf(false) }
     val chats = state.chats.sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
     val favorites = chats.filter { it.isFavorite }
     val others = chats.filterNot { it.isFavorite }
@@ -76,6 +78,16 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
             Text("Новый чат")
+        }
+
+        TextButton(
+            onClick = { clearAllConfirm = true },
+            enabled = !state.isLoading && chats.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+        ) {
+            Icon(Icons.Outlined.DeleteForever, contentDescription = null)
+            Spacer(Modifier.width(8.dp))
+            Text("Очистить все чаты")
         }
 
         LazyColumn(
@@ -113,6 +125,28 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
                 }) { Text("Удалить") }
             },
             dismissButton = { TextButton(onClick = { deleteTarget = null }) { Text("Отмена") } }
+        )
+    }
+
+    if (clearAllConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearAllConfirm = false },
+            title = { Text("Очистить всю историю чатов?") },
+            text = {
+                Text(
+                    "Будут удалены все ${state.chats.size} чатов и их файлы контекста. Сгенерированные изображения и экспорт в хранилище Umnik останутся."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.clearAllChats()
+                    clearAllConfirm = false
+                    onDismiss()
+                }) { Text("Очистить все") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearAllConfirm = false }) { Text("Отмена") }
+            }
         )
     }
 }
