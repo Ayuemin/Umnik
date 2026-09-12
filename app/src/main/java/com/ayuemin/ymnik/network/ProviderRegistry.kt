@@ -1,6 +1,7 @@
 package com.ayuemin.ymnik.network
 
 import android.content.Context
+import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.google.gson.Gson
@@ -32,6 +33,7 @@ class ProviderRegistry(context: Context) {
     private val prefs = context.getSharedPreferences("provider_registry", Context.MODE_PRIVATE)
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(DiagnosticHttpInterceptor(context, "Provider registry"))
         .connectTimeout(12, TimeUnit.SECONDS)
         .readTimeout(12, TimeUnit.SECONDS)
         .build()

@@ -2221,6 +2221,10 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
+    var diagnosticsExpanded by remember { mutableStateOf(false) }
+    var diagnosticLoggingEnabled by remember { mutableStateOf(vm.isDiagnosticLoggingEnabled()) }
+    var diagnosticLogBytes by remember { mutableStateOf(vm.diagnosticLogSize()) }
+    var diagnosticFileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var editingProfileId by remember { mutableStateOf("openrouter") }
     val editingProfile = state.connectionProfiles.firstOrNull { it.id == editingProfileId }
         ?: state.connectionProfiles.first()
@@ -2259,6 +2263,12 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::importAnswerSound)
+    }
+    val diagnosticSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
+        val file = diagnosticFileToSave
+        if (uri != null && file != null) vm.saveGeneratedFile(file, uri)
+        diagnosticFileToSave = null
+        diagnosticLogBytes = vm.diagnosticLogSize()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -2855,6 +2865,93 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp)
                     )
+                }
+            }
+
+            item {
+                ExpandableSettingsCard(
+                    title = "Диагностика и логи",
+                    subtitle = if (diagnosticLoggingEnabled)
+                        "Запись включена · ${humanSize(diagnosticLogBytes)}"
+                    else
+                        "Выключено · включайте только при поиске ошибки",
+                    icon = Icons.Outlined.Description,
+                    expanded = diagnosticsExpanded,
+                    onToggle = {
+                        diagnosticsExpanded = !diagnosticsExpanded
+                        diagnosticLoggingEnabled = vm.isDiagnosticLoggingEnabled()
+                        diagnosticLogBytes = vm.diagnosticLogSize()
+                    }
+                ) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Запись логов", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Включите, повторите действия с ошибкой и затем отправьте лог.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = diagnosticLoggingEnabled,
+                            onCheckedChange = { enabled ->
+                                vm.setDiagnosticLoggingEnabled(enabled)
+                                diagnosticLoggingEnabled = enabled
+                                diagnosticLogBytes = vm.diagnosticLogSize()
+                            }
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "Когда запись выключена, она практически не влияет на работу приложения. В лог не пишутся тексты сообщений, содержимое файлов и API-ключи: сохраняются технические события, модель, адрес сервиса без параметров, HTTP-код, время запроса и текст ошибки.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilledTonalButton(
+                            onClick = {
+                                val file = vm.diagnosticLogFile()
+                                if (file != null) {
+                                    shareGeneratedFile(context, file)
+                                    diagnosticLogBytes = vm.diagnosticLogSize()
+                                }
+                            },
+                            enabled = diagnosticLogBytes > 0L,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.Share, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Поделиться", maxLines = 1)
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                val file = vm.diagnosticLogFile()
+                                if (file != null) {
+                                    diagnosticFileToSave = file
+                                    diagnosticSave.launch(file.name)
+                                }
+                            },
+                            enabled = diagnosticLogBytes > 0L,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Icon(Icons.Outlined.Download, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Сохранить", maxLines = 1)
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            vm.clearDiagnosticLog()
+                            diagnosticLogBytes = 0L
+                        },
+                        enabled = diagnosticLogBytes > 0L,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Очистить лог")
+                    }
                 }
             }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
+import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeUnit
 class OpenRouterClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)

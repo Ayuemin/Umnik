@@ -3,4 +3,5 @@
     <cache-path name="camera" path="camera/" />
     <files-path name="generated" path="generated/" />
     <files-path name="exports" path="exports/" />
+    <files-path name="diagnostics" path="diagnostics/" />
 </paths>

@@ -18,6 +18,7 @@ import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
@@ -155,11 +156,46 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     init {
+        DiagnosticLog.record(
+            context,
+            "APP",
+            "ChatViewModel initialized; activeProfile=${initialProfile.name}; activeModel=${loadTextModelForProfile(initialProfile)}"
+        )
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
         refreshProviderUsage()
         viewModelScope.launch {
             if (providerRegistry.refreshIfStale()) refreshModelCapabilities()
         }
+    }
+
+    fun isDiagnosticLoggingEnabled(): Boolean = DiagnosticLog.isEnabled(context)
+
+    fun setDiagnosticLoggingEnabled(enabled: Boolean) {
+        DiagnosticLog.setEnabled(context, enabled)
+        _state.value = _state.value.copy(
+            status = if (enabled)
+                "Запись диагностических логов включена"
+            else
+                "Запись диагностических логов выключена"
+        )
+    }
+
+    fun diagnosticLogSize(): Long = DiagnosticLog.size(context)
+
+    fun diagnosticLogFile(): GeneratedFile? {
+        val file = DiagnosticLog.file(context) ?: return null
+        return GeneratedFile(
+            id = "diagnostic-log",
+            name = "umnik-diagnostic.log",
+            mimeType = "text/plain",
+            localPath = file.absolutePath,
+            size = file.length()
+        )
+    }
+
+    fun clearDiagnosticLog() {
+        DiagnosticLog.clear(context)
+        _state.value = _state.value.copy(status = "Диагностический лог очищен")
     }
 
     fun saveApiKey(apiKey: String?) {
@@ -1951,6 +1987,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val reasoningEffort = _state.value.reasoningEffort
         val requestId = ++requestGeneration
         activeRequestPending = pending
+        DiagnosticLog.record(
+            context,
+            "REQUEST",
+            "start id=$requestId; provider=${profile.name}; mode=$mode; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; history=${before.size}; pending=${pending.size}; persistent=${persistentChatFiles.size}; promptChars=${clean.length}"
+        )
 
         activeRequestJob = viewModelScope.launch {
             val operation = runCatching {
@@ -2029,6 +2070,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
 
             operation.onSuccess { result ->
+                DiagnosticLog.record(
+                    context,
+                    "REQUEST",
+                    "success id=$requestId; provider=${profile.name}; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; responseChars=${result.text.length}; files=${result.files.size}"
+                )
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
@@ -2055,11 +2101,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     if (mode == ChatMode.IMAGE) refreshProviderUsage(2500L)
                 }
             }.onFailure {
+                DiagnosticLog.record(
+                    context,
+                    "REQUEST",
+                    "failed id=$requestId; provider=${profile.name}; model=${if (mode == ChatMode.TEXT) textModel else imageModel}",
+                    it
+                )
+                val friendlyError = if (it is java.net.SocketTimeoutException) {
+                    "Сервис не ответил вовремя (тайм-аут). При необходимости включите «Диагностика и логи» и повторите запрос."
+                } else {
+                    it.message ?: "Ошибка запроса"
+                }
                 _state.value = _state.value.copy(
                     isLoading = false,
                     requestActive = false,
                     busyLabel = null,
-                    status = it.message ?: "Ошибка запроса"
+                    status = friendlyError
                 )
             }
             cleanupTempAttachments(pending)

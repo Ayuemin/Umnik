@@ -2,6 +2,7 @@ package com.ayuemin.ymnik.network
 
 import android.content.Context
 import android.util.Base64
+import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.google.gson.Gson
 import com.google.gson.JsonArray
@@ -22,6 +23,7 @@ import java.util.concurrent.TimeUnit
 class NvidiaImageClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(DiagnosticHttpInterceptor(context, "NVIDIA image"))
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(600, TimeUnit.SECONDS)
         .writeTimeout(600, TimeUnit.SECONDS)

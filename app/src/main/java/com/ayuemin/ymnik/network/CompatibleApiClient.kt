@@ -3,6 +3,8 @@ package com.ayuemin.ymnik.network
 import android.content.Context
 import android.net.Uri
 import android.util.Base64
+import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
@@ -25,6 +27,7 @@ import java.util.concurrent.TimeUnit
 class CompatibleApiClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
+        .addInterceptor(DiagnosticHttpInterceptor(context, "Compatible text/image"))
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -70,14 +73,26 @@ class CompatibleApiClient(private val context: Context) {
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
         val messages = JsonArray()
         if (systemPrompt.isNotBlank()) messages.add(message("system", systemPrompt))
-        history.takeLast(30).forEach { item -> messages.add(message(item.role, item.text)) }
+        // NVIDIA requires alternating user/assistant roles. After a timeout Umnik
+        // keeps the unanswered user message in local history; do not send that stale
+        // trailing user turn again when the user retries.
+        history.takeLast(30)
+            .dropLastWhile { it.role == "user" }
+            .forEach { item -> messages.add(message(item.role, item.text)) }
         messages.add(message("user", userText(prompt, attachments)))
 
         val payload = JsonObject().apply {
             addProperty("model", model)
             add("messages", messages)
-            addProperty("max_tokens", 6000)
+            addProperty("max_tokens", 4096)
+            addProperty("stream", false)
         }
+        val providerLabel = if (baseUrl.contains("nvidia.com", ignoreCase = true)) "NVIDIA" else "Compatible API"
+        DiagnosticLog.record(
+            context,
+            "TEXT REQUEST",
+            "$providerLabel start; model=$model; history=${history.size}; sentMessages=${messages.size()}; promptChars=${prompt.length}; attachments=${attachments.size}"
+        )
         val builder = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Content-Type", "application/json")
@@ -90,12 +105,22 @@ class CompatibleApiClient(private val context: Context) {
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) error(apiError(response.code, body))
                 val root = gson.fromJson(body, JsonObject::class.java)
-                val content = root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
-                    ?.getAsJsonObject("message")?.get("content")
-                val text = extractText(content)
+                val messageObject = root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
+                    ?.getAsJsonObject("message")
+                val content = messageObject?.get("content")
+                val reasoningContent = messageObject?.get("reasoning_content")
+                val text = extractText(content).ifBlank { extractText(reasoningContent) }
                 if (text.isBlank()) error("Совместимый API вернул пустой ответ")
+                DiagnosticLog.record(
+                    context,
+                    "TEXT REQUEST",
+                    "$providerLabel success; model=$model; responseChars=${text.length}; responseBytes=${body.length}"
+                )
                 OpenRouterClient.Result(text, emptyList())
             }
+        } catch (t: Throwable) {
+            DiagnosticLog.record(context, "TEXT REQUEST", "$providerLabel failed; model=$model", t)
+            throw t
         } finally {
             activeCall = null
         }
