@@ -1,0 +1,332 @@
+name: Release Umnik 1.3.4 once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/trigger-1.3.4"
+
+permissions:
+  contents: write
+
+jobs:
+  fix-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply v1.3.4 fixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import json
+
+          vm_path = Path('app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt')
+          vm = vm_path.read_text()
+          old = '''    fun selectDefaultTextModel(profileId: String, model: String) {
+              val clean = model.trim()
+              if (clean.isBlank()) return
+              val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+              if (profile.id in _state.value.disabledConnectionIds) return
+              if (!isProfileConfigured(profile)) return
+              val saved = prefs.edit().putString(profilePrefKey("text_model", profile.id), clean).commit()
+              if (!saved) {
+                  _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели")
+                  return
+              }
+              if (profile.id == _state.value.activeConnectionProfileId) {
+                  val chats = _state.value.chats.map { chat ->
+                      if (chat.id == _state.value.currentChatId) chat.copy(
+                          connectionProfileId = profile.id,
+                          textModelOverride = null,
+                          mode = ChatMode.TEXT,
+                          updatedAt = System.currentTimeMillis()
+                      ) else chat
+                  }
+                  chatsRepository.save(chats)
+                  val info = _state.value.availableTextModels.firstOrNull { it.id == clean }
+                      ?: _state.value.modelCatalog
+                          .takeIf { _state.value.modelCatalogConnectionId == profile.id }
+                          ?.firstOrNull { it.id == clean }
+                  val effort = preferredReasoningEffort(clean, info)
+                  val keepReasoning = reasoningStillValid(info, effort)
+                  prefs.edit()
+                      .putString("reasoning_effort", effort.name)
+                      .putBoolean("reasoning_enabled", keepReasoning)
+                      .apply()
+                  _state.value = _state.value.copy(
+                      chats = chats,
+                      textModel = clean,
+                      currentChatTextModel = null,
+                      mode = ChatMode.TEXT,
+                      reasoningEffort = effort,
+                      reasoningEnabled = keepReasoning,
+                      status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
+                  )
+              } else {
+                  _state.value = _state.value.copy(
+                      status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий чат не переключён"
+                  )
+              }
+          }
+          '''
+          new = '''    fun selectDefaultTextModel(profileId: String, model: String) {
+              val clean = model.trim()
+              if (clean.isBlank()) return
+              val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+              if (profile.id in _state.value.disabledConnectionIds) return
+              if (!isProfileConfigured(profile)) return
+
+              // The model picker is a global choice for text chats: choosing a provider
+              // and a model must switch the current chat and become the default for new chats.
+              val saved = prefs.edit()
+                  .putString(profilePrefKey("text_model", profile.id), clean)
+                  .putString("active_connection_profile", profile.id)
+                  .commit()
+              if (!saved) {
+                  _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели")
+                  return
+              }
+
+              val catalog = when {
+                  _state.value.modelCatalogConnectionId == profile.id -> _state.value.modelCatalog
+                  _state.value.activeConnectionProfileId == profile.id -> _state.value.availableTextModels
+                  else -> emptyList()
+              }
+              val info = catalog.firstOrNull { it.id == clean }
+              val effort = preferredReasoningEffort(clean, info)
+              val keepReasoning = reasoningStillValid(info, effort)
+              val chats = _state.value.chats.map { chat ->
+                  if (chat.id == _state.value.currentChatId) chat.copy(
+                      connectionProfileId = profile.id,
+                      textModelOverride = null,
+                      mode = ChatMode.TEXT,
+                      updatedAt = System.currentTimeMillis()
+                  ) else chat
+              }
+              chatsRepository.save(chats)
+              prefs.edit()
+                  .putString("reasoning_effort", effort.name)
+                  .putBoolean("reasoning_enabled", keepReasoning)
+                  .apply()
+
+              _state.value = _state.value.copy(
+                  chats = chats,
+                  activeConnectionProfileId = profile.id,
+                  textModel = clean,
+                  currentChatTextModel = null,
+                  mode = ChatMode.TEXT,
+                  availableTextModels = catalog,
+                  quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
+                  webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
+                  reasoningEffort = effort,
+                  reasoningEnabled = keepReasoning,
+                  apiKeyConfigured = isProfileConfigured(profile),
+                  status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
+              )
+              refreshModelCapabilities()
+              if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
+          }
+          '''
+          if old not in vm:
+              raise SystemExit('selectDefaultTextModel block not found')
+          vm_path.write_text(vm.replace(old, new, 1))
+
+          ui_path = Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
+          ui = ui_path.read_text()
+          old_help = 'Нажмите модель, затем «Сохранить выбор». Для текущего подключения модель сразу применяется к этому и новым чатам. Для другого подключения сохраняется его модель по умолчанию без переключения сервиса текущего чата.'
+          new_help = 'Выберите поставщика и модель, затем нажмите «Сохранить выбор». Выбранный поставщик и модель сразу применятся к текущему чату и станут значениями по умолчанию для новых чатов.'
+          if old_help not in ui:
+              raise SystemExit('model picker help text not found')
+          ui_path.write_text(ui.replace(old_help, new_help, 1))
+
+          nim_path = Path('app/src/main/java/com/ayuemin/ymnik/network/NvidiaImageClient.kt')
+          nim = nim_path.read_text()
+          old_retry = '''            if (
+                  !response.successful &&
+                  response.code == 422 &&
+                  isExtraInputValidation(response.body) &&
+                  gson.toJson(primaryPayload) != gson.toJson(minimalPayload)
+              ) {
+                  response = execute(url, apiKey, minimalPayload)
+              }
+          '''
+          new_retry = '''            if (
+                  !response.successful &&
+                  response.code in setOf(400, 422) &&
+                  gson.toJson(primaryPayload) != gson.toJson(minimalPayload)
+              ) {
+                  // Some hosted NIM validators are stricter than the published schema.
+                  // Retry once without optional size fields on validation failures.
+                  response = execute(url, apiKey, minimalPayload)
+              }
+          '''
+          if old_retry not in nim:
+              raise SystemExit('NVIDIA retry block not found')
+          nim = nim.replace(old_retry, new_retry, 1)
+
+          old_payload = '''        model.contains("flux.1-schnell") || model.contains("flux.1-dev") -> JsonObject().apply {
+              addProperty("prompt", prompt)
+              flux1Dimensions(aspectRatio)?.let { (width, height) ->
+                  addProperty("width", width)
+                  addProperty("height", height)
+              }
+          }
+          '''
+          new_payload = '''        model.contains("flux.1-schnell") -> JsonObject().apply {
+              addProperty("prompt", prompt)
+              // NVIDIA's official Schnell examples send these values explicitly.
+              addProperty("seed", 0)
+              addProperty("steps", 4)
+              flux1Dimensions(aspectRatio)?.let { (width, height) ->
+                  addProperty("width", width)
+                  addProperty("height", height)
+              }
+          }
+          model.contains("flux.1-dev") -> JsonObject().apply {
+              addProperty("prompt", prompt)
+              flux1Dimensions(aspectRatio)?.let { (width, height) ->
+                  addProperty("width", width)
+                  addProperty("height", height)
+              }
+          }
+          '''
+          if old_payload not in nim:
+              raise SystemExit('NVIDIA FLUX payload block not found')
+          nim = nim.replace(old_payload, new_payload, 1)
+
+          old_minimal = '''    private fun minimalPayload(model: String, prompt: String): JsonObject =
+              if (model.endsWith("stable-diffusion-xl")) {
+                  stableDiffusionXlPayload(prompt)
+              } else {
+                  JsonObject().apply { addProperty("prompt", prompt) }
+              }
+          '''
+          new_minimal = '''    private fun minimalPayload(model: String, prompt: String): JsonObject = when {
+              model.contains("flux.1-schnell") -> JsonObject().apply {
+                  addProperty("prompt", prompt)
+                  addProperty("seed", 0)
+                  addProperty("steps", 4)
+              }
+              model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
+              else -> JsonObject().apply { addProperty("prompt", prompt) }
+          }
+          '''
+          if old_minimal not in nim:
+              raise SystemExit('NVIDIA minimal payload block not found')
+          nim_path.write_text(nim.replace(old_minimal, new_minimal, 1))
+
+          registry_path = Path('docs/provider-registry.json')
+          registry = json.loads(registry_path.read_text())
+          registry['version'] = 2
+          registry['updated'] = '2026-09-12'
+          registry['providers']['nvidia']['imageModels'] = [
+              {
+                  'id': 'black-forest-labs/flux.2-klein-4b',
+                  'inputModalities': ['text'],
+                  'parameterOptions': {}
+              },
+              {
+                  'id': 'black-forest-labs/flux.1-schnell',
+                  'inputModalities': ['text'],
+                  'parameterOptions': {'aspect_ratio': ['1:1','16:9','9:16','5:4','4:5','3:2','2:3']}
+              },
+              {
+                  'id': 'black-forest-labs/flux.1-dev',
+                  'inputModalities': ['text'],
+                  'parameterOptions': {'aspect_ratio': ['1:1','16:9','9:16','5:4','4:5','3:2','2:3']}
+              }
+          ]
+          registry_path.write_text(json.dumps(registry, ensure_ascii=False, indent=2) + '\n')
+
+          pr_path = Path('app/src/main/java/com/ayuemin/ymnik/network/ProviderRegistry.kt')
+          pr = pr_path.read_text()
+          pr = pr.replace('val version: Int = 1,', 'val version: Int = 2,', 1)
+          pr = pr.replace('doc.version >= 1 &&', 'doc.version >= MIN_REGISTRY_VERSION &&', 1)
+          pr = pr.replace('version = 1,', 'version = 2,', 1)
+          old_defs = '''                    ImageModelDefinition(
+                          "black-forest-labs/flux.1-dev",
+                          parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
+                      ),
+                      ImageModelDefinition(
+                          "stabilityai/stable-diffusion-3-medium",
+                          parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
+                      ),
+                      ImageModelDefinition("stabilityai/stable-diffusion-xl")
+          '''
+          new_defs = '''                    ImageModelDefinition(
+                          "black-forest-labs/flux.1-dev",
+                          parameterOptions = mapOf("aspect_ratio" to COMMON_RATIOS)
+                      )
+          '''
+          if old_defs not in pr:
+              raise SystemExit('ProviderRegistry image fallback block not found')
+          pr = pr.replace(old_defs, new_defs, 1)
+          marker = '        private const val KEY_JSON = "registry_json"\n'
+          if marker not in pr:
+              raise SystemExit('ProviderRegistry companion marker not found')
+          pr = pr.replace(marker, '        private const val MIN_REGISTRY_VERSION = 2\n' + marker, 1)
+          pr_path.write_text(pr)
+
+          gradle = Path('app/build.gradle.kts')
+          g = gradle.read_text()
+          g = g.replace('// Umnik v1.3.3', '// Umnik v1.3.4', 1)
+          g = g.replace('versionCode = 45', 'versionCode = 46', 1)
+          g = g.replace('versionName = "1.3.3"', 'versionName = "1.3.4"', 1)
+          gradle.write_text(g)
+
+          changelog = Path('CHANGELOG.md')
+          c = changelog.read_text()
+          entry = '''## v1.3.4 - 2026-09-12
+
+- Исправлен выбор текстовой модели: выбор поставщика и модели в настройках теперь действительно переключает текущий чат на этот сервис и сохраняет его для новых чатов.
+- После переключения модель сразу появляется как текущая в быстром списке моделей в шапке чата.
+- Исправлено обратное переключение между NVIDIA и OpenRouter: старый поставщик больше не остаётся активным после сохранения нового выбора.
+- Каталог NVIDIA для генерации изображений очищен от устаревших бесплатных endpoint-ов Stable Diffusion 3 Medium и Stable Diffusion XL, которые NVIDIA пометила как deprecated.
+- Для FLUX.1-schnell запрос приведён к официальному примеру NVIDIA (`seed=0`, `steps=4`) и добавлен безопасный повтор без необязательных размеров при ошибке валидации 400/422.
+- Версия реестра провайдеров поднята до 2, поэтому старый кэш с уже недоступными image-моделями не переживает обновление приложения.
+
+'''
+          if '## v1.3.4 - 2026-09-12' not in c:
+              c = c.replace('## Unreleased\n\n', '## Unreleased\n\n' + entry, 1)
+          changelog.write_text(c)
+          PY
+
+          rm -f .github/trigger-1.3.4 .github/workflows/release-1.3.4-once.yml
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Build debug APK
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Commit and tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Fix provider switching and NVIDIA image models"
+          git tag v1.3.4
+          git push origin HEAD:main
+          git push origin v1.3.4
