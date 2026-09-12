@@ -1,0 +1,198 @@
+name: Prepare Umnik 1.3.9 once
+
+on:
+  push:
+    paths:
+      - ".github/run-v1.3.9"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Apply final NVIDIA catalogue fixes and bump version
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          vm_path = Path("app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
+          text = vm_path.read_text(encoding="utf-8")
+
+          old = '''                    ChatMode.TEXT -> {
+                        var selectedModel = loadTextModelForProfile(profile)
+'''
+          new = '''                    ChatMode.TEXT -> {
+                        if (profile.type == ProviderType.NVIDIA) {
+                            val validIds = infos.map { it.id }.toSet()
+                            pruneQuickTextModels(profile.id, validIds)
+                            clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
+                        }
+                        var selectedModel = loadTextModelForProfile(profile)
+'''
+          if old not in text:
+              raise SystemExit("refreshModels patch point not found")
+          text = text.replace(old, new, 1)
+
+          old = '''            if (textInfos != null) {
+                var selectedModel = loadTextModelForProfile(profile)
+'''
+          new = '''            if (textInfos != null) {
+                if (profile.type == ProviderType.NVIDIA) {
+                    val validIds = textInfos.map { it.id }.toSet()
+                    pruneQuickTextModels(profile.id, validIds)
+                    clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
+                    next = _state.value
+                }
+                var selectedModel = loadTextModelForProfile(profile)
+'''
+          if old not in text:
+              raise SystemExit("refreshModelCapabilities patch point not found")
+          text = text.replace(old, new, 1)
+
+          marker = '''    private fun quickModelRef(profileId: String, modelId: String): String =
+'''
+          helper = '''    private fun pruneQuickTextModels(profileId: String, availableIds: Set<String>) {
+        if (availableIds.isEmpty()) return
+        val stored = loadQuickTextModels(profileId)
+        val valid = stored.filter { it in availableIds }
+        if (valid != stored) {
+            prefs.edit().putString(
+                profilePrefKey("quick_text_models_json", profileId),
+                gson.toJson(valid)
+            ).apply()
+        }
+    }
+
+    private fun clearCurrentChatModelOverrideIfInvalid(profileId: String, availableIds: Set<String>) {
+        val currentOverride = _state.value.currentChatTextModel ?: return
+        if (currentOverride in availableIds) return
+        val currentChatId = _state.value.currentChatId
+        var changed = false
+        val chats = _state.value.chats.map { chat ->
+            if (
+                chat.id == currentChatId &&
+                (chat.connectionProfileId == null || chat.connectionProfileId == profileId) &&
+                !chat.textModelOverride.isNullOrBlank()
+            ) {
+                changed = true
+                chat.copy(textModelOverride = null, updatedAt = System.currentTimeMillis())
+            } else chat
+        }
+        if (changed) chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = if (changed) chats else _state.value.chats,
+            currentChatTextModel = null
+        )
+    }
+
+'''
+          if marker not in text:
+              raise SystemExit("quick-model helper patch point not found")
+          text = text.replace(marker, helper + marker, 1)
+
+          old = '''                _state.value = _state.value.copy(
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    status = friendlyError
+                )
+'''
+          new = '''                _state.value = _state.value.copy(
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    status = friendlyError
+                )
+                if (
+                    profile.type == ProviderType.NVIDIA &&
+                    mode == ChatMode.TEXT &&
+                    friendlyError.contains("временно скроет модель")
+                ) {
+                    refreshModelCapabilities()
+                }
+'''
+          if old not in text:
+              raise SystemExit("NVIDIA failure refresh patch point not found")
+          text = text.replace(old, new, 1)
+          vm_path.write_text(text, encoding="utf-8")
+
+          gradle = Path("app/build.gradle.kts")
+          g = gradle.read_text(encoding="utf-8")
+          g = g.replace("// Umnik v1.3.8", "// Umnik v1.3.9", 1)
+          g = g.replace('versionCode = 50', 'versionCode = 51', 1)
+          g = g.replace('versionName = "1.3.8"', 'versionName = "1.3.9"', 1)
+          if 'versionName = "1.3.9"' not in g or 'versionCode = 51' not in g:
+              raise SystemExit("version bump failed")
+          gradle.write_text(g, encoding="utf-8")
+
+          changelog = Path("CHANGELOG.md")
+          c = changelog.read_text(encoding="utf-8")
+          section = '''## v1.3.9 - 2026-09-12
+
+          - Исправлена главная причина серии HTTP 404 у NVIDIA: `/v1/models` больше не считается списком гарантированно доступных chat-моделей. Umnik пересекает ответ NVIDIA с обновляемым проверенным каталогом текстовых моделей.
+          - Реестр провайдеров поднят до версии 4 и теперь содержит отдельный список NVIDIA text-моделей. Его можно обновлять удалённо без выпуска нового APK, если NVIDIA меняет каталог.
+          - Добавлена защита от особенностей аккаунта NVIDIA: если конкретная модель возвращает HTTP 404 через `/chat/completions`, Umnik запоминает это для данного API-ключа на 24 часа и временно исключает модель из каталога.
+          - После такого 404 каталог обновляется автоматически, текущий невалидный override снимается, а недоступные быстрые модели очищаются при обновлении списка.
+          - Из NVIDIA text-каталога отсекаются очевидные embeddings/rerank/retrieval/reward/image-модели, чтобы их нельзя было ошибочно отправлять в Chat API.
+          - Ошибки совместимого API теперь разбирают `detail`, `message`, `title` и текстовое тело ответа, поэтому вместо голого «Ошибка API 404» показывается реальная причина сервера, когда она доступна.
+          - Проверена схема OpenRouter: обычный `/models` по текущей документации уже отдаёт text-модели по умолчанию, а генерация изображений остаётся на отдельном `/images/models` + `/images`.
+          - Версия: 1.3.9 / versionCode 51.
+
+          '''
+          marker = "## Unreleased\n\n"
+          if "## v1.3.9 - 2026-09-12" not in c:
+              if marker not in c:
+                  raise SystemExit("Unreleased marker not found")
+              c = c.replace(marker, marker + section, 1)
+              changelog.write_text(c, encoding="utf-8")
+          PY
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Compile debug APK
+        run: gradle --no-daemon :app:assembleDebug --stacktrace
+
+      - name: Commit and tag release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt app/build.gradle.kts CHANGELOG.md
+          git commit -m "Release Umnik v1.3.9"
+          git push origin main
+          git tag v1.3.9 HEAD
+          git push origin v1.3.9
+
+      - name: Dispatch signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" -f tag=v1.3.9
