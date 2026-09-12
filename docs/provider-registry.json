@@ -1,40 +1,52 @@
 {
-  "version": 3,
+  "version": 4,
   "updated": "2026-09-12",
   "providers": {
     "openrouter": {
       "textBaseUrl": "https://openrouter.ai/api/v1",
+      "textModels": [],
       "imageBaseUrl": "https://openrouter.ai/api/v1",
       "imageProtocol": "OPENROUTER",
       "imageModels": []
     },
     "nvidia": {
       "textBaseUrl": "https://integrate.api.nvidia.com/v1",
+      "textModels": [
+        "z-ai/glm-5.3-flash",
+        "z-ai/glm-5.2",
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+        "deepseek-ai/deepseek-v4-pro-0813",
+        "deepseek-ai/deepseek-v4-pro",
+        "deepseek-ai/deepseek-v4-flash-0731",
+        "mistralai/mistral-large-3-675b-instruct-2512",
+        "mistralai/mistral-small-4-119b-2603",
+        "meta/llama-3.1-8b-instruct",
+        "meta/llama-3.1-70b-instruct",
+        "meta/llama-3.3-70b-instruct",
+        "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+        "qwen/qwen3-next-80b-a3b-instruct",
+        "qwen/qwen3-next-80b-a3b-thinking",
+        "qwen/qwen3-32b",
+        "qwen/qwen2.5-coder-32b-instruct",
+        "moonshotai/kimi-k3",
+        "moonshotai/kimi-k2.6",
+        "sarvamai/sarvam-m",
+        "stockmark/stockmark-2-100b-instruct"
+      ],
       "imageBaseUrl": "https://ai.api.nvidia.com/v1/genai",
       "imageProtocol": "NVIDIA_NIM",
       "imageModels": [
         {
           "id": "black-forest-labs/flux.2-klein-4b",
-          "inputModalities": [
-            "text"
-          ],
+          "inputModalities": ["text"],
           "parameterOptions": {}
         },
         {
           "id": "black-forest-labs/flux.1-dev",
-          "inputModalities": [
-            "text"
-          ],
+          "inputModalities": ["text"],
           "parameterOptions": {
-            "aspect_ratio": [
-              "1:1",
-              "16:9",
-              "9:16",
-              "5:4",
-              "4:5",
-              "3:2",
-              "2:3"
-            ]
+            "aspect_ratio": ["1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3"]
           }
         }
       ]
