@@ -1458,6 +1458,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onSuccess { infos ->
                 _state.value = when (mode) {
                     ChatMode.TEXT -> {
+                        if (profile.type == ProviderType.NVIDIA) {
+                            val validIds = infos.map { it.id }.toSet()
+                            pruneQuickTextModels(profile.id, validIds)
+                            clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
+                        }
                         var selectedModel = loadTextModelForProfile(profile)
                         if (profile.type != ProviderType.OPENROUTER && infos.none { it.id == selectedModel }) {
                             selectedModel = infos.firstOrNull()?.id.orEmpty()
@@ -1549,6 +1554,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
             var next = _state.value
             if (textInfos != null) {
+                if (profile.type == ProviderType.NVIDIA) {
+                    val validIds = textInfos.map { it.id }.toSet()
+                    pruneQuickTextModels(profile.id, validIds)
+                    clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
+                    next = _state.value
+                }
                 var selectedModel = loadTextModelForProfile(profile)
                 if (profile.type != ProviderType.OPENROUTER && textInfos.none { it.id == selectedModel }) {
                     selectedModel = textInfos.firstOrNull()?.id.orEmpty()
@@ -2118,6 +2129,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     busyLabel = null,
                     status = friendlyError
                 )
+                if (
+                    profile.type == ProviderType.NVIDIA &&
+                    mode == ChatMode.TEXT &&
+                    friendlyError.contains("временно скроет модель")
+                ) {
+                    refreshModelCapabilities()
+                }
             }
             cleanupTempAttachments(pending)
             if (requestId == requestGeneration) {
@@ -2628,6 +2646,40 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .distinct()
             .take(10)
     }.getOrDefault(emptyList())
+
+    private fun pruneQuickTextModels(profileId: String, availableIds: Set<String>) {
+        if (availableIds.isEmpty()) return
+        val stored = loadQuickTextModels(profileId)
+        val valid = stored.filter { it in availableIds }
+        if (valid != stored) {
+            prefs.edit().putString(
+                profilePrefKey("quick_text_models_json", profileId),
+                gson.toJson(valid)
+            ).apply()
+        }
+    }
+
+    private fun clearCurrentChatModelOverrideIfInvalid(profileId: String, availableIds: Set<String>) {
+        val currentOverride = _state.value.currentChatTextModel ?: return
+        if (currentOverride in availableIds) return
+        val currentChatId = _state.value.currentChatId
+        var changed = false
+        val chats = _state.value.chats.map { chat ->
+            if (
+                chat.id == currentChatId &&
+                (chat.connectionProfileId == null || chat.connectionProfileId == profileId) &&
+                !chat.textModelOverride.isNullOrBlank()
+            ) {
+                changed = true
+                chat.copy(textModelOverride = null, updatedAt = System.currentTimeMillis())
+            } else chat
+        }
+        if (changed) chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = if (changed) chats else _state.value.chats,
+            currentChatTextModel = null
+        )
+    }
 
     private fun quickModelRef(profileId: String, modelId: String): String =
         profileId + QUICK_MODEL_SEPARATOR + modelId
