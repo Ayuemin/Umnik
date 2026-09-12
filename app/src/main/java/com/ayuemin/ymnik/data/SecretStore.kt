@@ -18,8 +18,27 @@ class SecretStore(context: Context) {
 
     fun getApiKey(): String? = getProfileApiKey("openrouter")
 
-    fun saveProfileApiKey(profileId: String, value: String) {
-        val prefKey = prefKey(profileId)
+    fun saveProfileApiKey(profileId: String, value: String) = saveSecret(prefKey(profileId), value)
+
+    fun getProfileApiKey(profileId: String): String? = readSecret(prefKey(profileId))
+
+    fun saveProfileImageApiKey(profileId: String, value: String) = saveSecret(imagePrefKey(profileId), value)
+
+    fun getProfileImageApiKey(profileId: String): String? = readSecret(imagePrefKey(profileId))
+
+    fun deleteProfileImageApiKey(profileId: String) {
+        prefs.edit().remove(imagePrefKey(profileId)).apply()
+    }
+
+    fun deleteProfileApiKey(profileId: String) {
+        if (profileId == "openrouter") return
+        prefs.edit()
+            .remove(prefKey(profileId))
+            .remove(imagePrefKey(profileId))
+            .apply()
+    }
+
+    private fun saveSecret(prefKey: String, value: String) {
         if (value.isBlank()) {
             prefs.edit().remove(prefKey).apply()
             return
@@ -32,8 +51,8 @@ class SecretStore(context: Context) {
         prefs.edit().putString(prefKey, payload).apply()
     }
 
-    fun getProfileApiKey(profileId: String): String? {
-        val payload = prefs.getString(prefKey(profileId), null) ?: return null
+    private fun readSecret(prefKey: String): String? {
+        val payload = prefs.getString(prefKey, null) ?: return null
         return runCatching {
             val parts = payload.split(":", limit = 2)
             val iv = Base64.decode(parts[0], Base64.NO_WRAP)
@@ -44,16 +63,15 @@ class SecretStore(context: Context) {
         }.getOrNull()
     }
 
-    fun deleteProfileApiKey(profileId: String) {
-        if (profileId == "openrouter") return
-        prefs.edit().remove(prefKey(profileId)).apply()
-    }
-
     private fun prefKey(profileId: String): String = if (profileId == "openrouter") {
         "api_key"
     } else {
-        "api_key_profile_" + profileId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
+        "api_key_profile_" + safeId(profileId)
     }
+
+    private fun imagePrefKey(profileId: String): String = "image_api_key_profile_" + safeId(profileId)
+
+    private fun safeId(profileId: String): String = profileId.replace(Regex("[^A-Za-z0-9_.-]"), "_")
 
     private fun getOrCreateKey(): SecretKey {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

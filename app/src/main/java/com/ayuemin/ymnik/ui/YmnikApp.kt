@@ -150,6 +150,7 @@ import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
@@ -264,7 +265,7 @@ private fun ChatScreen(
     val openRouterProfile = activeProfile.type == ProviderType.OPENROUTER
     val imageProfile = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }
         ?: state.connectionProfiles.first()
-    val imageConnectionAvailable = imageProfile.id !in state.disabledConnectionIds
+    val imageConnectionAvailable = imageProfile.id !in state.disabledConnectionIds && vm.connectionImageEnabled(imageProfile.id)
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
     val microphoneAvailable = !imagePromptMode && activeProfile.type == ProviderType.OPENROUTER && textModelInfo?.accepts("audio") == true
@@ -1249,7 +1250,9 @@ private fun ModelPickerDialog(
     onDismiss: () -> Unit
 ) {
     var query by remember(mode) { mutableStateOf("") }
-    val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
+    val enabledConnections = state.connectionProfiles.filter { profile ->
+        profile.id !in state.disabledConnectionIds && (mode == ChatMode.TEXT || vm.connectionImageEnabled(profile.id))
+    }
     var selectedTextConnectionId by remember(mode, enabledConnections.map { it.id }) {
         mutableStateOf(
             state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
@@ -1269,11 +1272,15 @@ private fun ModelPickerDialog(
     val models = when {
         state.modelCatalogConnectionId == selectedConnectionId -> state.modelCatalog
         mode == ChatMode.TEXT && selectedConnectionId == state.activeConnectionProfileId -> state.availableTextModels
+        mode == ChatMode.IMAGE && selectedConnectionId == state.imageConnectionProfileId -> state.availableImageModels
         else -> emptyList()
     }
     val current = if (mode == ChatMode.TEXT) {
         selectedTextConnectionId?.let(vm::defaultTextModelForConnection).orEmpty()
-    } else state.imageModel
+    } else {
+        selectedImageConnectionId?.let(vm::defaultImageModelForConnection).orEmpty()
+    }
+    var manualImageModel by remember(selectedImageConnectionId, current) { mutableStateOf(current) }
 
     LaunchedEffect(mode, selectedTextConnectionId, selectedImageConnectionId) {
         if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
@@ -1283,6 +1290,7 @@ private fun ModelPickerDialog(
     val filtered = remember(models, query) {
         models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(300)
     }
+    val customImageConnection = mode == ChatMode.IMAGE && selectedConnection?.type == ProviderType.OPENAI_COMPATIBLE
 
     FullScreenPanel(
         title = if (mode == ChatMode.TEXT) "Текстовая модель" else "Модель изображений",
@@ -1298,7 +1306,7 @@ private fun ModelPickerDialog(
         )
         if (enabledConnections.isEmpty()) {
             Text(
-                "Нет включённых подключений.",
+                if (mode == ChatMode.IMAGE) "Нет подключений с включённой генерацией изображений." else "Нет включённых подключений.",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1319,15 +1327,19 @@ private fun ModelPickerDialog(
                     )
                 }
             }
-            if (mode == ChatMode.IMAGE && selectedConnection?.type == ProviderType.OPENAI_COMPATIBLE) {
+            if (mode == ChatMode.IMAGE) {
                 Text(
-                    "Для совместимого API показан общий список /models. Выберите модель, которая умеет генерацию изображений; запрос отправится на /images/generations.",
+                    when (selectedConnection?.type) {
+                        ProviderType.OPENROUTER -> "Показаны только модели OpenRouter Image API."
+                        ProviderType.NVIDIA -> "Показаны только генераторы изображений NVIDIA NIM из обновляемого реестра Umnik."
+                        ProviderType.OPENAI_COMPATIBLE -> "У произвольного API нет универсального каталога генераторов. Укажите ID image-модели вручную; Umnik не будет выдавать общий /models за список генераторов."
+                        null -> ""
+                    },
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            }
-            if (mode == ChatMode.TEXT) {
+            } else {
                 Text(
                     "У каждого подключения своя модель по умолчанию. Выбор здесь не переключает текущий чат на другой сервис.",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
@@ -1336,14 +1348,36 @@ private fun ModelPickerDialog(
                 )
             }
         }
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-            singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            placeholder = { Text("Поиск модели") }
-        )
+
+        if (customImageConnection) {
+            OutlinedTextField(
+                value = manualImageModel,
+                onValueChange = { manualImageModel = it.trim().take(180) },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                label = { Text("ID модели изображений") },
+                placeholder = { Text("provider/image-model") },
+                singleLine = true
+            )
+            FilledTonalButton(
+                onClick = {
+                    selectedImageConnectionId?.let { vm.selectImageModel(it, manualImageModel) }
+                    onDismiss()
+                },
+                enabled = manualImageModel.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
+            ) { Text("Использовать эту модель") }
+        }
+
+        if (!customImageConnection) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                placeholder = { Text("Поиск модели") }
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
             horizontalArrangement = Arrangement.End
@@ -1358,11 +1392,13 @@ private fun ModelPickerDialog(
             }
         }
         if (filtered.isEmpty()) {
-            Text(
-                if (state.isLoading) "Загрузка списка…" else "Модели не найдены",
-                modifier = Modifier.padding(20.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!customImageConnection) {
+                Text(
+                    if (state.isLoading) "Загрузка списка…" else "Модели не найдены",
+                    modifier = Modifier.padding(20.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         } else {
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
@@ -2016,8 +2052,27 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     val editingProfile = state.connectionProfiles.firstOrNull { it.id == editingProfileId }
         ?: state.connectionProfiles.first()
     var connectionName by remember(editingProfile.id, editingProfile.name) { mutableStateOf(editingProfile.name) }
-    var connectionUrl by remember(editingProfile.id, editingProfile.baseUrl) { mutableStateOf(editingProfile.baseUrl) }
+    var connectionUrl by remember(editingProfile.id, editingProfile.baseUrl, editingProfile.useProviderDefaults) {
+        mutableStateOf(vm.connectionTextEndpoint(editingProfile.id))
+    }
     var connectionKey by remember(editingProfile.id) { mutableStateOf("") }
+    var connectionAdvancedExpanded by remember(editingProfile.id) { mutableStateOf(false) }
+    var connectionImageEnabled by remember(editingProfile.id, editingProfile.imageEnabled) {
+        mutableStateOf(vm.connectionImageEnabled(editingProfile.id))
+    }
+    var connectionImageUrl by remember(editingProfile.id, editingProfile.imageBaseUrl, editingProfile.useProviderDefaults) {
+        mutableStateOf(vm.connectionImageEndpoint(editingProfile.id))
+    }
+    var connectionImageProtocol by remember(editingProfile.id, editingProfile.imageProtocol) {
+        mutableStateOf(editingProfile.imageProtocol ?: ImageApiProtocol.AUTO)
+    }
+    var connectionSameImageKey by remember(editingProfile.id, editingProfile.useSameImageApiKey) {
+        mutableStateOf(vm.connectionUsesSameImageKey(editingProfile.id))
+    }
+    var connectionImageKey by remember(editingProfile.id) { mutableStateOf("") }
+    var connectionUseProviderDefaults by remember(editingProfile.id, editingProfile.useProviderDefaults, editingProfile.baseUrl) {
+        mutableStateOf(vm.connectionUsesProviderDefaults(editingProfile.id))
+    }
     var customColorText by remember(state.customThemeColor) {
         mutableStateOf("#%06X".format(state.customThemeColor and 0xFFFFFF))
     }
@@ -2075,7 +2130,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                 val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
                 ExpandableSettingsCard(
                     title = "Генерация изображений",
-                    subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { state.imageModel }} · $imageConnectionName",
+                    subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { "не выбрана" }} · $imageConnectionName",
                     icon = Icons.Outlined.Image,
                     expanded = imageModelsExpanded,
                     onToggle = { imageModelsExpanded = !imageModelsExpanded }
@@ -2372,7 +2427,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     onToggle = { connectionsExpanded = !connectionsExpanded }
                 ) {
                     Text(
-                        "Включённые подключения доступны Umnik. Быстрая модель сама выбирает нужное подключение, поэтому отдельно переключать сервис перед запросом не нужно.",
+                        "Для OpenRouter и NVIDIA Umnik знает стандартные адреса сам. Для других сервисов можно настроить отдельный Image API в дополнительных параметрах.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2385,9 +2440,9 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             TextButton(
                                 onClick = {
                                     editingProfileId = profile.id
-                                    connectionName = profile.name
-                                    connectionUrl = profile.baseUrl
+                                    connectionAdvancedExpanded = false
                                     connectionKey = ""
+                                    connectionImageKey = ""
                                 },
                                 modifier = Modifier.weight(1f),
                                 contentPadding = PaddingValues(horizontal = 4.dp, vertical = 7.dp)
@@ -2398,7 +2453,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                                         fontWeight = if (editingProfileId == profile.id) FontWeight.Bold else FontWeight.Medium
                                     )
                                     Text(
-                                        if (profile.type == ProviderType.OPENROUTER) "OpenRouter" else "OpenAI-совместимое",
+                                        providerTypeLabel(profile.type),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                         maxLines = 1
@@ -2417,9 +2472,9 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         onClick = {
                             val id = vm.addCompatibleProfile()
                             editingProfileId = id
-                            connectionName = "Другой API"
-                            connectionUrl = ""
+                            connectionAdvancedExpanded = true
                             connectionKey = ""
+                            connectionImageKey = ""
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -2429,11 +2484,11 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     }
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        if (editingProfile.type == ProviderType.OPENROUTER) "OpenRouter" else "Настройка подключения",
+                        editingProfile.name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold
                     )
-                    if (editingProfile.type != ProviderType.OPENROUTER) {
+                    if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
                         Spacer(Modifier.height(7.dp))
                         OutlinedTextField(
                             value = connectionName,
@@ -2445,26 +2500,6 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     }
                     Spacer(Modifier.height(7.dp))
                     OutlinedTextField(
-                        value = connectionUrl,
-                        onValueChange = { connectionUrl = it.trim().take(240) },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Адрес API") },
-                        placeholder = {
-                            Text(if (editingProfile.type == ProviderType.OPENROUTER) "https://openrouter.ai/api/v1" else "https://example.com/v1")
-                        },
-                        singleLine = true
-                    )
-                    Text(
-                        if (editingProfile.type == ProviderType.OPENROUTER)
-                            "Адрес можно изменить на случай изменения API у провайдера. Обычно оставьте значение по умолчанию."
-                        else
-                            "Umnik использует стандартные /models и /chat/completions. Для удалённого сервера используйте HTTPS.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 5.dp)
-                    )
-                    Spacer(Modifier.height(7.dp))
-                    OutlinedTextField(
                         value = connectionKey,
                         onValueChange = { connectionKey = it },
                         modifier = Modifier.fillMaxWidth(),
@@ -2473,30 +2508,166 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true
                     )
-                    Spacer(Modifier.height(8.dp))
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(
+                        onClick = { vm.checkConnection(editingProfile.id) },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Check, contentDescription = null)
+                        Spacer(Modifier.width(7.dp))
+                        Text("Проверить подключение")
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    TextButton(
+                        onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(
+                            if (connectionAdvancedExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = null
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("Дополнительные настройки")
+                    }
+                    if (connectionAdvancedExpanded) {
+                        if (editingProfile.type != ProviderType.OPENAI_COMPATIBLE) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Автоматические адреса")
+                                    Text(
+                                        "Получать актуальные стандартные адреса из реестра Umnik",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = connectionUseProviderDefaults,
+                                    onCheckedChange = { connectionUseProviderDefaults = it }
+                                )
+                            }
+                            Spacer(Modifier.height(7.dp))
+                        }
+                        OutlinedTextField(
+                            value = connectionUrl,
+                            onValueChange = { connectionUrl = it.trim().take(300) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Адрес API текста") },
+                            placeholder = { Text("https://example.com/v1") },
+                            singleLine = true,
+                            enabled = editingProfile.type == ProviderType.OPENAI_COMPATIBLE || !connectionUseProviderDefaults
+                        )
+                        Text(
+                            if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE)
+                                "Для текста используются стандартные /models и /chat/completions."
+                            else if (connectionUseProviderDefaults)
+                                "Адрес обновляется из реестра провайдеров; встроенная копия остаётся запасным вариантом."
+                            else
+                                "Ручной адрес имеет приоритет над встроенным реестром.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 5.dp)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Генерация изображений")
+                                Text(
+                                    "Подключить Image API этого сервиса",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = connectionImageEnabled, onCheckedChange = { connectionImageEnabled = it })
+                        }
+                        if (connectionImageEnabled) {
+                            Spacer(Modifier.height(8.dp))
+                            if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
+                                Text("Протокол изображений", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
+                                Spacer(Modifier.height(5.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(ImageApiProtocol.entries) { protocol ->
+                                        FilterChip(
+                                            selected = connectionImageProtocol == protocol,
+                                            onClick = { connectionImageProtocol = protocol },
+                                            label = { Text(imageProtocolLabel(protocol)) }
+                                        )
+                                    }
+                                }
+                            } else {
+                                Text(
+                                    if (editingProfile.type == ProviderType.NVIDIA)
+                                        "Протокол изображений определяется автоматически: NVIDIA NIM."
+                                    else
+                                        "Протокол изображений определяется автоматически: OpenRouter Image API.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(7.dp))
+                            OutlinedTextField(
+                                value = connectionImageUrl,
+                                onValueChange = { connectionImageUrl = it.trim().take(320) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Адрес API изображений") },
+                                placeholder = { Text("https://example.com/v1") },
+                                singleLine = true,
+                                enabled = editingProfile.type == ProviderType.OPENAI_COMPATIBLE || !connectionUseProviderDefaults
+                            )
+                            Text(
+                                "Для известных провайдеров Umnik подставляет этот адрес сам. Для своего сервера можно указать отдельный адрес.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 5.dp)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Использовать тот же API-ключ", modifier = Modifier.weight(1f))
+                                Switch(checked = connectionSameImageKey, onCheckedChange = { connectionSameImageKey = it })
+                            }
+                            if (!connectionSameImageKey) {
+                                Spacer(Modifier.height(7.dp))
+                                OutlinedTextField(
+                                    value = connectionImageKey,
+                                    onValueChange = { connectionImageKey = it },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("API-ключ изображений") },
+                                    placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
+                                    visualTransformation = PasswordVisualTransformation(),
+                                    singleLine = true
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(9.dp))
                     FilledTonalButton(
                         onClick = {
                             vm.saveConnectionProfile(
-                                editingProfile.id,
-                                connectionName,
-                                connectionUrl,
-                                connectionKey.takeIf { it.isNotBlank() }
+                                profileId = editingProfile.id,
+                                name = connectionName,
+                                baseUrl = connectionUrl,
+                                apiKey = connectionKey.takeIf { it.isNotBlank() },
+                                imageEnabled = connectionImageEnabled,
+                                imageBaseUrl = connectionImageUrl.takeIf { it.isNotBlank() },
+                                imageProtocol = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) connectionImageProtocol else ImageApiProtocol.AUTO,
+                                useSameImageApiKey = connectionSameImageKey,
+                                imageApiKey = connectionImageKey.takeIf { it.isNotBlank() },
+                                useProviderDefaults = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) false else connectionUseProviderDefaults
                             )
                             connectionKey = ""
+                            connectionImageKey = ""
                         },
-                        enabled = connectionUrl.isNotBlank(),
+                        enabled = connectionUrl.isNotBlank() || (editingProfile.type != ProviderType.OPENAI_COMPATIBLE && connectionUseProviderDefaults),
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("Сохранить подключение") }
-                    if (editingProfile.type != ProviderType.OPENROUTER) {
+                    if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
                         Spacer(Modifier.height(4.dp))
                         TextButton(
                             onClick = {
                                 vm.deleteConnectionProfile(editingProfile.id)
-                                editingProfileId = "openrouter"
-                                val openRouter = state.connectionProfiles.first { it.id == "openrouter" }
-                                connectionName = openRouter.name
-                                connectionUrl = openRouter.baseUrl
+                                editingProfileId = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }?.id ?: "openrouter"
                                 connectionKey = ""
+                                connectionImageKey = ""
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
@@ -3162,6 +3333,18 @@ private fun createCameraTarget(context: Context): CameraTarget {
     val file = File(dir, "photo_${System.currentTimeMillis()}.jpg")
     val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
     return CameraTarget(uri, file)
+}
+
+private fun providerTypeLabel(type: ProviderType): String = when (type) {
+    ProviderType.OPENROUTER -> "OpenRouter"
+    ProviderType.NVIDIA -> "NVIDIA NIM"
+    ProviderType.OPENAI_COMPATIBLE -> "OpenAI-совместимое"
+}
+
+private fun imageProtocolLabel(protocol: ImageApiProtocol): String = when (protocol) {
+    ImageApiProtocol.AUTO -> "Авто"
+    ImageApiProtocol.OPENAI_COMPATIBLE -> "OpenAI-compatible"
+    ImageApiProtocol.NVIDIA_NIM -> "NVIDIA NIM"
 }
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {

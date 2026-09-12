@@ -13,7 +13,14 @@ enum class UserProfileScope {
 
 enum class ProviderType {
     OPENROUTER,
+    NVIDIA,
     OPENAI_COMPATIBLE
+}
+
+enum class ImageApiProtocol {
+    AUTO,
+    OPENAI_COMPATIBLE,
+    NVIDIA_NIM
 }
 
 data class ProviderUsage(
@@ -29,7 +36,12 @@ data class ConnectionProfile(
     val id: String,
     val name: String,
     val type: ProviderType,
-    val baseUrl: String
+    val baseUrl: String,
+    val imageEnabled: Boolean? = null,
+    val imageBaseUrl: String? = null,
+    val imageProtocol: ImageApiProtocol? = null,
+    val useSameImageApiKey: Boolean? = null,
+    val useProviderDefaults: Boolean? = null
 )
 
 data class UserProfile(

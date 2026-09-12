@@ -25,6 +25,7 @@ import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
@@ -38,7 +39,9 @@ import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.network.CompatibleApiClient
+import com.ayuemin.ymnik.network.NvidiaImageClient
 import com.ayuemin.ymnik.network.OpenRouterClient
+import com.ayuemin.ymnik.network.ProviderRegistry
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Job
@@ -61,6 +64,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val compatibleApi = CompatibleApiClient(context)
+    private val nvidiaImageApi = NvidiaImageClient(context)
+    private val providerRegistry = ProviderRegistry(context)
     private val gson = Gson()
     private var activeRequestJob: Job? = null
     private var activeRequestPending: List<PendingAttachment> = emptyList()
@@ -81,9 +86,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialProfile = initialProfiles.firstOrNull { it.id == initialProfileId }
         ?: defaultOpenRouterProfile()
     private val initialImageProfileId = prefs.getString("image_connection_profile", "openrouter")
-        ?.takeIf { id -> initialProfiles.any { it.id == id } && id !in initialDisabledConnectionIds }
-        ?: initialProfiles.firstOrNull { it.id == "openrouter" && it.id !in initialDisabledConnectionIds }?.id
-        ?: initialProfiles.firstOrNull { it.id !in initialDisabledConnectionIds }?.id
+        ?.takeIf { id -> initialProfiles.any { it.id == id && imageGenerationEnabled(it) } && id !in initialDisabledConnectionIds }
+        ?: initialProfiles.firstOrNull { it.type == ProviderType.OPENROUTER && it.id !in initialDisabledConnectionIds && imageGenerationEnabled(it) }?.id
+        ?: initialProfiles.firstOrNull { it.id !in initialDisabledConnectionIds && imageGenerationEnabled(it) }?.id
         ?: "openrouter"
     private val initialImageProfile = initialProfiles.firstOrNull { it.id == initialImageProfileId }
         ?: defaultOpenRouterProfile()
@@ -152,6 +157,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     init {
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
         refreshProviderUsage()
+        viewModelScope.launch {
+            if (providerRegistry.refreshIfStale()) refreshModelCapabilities()
+        }
     }
 
     fun saveApiKey(apiKey: String?) {
@@ -200,7 +208,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun addCompatibleProfile(): String {
         val id = UUID.randomUUID().toString()
-        val profile = ConnectionProfile(id, "Другой API", ProviderType.OPENAI_COMPATIBLE, "")
+        val profile = ConnectionProfile(
+            id = id,
+            name = "Другой API",
+            type = ProviderType.OPENAI_COMPATIBLE,
+            baseUrl = "",
+            imageEnabled = false,
+            imageProtocol = ImageApiProtocol.AUTO,
+            useSameImageApiKey = true,
+            useProviderDefaults = false
+        )
         val profiles = _state.value.connectionProfiles + profile
         saveConnectionProfiles(profiles)
         _state.value = _state.value.copy(
@@ -211,32 +228,117 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return id
     }
 
-    fun saveConnectionProfile(profileId: String, name: String, baseUrl: String, apiKey: String?) {
+    fun saveConnectionProfile(
+        profileId: String,
+        name: String,
+        baseUrl: String,
+        apiKey: String?,
+        imageEnabled: Boolean,
+        imageBaseUrl: String?,
+        imageProtocol: ImageApiProtocol,
+        useSameImageApiKey: Boolean,
+        imageApiKey: String?,
+        useProviderDefaults: Boolean
+    ) {
         val old = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         val cleanUrl = normalizeBaseUrl(baseUrl)
-        if (cleanUrl.isBlank()) {
+        val builtIn = old.type == ProviderType.OPENROUTER || old.type == ProviderType.NVIDIA
+        if ((!builtIn || !useProviderDefaults) && cleanUrl.isBlank()) {
             _state.value = _state.value.copy(status = "Укажите адрес API")
             return
         }
+        val cleanImageUrl = imageBaseUrl?.let(::normalizeBaseUrl)?.takeIf { it.isNotBlank() }
         val updated = old.copy(
-            name = if (old.type == ProviderType.OPENROUTER) "OpenRouter" else name.trim().ifBlank { "Другой API" },
-            baseUrl = cleanUrl
+            name = when (old.type) {
+                ProviderType.OPENROUTER -> "OpenRouter"
+                ProviderType.NVIDIA -> "NVIDIA"
+                ProviderType.OPENAI_COMPATIBLE -> name.trim().ifBlank { "Другой API" }
+            },
+            baseUrl = cleanUrl,
+            imageEnabled = imageEnabled,
+            imageBaseUrl = cleanImageUrl,
+            imageProtocol = imageProtocol,
+            useSameImageApiKey = useSameImageApiKey,
+            useProviderDefaults = if (builtIn) useProviderDefaults else false
         )
         val profiles = _state.value.connectionProfiles.map { if (it.id == profileId) updated else it }
         saveConnectionProfiles(profiles)
         if (!apiKey.isNullOrBlank()) secrets.saveProfileApiKey(profileId, apiKey)
+        if (useSameImageApiKey) {
+            secrets.deleteProfileImageApiKey(profileId)
+        } else if (!imageApiKey.isNullOrBlank()) {
+            secrets.saveProfileImageApiKey(profileId, imageApiKey)
+        }
+
+        var nextImageProfileId = _state.value.imageConnectionProfileId
+        if (profileId == nextImageProfileId && !imageGenerationEnabled(updated)) {
+            nextImageProfileId = profiles.firstOrNull {
+                it.id !in _state.value.disabledConnectionIds && imageGenerationEnabled(it) && isImageProfileConfigured(it)
+            }?.id ?: profiles.firstOrNull {
+                it.id !in _state.value.disabledConnectionIds && imageGenerationEnabled(it)
+            }?.id ?: nextImageProfileId
+            prefs.edit().putString("image_connection_profile", nextImageProfileId).apply()
+        }
+        val nextImageProfile = profiles.firstOrNull { it.id == nextImageProfileId } ?: updated
+        val nextImageModel = loadImageModelForProfile(nextImageProfile.id)
         val active = _state.value.activeConnectionProfileId == profileId
         _state.value = _state.value.copy(
             connectionProfiles = profiles,
             apiKeyConfigured = if (active) isProfileConfigured(updated) else _state.value.apiKeyConfigured,
+            imageConnectionProfileId = nextImageProfileId,
+            imageModel = nextImageModel,
+            imageAspectRatio = loadImageParameter("aspect_ratio", nextImageProfileId, nextImageModel),
+            imageResolution = loadImageParameter("resolution", nextImageProfileId, nextImageModel),
             availableTextModels = if (active) emptyList() else _state.value.availableTextModels,
-            availableImageModels = if (profileId == _state.value.imageConnectionProfileId) emptyList() else _state.value.availableImageModels,
+            availableImageModels = if (profileId == _state.value.imageConnectionProfileId || nextImageProfileId != _state.value.imageConnectionProfileId) emptyList() else _state.value.availableImageModels,
             modelCatalogConnectionId = null,
             modelCatalog = emptyList(),
             status = "Подключение сохранено"
         )
-        if ((active || profileId == _state.value.imageConnectionProfileId) && profileId !in _state.value.disabledConnectionIds && isProfileConfigured(updated)) refreshModelCapabilities()
+        if ((active || profileId == nextImageProfileId) && profileId !in _state.value.disabledConnectionIds) refreshModelCapabilities()
         if (updated.type == ProviderType.OPENROUTER) refreshProviderUsage()
+    }
+
+    fun checkConnection(profileId: String) {
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (profile.id in _state.value.disabledConnectionIds) {
+            _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, busyLabel = "Проверяю подключение…", status = null)
+            providerRegistry.refreshIfStale(force = true)
+            val textCheck = runCatching { textModelsForProfile(profile) }
+            val imageCheck = if (!imageGenerationEnabled(profile)) {
+                null
+            } else if (!isImageProfileConfigured(profile)) {
+                Result.failure(IllegalStateException(imageConnectionSetupMessage(profile)))
+            } else {
+                runCatching { imageModelsForProfile(profile) }
+            }
+
+            val textStatus = textCheck.fold(
+                onSuccess = { "Текст: ✓ ${it.size} моделей" },
+                onFailure = { "Текст: ✕ ${it.message ?: "ошибка"}" }
+            )
+            val imageStatus = when {
+                !imageGenerationEnabled(profile) -> "Изображения: выкл"
+                imageCheck == null -> "Изображения: —"
+                imageCheck.isSuccess -> {
+                    val count = imageCheck.getOrNull().orEmpty().size
+                    if (resolvedImageProtocol(profile) == ImageApiProtocol.NVIDIA_NIM)
+                        "Изображения: ✓ $count моделей (без пробной генерации)"
+                    else
+                        "Изображения: ✓ $count моделей"
+                }
+                else -> "Изображения: ✕ ${imageCheck.exceptionOrNull()?.message ?: "ошибка"}"
+            }
+            _state.value = _state.value.copy(
+                isLoading = false,
+                busyLabel = null,
+                status = "$textStatus · $imageStatus"
+            )
+        }
     }
 
     fun setConnectionEnabled(profileId: String, enabled: Boolean) {
@@ -256,8 +358,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         if (!enabled && _state.value.imageConnectionProfileId == profileId) {
             val fallbackImage = _state.value.connectionProfiles.firstOrNull {
-                it.id !in disabled && it.id != profileId && isProfileConfigured(it)
-            } ?: _state.value.connectionProfiles.firstOrNull { it.id !in disabled && it.id != profileId }
+                it.id !in disabled && it.id != profileId && imageGenerationEnabled(it) && isImageProfileConfigured(it)
+            } ?: _state.value.connectionProfiles.firstOrNull {
+                it.id !in disabled && it.id != profileId && imageGenerationEnabled(it)
+            }
             if (fallbackImage != null) {
                 prefs.edit().putString("image_connection_profile", fallbackImage.id).apply()
                 val fallbackImageModel = loadImageModelForProfile(fallbackImage.id)
@@ -297,7 +401,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun deleteConnectionProfile(profileId: String) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        if (profile.type == ProviderType.OPENROUTER) return
+        if (profile.type == ProviderType.OPENROUTER || profile.type == ProviderType.NVIDIA) return
         secrets.deleteProfileApiKey(profileId)
         prefs.edit()
             .remove(profilePrefKey("text_model", profileId))
@@ -309,7 +413,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val fallback = profiles.firstOrNull { it.id !in disabled && isProfileConfigured(it) }
             ?: profiles.firstOrNull { it.id !in disabled }
             ?: profiles.first()
-        val nextImageProfileId = if (_state.value.imageConnectionProfileId == profileId) fallback.id else _state.value.imageConnectionProfileId
+        val imageFallback = profiles.firstOrNull {
+            it.id !in disabled && imageGenerationEnabled(it) && isImageProfileConfigured(it)
+        } ?: profiles.firstOrNull { it.id !in disabled && imageGenerationEnabled(it) }
+            ?: fallback
+        val nextImageProfileId = if (_state.value.imageConnectionProfileId == profileId) imageFallback.id else _state.value.imageConnectionProfileId
         if (nextImageProfileId != _state.value.imageConnectionProfileId) {
             prefs.edit().putString("image_connection_profile", nextImageProfileId).apply()
         }
@@ -339,7 +447,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             status = "Подключение «${profile.name}» удалено"
         )
         if (_state.value.activeConnectionProfileId == profileId) selectConnectionProfile(fallback.id)
-        else if (nextImageProfileId != profileId && isProfileConfigured(imageConnectionProfile())) refreshModelCapabilities()
+        else if (isImageProfileConfigured(imageConnectionProfile())) refreshModelCapabilities()
     }
 
     fun loadConnectionModels(profileId: String) {
@@ -352,26 +460,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = connectionSetupMessage(profile))
             return
         }
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, busyLabel = "Загружаю модели…", status = null)
-            runCatching {
-                if (profile.type == ProviderType.OPENROUTER) api.models(key, profile.baseUrl)
-                else compatibleApi.models(key, profile.baseUrl)
-            }.onSuccess { infos ->
-                _state.value = _state.value.copy(
-                    modelCatalogConnectionId = profile.id,
-                    modelCatalog = infos,
-                    isLoading = false,
-                    busyLabel = null
-                )
-            }.onFailure {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    busyLabel = null,
-                    status = it.message ?: "Не удалось загрузить модели подключения"
-                )
-            }
+            runCatching { textModelsForProfile(profile) }
+                .onSuccess { infos ->
+                    _state.value = _state.value.copy(
+                        modelCatalogConnectionId = profile.id,
+                        modelCatalog = infos,
+                        isLoading = false,
+                        busyLabel = null
+                    )
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        busyLabel = null,
+                        status = it.message ?: "Не удалось загрузить модели подключения"
+                    )
+                }
         }
     }
 
@@ -381,30 +487,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
             return
         }
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+        if (!imageGenerationEnabled(profile)) {
+            _state.value = _state.value.copy(status = "Генерация изображений выключена для «${profile.name}»")
             return
         }
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        if (!isImageProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
+            return
+        }
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, busyLabel = "Загружаю модели изображений…", status = null)
-            runCatching {
-                if (profile.type == ProviderType.OPENROUTER) api.imageModels(key, profile.baseUrl)
-                else compatibleApi.models(key, profile.baseUrl)
-            }.onSuccess { infos ->
-                _state.value = _state.value.copy(
-                    modelCatalogConnectionId = profile.id,
-                    modelCatalog = infos,
-                    isLoading = false,
-                    busyLabel = null
-                )
-            }.onFailure {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    busyLabel = null,
-                    status = it.message ?: "Не удалось загрузить модели изображений"
-                )
-            }
+            runCatching { imageModelsForProfile(profile) }
+                .onSuccess { infos ->
+                    _state.value = _state.value.copy(
+                        modelCatalogConnectionId = profile.id,
+                        modelCatalog = infos,
+                        isLoading = false,
+                        busyLabel = null
+                    )
+                }
+                .onFailure {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        busyLabel = null,
+                        status = it.message ?: "Не удалось загрузить модели изображений"
+                    )
+                }
         }
     }
 
@@ -412,8 +520,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val clean = model.trim()
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (clean.isBlank() || profile.id in _state.value.disabledConnectionIds) return
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+        if (!imageGenerationEnabled(profile)) {
+            _state.value = _state.value.copy(status = "Генерация изображений выключена для «${profile.name}»")
+            return
+        }
+        if (!isImageProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
             return
         }
         prefs.edit()
@@ -487,8 +599,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun setMode(mode: ChatMode) {
         if (mode == ChatMode.IMAGE) {
             val imageProfile = imageConnectionProfile()
-            if (imageProfile.id in _state.value.disabledConnectionIds || !isProfileConfigured(imageProfile)) {
-                _state.value = _state.value.copy(status = "Для создания изображений включите и настройте выбранное подключение")
+            if (imageProfile.id in _state.value.disabledConnectionIds || !imageGenerationEnabled(imageProfile) || !isImageProfileConfigured(imageProfile)) {
+                _state.value = _state.value.copy(status = "Для создания изображений включите и настройте Image API выбранного подключения")
                 return
             }
         }
@@ -505,6 +617,33 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return ""
         return loadTextModelForProfile(profile)
     }
+
+    fun defaultImageModelForConnection(profileId: String): String = loadImageModelForProfile(profileId)
+
+    fun connectionTextEndpoint(profileId: String): String = _state.value.connectionProfiles
+        .firstOrNull { it.id == profileId }
+        ?.let(::effectiveTextBaseUrl)
+        .orEmpty()
+
+    fun connectionImageEndpoint(profileId: String): String = _state.value.connectionProfiles
+        .firstOrNull { it.id == profileId }
+        ?.let(::effectiveImageBaseUrl)
+        .orEmpty()
+
+    fun connectionImageEnabled(profileId: String): Boolean = _state.value.connectionProfiles
+        .firstOrNull { it.id == profileId }
+        ?.let(::imageGenerationEnabled)
+        ?: false
+
+    fun connectionUsesSameImageKey(profileId: String): Boolean = _state.value.connectionProfiles
+        .firstOrNull { it.id == profileId }
+        ?.let(::usesSameImageApiKey)
+        ?: true
+
+    fun connectionUsesProviderDefaults(profileId: String): Boolean = _state.value.connectionProfiles
+        .firstOrNull { it.id == profileId }
+        ?.let(::usesProviderDefaults)
+        ?: false
 
     fun selectDefaultTextModel(profileId: String, model: String) {
         val clean = model.trim()
@@ -1155,24 +1294,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
             return
         }
-        if (!isProfileConfigured(profile)) {
+        if (mode == ChatMode.IMAGE) {
+            if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
+                _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
+                return
+            }
+        } else if (!isProfileConfigured(profile)) {
             _state.value = _state.value.copy(status = connectionSetupMessage(profile))
             return
         }
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, busyLabel = "Загружаю модели…", status = null)
             runCatching {
-                when {
-                    profile.type == ProviderType.OPENROUTER && mode == ChatMode.TEXT -> api.models(key, profile.baseUrl)
-                    profile.type == ProviderType.OPENROUTER && mode == ChatMode.IMAGE -> api.imageModels(key, profile.baseUrl)
-                    else -> compatibleApi.models(key, profile.baseUrl)
-                }
+                if (mode == ChatMode.TEXT) textModelsForProfile(profile) else imageModelsForProfile(profile)
             }.onSuccess { infos ->
                 _state.value = when (mode) {
                     ChatMode.TEXT -> {
-                        var selectedModel = _state.value.textModel
-                        if (profile.type == ProviderType.OPENAI_COMPATIBLE && infos.none { it.id == selectedModel }) {
+                        var selectedModel = loadTextModelForProfile(profile)
+                        if (profile.type != ProviderType.OPENROUTER && infos.none { it.id == selectedModel }) {
                             selectedModel = infos.firstOrNull()?.id.orEmpty()
                             if (selectedModel.isNotBlank()) {
                                 prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
@@ -1197,7 +1337,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         )
                     }
                     ChatMode.IMAGE -> {
-                        val selectedModel = loadImageModelForProfile(profile.id)
+                        val selectedModel = chooseImageModel(profile, infos)
                         val info = infos.firstOrNull { it.id == selectedModel }
                         _state.value.copy(
                             availableImageModels = infos,
@@ -1230,7 +1370,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
         viewModelScope.launch {
             if (delayMs > 0L) delay(delayMs)
-            runCatching { api.keyUsage(key, profile.baseUrl) }
+            runCatching { api.keyUsage(key, effectiveTextBaseUrl(profile)) }
                 .onSuccess { usage ->
                     _state.value = _state.value.copy(
                         providerUsage = ProviderUsage(
@@ -1250,23 +1390,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val imageProfile = imageConnectionProfile()
         viewModelScope.launch {
             val textInfos = if (profile.id !in _state.value.disabledConnectionIds && isProfileConfigured(profile)) {
-                val key = secrets.getProfileApiKey(profile.id).orEmpty()
-                runCatching {
-                    if (profile.type == ProviderType.OPENROUTER) api.models(key, profile.baseUrl)
-                    else compatibleApi.models(key, profile.baseUrl)
-                }.getOrNull()
+                runCatching { textModelsForProfile(profile) }.getOrNull()
             } else null
-            val imageInfos = if (imageProfile.id !in _state.value.disabledConnectionIds && isProfileConfigured(imageProfile)) {
-                val key = secrets.getProfileApiKey(imageProfile.id).orEmpty()
-                runCatching {
-                    if (imageProfile.type == ProviderType.OPENROUTER) api.imageModels(key, imageProfile.baseUrl)
-                    else compatibleApi.models(key, imageProfile.baseUrl)
-                }.getOrNull()
+            val imageInfos = if (
+                imageProfile.id !in _state.value.disabledConnectionIds &&
+                imageGenerationEnabled(imageProfile) &&
+                isImageProfileConfigured(imageProfile)
+            ) {
+                runCatching { imageModelsForProfile(imageProfile) }.getOrNull()
             } else emptyList()
+
             var next = _state.value
             if (textInfos != null) {
                 var selectedModel = loadTextModelForProfile(profile)
-                if (profile.type == ProviderType.OPENAI_COMPATIBLE && textInfos.none { it.id == selectedModel }) {
+                if (profile.type != ProviderType.OPENROUTER && textInfos.none { it.id == selectedModel }) {
                     selectedModel = textInfos.firstOrNull()?.id.orEmpty()
                     if (selectedModel.isNotBlank()) prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
                 }
@@ -1288,10 +1425,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             } else {
                 next = next.copy(availableTextModels = emptyList(), reasoningEnabled = false)
             }
-            val selectedImageModel = loadImageModelForProfile(imageProfile.id)
-            val selectedImageInfo = imageInfos?.firstOrNull { it.id == selectedImageModel }
+
+            val safeImageInfos = imageInfos ?: emptyList()
+            val selectedImageModel = chooseImageModel(imageProfile, safeImageInfos)
+            val selectedImageInfo = safeImageInfos.firstOrNull { it.id == selectedImageModel }
             next = next.copy(
-                availableImageModels = imageInfos ?: emptyList(),
+                availableImageModels = safeImageInfos,
                 imageConnectionProfileId = imageProfile.id,
                 imageModel = selectedImageModel,
                 imageAspectRatio = validatedImageParameter("aspect_ratio", imageProfile.id, selectedImageModel, selectedImageInfo),
@@ -1337,11 +1476,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value.availableImageModels.firstOrNull { it.id == _state.value.imageModel }
 
     private fun imageAttachmentAllowed(attachment: PendingAttachment): Pair<Boolean, String?> {
-        if (imageConnectionProfile().type != ProviderType.OPENROUTER) {
-            return false to "Изображения-референсы для произвольного совместимого API пока не включены; текстовая генерация доступна через /images/generations"
-        }
         if (!attachment.mimeType.startsWith("image/")) {
             return false to "Для генерации изображения можно добавить только изображение-референс"
+        }
+        val profile = imageConnectionProfile()
+        if (profile.type != ProviderType.OPENROUTER) {
+            return false to when (resolvedImageProtocol(profile)) {
+                ImageApiProtocol.NVIDIA_NIM -> "Облачный NVIDIA NIM сейчас принимает в Umnik текстовый промпт; произвольные референсы для этого API не отправляются"
+                else -> "Формат image edit у этого API не стандартизирован; используйте текстовый промпт без референса"
+            }
         }
         val info = currentImageModelInfo()
         return if (info == null || info.accepts("image")) true to null
@@ -1571,6 +1714,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         requestGeneration += 1L
         api.cancelActiveRequest()
         compatibleApi.cancelActiveRequest()
+        nvidiaImageApi.cancelActiveRequest()
         activeRequestJob?.cancel()
         activeRequestJob = null
         val restore = activeRequestPending
@@ -1591,8 +1735,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Для генерации изображений включите выбранное подключение")
             return false
         }
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+        if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
             return false
         }
         if (_state.value.imageModel.isBlank()) {
@@ -1609,11 +1753,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
             return
         }
-        if (!isProfileConfigured(profile)) {
+        if (_state.value.mode == ChatMode.IMAGE) {
+            if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
+                _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
+                return
+            }
+        } else if (!isProfileConfigured(profile)) {
             _state.value = _state.value.copy(status = connectionSetupMessage(profile))
             return
         }
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        val key = if (_state.value.mode == ChatMode.IMAGE) imageApiKey(profile) else secrets.getProfileApiKey(profile.id).orEmpty()
         val clean = text.trim()
         val pending = _state.value.pendingAttachments
         if (_state.value.isLoading) return
@@ -1719,12 +1868,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 actualReasoning,
                                 effort,
                                 modelInfo?.supportsTools == true,
-                                profile.baseUrl
+                                effectiveTextBaseUrl(profile)
                             )
                         } else {
                             compatibleApi.chat(
                                 key,
-                                profile.baseUrl,
+                                effectiveTextBaseUrl(profile),
                                 textModel,
                                 before,
                                 clean,
@@ -1745,20 +1894,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             ) }
                         val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
                         val imagePrompt = listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n")
-                        if (profile.type == ProviderType.OPENROUTER) {
-                            generateOpenRouterImageWithResolutionFallback(
-                                profileId = profile.id,
-                                apiKey = key,
-                                model = imageModel,
-                                prompt = imagePrompt,
-                                attachments = pending + projectImages,
-                                baseUrl = profile.baseUrl,
-                                aspectRatio = imageAspectRatio,
-                                resolution = imageResolution
-                            )
-                        } else {
-                            compatibleApi.generateImage(key, profile.baseUrl, imageModel, imagePrompt)
-                        }
+                        generateImageForProfile(
+                            profile = profile,
+                            apiKey = key,
+                            model = imageModel,
+                            prompt = imagePrompt,
+                            attachments = pending + projectImages,
+                            aspectRatio = imageAspectRatio,
+                            resolution = imageResolution
+                        )
                     }
                 }
             }
@@ -1816,8 +1960,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Для генерации изображений включите выбранное подключение")
             return false
         }
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = connectionSetupMessage(profile))
+        if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = imageConnectionSetupMessage(profile))
             return false
         }
 
@@ -1859,7 +2003,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             storageStats = storageRepository.stats()
         )
 
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        val key = imageApiKey(profile)
         val imageModel = _state.value.imageModel
         val imageAspectRatio = _state.value.imageAspectRatio
         val imageResolution = _state.value.imageResolution
@@ -1868,25 +2012,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         activeRequestJob = viewModelScope.launch {
             val operation = runCatching {
-                if (profile.type == ProviderType.OPENROUTER) {
-                    generateOpenRouterImageWithResolutionFallback(
-                        profileId = profile.id,
-                        apiKey = key,
-                        model = imageModel,
-                        prompt = prompt,
-                        attachments = pending,
-                        baseUrl = profile.baseUrl,
-                        aspectRatio = imageAspectRatio,
-                        resolution = imageResolution
-                    )
-                } else {
-                    compatibleApi.generateImage(
-                        apiKey = key,
-                        baseUrl = profile.baseUrl,
-                        model = imageModel,
-                        prompt = prompt
-                    )
-                }
+                generateImageForProfile(
+                    profile = profile,
+                    apiKey = key,
+                    model = imageModel,
+                    prompt = prompt,
+                    attachments = pending,
+                    aspectRatio = imageAspectRatio,
+                    resolution = imageResolution
+                )
             }
 
             if (requestId != requestGeneration) return@launch
@@ -1933,6 +2067,44 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
         return true
+    }
+
+    private suspend fun generateImageForProfile(
+        profile: ConnectionProfile,
+        apiKey: String,
+        model: String,
+        prompt: String,
+        attachments: List<PendingAttachment>,
+        aspectRatio: String?,
+        resolution: String?
+    ): OpenRouterClient.Result {
+        if (profile.type == ProviderType.OPENROUTER) {
+            return generateOpenRouterImageWithResolutionFallback(
+                profileId = profile.id,
+                apiKey = apiKey,
+                model = model,
+                prompt = prompt,
+                attachments = attachments,
+                baseUrl = effectiveImageBaseUrl(profile),
+                aspectRatio = aspectRatio,
+                resolution = resolution
+            )
+        }
+        return when (resolvedImageProtocol(profile)) {
+            ImageApiProtocol.NVIDIA_NIM -> nvidiaImageApi.generateImage(
+                apiKey = apiKey,
+                baseUrl = effectiveImageBaseUrl(profile),
+                model = model,
+                prompt = prompt,
+                aspectRatio = aspectRatio
+            )
+            ImageApiProtocol.OPENAI_COMPATIBLE, ImageApiProtocol.AUTO -> compatibleApi.generateImage(
+                apiKey = apiKey,
+                baseUrl = effectiveImageBaseUrl(profile),
+                model = model,
+                prompt = prompt
+            )
+        }
     }
 
     private suspend fun generateOpenRouterImageWithResolutionFallback(
@@ -1985,6 +2157,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     override fun onCleared() {
         api.cancelActiveRequest()
         compatibleApi.cancelActiveRequest()
+        nvidiaImageApi.cancelActiveRequest()
         activeRequestJob?.cancel()
         super.onCleared()
     }
@@ -2310,7 +2483,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         id = "openrouter",
         name = "OpenRouter",
         type = ProviderType.OPENROUTER,
-        baseUrl = OpenRouterClient.DEFAULT_BASE_URL
+        baseUrl = ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL,
+        imageEnabled = true,
+        imageProtocol = ImageApiProtocol.AUTO,
+        useSameImageApiKey = true,
+        useProviderDefaults = true
+    )
+
+    private fun defaultNvidiaProfile() = ConnectionProfile(
+        id = "nvidia",
+        name = "NVIDIA",
+        type = ProviderType.NVIDIA,
+        baseUrl = ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL,
+        imageEnabled = true,
+        imageProtocol = ImageApiProtocol.AUTO,
+        useSameImageApiKey = true,
+        useProviderDefaults = true
     )
 
     private fun loadConnectionProfiles(): List<ConnectionProfile> = runCatching {
@@ -2319,20 +2507,58 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             prefs.getString("connection_profiles_json", "[]") ?: "[]",
             type
         ).orEmpty().filter { it.id.isNotBlank() }
-        val openRouter = stored.firstOrNull { it.id == "openrouter" }?.copy(
+
+        val storedOpenRouter = stored.firstOrNull { it.id == "openrouter" }
+        val openRouter = storedOpenRouter?.copy(
             name = "OpenRouter",
             type = ProviderType.OPENROUTER,
-            baseUrl = normalizeBaseUrl(stored.first { it.id == "openrouter" }.baseUrl).ifBlank { OpenRouterClient.DEFAULT_BASE_URL }
+            baseUrl = normalizeBaseUrl(storedOpenRouter.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL },
+            imageEnabled = storedOpenRouter.imageEnabled ?: true,
+            imageProtocol = storedOpenRouter.imageProtocol ?: ImageApiProtocol.AUTO,
+            useSameImageApiKey = storedOpenRouter.useSameImageApiKey ?: true,
+            useProviderDefaults = storedOpenRouter.useProviderDefaults ?: (
+                normalizeBaseUrl(storedOpenRouter.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL } == ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL
+            )
         ) ?: defaultOpenRouterProfile()
-        listOf(openRouter) + stored.filterNot { it.id == "openrouter" }
-    }.getOrElse { listOf(defaultOpenRouterProfile()) }
+
+        val nvidiaSource = stored.firstOrNull { profile ->
+            profile.id != "openrouter" && (
+                profile.type == ProviderType.NVIDIA ||
+                    profile.id.equals("nvidia", true) ||
+                    profile.name.equals("nvidia", true) ||
+                    normalizeBaseUrl(profile.baseUrl).contains("integrate.api.nvidia.com", ignoreCase = true)
+                )
+        }
+        val nvidia = nvidiaSource?.copy(
+            name = "NVIDIA",
+            type = ProviderType.NVIDIA,
+            baseUrl = normalizeBaseUrl(nvidiaSource.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL },
+            imageEnabled = nvidiaSource.imageEnabled ?: true,
+            imageProtocol = nvidiaSource.imageProtocol ?: ImageApiProtocol.AUTO,
+            useSameImageApiKey = nvidiaSource.useSameImageApiKey ?: true,
+            useProviderDefaults = nvidiaSource.useProviderDefaults ?: (
+                normalizeBaseUrl(nvidiaSource.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL } == ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL
+            )
+        ) ?: defaultNvidiaProfile()
+
+        val remaining = stored.filterNot { it.id == "openrouter" || it.id == nvidiaSource?.id }
+            .map { profile ->
+                profile.copy(
+                    imageEnabled = profile.imageEnabled ?: !prefs.getString(profilePrefKey("image_model", profile.id), null).isNullOrBlank(),
+                    imageProtocol = profile.imageProtocol ?: ImageApiProtocol.AUTO,
+                    useSameImageApiKey = profile.useSameImageApiKey ?: true,
+                    useProviderDefaults = false
+                )
+            }
+        listOf(openRouter, nvidia) + remaining
+    }.getOrElse { listOf(defaultOpenRouterProfile(), defaultNvidiaProfile()) }
 
     private fun saveConnectionProfiles(profiles: List<ConnectionProfile>) {
         prefs.edit().putString("connection_profiles_json", gson.toJson(profiles)).apply()
     }
 
     private fun openRouterProfile(): ConnectionProfile =
-        _state.value.connectionProfiles.firstOrNull { it.id == "openrouter" } ?: defaultOpenRouterProfile()
+        _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER } ?: defaultOpenRouterProfile()
 
     private fun activeConnectionProfile(): ConnectionProfile =
         _state.value.connectionProfiles.firstOrNull { it.id == _state.value.activeConnectionProfileId }
@@ -2344,14 +2570,114 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun normalizeBaseUrl(value: String): String = value.trim().trimEnd('/')
 
+    private fun usesProviderDefaults(profile: ConnectionProfile): Boolean = profile.useProviderDefaults ?: when (profile.type) {
+        ProviderType.OPENROUTER -> normalizeBaseUrl(profile.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL } == ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL
+        ProviderType.NVIDIA -> normalizeBaseUrl(profile.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL } == ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL
+        ProviderType.OPENAI_COMPATIBLE -> false
+    }
+
+    private fun effectiveTextBaseUrl(profile: ConnectionProfile): String {
+        if (usesProviderDefaults(profile)) {
+            providerRegistry.textBaseUrl(profile.type)?.let { return normalizeBaseUrl(it) }
+        }
+        return normalizeBaseUrl(profile.baseUrl)
+    }
+
+    private fun effectiveImageBaseUrl(profile: ConnectionProfile): String {
+        if (usesProviderDefaults(profile)) {
+            providerRegistry.imageBaseUrl(profile.type)?.let { return normalizeBaseUrl(it) }
+        }
+        profile.imageBaseUrl?.let(::normalizeBaseUrl)?.takeIf { it.isNotBlank() }?.let { return it }
+        return when (profile.type) {
+            ProviderType.NVIDIA -> ProviderRegistry.DEFAULT_NVIDIA_IMAGE_BASE_URL
+            else -> effectiveTextBaseUrl(profile)
+        }
+    }
+
+    private fun imageGenerationEnabled(profile: ConnectionProfile): Boolean = profile.imageEnabled ?: when (profile.type) {
+        ProviderType.OPENROUTER, ProviderType.NVIDIA -> true
+        ProviderType.OPENAI_COMPATIBLE -> false
+    }
+
+    private fun usesSameImageApiKey(profile: ConnectionProfile): Boolean = profile.useSameImageApiKey ?: true
+
+    private fun imageApiKey(profile: ConnectionProfile): String = if (usesSameImageApiKey(profile)) {
+        secrets.getProfileApiKey(profile.id).orEmpty()
+    } else {
+        secrets.getProfileImageApiKey(profile.id).orEmpty()
+    }
+
+    private fun resolvedImageProtocol(profile: ConnectionProfile): ImageApiProtocol {
+        val explicit = profile.imageProtocol ?: ImageApiProtocol.AUTO
+        if (explicit != ImageApiProtocol.AUTO) return explicit
+        return if (profile.type == ProviderType.NVIDIA) ImageApiProtocol.NVIDIA_NIM else ImageApiProtocol.OPENAI_COMPATIBLE
+    }
+
     private fun isProfileConfigured(profile: ConnectionProfile): Boolean = when (profile.type) {
-        ProviderType.OPENROUTER -> profile.baseUrl.isNotBlank() && !secrets.getProfileApiKey(profile.id).isNullOrBlank()
-        ProviderType.OPENAI_COMPATIBLE -> profile.baseUrl.isNotBlank()
+        ProviderType.OPENROUTER, ProviderType.NVIDIA -> effectiveTextBaseUrl(profile).isNotBlank() && !secrets.getProfileApiKey(profile.id).isNullOrBlank()
+        ProviderType.OPENAI_COMPATIBLE -> effectiveTextBaseUrl(profile).isNotBlank()
+    }
+
+    private fun isImageProfileConfigured(profile: ConnectionProfile): Boolean {
+        if (!imageGenerationEnabled(profile) || effectiveImageBaseUrl(profile).isBlank()) return false
+        return when (profile.type) {
+            ProviderType.OPENROUTER, ProviderType.NVIDIA -> imageApiKey(profile).isNotBlank()
+            ProviderType.OPENAI_COMPATIBLE -> true
+        }
     }
 
     private fun connectionSetupMessage(profile: ConnectionProfile): String = when (profile.type) {
-        ProviderType.OPENROUTER -> "Откройте «Подключения» и сохраните адрес и API-ключ OpenRouter"
+        ProviderType.OPENROUTER -> "Откройте «Подключения» и сохраните API-ключ OpenRouter"
+        ProviderType.NVIDIA -> "Откройте «Подключения» и сохраните API-ключ NVIDIA"
         ProviderType.OPENAI_COMPATIBLE -> "Откройте «Подключения» и укажите адрес совместимого API"
+    }
+
+    private fun imageConnectionSetupMessage(profile: ConnectionProfile): String = when {
+        !imageGenerationEnabled(profile) -> "В «Подключениях» включите генерацию изображений для «${profile.name}»"
+        effectiveImageBaseUrl(profile).isBlank() -> "Укажите адрес API изображений для «${profile.name}»"
+        !usesSameImageApiKey(profile) && imageApiKey(profile).isBlank() -> "Укажите отдельный API-ключ изображений для «${profile.name}»"
+        profile.type == ProviderType.OPENROUTER && imageApiKey(profile).isBlank() -> "Сохраните API-ключ OpenRouter"
+        profile.type == ProviderType.NVIDIA && imageApiKey(profile).isBlank() -> "Сохраните API-ключ NVIDIA"
+        else -> "Проверьте настройки Image API для «${profile.name}»"
+    }
+
+    private suspend fun textModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        return if (profile.type == ProviderType.OPENROUTER) {
+            api.models(key, effectiveTextBaseUrl(profile))
+        } else {
+            compatibleApi.models(key, effectiveTextBaseUrl(profile))
+        }
+    }
+
+    private suspend fun imageModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
+        if (!imageGenerationEnabled(profile)) return emptyList()
+        val key = imageApiKey(profile)
+        if (profile.type == ProviderType.OPENROUTER) {
+            return api.imageModels(key, effectiveImageBaseUrl(profile))
+        }
+        return when (resolvedImageProtocol(profile)) {
+            ImageApiProtocol.NVIDIA_NIM -> {
+                val registryModels = providerRegistry.imageModels(ProviderType.NVIDIA)
+                val saved = loadImageModelForProfile(profile.id)
+                if (profile.type == ProviderType.OPENAI_COMPATIBLE && saved.isNotBlank() && registryModels.none { it.id == saved }) {
+                    listOf(ModelInfo(saved)) + registryModels
+                } else registryModels
+            }
+            ImageApiProtocol.OPENAI_COMPATIBLE, ImageApiProtocol.AUTO -> {
+                val saved = loadImageModelForProfile(profile.id)
+                if (saved.isBlank()) emptyList() else listOf(ModelInfo(saved))
+            }
+        }
+    }
+
+    private fun chooseImageModel(profile: ConnectionProfile, infos: List<ModelInfo>): String {
+        var selected = loadImageModelForProfile(profile.id)
+        if (infos.isNotEmpty() && infos.none { it.id == selected }) {
+            selected = infos.first().id
+            prefs.edit().putString(profilePrefKey("image_model", profile.id), selected).apply()
+        }
+        return selected
     }
 
     private fun profilePrefKey(base: String, profileId: String): String =
@@ -2363,7 +2689,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun loadImageModelForProfile(profileId: String): String {
-        val fallback = if (profileId == "openrouter") "bytedance-seed/seedream-4.5" else ""
+        val profile = initialProfiles.firstOrNull { it.id == profileId }
+            ?: runCatching { _state.value.connectionProfiles.firstOrNull { it.id == profileId } }.getOrNull()
+        val fallback = when (profile?.type) {
+            ProviderType.OPENROUTER -> "bytedance-seed/seedream-4.5"
+            ProviderType.NVIDIA -> providerRegistry.imageModels(ProviderType.NVIDIA).firstOrNull()?.id.orEmpty()
+            else -> ""
+        }
         return prefs.getString(profilePrefKey("image_model", profileId), fallback) ?: fallback
     }
 

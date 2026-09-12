@@ -112,7 +112,7 @@ class CompatibleApiClient(private val context: Context) {
             addProperty("prompt", prompt.ifBlank { "Создай изображение." })
         }
         val builder = Request.Builder()
-            .url(endpoint(baseUrl, "images/generations"))
+            .url(imageGenerationEndpoint(baseUrl))
             .header("Content-Type", "application/json")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
         if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
@@ -221,8 +221,12 @@ class CompatibleApiClient(private val context: Context) {
         else -> content.toString()
     }
 
-    private fun endpoint(baseUrl: String, path: String): String =
-        baseUrl.trim().trimEnd('/') + "/" + path.trimStart('/')
+    private fun imageGenerationEndpoint(baseUrl: String): String {
+        val clean = baseUrl.trim().trimEnd('/')
+        return if (clean.endsWith("/images/generations")) clean else endpoint(clean, "images/generations")
+    }
+
+    private fun endpoint(baseUrl: String, path: String): String = baseUrl.trim().trimEnd('/') + "/" + path
 
     private fun apiError(code: Int, body: String): String {
         val message = runCatching {
