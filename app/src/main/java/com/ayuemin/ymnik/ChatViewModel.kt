@@ -42,6 +42,7 @@ import com.ayuemin.ymnik.network.OpenRouterClient
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -1210,7 +1211,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun refreshProviderUsage() {
+    fun refreshProviderUsage(delayMs: Long = 0L) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
             ?: return
         if (profile.id in _state.value.disabledConnectionIds || !isProfileConfigured(profile)) {
@@ -1219,6 +1220,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
         viewModelScope.launch {
+            if (delayMs > 0L) delay(delayMs)
             runCatching { api.keyUsage(key, profile.baseUrl) }
                 .onSuccess { usage ->
                     _state.value = _state.value.copy(
@@ -1778,7 +1780,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     storageStats = storageRepository.stats()
                 )
                 playReadySound()
-                if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
+                if (profile.type == ProviderType.OPENROUTER) {
+                    refreshProviderUsage()
+                    if (mode == ChatMode.IMAGE) refreshProviderUsage(2500L)
+                }
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,
@@ -1900,7 +1905,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     storageStats = storageRepository.stats()
                 )
                 playReadySound()
-                if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
+                if (profile.type == ProviderType.OPENROUTER) {
+                    refreshProviderUsage()
+                    refreshProviderUsage(2500L)
+                }
             }.onFailure {
                 _state.value = _state.value.copy(
                     isLoading = false,
