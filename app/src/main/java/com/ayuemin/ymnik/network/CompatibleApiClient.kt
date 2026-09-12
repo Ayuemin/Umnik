@@ -223,7 +223,11 @@ class CompatibleApiClient(private val context: Context) {
 
     private fun imageGenerationEndpoint(baseUrl: String): String {
         val clean = baseUrl.trim().trimEnd('/')
-        return if (clean.endsWith("/images/generations")) clean else endpoint(clean, "images/generations")
+        return when {
+            clean.endsWith("/images/generations") -> clean
+            clean.endsWith("/images") -> clean
+            else -> endpoint(clean, "images/generations")
+        }
     }
 
     private fun endpoint(baseUrl: String, path: String): String = baseUrl.trim().trimEnd('/') + "/" + path

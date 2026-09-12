@@ -1806,7 +1806,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     else -> "[Вложения]"
                 }
             },
-            attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct()
+            attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct(),
+            imageGeneration = mode == ChatMode.IMAGE
         )
         val nextMessages = before + user
         val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }
@@ -1827,8 +1828,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val textModel = currentTextModelId()
         val imageModel = _state.value.imageModel
-        val imageAspectRatio = _state.value.imageAspectRatio
-        val imageResolution = _state.value.imageResolution
+        val imageInfo = currentImageModelInfo()
+        val imageAspectRatio = _state.value.imageAspectRatio?.takeIf {
+            profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("aspect_ratio") == true
+        }
+        val imageResolution = _state.value.imageResolution?.takeIf {
+            profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("resolution") == true
+        }
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
@@ -2005,8 +2011,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val key = imageApiKey(profile)
         val imageModel = _state.value.imageModel
-        val imageAspectRatio = _state.value.imageAspectRatio
-        val imageResolution = _state.value.imageResolution
+        val imageInfo = currentImageModelInfo()
+        val imageAspectRatio = _state.value.imageAspectRatio?.takeIf {
+            profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("aspect_ratio") == true
+        }
+        val imageResolution = _state.value.imageResolution?.takeIf {
+            profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("resolution") == true
+        }
         val requestId = ++requestGeneration
         activeRequestPending = pending
 

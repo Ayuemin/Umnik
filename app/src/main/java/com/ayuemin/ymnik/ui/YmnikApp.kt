@@ -379,16 +379,18 @@ private fun ChatScreen(
 onBranch = if (message.role == "assistant") {
     { vm.branchFromMessage(message.id) }
 } else null,
-                    onRetry = if (
-                        !message.imageGeneration &&
-                        message.role == "user" &&
-                        message.text.isNotBlank() &&
-                        message.attachmentNames.all { name ->
-                            currentChatFiles.any { file -> file.name == name }
+                    onRetry = when {
+                        message.role != "user" || message.text.isBlank() -> null
+                        message.imageGeneration && message.attachmentNames.isEmpty() -> {
+                            { vm.sendImagePrompt(message.text) }
                         }
-                    ) {
-                        { vm.send(message.text) }
-                    } else null
+                        !message.imageGeneration && message.attachmentNames.all { name ->
+                            currentChatFiles.any { file -> file.name == name }
+                        } -> {
+                            { vm.send(message.text) }
+                        }
+                        else -> null
+                    }
                 )
             }
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
@@ -1529,7 +1531,7 @@ private fun MessageCard(
                 if (onRetry != null) {
                     CompactMessageAction(
                         icon = Icons.Outlined.Refresh,
-                        description = "Спросить ещё раз",
+                        description = if (message.imageGeneration) "Сгенерировать снова" else "Спросить ещё раз",
                         onClick = onRetry
                     )
                 }
