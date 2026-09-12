@@ -3,6 +3,7 @@ package com.ayuemin.ymnik.network
 import android.content.Context
 import android.net.Uri
 import android.util.Base64
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -10,12 +11,12 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
-import com.ayuemin.ymnik.model.ProviderType
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,26 +24,28 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class CompatibleApiClient(private val context: Context) {
     private val gson = Gson()
-    private val providerRegistry = ProviderRegistry(context)
-    private val modelHealthPrefs = context.getSharedPreferences("nvidia_model_health", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "Compatible text/image"))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "Compatible text/image") }
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(240, TimeUnit.SECONDS)
-        .writeTimeout(240, TimeUnit.SECONDS)
+        .readTimeout(600, TimeUnit.SECONDS)
+        .writeTimeout(600, TimeUnit.SECONDS)
         .build()
     @Volatile private var activeCall: Call? = null
+
+    private data class RawResponse(val code: Int, val body: String) {
+        val successful: Boolean get() = code in 200..299
+    }
 
     fun cancelActiveRequest() {
         activeCall?.cancel()
         http.dispatcher.cancelAll()
+        RequestKeepAliveService.stop(context)
     }
 
     suspend fun models(apiKey: String, baseUrl: String): List<ModelInfo> = withContext(Dispatchers.IO) {
@@ -57,43 +60,22 @@ class CompatibleApiClient(private val context: Context) {
                 root.isJsonArray -> root.asJsonArray
                 else -> null
             } ?: return@withContext emptyList()
+
             val discovered = data.mapNotNull { element ->
                 val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
                 val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                ModelInfo(id)
-            }.distinctBy { it.id }
+                if (isNvidiaHosted(baseUrl) && !isLikelyChatModel(id)) return@mapNotNull null
+                modelInfo(id)
+            }.distinctBy { it.id }.sortedBy { it.id }
 
-            if (!isNvidiaHosted(baseUrl)) {
-                return@withContext discovered.sortedBy { it.id }
+            if (isNvidiaHosted(baseUrl)) {
+                DiagnosticLog.record(
+                    context,
+                    "MODEL CATALOG",
+                    "NVIDIA /models raw=${data.size()}; chatCandidates=${discovered.size}; whitelist=false; quarantine=false"
+                )
             }
-
-            // NVIDIA hosted Integrate currently returns a catalogue that can contain
-            // embeddings, rerankers and entries that are visible in /models but return
-            // 404 on /chat/completions for a particular account. Do not present that
-            // raw list as if every entry were a usable chat model.
-            runCatching { providerRegistry.refreshIfStale() }
-            val byId = discovered.associateBy { it.id }
-            val blocked = blockedNvidiaModels(apiKey)
-            val verified = providerRegistry.textModels(ProviderType.NVIDIA)
-                .mapNotNull { byId[it.id] }
-                .filterNot { it.id in blocked }
-
-            val result = if (verified.isNotEmpty()) {
-                verified
-            } else {
-                // Fail open if NVIDIA renames the whole catalogue before the remote
-                // registry is refreshed, but still remove obvious non-chat families.
-                discovered
-                    .filter { isLikelyChatModel(it.id) }
-                    .filterNot { it.id in blocked }
-                    .sortedBy { it.id }
-            }
-            DiagnosticLog.record(
-                context,
-                "MODEL CATALOG",
-                "NVIDIA discovered=${discovered.size}; verified=${verified.size}; blocked=${blocked.size}; shown=${result.size}"
-            )
-            result
+            discovered
         }
     }
 
@@ -107,86 +89,71 @@ class CompatibleApiClient(private val context: Context) {
         systemPrompt: String
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
         val isNvidia = isNvidiaHosted(baseUrl)
-        if (isNvidia && model in blockedNvidiaModels(apiKey)) {
-            error(
-                "Модель NVIDIA «${model.substringAfterLast('/')}» недавно вернула 404 для этого API-ключа. " +
-                    "Umnik временно исключил её из каталога. Обновите список моделей и выберите другую."
-            )
-        }
+        if (isNvidia) runCatching { RequestKeepAliveService.start(context, "NVIDIA · ${model.substringAfterLast('/')}") }
 
-        val messages = JsonArray()
-        if (systemPrompt.isNotBlank()) messages.add(message("system", systemPrompt))
-        // NVIDIA requires a sane conversational history. After a timeout Umnik keeps
-        // the unanswered user message locally; do not send that stale trailing turn
-        // again when the user retries.
-        history.takeLast(30)
-            .dropLastWhile { it.role == "user" }
-            .filter { it.role == "user" || it.role == "assistant" }
-            .forEach { item -> messages.add(message(item.role, item.text)) }
-        messages.add(message("user", userText(prompt, attachments)))
-
-        val providerLabel = if (isNvidia) "NVIDIA" else "Compatible API"
-        val payload = JsonObject().apply {
-            addProperty("model", model)
-            add("messages", messages)
-            // Keep NVIDIA requests deliberately minimal. Different hosted NIMs have
-            // different optional parameter sets, while model/messages/stream are the
-            // common denominator of the chat-completions contract.
-            if (!isNvidia) addProperty("max_tokens", 4096)
-            addProperty("stream", false)
-        }
-        DiagnosticLog.record(
-            context,
-            "TEXT REQUEST",
-            "$providerLabel start; model=$model; history=${history.size}; sentMessages=${messages.size()}; promptChars=${prompt.length}; attachments=${attachments.size}; minimalPayload=$isNvidia"
-        )
-        val builder = Request.Builder()
-            .url(endpoint(baseUrl, "chat/completions"))
-            .header("Content-Type", "application/json")
-            .header("Accept", "application/json")
-            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
-        if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
-        val call = http.newCall(builder.build())
-        activeCall = call
         try {
-            call.execute().use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) {
-                    if (isNvidia && response.code == 404) {
-                        blockNvidiaModel(apiKey, model)
-                        val detail = apiError(response.code, body)
-                        DiagnosticLog.record(
-                            context,
-                            "MODEL CATALOG",
-                            "NVIDIA quarantined model=$model after HTTP 404"
-                        )
-                        error(
-                            "Модель NVIDIA «${model.substringAfterLast('/')}» недоступна через Chat API для этого аккаунта. " +
-                                "Umnik запомнил ошибку и временно скроет модель после обновления списка. $detail"
-                        )
-                    }
-                    error(apiError(response.code, body))
+            val messages = JsonArray()
+            if (systemPrompt.isNotBlank()) messages.add(message("system", systemPrompt))
+
+            history.takeLast(30)
+                .dropLastWhile { it.role == "user" }
+                .filter { it.role == "user" || it.role == "assistant" }
+                .forEach { item -> messages.add(message(item.role, item.text)) }
+            messages.add(userMessage(prompt, attachments, isNvidia))
+
+            val payload = JsonObject().apply {
+                addProperty("model", model)
+                add("messages", messages)
+                if (!isNvidia) addProperty("max_tokens", 4096)
+                addProperty("stream", false)
+                // DeepSeek V4 on NVIDIA defaults to high reasoning. For normal Umnik
+                // chat explicitly disable hidden thinking; otherwise even «привет» can
+                // spend minutes reasoning before the first visible answer.
+                if (isNvidia && model.lowercase().contains("deepseek-v4")) {
+                    addProperty("reasoning_effort", "none")
                 }
-                val root = gson.fromJson(body, JsonObject::class.java)
-                val messageObject = root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
-                    ?.getAsJsonObject("message")
-                val content = messageObject?.get("content")
-                val reasoningContent = messageObject?.get("reasoning_content")
-                val text = extractText(content).ifBlank { extractText(reasoningContent) }
-                if (text.isBlank()) error("Совместимый API вернул пустой ответ")
-                if (isNvidia) unblockNvidiaModel(apiKey, model)
-                DiagnosticLog.record(
-                    context,
-                    "TEXT REQUEST",
-                    "$providerLabel success; model=$model; responseChars=${text.length}; responseBytes=${body.length}"
-                )
-                OpenRouterClient.Result(text, emptyList())
             }
+
+            val providerLabel = if (isNvidia) "NVIDIA" else "Compatible API"
+            DiagnosticLog.record(
+                context,
+                "TEXT REQUEST",
+                "$providerLabel start; model=$model; history=${history.size}; sentMessages=${messages.size()}; promptChars=${prompt.length}; attachments=${attachments.size}; async202=$isNvidia"
+            )
+
+            var response = executeChat(apiKey, endpoint(baseUrl, "chat/completions"), payload)
+            if (isNvidia && response.code == 202) {
+                response = pollNvidia(apiKey, baseUrl, response.body)
+            }
+
+            if (!response.successful) {
+                val detail = apiError(response.code, response.body)
+                if (isNvidia && response.code == 404) {
+                    error(
+                        "NVIDIA не дала этому аккаунту доступ к модели «${model.substringAfterLast('/')}» через Chat API. " +
+                            "Модель останется в списке. $detail"
+                    )
+                }
+                if (isNvidia && response.code == 429) {
+                    error("NVIDIA временно перегружена или исчерпан лимит запросов. Повторите позже. $detail")
+                }
+                error(detail)
+            }
+
+            val text = parseCompletionText(response.body)
+            if (text.isBlank()) error("Совместимый API вернул пустой ответ")
+            DiagnosticLog.record(
+                context,
+                "TEXT REQUEST",
+                "$providerLabel success; model=$model; responseChars=${text.length}; responseBytes=${response.body.length}"
+            )
+            OpenRouterClient.Result(text, emptyList())
         } catch (t: Throwable) {
-            DiagnosticLog.record(context, "TEXT REQUEST", "$providerLabel failed; model=$model", t)
+            DiagnosticLog.record(context, "TEXT REQUEST", "${if (isNvidia) "NVIDIA" else "Compatible API"} failed; model=$model", t)
             throw t
         } finally {
             activeCall = null
+            if (isNvidia) RequestKeepAliveService.stop(context)
         }
     }
 
@@ -236,6 +203,139 @@ class CompatibleApiClient(private val context: Context) {
         }
     }
 
+    private fun executeChat(apiKey: String, url: String, payload: JsonObject): RawResponse {
+        val builder = Request.Builder()
+            .url(url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+        if (apiKey.isNotBlank()) builder.header("Authorization", "Bearer $apiKey")
+        val call = http.newCall(builder.build())
+        activeCall = call
+        return call.execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
+    }
+
+    private suspend fun pollNvidia(apiKey: String, baseUrl: String, firstBody: String): RawResponse {
+        val requestId = extractRequestId(firstBody) ?: error("NVIDIA вернула HTTP 202 без requestId")
+        val url = endpoint(baseUrl, "status/$requestId")
+        DiagnosticLog.record(context, "TEXT REQUEST", "NVIDIA pending requestId=${requestId.take(8)}…")
+        repeat(500) { attempt ->
+            delay(1200L)
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            val call = http.newCall(request)
+            activeCall = call
+            val response = call.execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
+            when (response.code) {
+                200 -> return response
+                202 -> if ((attempt + 1) % 10 == 0) {
+                    DiagnosticLog.record(context, "TEXT REQUEST", "NVIDIA still pending attempt=${attempt + 1}")
+                }
+                else -> return response
+            }
+        }
+        error("NVIDIA слишком долго не завершает асинхронный запрос")
+    }
+
+    private fun extractRequestId(body: String): String? = runCatching {
+        val root = gson.fromJson(body, JsonObject::class.java)
+        listOf("requestId", "request_id", "id")
+            .asSequence()
+            .mapNotNull { root.get(it)?.takeIf { value -> value.isJsonPrimitive }?.asString }
+            .firstOrNull { it.isNotBlank() }
+    }.getOrNull()
+
+    private fun parseCompletionText(body: String): String {
+        val root = runCatching { gson.fromJson(body, JsonObject::class.java) }.getOrNull() ?: return ""
+        val messageObject = root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
+            ?.getAsJsonObject("message")
+        return extractText(messageObject?.get("content")).ifBlank {
+            extractText(messageObject?.get("reasoning_content"))
+        }
+    }
+
+    private fun modelInfo(id: String): ModelInfo {
+        val value = id.lowercase()
+        val multimodal = listOf("vision", "vlm", "multimodal", "vila", "fuyu", "kosmos", "paligemma", "neva")
+            .any { it in value }
+        val deepSeek = value.contains("deepseek-v4")
+        return ModelInfo(
+            id = id,
+            inputModalities = if (multimodal) setOf("text", "image") else setOf("text"),
+            supportedParameters = if (deepSeek) setOf("reasoning", "reasoning_effort") else emptySet(),
+            reasoningEfforts = if (deepSeek) setOf("high", "xhigh") else emptySet()
+        )
+    }
+
+    private fun isLikelyChatModel(id: String): Boolean {
+        val value = id.lowercase()
+        val nonChatMarkers = listOf(
+            "embed", "embedding", "rerank", "re-rank", "retriever", "retrieval", "reward",
+            "nvclip", "/clip", "flux.", "stable-diffusion", "image-detection", "deepfake",
+            "synthetic-video-detector", "object-detection", "ocr", "riva-translate", "whisper",
+            "parakeet", "text-embedding"
+        )
+        return nonChatMarkers.none { it in value }
+    }
+
+    private fun userMessage(prompt: String, attachments: List<PendingAttachment>, nvidia: Boolean): JsonObject {
+        val text = buildPromptWithTextAttachments(prompt, attachments)
+        val images = attachments.filter { it.mimeType.lowercase().startsWith("image/") }
+        if (!nvidia || images.isEmpty()) return message("user", text)
+
+        val content = JsonArray().apply {
+            add(JsonObject().apply {
+                addProperty("type", "text")
+                addProperty("text", text)
+            })
+            images.forEach { attachment ->
+                val bytes = readAttachment(attachment)
+                val encoded = Base64.encodeToString(bytes, Base64.NO_WRAP)
+                val mime = attachment.mimeType.ifBlank { "image/jpeg" }
+                add(JsonObject().apply {
+                    addProperty("type", "image_url")
+                    add("image_url", JsonObject().apply {
+                        addProperty("url", "data:$mime;base64,$encoded")
+                    })
+                })
+            }
+        }
+        return JsonObject().apply {
+            addProperty("role", "user")
+            add("content", content)
+        }
+    }
+
+    private fun buildPromptWithTextAttachments(prompt: String, attachments: List<PendingAttachment>): String = buildString {
+        append(prompt.ifBlank { "Изучи вложения и помоги мне с ними." })
+        attachments.forEach { attachment ->
+            val mime = attachment.mimeType.lowercase()
+            val name = attachment.name.lowercase()
+            val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
+                name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+            if (textLike) {
+                val value = runCatching { String(readAttachment(attachment), Charsets.UTF_8) }.getOrDefault("")
+                append("\n\n--- Вложение: ${attachment.name} ---\n")
+                append(value)
+                append("\n--- Конец вложения ---")
+            }
+        }
+    }
+
+    private fun readAttachment(attachment: PendingAttachment): ByteArray {
+        attachment.localPath?.takeIf { it.isNotBlank() }?.let { path ->
+            val file = File(path)
+            if (file.isFile) return file.readBytes()
+        }
+        val uri = Uri.parse(attachment.uri)
+        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: error("Не удалось прочитать ${attachment.name}")
+    }
+
     private fun saveGeneratedImageBytes(bytes: ByteArray, mimeType: String, index: Int): GeneratedFile {
         val extension = when (mimeType.lowercase()) {
             "image/jpeg", "image/jpg" -> "jpg"
@@ -265,32 +365,6 @@ class CompatibleApiClient(private val context: Context) {
                 saveGeneratedImageBytes(bytes, mime, index)
             }
         }.getOrNull()
-    }
-
-    private fun userText(prompt: String, attachments: List<PendingAttachment>): String = buildString {
-        append(prompt.ifBlank { "Изучи вложения и помоги мне с ними." })
-        attachments.forEach { attachment ->
-            val mime = attachment.mimeType.lowercase()
-            val name = attachment.name.lowercase()
-            val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
-                name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
-            if (textLike) {
-                val value = runCatching { String(readAttachment(attachment), Charsets.UTF_8) }.getOrDefault("")
-                append("\n\n--- Вложение: ${attachment.name} ---\n")
-                append(value)
-                append("\n--- Конец вложения ---")
-            }
-        }
-    }
-
-    private fun readAttachment(attachment: PendingAttachment): ByteArray {
-        attachment.localPath?.takeIf { it.isNotBlank() }?.let { path ->
-            val file = File(path)
-            if (file.isFile) return file.readBytes()
-        }
-        val uri = Uri.parse(attachment.uri)
-        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("Не удалось прочитать ${attachment.name}")
     }
 
     private fun message(role: String, text: String) = JsonObject().apply {
@@ -325,62 +399,6 @@ class CompatibleApiClient(private val context: Context) {
     private fun isNvidiaHosted(baseUrl: String): Boolean =
         baseUrl.contains("integrate.api.nvidia.com", ignoreCase = true)
 
-    private fun isLikelyChatModel(id: String): Boolean {
-        val value = id.lowercase()
-        val nonChatMarkers = listOf(
-            "embed", "embedding", "rerank", "re-rank", "retriever", "retrieval",
-            "reward", "guard", "safety", "moderation", "clip", "flux", "stable-diffusion",
-            "kosmos", "fuyu", "grounding", "ocr"
-        )
-        return nonChatMarkers.none { it in value }
-    }
-
-    private fun blockedNvidiaModels(apiKey: String): Set<String> {
-        if (apiKey.isBlank()) return emptySet()
-        val key = modelHealthKey(apiKey)
-        val now = System.currentTimeMillis()
-        val stored = modelHealthPrefs.getStringSet(key, emptySet()).orEmpty()
-        val live = stored.mapNotNull { item ->
-            val divider = item.indexOf('\t')
-            if (divider <= 0) return@mapNotNull null
-            val timestamp = item.substring(0, divider).toLongOrNull() ?: return@mapNotNull null
-            val model = item.substring(divider + 1).takeIf { it.isNotBlank() } ?: return@mapNotNull null
-            if (now - timestamp <= NVIDIA_BLOCK_TTL_MS) timestamp to model else null
-        }
-        if (live.size != stored.size) {
-            modelHealthPrefs.edit().putStringSet(
-                key,
-                live.map { (timestamp, model) -> "$timestamp\t$model" }.toSet()
-            ).apply()
-        }
-        return live.map { it.second }.toSet()
-    }
-
-    private fun blockNvidiaModel(apiKey: String, model: String) {
-        if (apiKey.isBlank() || model.isBlank()) return
-        val key = modelHealthKey(apiKey)
-        val now = System.currentTimeMillis()
-        val next = modelHealthPrefs.getStringSet(key, emptySet()).orEmpty()
-            .filterNot { it.substringAfter('\t', "") == model }
-            .toMutableSet()
-            .apply { add("$now\t$model") }
-        modelHealthPrefs.edit().putStringSet(key, next).apply()
-    }
-
-    private fun unblockNvidiaModel(apiKey: String, model: String) {
-        if (apiKey.isBlank() || model.isBlank()) return
-        val key = modelHealthKey(apiKey)
-        val current = modelHealthPrefs.getStringSet(key, emptySet()).orEmpty()
-        val next = current.filterNot { it.substringAfter('\t', "") == model }.toSet()
-        if (next.size != current.size) modelHealthPrefs.edit().putStringSet(key, next).apply()
-    }
-
-    private fun modelHealthKey(apiKey: String): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(apiKey.toByteArray(Charsets.UTF_8))
-        val suffix = digest.take(8).joinToString("") { "%02x".format(it) }
-        return "blocked_$suffix"
-    }
-
     private fun apiError(code: Int, body: String): String {
         val message = runCatching {
             val root = gson.fromJson(body, JsonObject::class.java)
@@ -395,11 +413,7 @@ class CompatibleApiClient(private val context: Context) {
                 ?: root.get("message")?.takeIf { it.isJsonPrimitive }?.asString
                 ?: root.get("title")?.takeIf { it.isJsonPrimitive }?.asString
         }.getOrNull()?.trim()?.takeIf { it.isNotBlank() }
-            ?: body.trim().replace(Regex("\\s+"), " ").take(260).takeIf { it.isNotBlank() }
+            ?: body.trim().replace(Regex("\\s+"), " ").take(300).takeIf { it.isNotBlank() }
         return if (message.isNullOrBlank()) "Ошибка API $code" else "Ошибка API $code: $message"
-    }
-
-    private companion object {
-        private const val NVIDIA_BLOCK_TTL_MS = 24L * 60L * 60L * 1000L
     }
 }
