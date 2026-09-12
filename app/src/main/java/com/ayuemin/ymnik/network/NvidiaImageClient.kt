@@ -2,13 +2,16 @@ package com.ayuemin.ymnik.network
 
 import android.content.Context
 import android.util.Base64
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.google.gson.Gson
-import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
@@ -24,6 +27,7 @@ class NvidiaImageClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "NVIDIA image"))
+        .eventListenerFactory { DiagnosticNetworkEventListener(context, "NVIDIA image") }
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(600, TimeUnit.SECONDS)
         .writeTimeout(600, TimeUnit.SECONDS)
@@ -31,15 +35,14 @@ class NvidiaImageClient(private val context: Context) {
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
-    private data class RawResponse(
-        val successful: Boolean,
-        val code: Int,
-        val body: String
-    )
+    private data class RawResponse(val code: Int, val body: String) {
+        val successful: Boolean get() = code in 200..299
+    }
 
     fun cancelActiveRequest() {
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
+        RequestKeepAliveService.stop(context)
     }
 
     suspend fun generateImage(
@@ -49,33 +52,31 @@ class NvidiaImageClient(private val context: Context) {
         prompt: String,
         aspectRatio: String? = null
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
+        runCatching { RequestKeepAliveService.start(context, "NVIDIA · ${model.substringAfterLast('/')}") }
         val url = modelEndpoint(baseUrl, model)
         val primaryPayload = payload(model, prompt, aspectRatio)
         val minimalPayload = minimalPayload(model, prompt)
+        DiagnosticLog.record(context, "NVIDIA IMAGE", "start model=$model; aspect=${aspectRatio ?: "auto"}")
 
         try {
             var response = execute(url, apiKey, primaryPayload)
+            if (response.code == 202) response = pollUntilReady(apiKey, baseUrl, response.body)
 
-            // NIM schemas occasionally differ between the published reference and the
-            // deployed validation layer. If an optional field is rejected as an extra
-            // input, retry once with only the model's required fields. This keeps old
-            // app versions resilient to provider-side schema tightening without hiding
-            // unrelated validation errors.
-            if (
-                !response.successful &&
-                response.code in setOf(400, 422) &&
-                gson.toJson(primaryPayload) != gson.toJson(minimalPayload)
-            ) {
+            if (!response.successful && response.code in setOf(400, 422) && gson.toJson(primaryPayload) != gson.toJson(minimalPayload)) {
+                DiagnosticLog.record(context, "NVIDIA IMAGE", "validation retry model=$model with minimal payload")
                 response = execute(url, apiKey, minimalPayload)
+                if (response.code == 202) response = pollUntilReady(apiKey, baseUrl, response.body)
             }
 
             if (!response.successful) error(apiError(response.code, response.body))
             val root = gson.fromJson(response.body, JsonObject::class.java)
             val files = extractImages(root)
-            if (files.isEmpty()) error("NVIDIA NIM вернул ответ без изображения")
+            if (files.isEmpty()) error("NVIDIA NIM вернул успешный ответ без изображения")
+            DiagnosticLog.record(context, "NVIDIA IMAGE", "success model=$model; files=${files.size}")
             OpenRouterClient.Result("Изображение создано.", files)
         } finally {
             synchronized(activeCallLock) { activeCall = null }
+            RequestKeepAliveService.stop(context)
         }
     }
 
@@ -89,81 +90,98 @@ class NvidiaImageClient(private val context: Context) {
             .build()
         val call = http.newCall(request)
         synchronized(activeCallLock) { activeCall = call }
-        return call.execute().use { response ->
-            RawResponse(
-                successful = response.isSuccessful,
-                code = response.code,
-                body = response.body?.string().orEmpty()
-            )
-        }
+        return call.execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
     }
 
-    private fun payload(model: String, prompt: String, aspectRatio: String?): JsonObject = when {
-        model.endsWith("stable-diffusion-3-medium") -> JsonObject().apply {
-            addProperty("prompt", prompt)
-            addProperty("output_format", "jpeg")
-            aspectRatio?.takeIf { it in COMMON_RATIOS }?.let { addProperty("aspect_ratio", it) }
-        }
-        model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
-        model.contains("flux.1-schnell") -> JsonObject().apply {
-            // Keep the hosted trial request identical to NVIDIA's current official
-            // cloud example. In particular, do not send width/height here: the
-            // hosted FLUX.1-schnell validator currently behaves more reliably with
-            // its default 1024x1024 output.
-            addProperty("prompt", prompt)
-            addProperty("seed", 0)
-            addProperty("steps", 4)
-        }
-        model.contains("flux.1-dev") -> JsonObject().apply {
-            addProperty("prompt", prompt)
-            flux1Dimensions(aspectRatio)?.let { (width, height) ->
-                addProperty("width", width)
-                addProperty("height", height)
+    private suspend fun pollUntilReady(apiKey: String, baseUrl: String, firstBody: String): RawResponse {
+        val requestId = extractRequestId(firstBody) ?: error("NVIDIA Image API вернул HTTP 202 без requestId")
+        val statusUrl = statusEndpoint(baseUrl, requestId)
+        DiagnosticLog.record(context, "NVIDIA IMAGE", "pending requestId=${requestId.take(8)}…")
+        repeat(500) { attempt ->
+            delay(1200L)
+            val request = Request.Builder()
+                .url(statusUrl)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+            val call = http.newCall(request)
+            synchronized(activeCallLock) { activeCall = call }
+            val response = call.execute().use { RawResponse(it.code, it.body?.string().orEmpty()) }
+            when (response.code) {
+                200 -> return response
+                202 -> if ((attempt + 1) % 10 == 0) {
+                    DiagnosticLog.record(context, "NVIDIA IMAGE", "still pending attempt=${attempt + 1}")
+                }
+                else -> return response
             }
         }
-        else -> JsonObject().apply {
-            // For FLUX.2 Klein and future text-to-image NIMs, send only the required
-            // prompt. Optional mode/seed/steps fields have defaults and are the most
-            // likely fields to drift between deployed NIM schema revisions.
-            addProperty("prompt", prompt)
+        error("NVIDIA слишком долго не завершает генерацию изображения")
+    }
+
+    private fun payload(model: String, prompt: String, aspectRatio: String?): JsonObject {
+        val (width, height) = dimensions(aspectRatio)
+        return when {
+            model.contains("flux.1-schnell") -> JsonObject().apply {
+                addProperty("prompt", prompt)
+                addProperty("height", height)
+                addProperty("width", width)
+                addProperty("cfg_scale", 0)
+                addProperty("mode", "base")
+                addProperty("samples", 1)
+                addProperty("seed", 0)
+                addProperty("steps", 4)
+            }
+            model.contains("flux.1-dev") -> JsonObject().apply {
+                addProperty("prompt", prompt)
+                addProperty("height", height)
+                addProperty("width", width)
+                addProperty("cfg_scale", 5)
+                addProperty("mode", "base")
+                addProperty("samples", 1)
+                addProperty("seed", 0)
+                addProperty("steps", 50)
+            }
+            model.contains("flux.2-klein-4b") -> JsonObject().apply {
+                addProperty("mode", "Image Generation")
+                addProperty("prompt", prompt)
+                addProperty("height", height)
+                addProperty("width", width)
+                addProperty("cfg_scale", 0)
+                addProperty("samples", 1)
+                addProperty("seed", 0)
+                addProperty("steps", 4)
+            }
+            else -> JsonObject().apply { addProperty("prompt", prompt) }
         }
     }
 
     private fun minimalPayload(model: String, prompt: String): JsonObject = when {
         model.contains("flux.1-schnell") -> JsonObject().apply {
             addProperty("prompt", prompt)
+            addProperty("mode", "base")
             addProperty("seed", 0)
             addProperty("steps", 4)
         }
-        model.endsWith("stable-diffusion-xl") -> stableDiffusionXlPayload(prompt)
+        model.contains("flux.1-dev") -> JsonObject().apply {
+            addProperty("prompt", prompt)
+            addProperty("mode", "base")
+        }
+        model.contains("flux.2-klein-4b") -> JsonObject().apply {
+            addProperty("mode", "Image Generation")
+            addProperty("prompt", prompt)
+        }
         else -> JsonObject().apply { addProperty("prompt", prompt) }
     }
 
-    private fun stableDiffusionXlPayload(prompt: String): JsonObject = JsonObject().apply {
-        add("text_prompts", JsonArray().apply {
-            add(JsonObject().apply {
-                addProperty("text", prompt)
-                addProperty("weight", 1)
-            })
-        })
-    }
-
-    private fun isExtraInputValidation(body: String): Boolean {
-        val normalized = body.lowercase()
-        return "extra_forbidden" in normalized ||
-            "extra inputs are not permitted" in normalized ||
-            "extra fields not permitted" in normalized
-    }
-
-    private fun flux1Dimensions(aspectRatio: String?): Pair<Int, Int>? = when (aspectRatio) {
-        "1:1" -> 1024 to 1024
+    private fun dimensions(aspectRatio: String?): Pair<Int, Int> = when (aspectRatio) {
         "16:9" -> 1344 to 768
         "9:16" -> 768 to 1344
         "5:4" -> 1152 to 896
         "4:5" -> 896 to 1152
         "3:2" -> 1216 to 832
         "2:3" -> 832 to 1216
-        else -> null
+        else -> 1024 to 1024
     }
 
     private fun extractImages(root: JsonObject): List<GeneratedFile> {
@@ -211,8 +229,7 @@ class NvidiaImageClient(private val context: Context) {
 
     private fun saveEncodedImage(raw: String, mimeHint: String?, index: Int): GeneratedFile {
         val cleaned = raw.substringAfter("base64,", raw).trim()
-        val bytes = Base64.decode(cleaned, Base64.DEFAULT)
-        return saveImageBytes(bytes, mimeHint, index)
+        return saveImageBytes(Base64.decode(cleaned, Base64.DEFAULT), mimeHint, index)
     }
 
     private fun downloadImage(url: String, index: Int): GeneratedFile {
@@ -231,18 +248,13 @@ class NvidiaImageClient(private val context: Context) {
         val ext = when (mime) {
             "image/jpeg" -> "jpg"
             "image/webp" -> "webp"
+            "image/svg+xml" -> "svg"
             else -> "png"
         }
         val dir = File(context.filesDir, "generated").apply { mkdirs() }
         val file = File(dir, "nvidia_${System.currentTimeMillis()}_${index}.$ext")
         file.writeBytes(bytes)
-        return GeneratedFile(
-            id = UUID.randomUUID().toString(),
-            name = file.name,
-            mimeType = mime,
-            localPath = file.absolutePath,
-            size = file.length()
-        )
+        return GeneratedFile(UUID.randomUUID().toString(), file.name, mime, file.absolutePath, file.length())
     }
 
     private fun detectMime(bytes: ByteArray, hint: String?): String {
@@ -251,6 +263,8 @@ class NvidiaImageClient(private val context: Context) {
         if (bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() && bytes[2] == 0xFF.toByte()) return "image/jpeg"
         if (bytes.size >= 12 && String(bytes.copyOfRange(0, 4), Charsets.US_ASCII) == "RIFF" &&
             String(bytes.copyOfRange(8, 12), Charsets.US_ASCII) == "WEBP") return "image/webp"
+        val prefix = runCatching { String(bytes.take(200).toByteArray(), Charsets.UTF_8).trimStart() }.getOrDefault("")
+        if (prefix.startsWith("<svg") || (prefix.startsWith("<?xml") && "<svg" in prefix)) return "image/svg+xml"
         return "image/png"
     }
 
@@ -259,20 +273,30 @@ class NvidiaImageClient(private val context: Context) {
         return if (clean.endsWith(model)) clean else "$clean/${model.trimStart('/')}"
     }
 
+    private fun statusEndpoint(baseUrl: String, requestId: String): String {
+        val clean = baseUrl.trim().trimEnd('/')
+        return when {
+            "/v1/genai" in clean -> clean.substringBefore("/v1/genai") + "/v1/status/$requestId"
+            clean.endsWith("/v1") -> "$clean/status/$requestId"
+            else -> "$clean/status/$requestId"
+        }
+    }
+
+    private fun extractRequestId(body: String): String? = runCatching {
+        val root = gson.fromJson(body, JsonObject::class.java)
+        listOf("requestId", "request_id", "id")
+            .asSequence()
+            .mapNotNull { root.get(it)?.takeIf { value -> value.isJsonPrimitive }?.asString }
+            .firstOrNull { it.isNotBlank() }
+    }.getOrNull()
+
     private fun apiError(code: Int, body: String): String {
         val detail = runCatching {
             val root = gson.fromJson(body, JsonObject::class.java)
-            root.get("detail")?.let { detail ->
-                when {
-                    detail.isJsonPrimitive -> detail.asString
-                    else -> detail.toString()
-                }
-            } ?: root.get("message")?.asString
+            root.getAsJsonObject("error")?.get("message")?.takeIf { it.isJsonPrimitive }?.asString
+                ?: root.get("detail")?.let { if (it.isJsonPrimitive) it.asString else it.toString() }
+                ?: root.get("message")?.takeIf { it.isJsonPrimitive }?.asString
         }.getOrNull()?.takeIf { it.isNotBlank() }
         return "NVIDIA NIM: HTTP $code${detail?.let { " · $it" }.orEmpty()}"
-    }
-
-    private companion object {
-        val COMMON_RATIOS = setOf("1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3")
     }
 }
