@@ -8,6 +8,7 @@ data class RagSettings(
 )
 
 data class OpenRouterMediaSettings(
+    val batchModel: String = "",
     val videoModel: String = "",
     val speechModel: String = "",
     val transcriptionModel: String = "",
