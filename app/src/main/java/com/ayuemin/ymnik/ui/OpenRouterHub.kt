@@ -34,6 +34,8 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
@@ -167,7 +169,7 @@ private fun OpenRouterHubDialog(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text("OpenRouter Hub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Umnik 1.6.1 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Umnik 1.6.2 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                         }
@@ -270,10 +272,16 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
             }
         }
-        Text("Цена (макс. вход/выход за 1M токенов)", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+        val priceOptions = remember(category) {
+            when (category) {
+                ModelCategory.TEXT, ModelCategory.IMAGE -> ModelPriceFilter.entries.toList()
+                else -> listOf(ModelPriceFilter.ALL, ModelPriceFilter.FREE)
+            }
+        }
+        Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(ModelPriceFilter.entries) { item ->
-                FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item)) })
+            items(priceOptions) { item ->
+                FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item, category)) })
             }
         }
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -305,12 +313,49 @@ private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit
 
 @Composable
 private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController) {
+    val context = LocalContext.current
+    var menuOpen by remember(model.id) { mutableStateOf(false) }
     ElevatedCard(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(model.id, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                Text(
+                    model.id,
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Box {
+                    IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
+                        Text("⋮", style = MaterialTheme.typography.titleLarge)
+                    }
+                    DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        if (ModelCategory.TEXT in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Выбрать для чата") },
+                                onClick = { menuOpen = false; controller.useAsTextModel(model) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Добавить / убрать из быстрых") },
+                                onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
+                            )
+                        }
+                        if (ModelCategory.IMAGE in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Выбрать для изображений") },
+                                onClick = { menuOpen = false; controller.useAsImageModel(model) }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Копировать ID модели") },
+                            onClick = { menuOpen = false; copyToClipboard(context, model.id) }
+                        )
+                    }
+                }
+            }
             Text(
                 buildString {
                     append(model.categories.joinToString(" · ") { categoryLabel(it) })
@@ -321,9 +366,9 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
+            catalogPriceText(model)?.let { priceText ->
                 Text(
-                    "Цена / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}",
+                    priceText,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -343,13 +388,34 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
     }
 }
 
-private fun priceFilterLabel(value: ModelPriceFilter): String = when (value) {
+private fun priceSectionLabel(category: ModelCategory?): String = when (category) {
+    ModelCategory.IMAGE -> "Цена изображения (≈ для 1K; точная зависит от параметров)"
+    ModelCategory.TEXT -> "Цена текста (макс. вход/выход за 1M токенов)"
+    else -> "Цена"
+}
+
+private fun priceFilterLabel(value: ModelPriceFilter, category: ModelCategory?): String = when (value) {
     ModelPriceFilter.ALL -> "Все"
     ModelPriceFilter.FREE -> "Бесплатно"
-    ModelPriceFilter.UP_TO_0_5 -> "≤ \$0.5"
-    ModelPriceFilter.UP_TO_1 -> "≤ \$1"
-    ModelPriceFilter.UP_TO_5 -> "≤ \$5"
-    ModelPriceFilter.UP_TO_10 -> "≤ \$10"
+    ModelPriceFilter.UP_TO_0_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.02" else "≤ \$0.5/M"
+    ModelPriceFilter.UP_TO_1 -> if (category == ModelCategory.IMAGE) "≤ \$0.05" else "≤ \$1/M"
+    ModelPriceFilter.UP_TO_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.10" else "≤ \$5/M"
+    ModelPriceFilter.UP_TO_10 -> if (category == ModelCategory.IMAGE) "≤ \$0.20" else "≤ \$10/M"
+}
+
+private fun catalogPriceText(model: ModelInfo): String? {
+    if (ModelVariant.FREE in model.variants) return "Цена: бесплатно (:free)"
+    if (ModelCategory.IMAGE in model.categories) {
+        model.estimatedImageOutputUsd1K?.let { estimate ->
+            if (estimate > 0.0) return "Изображение: ≈ ${formatCatalogPrice(estimate)} за 1K · итог зависит от размера/качества"
+        }
+    }
+    if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
+        val bothZero = (model.promptPriceUsdPerMillion ?: 0.0) <= 0.0 && (model.completionPriceUsdPerMillion ?: 0.0) <= 0.0
+        if (ModelCategory.IMAGE in model.categories && bothZero) return "Изображение: цена зависит от image-тарифа OpenRouter"
+        return "Цена / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}"
+    }
+    return null
 }
 
 private fun formatCatalogPrice(value: Double?): String = when {

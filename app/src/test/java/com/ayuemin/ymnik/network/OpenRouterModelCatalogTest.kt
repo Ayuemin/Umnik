@@ -40,6 +40,25 @@ class OpenRouterModelCatalogTest {
     }
 
     @Test
+    fun parsesImageOutputPricingSeparatelyFromTextPricing() {
+        val image = OpenRouterModelCatalog.parse(
+            JsonParser.parseString(
+                """
+                {
+                  "id": "sourceful/riverflow-v2.5-pro",
+                  "architecture": {"input_modalities":["text","image"],"output_modalities":["image"]},
+                  "pricing": {"prompt":"0","completion":"0","image_output":"0.0000311377245508982"}
+                }
+                """.trimIndent()
+            )
+        )!!
+        assertEquals(0.0, image.promptPriceUsdPerMillion!!, 0.000001)
+        assertEquals(0.0000311377245508982, image.imageOutputPriceUsd!!, 0.000000000001)
+        assertTrue(image.estimatedImageOutputUsd1K!! > 0.12)
+        assertTrue(!image.isFreeFor(ModelCategory.IMAGE))
+    }
+
+    @Test
     fun parsesSpecializedOutputCategories() {
         val embeddings = OpenRouterModelCatalog.parse(
             JsonParser.parseString(

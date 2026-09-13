@@ -22,9 +22,21 @@ class ModelCatalogFilterTest {
             variants = setOf(ModelVariant.BATCH)
         ),
         ModelInfo(
-            id = "vendor/image",
+            id = "vendor/image-paid",
             inputModalities = setOf("text"),
-            outputModalities = setOf("image")
+            outputModalities = setOf("image"),
+            promptPriceUsdPerMillion = 0.0,
+            completionPriceUsdPerMillion = 0.0,
+            imageOutputPriceUsd = 0.0000311377245508982
+        ),
+        ModelInfo(
+            id = "vendor/image:free",
+            inputModalities = setOf("text"),
+            outputModalities = setOf("image"),
+            promptPriceUsdPerMillion = 0.0,
+            completionPriceUsdPerMillion = 0.0,
+            imageOutputPriceUsd = 0.0,
+            variants = setOf(ModelVariant.FREE)
         ),
         ModelInfo(
             id = "vendor/embed",
@@ -35,7 +47,7 @@ class ModelCatalogFilterTest {
 
     @Test
     fun allMeansNoCategoryOrVariantFilter() {
-        assertEquals(4, ModelCatalogFilter.apply(models).size)
+        assertEquals(5, ModelCatalogFilter.apply(models).size)
     }
 
     @Test
@@ -67,6 +79,34 @@ class ModelCatalogFilterTest {
         assertEquals(
             listOf("vendor/chat", "vendor/chat:batch"),
             ModelCatalogFilter.apply(models, price = ModelPriceFilter.UP_TO_1).map { it.id }
+        )
+    }
+
+    @Test
+    fun imageFreeFilterUsesImageOutputPriceNotZeroTextPrice() {
+        assertEquals(
+            listOf("vendor/image:free"),
+            ModelCatalogFilter.apply(
+                models,
+                category = ModelCategory.IMAGE,
+                price = ModelPriceFilter.FREE
+            ).map { it.id }
+        )
+        assertEquals(
+            listOf("vendor/image:free"),
+            ModelCatalogFilter.apply(
+                models,
+                category = ModelCategory.IMAGE,
+                price = ModelPriceFilter.UP_TO_0_5
+            ).map { it.id }
+        )
+        assertEquals(
+            listOf("vendor/image:free", "vendor/image-paid"),
+            ModelCatalogFilter.apply(
+                models,
+                category = ModelCategory.IMAGE,
+                price = ModelPriceFilter.UP_TO_10
+            ).map { it.id }
         )
     }
 

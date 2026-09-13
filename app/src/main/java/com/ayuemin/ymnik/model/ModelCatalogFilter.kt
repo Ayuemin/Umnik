@@ -22,7 +22,7 @@ object ModelCatalogFilter {
         limit: Int = Int.MAX_VALUE
     ): List<ModelInfo> {
         val needle = query.trim()
-        return models.asSequence()
+        val filtered = models.asSequence()
             .filter { model -> needle.isBlank() || model.id.contains(needle, ignoreCase = true) }
             .filter { model -> category == null || category in model.categories }
             .filter { model ->
@@ -33,17 +33,29 @@ object ModelCatalogFilter {
                 }
             }
             .filter { model ->
-                if (price == ModelPriceFilter.ALL) return@filter true
-                val value = model.maxTextPriceUsdPerMillion ?: return@filter false
-                if (price.freeOnly) value <= 0.0
-                else price.ceilingUsdPerMillion?.let { value <= it } ?: true
+                when {
+                    price == ModelPriceFilter.ALL -> true
+                    price.freeOnly -> model.isFreeFor(category)
+                    else -> {
+                        val value = model.catalogPriceFor(category) ?: return@filter false
+                        val ceiling = when (category) {
+                            ModelCategory.IMAGE -> price.imageCeilingUsd1K
+                            else -> price.textCeilingUsdPerMillion
+                        }
+                        ceiling?.let { value <= it } ?: true
+                    }
+                }
             }
             .filter { model -> !capabilities.imageInput || model.accepts("image") }
             .filter { model -> !capabilities.audioInput || model.accepts("audio") }
             .filter { model -> !capabilities.videoInput || model.accepts("video") }
             .filter { model -> !capabilities.reasoning || model.supportsReasoning }
             .filter { model -> !capabilities.tools || model.supportsTools }
-            .take(limit.coerceAtLeast(0))
             .toList()
+
+        val sorted = if (price == ModelPriceFilter.ALL) filtered else filtered.sortedWith(
+            compareBy<ModelInfo>({ !it.isFreeFor(category) }, { it.catalogPriceFor(category) ?: Double.MAX_VALUE }, { it.id })
+        )
+        return sorted.take(limit.coerceAtLeast(0))
     }
 }
