@@ -1,0 +1,27 @@
+name: Release v1.5.2 once
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/release-v1.5.2-once.yml"
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create v1.5.2 tag and start signed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_SHA: b35d2c592ef6f178194a9edad6b473b2863e8e51
+        run: |
+          set -euo pipefail
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref='refs/tags/v1.5.2' \
+            -f sha="$TARGET_SHA"
+          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=v1.5.2
