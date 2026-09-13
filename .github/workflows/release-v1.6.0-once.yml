@@ -1,0 +1,22 @@
+name: Release v1.6.0 once
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/release-v1.6.0-once.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Create release tag
+        run: |
+          set -euo pipefail
+          git tag v1.6.0 95c172583338858dbe8e3536a2fc64f196131e32
+          git push origin v1.6.0
