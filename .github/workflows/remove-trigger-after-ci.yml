@@ -1,0 +1,25 @@
+name: Remove sidebar validation trigger
+
+on:
+  push:
+    branches:
+      - feat/sidebar-navigation-v1.5.0
+    paths:
+      - ".github/workflows/remove-trigger-after-ci.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/sidebar-navigation-v1.5.0
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/trigger-sidebar-ci-once.yml .github/workflows/remove-trigger-after-ci.yml
+          git commit -m "ci: remove sidebar validation triggers"
+          git push origin HEAD:feat/sidebar-navigation-v1.5.0
