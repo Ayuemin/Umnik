@@ -100,6 +100,9 @@ jobs:
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" >/dev/null
 
+      - name: Run unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest --stacktrace
+
       - name: Build signed release APK
         env:
           UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-release.jks

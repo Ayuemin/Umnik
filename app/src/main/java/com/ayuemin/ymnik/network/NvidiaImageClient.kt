@@ -2,7 +2,6 @@ package com.ayuemin.ymnik.network
 
 import android.content.Context
 import android.util.Base64
-import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -42,7 +41,6 @@ class NvidiaImageClient(private val context: Context) {
     fun cancelActiveRequest() {
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
-        RequestKeepAliveService.stop(context)
     }
 
     suspend fun generateImage(
@@ -52,7 +50,6 @@ class NvidiaImageClient(private val context: Context) {
         prompt: String,
         aspectRatio: String? = null
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
-        runCatching { RequestKeepAliveService.start(context, "NVIDIA · ${model.substringAfterLast('/')}") }
         val url = modelEndpoint(baseUrl, model)
         val primaryPayload = payload(model, prompt, aspectRatio)
         val minimalPayload = minimalPayload(model, prompt)
@@ -76,7 +73,6 @@ class NvidiaImageClient(private val context: Context) {
             OpenRouterClient.Result("Изображение создано.", files)
         } finally {
             synchronized(activeCallLock) { activeCall = null }
-            RequestKeepAliveService.stop(context)
         }
     }
 
@@ -229,16 +225,22 @@ class NvidiaImageClient(private val context: Context) {
 
     private fun saveEncodedImage(raw: String, mimeHint: String?, index: Int): GeneratedFile {
         val cleaned = raw.substringAfter("base64,", raw).trim()
+        DownloadSafety.checkEncodedLength(cleaned)
         return saveImageBytes(Base64.decode(cleaned, Base64.DEFAULT), mimeHint, index)
     }
 
     private fun downloadImage(url: String, index: Int): GeneratedFile {
+        require(URL(url).protocol.equals("https", ignoreCase = true)) { "Изображение должно загружаться по HTTPS" }
         val connection = URL(url).openConnection().apply {
             connectTimeout = 30_000
             readTimeout = 300_000
         }
         val mime = connection.contentType
-        val bytes = connection.getInputStream().use { it.readBytes() }
+        require(connection.url.protocol.equals("https", ignoreCase = true)) { "Небезопасное перенаправление при загрузке изображения" }
+        require(connection.contentLengthLong <= DownloadSafety.MAX_IMAGE_BYTES || connection.contentLengthLong < 0) {
+            "Изображение превышает 16 МБ"
+        }
+        val bytes = connection.getInputStream().use(DownloadSafety::readImage)
         return saveImageBytes(bytes, mime, index)
     }
 

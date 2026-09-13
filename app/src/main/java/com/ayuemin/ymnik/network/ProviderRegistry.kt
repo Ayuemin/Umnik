@@ -9,6 +9,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.net.URI
 import java.util.concurrent.TimeUnit
 
 class ProviderRegistry(context: Context) {
@@ -27,7 +28,7 @@ class ProviderRegistry(context: Context) {
     )
 
     data class RegistryDocument(
-        val version: Int = 5,
+        val version: Int = 6,
         val providers: Map<String, ProviderDefinition> = emptyMap()
     )
 
@@ -44,8 +45,8 @@ class ProviderRegistry(context: Context) {
 
     fun textBaseUrl(type: ProviderType): String? = provider(type)?.textBaseUrl?.trim()?.takeIf { it.isNotBlank() }
 
-    // Kept for future provider metadata. NVIDIA text models are discovered live from
-    // /v1/models and are no longer restricted by a hard-coded allowlist.
+    // This remotely refreshable list is intersected with /models: a listed ID alone
+    // does not guarantee access to a hosted Chat API endpoint for this account.
     fun textModels(type: ProviderType): List<ModelInfo> = provider(type)?.textModels.orEmpty()
         .map(String::trim)
         .filter(String::isNotBlank)
@@ -74,7 +75,8 @@ class ProviderRegistry(context: Context) {
         val now = System.currentTimeMillis()
         val last = prefs.getLong(KEY_LAST_CHECK, 0L)
         if (!force && now - last < REFRESH_INTERVAL_MS) return@withContext false
-        prefs.edit().putLong(KEY_LAST_CHECK, now).apply()
+        val lastFailure = prefs.getLong(KEY_LAST_FAILURE, 0L)
+        if (!force && now - lastFailure < FAILURE_RETRY_MS) return@withContext false
 
         val request = Request.Builder()
             .url(REMOTE_URL)
@@ -88,13 +90,19 @@ class ProviderRegistry(context: Context) {
                 if (!response.isSuccessful) error("HTTP ${response.code}")
                 response.body?.string().orEmpty()
             }
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return@withContext false
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: run {
+            prefs.edit().putLong(KEY_LAST_FAILURE, now).apply()
+            return@withContext false
+        }
 
-        val parsed = parseAndValidate(raw) ?: return@withContext false
+        val parsed = parseAndValidate(raw) ?: run {
+            prefs.edit().putLong(KEY_LAST_FAILURE, now).apply()
+            return@withContext false
+        }
         val previous = gson.toJson(current)
         val next = gson.toJson(parsed)
         current = parsed
-        prefs.edit().putString(KEY_JSON, raw).apply()
+        prefs.edit().putString(KEY_JSON, raw).putLong(KEY_LAST_CHECK, now).remove(KEY_LAST_FAILURE).apply()
         previous != next
     }
 
@@ -113,15 +121,24 @@ class ProviderRegistry(context: Context) {
         val openRouter = doc.providers["openrouter"]
         val nvidia = doc.providers["nvidia"]
         doc.version >= MIN_REGISTRY_VERSION &&
-            openRouter?.textBaseUrl?.startsWith("https://") == true &&
-            openRouter.imageBaseUrl.startsWith("https://") &&
-            nvidia?.textBaseUrl?.startsWith("https://") == true &&
-            nvidia.imageBaseUrl.startsWith("https://") &&
+            allowedEndpoint(openRouter?.textBaseUrl, "openrouter.ai") &&
+            allowedEndpoint(openRouter?.imageBaseUrl, "openrouter.ai") &&
+            allowedEndpoint(nvidia?.textBaseUrl, "integrate.api.nvidia.com") &&
+            allowedEndpoint(nvidia?.imageBaseUrl, "ai.api.nvidia.com") &&
+            nvidia?.textModels?.isNotEmpty() == true &&
             nvidia.imageModels.any { it.id.isNotBlank() }
     }
 
+    private fun allowedEndpoint(raw: String?, hostname: String): Boolean = runCatching {
+        if (raw.isNullOrBlank()) false else {
+            val uri = URI(raw)
+            uri.scheme.equals("https", ignoreCase = true) && uri.host.equals(hostname, ignoreCase = true) &&
+                uri.userInfo == null && uri.port == -1 && uri.query == null && uri.fragment == null
+        }
+    }.getOrDefault(false)
+
     private fun fallback(): RegistryDocument = RegistryDocument(
-        version = 5,
+        version = 6,
         providers = mapOf(
             "openrouter" to ProviderDefinition(
                 textBaseUrl = DEFAULT_OPENROUTER_BASE_URL,
@@ -130,7 +147,7 @@ class ProviderRegistry(context: Context) {
             ),
             "nvidia" to ProviderDefinition(
                 textBaseUrl = DEFAULT_NVIDIA_TEXT_BASE_URL,
-                textModels = emptyList(),
+                textModels = VERIFIED_NVIDIA_TEXT_MODELS,
                 imageBaseUrl = DEFAULT_NVIDIA_IMAGE_BASE_URL,
                 imageProtocol = "NVIDIA_NIM",
                 imageModels = listOf(
@@ -157,10 +174,23 @@ class ProviderRegistry(context: Context) {
         const val DEFAULT_NVIDIA_IMAGE_BASE_URL = "https://ai.api.nvidia.com/v1/genai"
         const val REMOTE_URL = "https://raw.githubusercontent.com/Ayuemin/Umnik/main/docs/provider-registry.json"
 
-        private const val MIN_REGISTRY_VERSION = 5
+        private const val MIN_REGISTRY_VERSION = 6
         private const val KEY_JSON = "registry_json"
         private const val KEY_LAST_CHECK = "registry_last_check"
+        private const val KEY_LAST_FAILURE = "registry_last_failure"
         private const val REFRESH_INTERVAL_MS = 24L * 60L * 60L * 1000L
+        private const val FAILURE_RETRY_MS = 60L * 60L * 1000L
         private val COMMON_RATIOS = listOf("1:1", "16:9", "9:16", "5:4", "4:5", "3:2", "2:3")
+        private val VERIFIED_NVIDIA_TEXT_MODELS = listOf(
+            "z-ai/glm-5.3-flash", "z-ai/glm-5.2", "openai/gpt-oss-20b", "openai/gpt-oss-120b",
+            "deepseek-ai/deepseek-v4-pro-0813", "deepseek-ai/deepseek-v4-pro",
+            "deepseek-ai/deepseek-v4-flash-0731", "mistralai/mistral-large-3-675b-instruct-2512",
+            "mistralai/mistral-small-4-119b-2603", "meta/llama-3.1-8b-instruct",
+            "meta/llama-3.1-70b-instruct", "meta/llama-3.3-70b-instruct",
+            "nvidia/llama-3.3-nemotron-super-49b-v1.5", "qwen/qwen3-next-80b-a3b-instruct",
+            "qwen/qwen3-next-80b-a3b-thinking", "qwen/qwen3-32b", "qwen/qwen2.5-coder-32b-instruct",
+            "moonshotai/kimi-k3", "moonshotai/kimi-k2.6", "sarvamai/sarvam-m",
+            "stockmark/stockmark-2-100b-instruct"
+        )
     }
 }

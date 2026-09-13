@@ -41,7 +41,8 @@ data class ConnectionProfile(
     val imageBaseUrl: String? = null,
     val imageProtocol: ImageApiProtocol? = null,
     val useSameImageApiKey: Boolean? = null,
-    val useProviderDefaults: Boolean? = null
+    val useProviderDefaults: Boolean? = null,
+    val contextLimitTokens: Int? = null
 )
 
 data class UserProfile(
@@ -59,7 +60,11 @@ data class ModelInfo(
     val inputModalities: Set<String> = setOf("text"),
     val supportedParameters: Set<String> = emptySet(),
     val reasoningEfforts: Set<String> = emptySet(),
-    val parameterOptions: Map<String, List<String>> = emptyMap()
+    val parameterOptions: Map<String, List<String>> = emptyMap(),
+    val contextLength: Int? = null,
+    val maxCompletionTokens: Int? = null,
+    val reasoningMandatory: Boolean = false,
+    val reasoningDefaultEnabled: Boolean = false
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
     fun parameterValues(parameter: String): List<String> = parameterOptions[parameter.lowercase()].orEmpty()
@@ -156,7 +161,9 @@ data class ChatMessage(
     val attachmentNames: List<String> = emptyList(),
     val generatedFiles: List<GeneratedFile> = emptyList(),
     val imageGeneration: Boolean = false,
-    val timestamp: Long = System.currentTimeMillis()
+    val timestamp: Long = System.currentTimeMillis(),
+    // Null means an existing/completed message; older stored chats need no migration.
+    val deliveryState: String? = null
 )
 
 data class ChatSession(

@@ -13,13 +13,16 @@ class SkillRepository(private val context: Context) {
     private val gson = Gson()
     private val root = File(context.filesDir, "skills").apply { mkdirs() }
     private val metadata = File(root, "skills.json")
+    private val atomic = AtomicJsonFile(metadata)
+    private val type = object : TypeToken<List<Skill>>() {}.type
+    var loadError: String? = null
+        private set
     private val allowed = setOf("md", "txt", "json", "yaml", "yml")
 
     fun list(): List<Skill> = runCatching {
-        if (!metadata.exists()) return emptyList()
-        val type = object : TypeToken<List<Skill>>() {}.type
-        gson.fromJson<List<Skill>>(metadata.readText(), type) ?: emptyList()
-    }.getOrDefault(emptyList())
+        atomic.read(::validJson)?.let { gson.fromJson<List<Skill>>(it, type) } ?: emptyList()
+    }.onFailure { loadError = "Данные навыков повреждены и защищены от перезаписи." }
+        .getOrDefault(emptyList())
 
     fun importFile(uri: Uri): Skill {
         val doc = DocumentFile.fromSingleUri(context, uri) ?: error("Не удалось открыть файл")
@@ -93,8 +96,13 @@ class SkillRepository(private val context: Context) {
     }
 
     private fun save(skills: List<Skill>) {
-        metadata.writeText(gson.toJson(skills))
+        check(loadError == null) { loadError ?: "Хранилище навыков недоступно" }
+        atomic.write(gson.toJson(skills), ::validJson)
     }
+
+    private fun validJson(json: String): Boolean = runCatching {
+        gson.fromJson<List<Skill>>(json, type) != null
+    }.getOrDefault(false)
 
     private fun safeName(value: String): String = value.replace(Regex("[^A-Za-zА-Яа-я0-9._ -]"), "_")
 }
