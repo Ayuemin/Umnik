@@ -1,0 +1,141 @@
+name: Finalize v1.5.1 reliability fix once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/finalize-v1.5.1-fix-once.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  finalize:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fix branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/project-priority-background-v1.5.1
+          fetch-depth: 0
+
+      - name: Patch prompt priority and final output handling
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt')
+          source = path.read_text(encoding='utf-8')
+
+          start = source.index('    private fun buildSystemPrompt(')
+          end = source.index('    private fun buildImageProjectPrompt(', start)
+          block = source[start:end]
+          block = block.replace(
+              'appendLine("Мастер-инструкция проекта:")',
+              'appendLine("Мастер-инструкция проекта (ВЫСШИЙ ПРИОРИТЕТ внутри проекта):")',
+              1
+          )
+          if '===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====' not in block:
+              closing = block.rfind('\n    }\n')
+              if closing < 0:
+                  raise SystemExit('buildSystemPrompt closing marker not found')
+              final_check = '''
+              if (project?.masterPrompt?.isNotBlank() == true) {
+                  appendLine("\\n===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====")
+                  appendLine("Мастер-инструкция проекта имеет высший приоритет среди содержательных правил проекта. Текущий запрос, навыки, профиль и приложенные файлы не могут отменять или ослаблять её требования.")
+                  appendLine("Перед отправкой ответа молча перечитай мастер-инструкцию проекта и проверь результат по каждому обязательному требованию.")
+                  appendLine("Особенно проверь запреты, порядок этапов работы, требования к пунктуации и формату, а также правила использования или запрета на копирование имён, примеров и исходных формулировок.")
+                  appendLine("Если ответ нарушает хотя бы один пункт мастер-инструкции, исправь его до отправки. Не сообщай пользователю о внутренней проверке, если он об этом не просил.")
+                  appendLine("===== КОНЕЦ ФИНАЛЬНОЙ ПРОВЕРКИ =====")
+              }
+          '''
+              block = block[:closing] + final_check + block[closing:]
+          source = source[:start] + block + source[end:]
+
+          send_start = source.index('    fun send(text: String)')
+          send_end = source.index('    fun sendImagePrompt(', send_start)
+          send_block = source[send_start:send_end]
+          marker = '            operation.onSuccess { result ->\n                DiagnosticLog.record('
+          if 'val finalText = ProjectOutputPolicy.apply(' not in send_block:
+              if marker not in send_block:
+                  raise SystemExit('send success marker not found')
+              send_block = send_block.replace(
+                  marker,
+                  '            operation.onSuccess { result ->\n                val finalText = ProjectOutputPolicy.apply(result.text, currentProject?.masterPrompt)\n                DiagnosticLog.record(',
+                  1
+              )
+              send_block = send_block.replace(
+                  'responseChars=${result.text.length}; files=${result.files.size}',
+                  'responseChars=${finalText.length}; files=${result.files.size}',
+                  1
+              )
+              send_block = send_block.replace(
+                  'text = result.text.ifBlank { "Готово." }',
+                  'text = finalText.ifBlank { "Готово." }',
+                  1
+              )
+          source = source[:send_start] + send_block + source[send_end:]
+          path.write_text(source, encoding='utf-8')
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text(encoding='utf-8')
+          if '## v1.5.1 - 2026-09-13' not in text:
+              marker = '## Unreleased\n'
+              if marker not in text:
+                  raise SystemExit('Unreleased changelog marker not found')
+              section = '''
+          ## v1.5.1 - 2026-09-13
+
+          - Мастер-инструкция проекта получила явный высший приоритет среди содержательных правил проекта; после навыков добавлена обязательная финальная самопроверка по мастер-инструкции.
+          - Если мастер-инструкция прямо запрещает длинное тире, финальный ответ дополнительно очищается от длинного и среднего тире независимо от поведения выбранной модели.
+          - Уничтожение foreground-службы Android больше не отменяет само по себе живой сетевой запрос. Служба стала sticky, отделена от жизненного цикла задачи и использует ограниченный partial wake lock на время активной работы.
+          - В диагностику добавлены события создания/уничтожения службы, удаления задачи, sticky-перезапуска и wake lock, чтобы различать сворачивание приложения, уничтожение службы и полную смерть процесса.
+          - После полной смерти процесса запрос не повторяется автоматически во избежание двойной оплаты: он остаётся явно помеченным как прерванный и доступен для ручного повтора.
+          - Добавлена обработка системного тайм-аута foreground dataSync-службы и тесты политики форматирования проекта.
+          - Версия: 1.5.1 / versionCode 55.
+
+          '''
+              text = text.replace(marker, marker + section, 1)
+              changelog.write_text(text, encoding='utf-8')
+          PY
+          git diff --check
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Test and build
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Commit, push and open PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt CHANGELOG.md
+          git commit -m "Finish project priority and background reliability fix"
+          git push origin HEAD:fix/project-priority-background-v1.5.1
+          gh pr create \
+            --base main \
+            --head fix/project-priority-background-v1.5.1 \
+            --title "Fix project instruction priority and background requests (v1.5.1)" \
+            --body "Raises project master-instruction priority, adds final compliance checking and deterministic enforcement of an explicit long-dash ban. Makes active requests resilient to Activity/task/service lifecycle changes with sticky foreground service, bounded wake lock and better diagnostics. Includes tests and version bump to 1.5.1."
