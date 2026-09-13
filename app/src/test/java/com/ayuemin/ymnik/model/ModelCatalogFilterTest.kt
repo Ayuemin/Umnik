@@ -74,11 +74,19 @@ class ModelCatalogFilterTest {
     fun filtersByMaximumTokenPrice() {
         assertEquals(
             listOf("vendor/chat:batch"),
-            ModelCatalogFilter.apply(models, price = ModelPriceFilter.FREE).map { it.id }
+            ModelCatalogFilter.apply(
+                models,
+                category = ModelCategory.TEXT,
+                price = ModelPriceFilter.FREE
+            ).map { it.id }
         )
         assertEquals(
-            listOf("vendor/chat", "vendor/chat:batch"),
-            ModelCatalogFilter.apply(models, price = ModelPriceFilter.UP_TO_1).map { it.id }
+            listOf("vendor/chat:batch", "vendor/chat"),
+            ModelCatalogFilter.apply(
+                models,
+                category = ModelCategory.TEXT,
+                price = ModelPriceFilter.UP_TO_1
+            ).map { it.id }
         )
     }
 
