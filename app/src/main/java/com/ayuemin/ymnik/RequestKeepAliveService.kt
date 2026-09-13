@@ -9,10 +9,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import androidx.core.content.ContextCompat
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 
 class RequestKeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
+        DiagnosticLog.record(applicationContext, "SERVICE", "RequestKeepAliveService created")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(
@@ -29,10 +31,25 @@ class RequestKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL) {
+            DiagnosticLog.record(applicationContext, "SERVICE", "Active request cancelled from notification")
             RequestExecutionManager.fail("Запрос остановлен пользователем")
             RequestExecutionManager.cancel()
             return START_NOT_STICKY
         }
+
+        // START_STICKY may recreate the Service with a null Intent after process death.
+        // The old coroutine/socket does not survive process death, so do not leave an
+        // orphan foreground notification or silently replay a potentially paid request.
+        if (intent == null && !RequestExecutionManager.hasActiveRequest()) {
+            DiagnosticLog.record(
+                applicationContext,
+                "SERVICE",
+                "Sticky service recreated after process death without in-process request; stopping orphan service"
+            )
+            stopSelf(startId)
+            return START_NOT_STICKY
+        }
+
         val label = intent?.getStringExtra(EXTRA_LABEL).orEmpty().ifBlank { "Модель отвечает…" }
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         val openChat = PendingIntent.getActivity(
@@ -62,13 +79,43 @@ class RequestKeepAliveService : Service() {
                 .build()
         }
         startForeground(NOTIFICATION_ID, notification)
-        return START_NOT_STICKY
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "Foreground request service active; startId=$startId; active=${RequestExecutionManager.hasActiveRequest()}"
+        )
+        return START_STICKY
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "App task removed; active=${RequestExecutionManager.hasActiveRequest()}"
+        )
+        super.onTaskRemoved(rootIntent)
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "Foreground service timeout; startId=$startId; type=$fgsType"
+        )
+        RequestExecutionManager.fail("Android остановил слишком долгую фоновую работу. Повторите запрос вручную.")
+        RequestExecutionManager.cancel()
+        stopSelf(startId)
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        RequestExecutionManager.serviceStoppedUnexpectedly()
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "RequestKeepAliveService destroyed; active=${RequestExecutionManager.hasActiveRequest()}"
+        )
+        RequestExecutionManager.serviceStoppedUnexpectedly(applicationContext)
         super.onDestroy()
     }
 
