@@ -167,6 +167,13 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(status = "${model.id} выбрана для обычного чата")
     }
 
+    fun toggleQuickTextModel(model: ModelInfo) {
+        if (ModelCategory.TEXT !in model.categories) return
+        val profile = openRouterProfile() ?: return
+        viewModel.toggleQuickTextModelForConnection(profile.id, model.id)
+        mutableState.value = mutableState.value.copy(status = "Список быстрых моделей обновлён")
+    }
+
     fun useAsImageModel(model: ModelInfo) {
         if (ModelCategory.IMAGE !in model.categories) {
             mutableState.value = mutableState.value.copy(status = "Эта модель не генерирует изображения")

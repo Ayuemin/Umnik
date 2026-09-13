@@ -127,6 +127,9 @@ internal object OpenRouterModelCatalog {
         val pricing = item.getAsJsonObject("pricing")
         val promptPriceUsdPerMillion = pricePerMillion(pricing?.get("prompt"))
         val completionPriceUsdPerMillion = pricePerMillion(pricing?.get("completion"))
+        val imagePriceUsd = priceUsd(pricing?.get("image"))
+        val imageTokenPriceUsd = priceUsd(pricing?.get("image_token"))
+        val imageOutputPriceUsd = priceUsd(pricing?.get("image_output"))
         val variants = variants(id)
 
         return ModelInfo(
@@ -142,6 +145,9 @@ internal object OpenRouterModelCatalog {
             reasoningDefaultEnabled = boolOrFalse(reasoningInfo?.get("default_enabled")),
             promptPriceUsdPerMillion = promptPriceUsdPerMillion,
             completionPriceUsdPerMillion = completionPriceUsdPerMillion,
+            imagePriceUsd = imagePriceUsd,
+            imageTokenPriceUsd = imageTokenPriceUsd,
+            imageOutputPriceUsd = imageOutputPriceUsd,
             variants = variants
         )
     }
@@ -162,6 +168,9 @@ internal object OpenRouterModelCatalog {
             reasoningDefaultEnabled = first.reasoningDefaultEnabled || second.reasoningDefaultEnabled,
             promptPriceUsdPerMillion = first.promptPriceUsdPerMillion ?: second.promptPriceUsdPerMillion,
             completionPriceUsdPerMillion = first.completionPriceUsdPerMillion ?: second.completionPriceUsdPerMillion,
+            imagePriceUsd = first.imagePriceUsd ?: second.imagePriceUsd,
+            imageTokenPriceUsd = first.imageTokenPriceUsd ?: second.imageTokenPriceUsd,
+            imageOutputPriceUsd = first.imageOutputPriceUsd ?: second.imageOutputPriceUsd,
             variants = first.variants + second.variants
         )
     }
@@ -229,9 +238,12 @@ internal object OpenRouterModelCatalog {
         ?.toMap()
         .orEmpty()
 
-    private fun pricePerMillion(element: JsonElement?): Double? = runCatching {
+    private fun priceUsd(element: JsonElement?): Double? = runCatching {
         element?.takeUnless { it.isJsonNull }?.asDouble
-    }.getOrNull()?.takeIf { it >= 0.0 }?.times(1_000_000.0)
+    }.getOrNull()?.takeIf { it >= 0.0 }
+
+    private fun pricePerMillion(element: JsonElement?): Double? =
+        priceUsd(element)?.times(1_000_000.0)
 
     private fun intOrNull(element: JsonElement?): Int? = runCatching {
         element?.takeUnless { it.isJsonNull }?.asInt

@@ -45,13 +45,17 @@ enum class ModelVariant {
     FLOOR
 }
 
-enum class ModelPriceFilter(val ceilingUsdPerMillion: Double?, val freeOnly: Boolean = false) {
-    ALL(null),
-    FREE(0.0, true),
-    UP_TO_0_5(0.5),
-    UP_TO_1(1.0),
-    UP_TO_5(5.0),
-    UP_TO_10(10.0)
+enum class ModelPriceFilter(
+    val textCeilingUsdPerMillion: Double?,
+    val imageCeilingUsd1K: Double?,
+    val freeOnly: Boolean = false
+) {
+    ALL(null, null),
+    FREE(0.0, 0.0, true),
+    UP_TO_0_5(0.5, 0.02),
+    UP_TO_1(1.0, 0.05),
+    UP_TO_5(5.0, 0.10),
+    UP_TO_10(10.0, 0.20)
 }
 
 enum class BatchJobStatus {
@@ -155,6 +159,9 @@ data class ModelInfo(
     val reasoningDefaultEnabled: Boolean = false,
     val promptPriceUsdPerMillion: Double? = null,
     val completionPriceUsdPerMillion: Double? = null,
+    val imagePriceUsd: Double? = null,
+    val imageTokenPriceUsd: Double? = null,
+    val imageOutputPriceUsd: Double? = null,
     val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
@@ -173,6 +180,50 @@ data class ModelInfo(
         get() = if (isBatch) id.removeSuffix(":batch") else id
     val maxTextPriceUsdPerMillion: Double?
         get() = listOfNotNull(promptPriceUsdPerMillion, completionPriceUsdPerMillion).maxOrNull()
+
+    /**
+     * Approximate price of a 1K generated image from OpenRouter's image-output token rate.
+     * OpenRouter image models can bill by image, megapixel or image tokens; 4096 image tokens
+     * is the useful 1K baseline exposed by the general catalog. The actual request usage cost
+     * remains authoritative and can vary with resolution, quality and provider.
+     */
+    val estimatedImageOutputUsd1K: Double?
+        get() = (imageOutputPriceUsd ?: imageTokenPriceUsd)
+            ?.takeIf { it >= 0.0 }
+            ?.times(4096.0)
+
+    fun isFreeFor(category: ModelCategory?): Boolean {
+        if (ModelVariant.FREE in variants) return true
+        fun allKnownZero(values: List<Double?>): Boolean {
+            val known = values.filterNotNull()
+            return known.isNotEmpty() && known.all { it <= 0.0 }
+        }
+        return when (category) {
+            ModelCategory.TEXT -> allKnownZero(listOf(promptPriceUsdPerMillion, completionPriceUsdPerMillion))
+            ModelCategory.IMAGE -> allKnownZero(
+                listOf(
+                    promptPriceUsdPerMillion,
+                    completionPriceUsdPerMillion,
+                    imagePriceUsd,
+                    imageTokenPriceUsd,
+                    imageOutputPriceUsd
+                )
+            )
+            null -> categories.isNotEmpty() && categories.all { output -> isFreeFor(output) }
+            else -> false
+        }
+    }
+
+    fun catalogPriceFor(category: ModelCategory?): Double? = when (category) {
+        ModelCategory.IMAGE -> estimatedImageOutputUsd1K
+        ModelCategory.TEXT -> maxTextPriceUsdPerMillion
+        null -> when {
+            categories == setOf(ModelCategory.IMAGE) -> estimatedImageOutputUsd1K
+            categories == setOf(ModelCategory.TEXT) -> maxTextPriceUsdPerMillion
+            else -> null
+        }
+        else -> null
+    }
 
     val categories: Set<ModelCategory>
         get() {
