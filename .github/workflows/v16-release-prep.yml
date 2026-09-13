@@ -1,0 +1,135 @@
+name: Prepare Umnik 1.6.0 release
+
+on:
+  push:
+    branches:
+      - "feature/openrouter-full-v1.6.0"
+
+permissions:
+  contents: write
+
+jobs:
+  prep:
+    if: ${{ !contains(github.event.head_commit.message, '[v16-release-prep]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/openrouter-full-v1.6.0
+          fetch-depth: 0
+
+      - name: Bump version and write release notes
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          gradle = Path('app/build.gradle.kts')
+          text = gradle.read_text()
+          text = text.replace('// Umnik v1.5.2', '// Umnik v1.6.0', 1)
+          text = text.replace('versionCode = 56', 'versionCode = 60', 1)
+          text = text.replace('versionName = "1.5.2"', 'versionName = "1.6.0"', 1)
+          gradle.write_text(text)
+
+          changelog = Path('CHANGELOG.md')
+          text = changelog.read_text()
+          marker = '## Unreleased\n'
+          if marker not in text:
+              raise SystemExit('Unreleased section not found')
+          section = r'''
+
+## v1.6.0 - 2026-09-13
+
+- Добавлен OpenRouter Hub с полным каталогом моделей. Разделы «Все», «Текст», «Изображения», «Видео», «Speech», «Transcription», «Embeddings», «Rerank» и «Audio» строятся по метаданным OpenRouter, а не по жёсткому списку Umnik.
+- Каталог разделяет тип модели и её вариант. Поддерживаются Batch, Free, Thinking, Extended, Online, Nitro и Floor, а также фильтры Vision, Audio, Video, Reasoning и Tools.
+- Реализован настоящий OpenRouter Batch API. Batch-модель из обычного чата автоматически отправляется через `/api/beta/batches`; пакетные задания также можно создавать отдельно. `batch_id` сохраняется локально до опроса результата, поэтому Umnik не повторяет платный POST после сбоя или перезапуска.
+- В меню «+» появилась «Batch». Кнопка активна только когда текущая модель является `:batch`; для обычной модели она видна, но недоступна.
+- Batch и генерация видео выполняются как восстанавливаемые серверные задания. WorkManager продолжает проверять уже созданный job после закрытия или уничтожения процесса Android, а готовый результат возвращается в исходный чат.
+- Добавлены Embeddings и Rerank API. В OpenRouter Hub можно включить RAG для текстовых файлов проекта и чата: Umnik разбивает материал на фрагменты, находит релевантные embeddings и при выбранной rerank-модели уточняет выдачу перед отправкой основной модели. RAG выключен по умолчанию; PDF и нетекстовые форматы по-прежнему передаются штатным способом.
+- Добавлены асинхронная генерация видео, прикрепление референсов, список видео-заданий и автоматическое скачивание готового MP4 в хранилище Umnik.
+- Добавлены OpenRouter Speech-to-Text и Text-to-Speech: отдельные модели распознавания речи и нейросетевой озвучки выбираются из общего каталога.
+- Добавлены Files API, Responses API и OpenRouter Shell. Shell может получить пользовательские файлы во временный контейнер, выполнить вычисления и вернуть созданные файлы обратно в хранилище Umnik.
+- Добавлены server tools OpenRouter: Web Search, Web Fetch, DateTime, Image Generation, Fusion, Advisor, Subagent и Shell. Для обычного чата они применяются на HTTP-границе только к OpenRouter, не меняя логику других подключений.
+- Добавлена маршрутизация OpenRouter: авто, минимальная цена, максимальный throughput или минимальная latency; provider order/only/ignore, fallbacks, ZDR, запрет data collection, квантизации и ограничения максимальной цены.
+- Под ответом OpenRouter показываются фактическая модель/провайдер, входные и выходные токены и стоимость, когда эти значения возвращены API. Старые сохранённые чаты остаются совместимыми.
+- Сохранены универсальная иерархия инструкций проекта из v1.5.2 и защита активных обычных запросов от сворачивания приложения из v1.5.1.
+- Версия: 1.6.0 / versionCode 60.
+
+## v1.5.2 - 2026-09-13
+
+- Правила приоритета мастер-инструкции проекта сделаны универсальными: Umnik больше не выводит из текста проекта и не зашивает в код предметные правила форматирования или содержания.
+- Общий порядок контекста проекта: мастер-инструкция проекта, явный текущий запрос, настройки диалога, подключённые навыки, файлы проекта/чата и профиль пользователя.
+- Финальная самопроверка просит модель повторно свериться только с реальными требованиями мастер-инструкции и не придумывать новые ограничения.
+- Версия: 1.5.2 / versionCode 56.
+'''
+          if '## v1.6.0 - 2026-09-13' not in text:
+              text = text.replace(marker, marker + section, 1)
+          changelog.write_text(text)
+
+          docs = Path('docs/v1.6.0-openrouter.md')
+          docs.parent.mkdir(parents=True, exist_ok=True)
+          docs.write_text(r'''# Umnik 1.6.0: OpenRouter Hub
+
+Umnik 1.6.0 расширяет приложение от обычного чат-клиента до универсального Android-интерфейса возможностей OpenRouter. Новые функции не заменяют стандартный чат и не применяются к NVIDIA или произвольным OpenAI-compatible подключениям, если это явно не поддержано их прежней логикой.
+
+## Каталог моделей
+
+OpenRouter Hub загружает общий каталог с `output_modalities=all` и дополняет его специализированными каталогами изображений, видео и embeddings. Вкладка «Все» не накладывает фильтр категории. Отдельно можно фильтровать категории, варианты модели и входные возможности.
+
+Категории: Text, Image, Video, Speech, Transcription, Embeddings, Rerank, Audio.
+
+Варианты: Standard, Batch, Free, Thinking, Extended, Online, Nitro, Floor. Категория описывает, что модель делает; вариант описывает способ или маршрут её использования.
+
+## Batch
+
+`*:batch` не отправляется через обычный `/chat/completions`. Umnik создаёт асинхронное задание через `/api/beta/batches`, сохраняет возвращённый `batch_id` и после этого только опрашивает состояние. Неоднозначная сетевая ошибка POST не приводит к автоматической повторной отправке платного задания.
+
+В обычном чате выбор Batch-модели автоматически использует Batch API. Для нескольких независимых задач есть вкладка «Задания» в OpenRouter Hub; задания разделяются строкой `---`. В меню `+` кнопка Batch активна только при выбранной Batch-модели.
+
+## Фоновые задания
+
+Batch и Video имеют локальные записи job ID. WorkManager восстанавливает опрос после перезапуска процесса, но не создаёт новую платную задачу. Готовые результаты добавляются в исходный чат без повторной доставки одного и того же job.
+
+## RAG, Embeddings и Rerank
+
+RAG включается вручную и по умолчанию выключен. Для текстовых вложений Umnik делает временное смысловое разбиение, получает embeddings, выбирает подходящие фрагменты и при наличии rerank-модели переранжирует кандидатов. Выбранные фрагменты помечаются как пользовательские данные, а не инструкции. Мастер-инструкция проекта остаётся выше файлов по приоритету.
+
+В 1.6.0 индекс строится для текстового контекста текущего запроса и не является постоянной локальной векторной базой. PDF и другие нетекстовые файлы продолжают использовать существующую передачу OpenRouter. Это сознательное ограничение первого релиза RAG, чтобы не хранить устаревшие embeddings после изменения файлов.
+
+## Audio и Video
+
+Hub позволяет выбрать модели Transcription и Speech для STT/TTS. Видео создаётся через асинхронный Video API; можно приложить до четырёх image/video/audio референсов. Готовый MP4 скачивается в локальное хранилище Umnik.
+
+## Responses, Files и Shell
+
+Shell использует Responses API. Выбранные файлы временно загружаются через Files API, передаются в контейнер OpenRouter, а найденные созданные файлы скачиваются в `generated`. Загруженные для задания исходники удаляются из Files API после завершения попытки.
+
+## Server tools
+
+Доступны Web Search, Web Fetch, DateTime, Image Generation, Fusion, Advisor, Subagent и Shell. Shell переключает обычный OpenRouter-чат на Responses API; остальные поддерживаемые server tools добавляются к запросу Chat Completions.
+
+## Маршрутизация и приватность
+
+OpenRouter Hub позволяет задать sort по price/throughput/latency, provider order/only/ignore, fallback-модели, ZDR, запрет data collection, допустимые квантизации и верхние границы цены. Эти параметры сохраняются локально и добавляются только в запросы OpenRouter.
+
+## Метаданные ответа
+
+Для обычных ответов OpenRouter Umnik сохраняет значения, фактически возвращённые API: модель, провайдер, prompt/completion tokens и стоимость, если она присутствует. Приложение не рассчитывает стоимость самостоятельно по потенциально устаревшему прайсу.
+
+## Совместимость
+
+Формат сохранённых сообщений расширен только nullable-полями с значениями по умолчанию, поэтому старые чаты не требуют миграции. Логика проектов и навыков остаётся универсальной; новые возможности OpenRouter не добавляют предметных правил в системный промпт.
+''')
+          PY
+          git diff --check
+
+      - name: Commit release preparation
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then exit 0; fi
+          git config user.name "Ayuemin"
+          git config user.email "105455063+Ayuemin@users.noreply.github.com"
+          git add app/build.gradle.kts CHANGELOG.md docs/v1.6.0-openrouter.md
+          git commit -m "Prepare Umnik 1.6.0 release [v16-release-prep]"
+          git push origin HEAD:feature/openrouter-full-v1.6.0
