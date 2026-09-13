@@ -774,6 +774,16 @@ onBranch = if (message.role == "assistant") {
                             if (vm.prepareImageGeneration()) imagePromptMode = true
                         }
                     )
+                    ComposerActionTile(
+                        icon = Icons.Outlined.SwapHoriz,
+                        label = "Batch",
+                        enabled = !state.isLoading && !imagePromptMode && (state.currentChatTextModel ?: state.textModel).endsWith(":batch", ignoreCase = true),
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                        }
+                    )
                 }
 
                 HorizontalDivider()
@@ -1603,6 +1613,21 @@ private fun MessageCard(
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSaveGenerated)
+                }
+                val usageMeta = listOfNotNull(
+                    message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
+                    message.providerName?.takeIf { it.isNotBlank() },
+                    message.inputTokens?.let { "in $it" },
+                    message.outputTokens?.let { "out $it" },
+                    message.costUsd?.takeIf { it >= 0.0 }?.let { formatUsd(it) }
+                ).joinToString(" · ")
+                if (usageMeta.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        usageMeta,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                    )
                 }
             }
         }

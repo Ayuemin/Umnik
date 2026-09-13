@@ -23,6 +23,84 @@ enum class ImageApiProtocol {
     NVIDIA_NIM
 }
 
+enum class ModelCategory {
+    TEXT,
+    IMAGE,
+    VIDEO,
+    SPEECH,
+    TRANSCRIPTION,
+    EMBEDDINGS,
+    RERANK,
+    AUDIO
+}
+
+enum class ModelVariant {
+    STANDARD,
+    BATCH,
+    FREE,
+    THINKING,
+    EXTENDED,
+    ONLINE,
+    NITRO,
+    FLOOR
+}
+
+enum class BatchJobStatus {
+    VALIDATING,
+    QUEUED,
+    IN_PROGRESS,
+    FINALIZING,
+    COMPLETED,
+    FAILED,
+    CANCELLED,
+    EXPIRED,
+    UNKNOWN;
+
+    val terminal: Boolean
+        get() = this == COMPLETED || this == FAILED || this == CANCELLED || this == EXPIRED
+
+    companion object {
+        fun fromApi(value: String?): BatchJobStatus = when (value?.trim()?.lowercase()) {
+            "validating" -> VALIDATING
+            "queued", "pending" -> QUEUED
+            "in_progress", "running", "processing" -> IN_PROGRESS
+            "finalizing" -> FINALIZING
+            "completed" -> COMPLETED
+            "failed" -> FAILED
+            "cancelled", "canceled" -> CANCELLED
+            "expired" -> EXPIRED
+            else -> UNKNOWN
+        }
+    }
+}
+
+data class BatchJobItem(
+    val customId: String,
+    val label: String = customId,
+    val resultText: String? = null,
+    val error: String? = null
+)
+
+data class BatchJob(
+    val id: String,
+    val remoteId: String,
+    val connectionProfileId: String,
+    val chatId: String? = null,
+    val projectId: String? = null,
+    val userMessageId: String? = null,
+    val modelId: String,
+    val baseModelId: String,
+    val title: String,
+    val status: BatchJobStatus = BatchJobStatus.VALIDATING,
+    val items: List<BatchJobItem> = emptyList(),
+    val error: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    val totalItems: Int get() = items.size
+    val completedItems: Int get() = items.count { it.resultText != null || it.error != null }
+}
+
 data class ProviderUsage(
     val providerName: String,
     val daily: Double,
@@ -58,22 +136,49 @@ data class UserProfile(
 data class ModelInfo(
     val id: String,
     val inputModalities: Set<String> = setOf("text"),
+    val outputModalities: Set<String> = setOf("text"),
     val supportedParameters: Set<String> = emptySet(),
     val reasoningEfforts: Set<String> = emptySet(),
     val parameterOptions: Map<String, List<String>> = emptyMap(),
     val contextLength: Int? = null,
     val maxCompletionTokens: Int? = null,
     val reasoningMandatory: Boolean = false,
-    val reasoningDefaultEnabled: Boolean = false
+    val reasoningDefaultEnabled: Boolean = false,
+    val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
+    fun outputs(modality: String): Boolean = modality.lowercase() in outputModalities
     fun parameterValues(parameter: String): List<String> = parameterOptions[parameter.lowercase()].orEmpty()
+
     val supportsReasoning: Boolean
         get() = "reasoning" in supportedParameters || "reasoning_effort" in supportedParameters
     val supportsReasoningEffort: Boolean
         get() = "reasoning_effort" in supportedParameters
     val supportsTools: Boolean
         get() = "tools" in supportedParameters
+    val isBatch: Boolean
+        get() = ModelVariant.BATCH in variants || id.endsWith(":batch", ignoreCase = true)
+    val batchBaseModelId: String
+        get() = if (isBatch) id.removeSuffix(":batch") else id
+
+    val categories: Set<ModelCategory>
+        get() {
+            val categories = linkedSetOf<ModelCategory>()
+            outputModalities.forEach { modality ->
+                when (modality.lowercase()) {
+                    "text" -> categories += ModelCategory.TEXT
+                    "image" -> categories += ModelCategory.IMAGE
+                    "video" -> categories += ModelCategory.VIDEO
+                    "speech" -> categories += ModelCategory.SPEECH
+                    "transcription" -> categories += ModelCategory.TRANSCRIPTION
+                    "embeddings", "embedding" -> categories += ModelCategory.EMBEDDINGS
+                    "rerank", "ranking" -> categories += ModelCategory.RERANK
+                    "audio" -> categories += ModelCategory.AUDIO
+                }
+            }
+            if (categories.isEmpty()) categories += ModelCategory.TEXT
+            return categories
+        }
 }
 
 enum class ReasoningEffort(val apiValue: String) {
@@ -163,7 +268,12 @@ data class ChatMessage(
     val imageGeneration: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
     // Null means an existing/completed message; older stored chats need no migration.
-    val deliveryState: String? = null
+    val deliveryState: String? = null,
+    val modelId: String? = null,
+    val providerName: String? = null,
+    val costUsd: Double? = null,
+    val inputTokens: Int? = null,
+    val outputTokens: Int? = null
 )
 
 data class ChatSession(
@@ -241,6 +351,7 @@ data class UiState(
     val availableImageModels: List<ModelInfo> = emptyList(),
     val modelCatalogConnectionId: String? = null,
     val modelCatalog: List<ModelInfo> = emptyList(),
+    val batchJobs: List<BatchJob> = emptyList(),
     val providerUsage: ProviderUsage? = null,
     val answerSoundEnabled: Boolean = true,
     val answerSoundChoice: AnswerSoundChoice = AnswerSoundChoice.DEFAULT,

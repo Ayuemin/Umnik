@@ -1,4 +1,4 @@
-// Umnik v1.5.2
+// Umnik v1.6.0
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,8 +24,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 56
-        versionName = "1.5.2"
+        versionCode = 60
+        versionName = "1.6.0"
     }
 
     buildFeatures {
@@ -84,6 +84,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.3")
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.3")
+    implementation("androidx.work:work-runtime-ktx:2.10.1")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.13.1")

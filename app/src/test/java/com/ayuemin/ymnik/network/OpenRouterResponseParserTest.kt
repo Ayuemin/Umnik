@@ -34,4 +34,21 @@ class OpenRouterResponseParserTest {
         )
         assertEquals(1, response.message.getAsJsonArray("tool_calls").size())
     }
+
+    @Test
+    fun `parses OpenRouter usage metadata`() {
+        val parsed = OpenRouterResponseParser.parse("""{
+          "id":"gen_1",
+          "model":"openai/test",
+          "provider":"Provider X",
+          "choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],
+          "usage":{"prompt_tokens":12,"completion_tokens":7,"total_tokens":19,"cost":0.00123}
+        }""")
+        assertEquals("openai/test", parsed.model)
+        assertEquals("Provider X", parsed.provider)
+        assertEquals(12, parsed.promptTokens)
+        assertEquals(7, parsed.completionTokens)
+        assertEquals(19, parsed.totalTokens)
+        assertEquals(0.00123, parsed.costUsd!!, 0.0000001)
+    }
 }

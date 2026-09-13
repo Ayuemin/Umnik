@@ -40,7 +40,15 @@ class OpenRouterClient(private val context: Context) {
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
-    data class Result(val text: String, val files: List<GeneratedFile>)
+    data class Result(
+        val text: String,
+        val files: List<GeneratedFile>,
+        val modelId: String? = null,
+        val providerName: String? = null,
+        val costUsd: Double? = null,
+        val inputTokens: Int? = null,
+        val outputTokens: Int? = null
+    )
 
     data class KeyUsage(
         val daily: Double,
@@ -241,14 +249,23 @@ class OpenRouterClient(private val context: Context) {
                     add("reasoning", JsonObject().apply { addProperty("effort", "none") })
                 }
             }
-            val responseMessage = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
+            val completion = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
+            val responseMessage = completion.message
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
                 val content = extractText(responseMessage.get("content"))
                 if (content.isBlank() && created.isEmpty()) {
                     error("Модель не вернула готовый текст. Измените уровень рассуждения или повторите запрос; пустой ответ не сохранён в чат.")
                 }
-                return@withContext Result(content, created)
+                return@withContext Result(
+                    text = content,
+                    files = created,
+                    modelId = completion.model.ifBlank { model },
+                    providerName = completion.provider.takeIf { it.isNotBlank() },
+                    costUsd = completion.costUsd,
+                    inputTokens = completion.promptTokens,
+                    outputTokens = completion.completionTokens
+                )
             }
 
             messages.add(responseMessage.deepCopy())
@@ -343,7 +360,7 @@ class OpenRouterClient(private val context: Context) {
         }
     }
 
-    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): JsonObject {
+    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): OpenRouterResponseParser.Completion {
         val request = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
@@ -359,7 +376,7 @@ class OpenRouterClient(private val context: Context) {
                 if (!response.isSuccessful) error(apiError(response.code, body))
                 val completion = OpenRouterResponseParser.parse(body, allowEmpty)
                 DiagnosticLog.record(context, "COMPLETION", "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}")
-                return completion.message
+                return completion
             }
         } finally {
             clearActiveCall()
