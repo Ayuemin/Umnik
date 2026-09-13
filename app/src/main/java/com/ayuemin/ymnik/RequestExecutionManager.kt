@@ -1,6 +1,7 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
+import android.os.PowerManager
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
@@ -15,15 +16,19 @@ import kotlinx.coroutines.launch
 internal object RequestExecutionManager {
     data class Snapshot(val activeChatId: String? = null, val sequence: Long = 0L, val lastError: String? = null)
 
+    private const val WAKE_LOCK_TIMEOUT_MS = 15L * 60L * 1000L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mutableSnapshots = MutableStateFlow(Snapshot())
     val snapshots: StateFlow<Snapshot> = mutableSnapshots
     private var job: Job? = null
     private var cancelCall: (() -> Unit)? = null
     private var stoppingService = false
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    fun hasActiveRequest(): Boolean = job?.isActive == true
 
     fun recoverInterrupted(context: Context): String? {
-        if (job?.isActive == true) return null
+        if (hasActiveRequest()) return null
         val prefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
         val chatId = prefs.getString("chat_id", null) ?: return null
         val messageId = prefs.getString("message_id", null)
@@ -51,10 +56,8 @@ internal object RequestExecutionManager {
         cancelNetworkCall: () -> Unit,
         execute: suspend () -> Unit
     ): Job {
-        check(job?.isActive != true) { "Другой запрос ещё выполняется" }
+        check(!hasActiveRequest()) { "Другой запрос ещё выполняется" }
         val app = context.applicationContext
-        // The user initiates the service while the Activity is visible. Do not silently
-        // continue without foreground protection if Android refuses to start it.
         RequestKeepAliveService.start(app, label)
         val prefs = app.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
         if (!prefs.edit().putString("chat_id", chatId).putString("message_id", messageId)
@@ -63,6 +66,7 @@ internal object RequestExecutionManager {
             RequestKeepAliveService.stop(app)
             error("Не удалось сохранить состояние запроса")
         }
+        acquireWakeLock(app)
         cancelCall = cancelNetworkCall
         stoppingService = false
         mutableSnapshots.value = Snapshot(chatId, mutableSnapshots.value.sequence + 1L)
@@ -73,8 +77,6 @@ internal object RequestExecutionManager {
                 DiagnosticLog.record(app, "REQUEST", "Background execution failed", error)
                 mutableSnapshots.value = mutableSnapshots.value.copy(lastError = error.message ?: "Запрос прерван")
             } finally {
-                // If the worker was killed/cancelled before saving a result, leave the
-                // original user message visible but do not send a duplicate paid POST.
                 runCatching {
                     ChatRepository(app).updateMessage(chatId, messageId) {
                         if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
@@ -83,6 +85,7 @@ internal object RequestExecutionManager {
                 prefs.edit().clear().commit()
                 cancelCall = null
                 job = null
+                releaseWakeLock(app)
                 stoppingService = true
                 RequestKeepAliveService.stop(app)
                 mutableSnapshots.value = Snapshot(null, mutableSnapshots.value.sequence + 1L, mutableSnapshots.value.lastError)
@@ -99,10 +102,43 @@ internal object RequestExecutionManager {
         job?.cancel()
     }
 
-    fun serviceStoppedUnexpectedly() {
-        if (!stoppingService && job?.isActive == true) {
-            fail("Фоновая служба остановлена системой. Запрос прерван; его можно повторить вручную.")
-            cancel()
+    /**
+     * Destroying the foreground Service must not itself cancel an in-flight paid request
+     * while this process and its network job are still alive. A sticky Service can be
+     * recreated independently of the Activity.
+     */
+    fun serviceStoppedUnexpectedly(context: Context) {
+        if (!stoppingService && hasActiveRequest()) {
+            DiagnosticLog.record(
+                context.applicationContext,
+                "REQUEST",
+                "Foreground service destroyed while request is active; network job kept alive"
+            )
+        }
+    }
+
+    private fun acquireWakeLock(app: Context) {
+        if (wakeLock?.isHeld == true) return
+        runCatching {
+            val power = app.getSystemService(PowerManager::class.java)
+            power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "${app.packageName}:active_request").apply {
+                setReferenceCounted(false)
+                acquire(WAKE_LOCK_TIMEOUT_MS)
+            }
+        }.onSuccess { lock ->
+            wakeLock = lock
+            DiagnosticLog.record(app, "REQUEST", "Partial wake lock acquired for active request")
+        }.onFailure { error ->
+            DiagnosticLog.record(app, "REQUEST", "Could not acquire wake lock", error)
+        }
+    }
+
+    private fun releaseWakeLock(app: Context) {
+        val lock = wakeLock
+        wakeLock = null
+        if (lock?.isHeld == true) {
+            runCatching { lock.release() }
+                .onFailure { DiagnosticLog.record(app, "REQUEST", "Could not release wake lock", it) }
         }
     }
 }
