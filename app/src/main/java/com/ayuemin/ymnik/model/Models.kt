@@ -43,6 +43,62 @@ enum class ModelVariant {
     ONLINE
 }
 
+enum class BatchJobStatus {
+    VALIDATING,
+    QUEUED,
+    IN_PROGRESS,
+    FINALIZING,
+    COMPLETED,
+    FAILED,
+    CANCELLED,
+    EXPIRED,
+    UNKNOWN;
+
+    val terminal: Boolean
+        get() = this == COMPLETED || this == FAILED || this == CANCELLED || this == EXPIRED
+
+    companion object {
+        fun fromApi(value: String?): BatchJobStatus = when (value?.trim()?.lowercase()) {
+            "validating" -> VALIDATING
+            "queued", "pending" -> QUEUED
+            "in_progress", "running", "processing" -> IN_PROGRESS
+            "finalizing" -> FINALIZING
+            "completed" -> COMPLETED
+            "failed" -> FAILED
+            "cancelled", "canceled" -> CANCELLED
+            "expired" -> EXPIRED
+            else -> UNKNOWN
+        }
+    }
+}
+
+data class BatchJobItem(
+    val customId: String,
+    val label: String = customId,
+    val resultText: String? = null,
+    val error: String? = null
+)
+
+data class BatchJob(
+    val id: String,
+    val remoteId: String,
+    val connectionProfileId: String,
+    val chatId: String? = null,
+    val projectId: String? = null,
+    val userMessageId: String? = null,
+    val modelId: String,
+    val baseModelId: String,
+    val title: String,
+    val status: BatchJobStatus = BatchJobStatus.VALIDATING,
+    val items: List<BatchJobItem> = emptyList(),
+    val error: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+) {
+    val totalItems: Int get() = items.size
+    val completedItems: Int get() = items.count { it.resultText != null || it.error != null }
+}
+
 data class ProviderUsage(
     val providerName: String,
     val daily: Double,
@@ -288,6 +344,7 @@ data class UiState(
     val availableImageModels: List<ModelInfo> = emptyList(),
     val modelCatalogConnectionId: String? = null,
     val modelCatalog: List<ModelInfo> = emptyList(),
+    val batchJobs: List<BatchJob> = emptyList(),
     val providerUsage: ProviderUsage? = null,
     val answerSoundEnabled: Boolean = true,
     val answerSoundChoice: AnswerSoundChoice = AnswerSoundChoice.DEFAULT,
