@@ -3,7 +3,6 @@ package com.ayuemin.ymnik.network
 import android.content.Context
 import android.net.Uri
 import android.util.Base64
-import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -11,6 +10,7 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
+import com.ayuemin.ymnik.model.ProviderType
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -24,11 +24,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.net.URI
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class CompatibleApiClient(private val context: Context) {
     private val gson = Gson()
+    private val providerRegistry = ProviderRegistry(context)
+    private val unavailable = context.getSharedPreferences("nvidia_unavailable_models", Context.MODE_PRIVATE)
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "Compatible text/image"))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "Compatible text/image") }
@@ -45,7 +49,6 @@ class CompatibleApiClient(private val context: Context) {
     fun cancelActiveRequest() {
         activeCall?.cancel()
         http.dispatcher.cancelAll()
-        RequestKeepAliveService.stop(context)
     }
 
     suspend fun models(apiKey: String, baseUrl: String): List<ModelInfo> = withContext(Dispatchers.IO) {
@@ -65,15 +68,22 @@ class CompatibleApiClient(private val context: Context) {
                 val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
                 val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
                 if (isNvidiaHosted(baseUrl) && !isLikelyChatModel(id)) return@mapNotNull null
-                modelInfo(id)
+                modelInfo(id).copy(
+                    contextLength = runCatching { item.get("context_length")?.asInt }.getOrNull()?.takeIf { it > 0 },
+                    maxCompletionTokens = runCatching { item.get("max_output_tokens")?.asInt }.getOrNull()?.takeIf { it > 0 }
+                )
             }.distinctBy { it.id }.sortedBy { it.id }
 
             if (isNvidiaHosted(baseUrl)) {
+                val allowed = providerRegistry.textModels(ProviderType.NVIDIA).mapTo(mutableSetOf()) { it.id }
+                val verified = discovered.filter { it.id in allowed }
+                val result = verified.filterNot { blocked(apiKey, it.id) }
                 DiagnosticLog.record(
                     context,
                     "MODEL CATALOG",
-                    "NVIDIA /models raw=${data.size()}; chatCandidates=${discovered.size}; whitelist=false; quarantine=false"
+                    "NVIDIA discovered=${data.size()}; chatCandidates=${discovered.size}; verified=${verified.size}; blocked=${verified.size - result.size}; shown=${result.size}"
                 )
+                return@withContext result
             }
             discovered
         }
@@ -86,20 +96,23 @@ class CompatibleApiClient(private val context: Context) {
         history: List<ChatMessage>,
         prompt: String,
         attachments: List<PendingAttachment>,
-        systemPrompt: String
+        systemPrompt: String,
+        modelInfo: ModelInfo? = null
     ): OpenRouterClient.Result = withContext(Dispatchers.IO) {
         val isNvidia = isNvidiaHosted(baseUrl)
-        if (isNvidia) runCatching { RequestKeepAliveService.start(context, "NVIDIA · ${model.substringAfterLast('/')}") }
 
         try {
+            ConversationContext.checkTransferSize(attachments)
+            val selectedHistory = ConversationContext.select(
+                history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
+                modelInfo?.contextLength, if (isNvidia) 8_192 else 4_096
+            )
             val messages = JsonArray()
             if (systemPrompt.isNotBlank()) messages.add(message("system", systemPrompt))
 
-            history.takeLast(30)
-                .dropLastWhile { it.role == "user" }
-                .filter { it.role == "user" || it.role == "assistant" }
-                .forEach { item -> messages.add(message(item.role, item.text)) }
+            selectedHistory.forEach { item -> messages.add(message(item.role, item.text)) }
             messages.add(userMessage(prompt, attachments, isNvidia))
+            DiagnosticLog.record(context, "CONTEXT", "${if (isNvidia) "NVIDIA" else "Compatible"} model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: 128_000}; attachments=${attachments.size}")
 
             val payload = JsonObject().apply {
                 addProperty("model", model)
@@ -129,9 +142,10 @@ class CompatibleApiClient(private val context: Context) {
             if (!response.successful) {
                 val detail = apiError(response.code, response.body)
                 if (isNvidia && response.code == 404) {
+                    quarantine(apiKey, model)
                     error(
                         "NVIDIA не дала этому аккаунту доступ к модели «${model.substringAfterLast('/')}» через Chat API. " +
-                            "Модель останется в списке. $detail"
+                            "Umnik временно скроет модель на 24 часа. $detail"
                     )
                 }
                 if (isNvidia && response.code == 429) {
@@ -153,7 +167,6 @@ class CompatibleApiClient(private val context: Context) {
             throw t
         } finally {
             activeCall = null
-            if (isNvidia) RequestKeepAliveService.stop(context)
         }
     }
 
@@ -353,13 +366,17 @@ class CompatibleApiClient(private val context: Context) {
     private fun downloadGeneratedImage(url: String, hintedMime: String?, index: Int): GeneratedFile? {
         if (url.startsWith("data:image/")) {
             val mime = url.substringAfter("data:").substringBefore(';').takeIf { it.startsWith("image/") } ?: hintedMime ?: "image/png"
-            val bytes = Base64.decode(url.substringAfter("base64,", ""), Base64.DEFAULT)
+            val encoded = url.substringAfter("base64,", "")
+            DownloadSafety.checkEncodedLength(encoded)
+            val bytes = Base64.decode(encoded, Base64.DEFAULT)
             return saveGeneratedImageBytes(bytes, mime, index)
         }
+        if (!url.startsWith("https://", ignoreCase = true)) return null
         return runCatching {
             http.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-                if (!response.isSuccessful) return@use null
-                val bytes = response.body?.bytes() ?: return@use null
+                if (!response.isSuccessful || !response.request.url.isHttps) return@use null
+                if ((response.body?.contentLength() ?: -1L) > DownloadSafety.MAX_IMAGE_BYTES) return@use null
+                val bytes = response.body?.byteStream()?.use(DownloadSafety::readImage) ?: return@use null
                 val mime = response.header("Content-Type")?.substringBefore(';')
                     ?.takeIf { it.startsWith("image/") } ?: hintedMime ?: "image/png"
                 saveGeneratedImageBytes(bytes, mime, index)
@@ -396,8 +413,23 @@ class CompatibleApiClient(private val context: Context) {
 
     private fun endpoint(baseUrl: String, path: String): String = baseUrl.trim().trimEnd('/') + "/" + path
 
-    private fun isNvidiaHosted(baseUrl: String): Boolean =
-        baseUrl.contains("integrate.api.nvidia.com", ignoreCase = true)
+    private fun isNvidiaHosted(baseUrl: String): Boolean = runCatching {
+        URI(baseUrl).host.equals("integrate.api.nvidia.com", ignoreCase = true)
+    }.getOrDefault(false)
+
+    private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256")
+        .digest(value.toByteArray(Charsets.UTF_8))
+        .take(12).joinToString("") { "%02x".format(it) }
+
+    private fun quarantineKey(apiKey: String, model: String): String =
+        "blocked_${fingerprint(apiKey)}_${fingerprint(model)}"
+
+    private fun blocked(apiKey: String, model: String): Boolean =
+        unavailable.getLong(quarantineKey(apiKey, model), 0L) > System.currentTimeMillis()
+
+    private fun quarantine(apiKey: String, model: String) {
+        unavailable.edit().putLong(quarantineKey(apiKey, model), System.currentTimeMillis() + 24L * 60 * 60 * 1000).apply()
+    }
 
     private fun apiError(code: Int, body: String): String {
         val message = runCatching {

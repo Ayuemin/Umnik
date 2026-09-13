@@ -5,6 +5,8 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
@@ -28,9 +30,12 @@ class OpenRouterClient(private val context: Context) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
+        .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
+        .retryOnConnectionFailure(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
+        .callTimeout(600, TimeUnit.SECONDS)
         .build()
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
@@ -127,6 +132,12 @@ class OpenRouterClient(private val context: Context) {
                         ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
                         ?.toSet()
                         .orEmpty()
+                    val reasoningInfo = item.getAsJsonObject("reasoning")
+                    val contextLength = runCatching { item.get("context_length")?.asInt }.getOrNull()
+                        ?.takeIf { it > 0 }
+                    val maxCompletionTokens = runCatching {
+                        item.getAsJsonObject("top_provider")?.get("max_completion_tokens")?.asInt
+                    }.getOrNull()?.takeIf { it > 0 }
                     val parameterOptions = item.get("supported_parameters")
                         ?.takeIf { it.isJsonObject }
                         ?.asJsonObject
@@ -153,7 +164,11 @@ class OpenRouterClient(private val context: Context) {
                         inputModalities = inputModalities,
                         supportedParameters = supportedParameters,
                         reasoningEfforts = reasoningEfforts,
-                        parameterOptions = parameterOptions
+                        parameterOptions = parameterOptions,
+                        contextLength = contextLength,
+                        maxCompletionTokens = maxCompletionTokens,
+                        reasoningMandatory = runCatching { reasoningInfo?.get("mandatory")?.asBoolean }.getOrNull() == true,
+                        reasoningDefaultEnabled = runCatching { reasoningInfo?.get("default_enabled")?.asBoolean }.getOrNull() == true
                     )
                 }
                 ?.distinctBy { it.id }
@@ -173,14 +188,23 @@ class OpenRouterClient(private val context: Context) {
         reasoningEnabled: Boolean = false,
         reasoningEffort: String? = "medium",
         toolsEnabled: Boolean = true,
-        baseUrl: String = DEFAULT_BASE_URL
+        baseUrl: String = DEFAULT_BASE_URL,
+        modelInfo: ModelInfo? = null
     ): Result = withContext(Dispatchers.IO) {
+        ConversationContext.checkTransferSize(attachments)
+        val outputTokens = (if (reasoningEnabled || modelInfo?.reasoningMandatory == true) 12_000 else 8_000)
+            .coerceAtMost(modelInfo?.maxCompletionTokens ?: 12_000)
+        val selectedHistory = ConversationContext.select(
+            history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
+            modelInfo?.contextLength, outputTokens
+        )
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
-        history.takeLast(30).forEach { item ->
+        selectedHistory.forEach { item ->
             messages.add(message(item.role, item.text))
         }
         messages.add(userMessage(prompt, attachments))
+        DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: 128_000}; output=$outputTokens; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
         var loops = 0
@@ -188,7 +212,7 @@ class OpenRouterClient(private val context: Context) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
-                addProperty("max_tokens", 6000)
+                addProperty("max_tokens", outputTokens)
                 if (toolsEnabled) add("tools", tools())
 
                 if (webSearchEnabled) {
@@ -206,12 +230,25 @@ class OpenRouterClient(private val context: Context) {
                         reasoningEffort?.takeIf { it.isNotBlank() }?.let { addProperty("effort", it) }
                         addProperty("exclude", true)
                     })
+                } else if (modelInfo?.reasoningMandatory == true) {
+                    add("reasoning", JsonObject().apply {
+                        if ("low" in modelInfo.reasoningEfforts) addProperty("effort", "low")
+                        addProperty("exclude", true)
+                    })
+                } else if (modelInfo?.supportsReasoning == true || modelInfo?.reasoningDefaultEnabled == true ||
+                    model.startsWith("deepseek/deepseek-v4", ignoreCase = true)
+                ) {
+                    add("reasoning", JsonObject().apply { addProperty("effort", "none") })
                 }
             }
-            val responseMessage = requestCompletion(apiKey, baseUrl, payload)
-            val toolCalls = responseMessage.getAsJsonArray("tool_calls")
+            val responseMessage = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
+            val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
-                return@withContext Result(extractText(responseMessage.get("content")), created)
+                val content = extractText(responseMessage.get("content"))
+                if (content.isBlank() && created.isEmpty()) {
+                    error("Модель не вернула готовый текст. Измените уровень рассуждения или повторите запрос; пустой ответ не сохранён в чат.")
+                }
+                return@withContext Result(content, created)
             }
 
             messages.add(responseMessage.deepCopy())
@@ -306,7 +343,7 @@ class OpenRouterClient(private val context: Context) {
         }
     }
 
-    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject): JsonObject {
+    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): JsonObject {
         val request = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
@@ -320,9 +357,9 @@ class OpenRouterClient(private val context: Context) {
             executeActive(request).use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) error(apiError(response.code, body))
-                val root = gson.fromJson(body, JsonObject::class.java)
-                return root.getAsJsonArray("choices")?.firstOrNull()?.asJsonObject
-                    ?.getAsJsonObject("message") ?: error("OpenRouter вернул пустой ответ")
+                val completion = OpenRouterResponseParser.parse(body, allowEmpty)
+                DiagnosticLog.record(context, "COMPLETION", "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}")
+                return completion.message
             }
         } finally {
             clearActiveCall()
@@ -496,7 +533,11 @@ class OpenRouterClient(private val context: Context) {
         if (content == null || content.isJsonNull) return ""
         if (content.isJsonPrimitive) return content.asString
         if (content.isJsonArray) return content.asJsonArray.mapNotNull { part ->
-            part.takeIf { it.isJsonObject }?.asJsonObject?.get("text")?.takeIf { it.isJsonPrimitive }?.asString
+            when {
+                part.isJsonPrimitive -> part.asString
+                part.isJsonObject -> part.asJsonObject.get("text")?.takeIf { it.isJsonPrimitive }?.asString
+                else -> null
+            }
         }.joinToString("\n")
         return content.toString()
     }

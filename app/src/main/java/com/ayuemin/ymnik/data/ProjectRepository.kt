@@ -14,17 +14,25 @@ class ProjectRepository(private val context: Context) {
     private val gson = Gson()
     private val root = File(context.filesDir, "projects").apply { mkdirs() }
     private val metadata = File(root, "projects.json")
+    private val atomic = AtomicJsonFile(metadata)
+    private val type = object : TypeToken<List<Project>>() {}.type
+    var loadError: String? = null
+        private set
 
     fun list(): List<Project> = runCatching {
-        if (!metadata.exists()) return emptyList()
-        val type = object : TypeToken<List<Project>>() {}.type
-        gson.fromJson<List<Project>>(metadata.readText(), type) ?: emptyList()
-    }.getOrDefault(emptyList())
+        atomic.read(::validJson)?.let { gson.fromJson<List<Project>>(it, type) } ?: emptyList()
+    }.onFailure { loadError = "Данные проектов повреждены и защищены от перезаписи." }
+        .getOrDefault(emptyList())
 
     fun save(projects: List<Project>) {
+        check(loadError == null) { loadError ?: "Хранилище проектов недоступно" }
         root.mkdirs()
-        metadata.writeText(gson.toJson(projects))
+        atomic.write(gson.toJson(projects), ::validJson)
     }
+
+    private fun validJson(json: String): Boolean = runCatching {
+        gson.fromJson<List<Project>>(json, type) != null
+    }.getOrDefault(false)
 
     fun importFile(projectId: String, uri: Uri): ProjectFile {
         var name = "file"

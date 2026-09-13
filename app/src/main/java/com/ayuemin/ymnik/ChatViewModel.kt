@@ -50,6 +50,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
@@ -68,6 +69,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val nvidiaImageApi = NvidiaImageClient(context)
     private val providerRegistry = ProviderRegistry(context)
     private val gson = Gson()
+    private val recoveredRequest = RequestExecutionManager.recoverInterrupted(context)
     private var activeRequestJob: Job? = null
     private var activeRequestPending: List<PendingAttachment> = emptyList()
     private var requestGeneration: Long = 0L
@@ -150,7 +152,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.getOrDefault(ThemeChoice.DYNAMIC),
             customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
+            storageStats = storageRepository.stats(),
+            status = chatsRepository.loadError ?: projectsRepository.loadError ?: skills.loadError ?: recoveredRequest
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -162,6 +165,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             "ChatViewModel initialized; activeProfile=${initialProfile.name}; activeModel=${loadTextModelForProfile(initialProfile)}"
         )
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
+        viewModelScope.launch {
+            RequestExecutionManager.snapshots.collect { snapshot ->
+                if (snapshot.sequence == 0L) return@collect
+                val chats = chatsRepository.list()
+                val active = snapshot.activeChatId != null
+                _state.value = _state.value.copy(
+                    chats = chats,
+                    messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                    isLoading = active,
+                    requestActive = active,
+                    busyLabel = if (active) "Модель работает…" else null,
+                    status = if (active) null else snapshot.lastError,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
+                )
+            }
+        }
         refreshProviderUsage()
         viewModelScope.launch {
             if (providerRegistry.refreshIfStale()) refreshModelCapabilities()
@@ -274,13 +294,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         imageProtocol: ImageApiProtocol,
         useSameImageApiKey: Boolean,
         imageApiKey: String?,
-        useProviderDefaults: Boolean
+        useProviderDefaults: Boolean,
+        contextLimitTokens: Int? = null
     ) {
         val old = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         val cleanUrl = normalizeBaseUrl(baseUrl)
         val builtIn = old.type == ProviderType.OPENROUTER || old.type == ProviderType.NVIDIA
         if ((!builtIn || !useProviderDefaults) && cleanUrl.isBlank()) {
             _state.value = _state.value.copy(status = "Укажите адрес API")
+            return
+        }
+        if (contextLimitTokens != null && contextLimitTokens !in 8_192..1_048_576) {
+            _state.value = _state.value.copy(status = "Размер контекста должен быть от 8192 до 1048576 токенов")
             return
         }
         val cleanImageUrl = imageBaseUrl?.let(::normalizeBaseUrl)?.takeIf { it.isNotBlank() }
@@ -295,7 +320,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             imageBaseUrl = cleanImageUrl,
             imageProtocol = imageProtocol,
             useSameImageApiKey = useSameImageApiKey,
-            useProviderDefaults = if (builtIn) useProviderDefaults else false
+            useProviderDefaults = if (builtIn) useProviderDefaults else false,
+            contextLimitTokens = contextLimitTokens
         )
         val profiles = _state.value.connectionProfiles.map { if (it.id == profileId) updated else it }
         saveConnectionProfiles(profiles)
@@ -1870,10 +1896,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun stopGeneration() {
         if (!_state.value.requestActive) return
         requestGeneration += 1L
-        api.cancelActiveRequest()
-        compatibleApi.cancelActiveRequest()
-        nvidiaImageApi.cancelActiveRequest()
-        activeRequestJob?.cancel()
+        RequestExecutionManager.fail("Работа остановлена. При необходимости повторите запрос вручную.")
+        RequestExecutionManager.cancel()
         activeRequestJob = null
         val restore = activeRequestPending
         activeRequestPending = emptyList()
@@ -1884,6 +1908,46 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             busyLabel = null,
             status = "Работа остановлена. Уточните запрос и отправьте снова."
         )
+    }
+
+    fun retryFailedMessage(messageId: String) {
+        if (_state.value.isLoading) return
+        val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
+            ?: return
+        if (previous.attachmentNames.isNotEmpty()) {
+            _state.value = _state.value.copy(status = "Для повтора прикрепите файлы заново и отправьте запрос вручную")
+            return
+        }
+        _state.value = _state.value.copy(mode = if (previous.imageGeneration) ChatMode.IMAGE else ChatMode.TEXT)
+        if (previous.imageGeneration) sendImagePrompt(previous.text) else send(previous.text)
+    }
+
+    private fun launchRequest(
+        chatId: String,
+        messageId: String,
+        label: String,
+        execute: suspend () -> Unit
+    ): Job? = runCatching {
+        RequestExecutionManager.start(
+            context, chatId, messageId, label,
+            cancelNetworkCall = {
+                api.cancelActiveRequest()
+                compatibleApi.cancelActiveRequest()
+                nvidiaImageApi.cancelActiveRequest()
+            },
+            execute = execute
+        )
+    }.getOrElse { error ->
+        val chats = chatsRepository.finishRequest(chatId, messageId, null)
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+            requestActive = false,
+            isLoading = false,
+            busyLabel = null,
+            status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
+        )
+        null
     }
 
     fun prepareImageGeneration(): Boolean {
@@ -1965,7 +2029,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             },
             attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct(),
-            imageGeneration = mode == ChatMode.IMAGE
+            imageGeneration = mode == ChatMode.IMAGE,
+            deliveryState = "pending"
         )
         val nextMessages = before + user
         val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }
@@ -2004,7 +2069,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             "start id=$requestId; provider=${profile.name}; mode=$mode; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; history=${before.size}; pending=${pending.size}; persistent=${persistentChatFiles.size}; promptChars=${clean.length}"
         )
 
-        activeRequestJob = viewModelScope.launch {
+        activeRequestJob = launchRequest(chatId, user.id, "${profile.name} · ${if (mode == ChatMode.TEXT) textModel else imageModel}") {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
@@ -2020,6 +2085,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             )
                         }.filter { attachmentAllowed(it).first }
                         val modelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
+                        val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
+                        val requestModelInfo = (modelInfo ?: ModelInfo(textModel)).copy(contextLength = chosenWindow)
                         val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true &&
                             (modelInfo.reasoningEfforts.isEmpty() || reasoningEffort.apiValue in modelInfo.reasoningEfforts)
                         val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
@@ -2037,7 +2104,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 actualReasoning,
                                 effort,
                                 modelInfo?.supportsTools == true,
-                                effectiveTextBaseUrl(profile)
+                                effectiveTextBaseUrl(profile),
+                                requestModelInfo
                             )
                         } else {
                             compatibleApi.chat(
@@ -2047,7 +2115,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 before,
                                 clean,
                                 allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, false)
+                                buildSystemPrompt(skillText, currentProject, currentChat, false),
+                                requestModelInfo
                             )
                         }
                     }
@@ -2074,10 +2143,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         )
                     }
                 }
+            }.mapCatching { result ->
+                require(result.text.isNotBlank() || result.files.isNotEmpty()) { "Модель вернула пустой ответ" }
+                result
             }
 
             if (requestId != requestGeneration) {
-                return@launch
+                return@launchRequest
             }
 
             operation.onSuccess { result ->
@@ -2089,20 +2161,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
-                    text = result.text.ifBlank {
-                        if (result.files.isNotEmpty()) "Готово." else "Пустой ответ модели."
-                    },
+                    text = result.text.ifBlank { "Готово." },
                     generatedFiles = result.files
                 )
-                val messages = _state.value.messages + assistant
-                val chats = replaceChatMessages(_state.value.chats, chatId, messages, null)
-                chatsRepository.save(chats)
+                val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(
-                    messages = messages,
+                    messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = chats,
                     isLoading = false,
                     requestActive = false,
                     busyLabel = null,
+                    status = null,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
                 )
@@ -2123,7 +2192,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 } else {
                     it.message ?: "Ошибка запроса"
                 }
+                RequestExecutionManager.fail(friendlyError)
+                val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
                 _state.value = _state.value.copy(
+                    messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                    chats = failedChats,
                     isLoading = false,
                     requestActive = false,
                     busyLabel = null,
@@ -2177,7 +2250,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             role = "user",
             text = prompt,
             attachmentNames = pending.map { it.name }.distinct(),
-            imageGeneration = true
+            imageGeneration = true,
+            deliveryState = "pending"
         )
         val nextMessages = before + user
         val title = if (before.isEmpty()) makeChatTitle(prompt, pending.map { it.name }) else null
@@ -2207,7 +2281,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val requestId = ++requestGeneration
         activeRequestPending = pending
 
-        activeRequestJob = viewModelScope.launch {
+        activeRequestJob = launchRequest(chatId, user.id, "${profile.name} · $imageModel") {
             val operation = runCatching {
                 generateImageForProfile(
                     profile = profile,
@@ -2218,29 +2292,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     aspectRatio = imageAspectRatio,
                     resolution = imageResolution
                 )
+            }.mapCatching { result ->
+                require(result.text.isNotBlank() || result.files.isNotEmpty()) { "Модель вернула пустой ответ" }
+                result
             }
 
-            if (requestId != requestGeneration) return@launch
+            if (requestId != requestGeneration) return@launchRequest
 
             operation.onSuccess { result ->
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
-                    text = result.text.ifBlank {
-                        if (result.files.isNotEmpty()) "Готово." else "Пустой ответ модели."
-                    },
+                    text = result.text.ifBlank { "Готово." },
                     generatedFiles = result.files,
                     imageGeneration = true
                 )
-                val messages = _state.value.messages + assistant
-                val chats = replaceChatMessages(_state.value.chats, chatId, messages, null)
-                chatsRepository.save(chats)
+                val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(
-                    messages = messages,
+                    messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = chats,
                     isLoading = false,
                     requestActive = false,
                     busyLabel = null,
+                    status = null,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
                 )
@@ -2250,11 +2324,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     refreshProviderUsage(2500L)
                 }
             }.onFailure {
+                val friendlyError = it.message ?: "Ошибка генерации изображения"
+                RequestExecutionManager.fail(friendlyError)
+                val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
                 _state.value = _state.value.copy(
+                    messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                    chats = failedChats,
                     isLoading = false,
                     requestActive = false,
                     busyLabel = null,
-                    status = it.message ?: "Ошибка генерации изображения"
+                    status = friendlyError
                 )
             }
             cleanupTempAttachments(pending)
@@ -2352,10 +2431,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     override fun onCleared() {
-        api.cancelActiveRequest()
-        compatibleApi.cancelActiveRequest()
-        nvidiaImageApi.cancelActiveRequest()
-        activeRequestJob?.cancel()
+        // The process-wide request manager owns the job; Activity recreation must not cancel it.
         super.onCleared()
     }
 
@@ -2610,7 +2686,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return chats.map { chat ->
             if (chat.id == chatId) chat.copy(
                 title = titleOverride ?: chat.title,
-                messages = messages.takeLast(120),
+                messages = messages,
                 updatedAt = now
             ) else chat
         }
@@ -2974,6 +3050,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun loadInitialChats(): List<ChatSession> {
         val existing = chatsRepository.list()
         if (existing.isNotEmpty()) return existing
+        if (chatsRepository.loadError != null) {
+            return listOf(ChatSession(id = UUID.randomUUID().toString(), title = "Хранилище чатов недоступно"))
+        }
 
         val legacy = loadLegacyMessages()
         val chat = ChatSession(

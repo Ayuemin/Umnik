@@ -1,4 +1,4 @@
-// Umnik v1.4.0
+// Umnik v1.4.1-rc.1
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,8 +24,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 52
-        versionName = "1.4.0"
+        versionCode = 53
+        versionName = "1.4.1-rc.1"
     }
 
     buildFeatures {
@@ -88,4 +88,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.13.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

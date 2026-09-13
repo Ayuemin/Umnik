@@ -445,6 +445,10 @@ onBranch = if (message.role == "assistant") {
 } else null,
                     onRetry = when {
                         message.role != "user" || message.text.isBlank() -> null
+                        message.deliveryState == "pending" -> null
+                        message.deliveryState == "failed" && message.attachmentNames.all { name ->
+                            currentChatFiles.any { file -> file.name == name }
+                        } -> { { vm.retryFailedMessage(message.id) } }
                         message.imageGeneration && message.attachmentNames.isEmpty() -> {
                             { vm.sendImagePrompt(message.text) }
                         }
@@ -1630,6 +1634,14 @@ private fun MessageCard(
                             )
                         }
                     }
+                    if (message.deliveryState == "failed" || message.deliveryState == "pending") {
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            if (message.deliveryState == "pending") "Ожидается ответ…" else "Ответ не получен. Можно повторить вручную.",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
                 }
             }
         } else {
@@ -2250,6 +2262,9 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var connectionUseProviderDefaults by remember(editingProfile.id, editingProfile.useProviderDefaults, editingProfile.baseUrl) {
         mutableStateOf(vm.connectionUsesProviderDefaults(editingProfile.id))
     }
+    var connectionContextWindow by remember(editingProfile.id, editingProfile.contextLimitTokens) {
+        mutableStateOf(editingProfile.contextLimitTokens?.toString().orEmpty())
+    }
     var customColorText by remember(state.customThemeColor) {
         mutableStateOf("#%06X".format(state.customThemeColor and 0xFFFFFF))
     }
@@ -2751,6 +2766,20 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 5.dp)
                         )
+                        Spacer(Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = connectionContextWindow,
+                            onValueChange = { value -> connectionContextWindow = value.filter(Char::isDigit).take(7) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Окно контекста, токенов") },
+                            placeholder = { Text("Авто по модели; если неизвестно — 128000") },
+                            singleLine = true
+                        )
+                        Text(
+                            "Необязательно. Для своего API укажите реальный предел модели; сохранённые сообщения не удаляются.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Spacer(Modifier.height(10.dp))
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -2835,7 +2864,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                                 imageProtocol = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) connectionImageProtocol else ImageApiProtocol.AUTO,
                                 useSameImageApiKey = connectionSameImageKey,
                                 imageApiKey = connectionImageKey.takeIf { it.isNotBlank() },
-                                useProviderDefaults = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) false else connectionUseProviderDefaults
+                                useProviderDefaults = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) false else connectionUseProviderDefaults,
+                                contextLimitTokens = connectionContextWindow.toIntOrNull()
                             )
                             connectionKey = ""
                             connectionImageKey = ""
