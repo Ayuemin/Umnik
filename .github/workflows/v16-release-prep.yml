@@ -1,4 +1,4 @@
-name: Prepare Umnik 1.6.0 release
+name: Prepare Umnik 1.6 changelog
 
 on:
   push:
@@ -10,126 +10,36 @@ permissions:
 
 jobs:
   prep:
-    if: ${{ !contains(github.event.head_commit.message, '[v16-release-prep]') }}
+    if: ${{ !contains(github.event.head_commit.message, '[v16-changelog]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           ref: feature/openrouter-full-v1.6.0
           fetch-depth: 0
-
-      - name: Bump version and write release notes
-        shell: bash
+      - name: Insert changelog sections
+        env:
+          SECTION_B64: "CgojIyB2MS42LjAgLSAyMDI2LTA5LTEzCgotINCU0L7QsdCw0LLQu9C10L0gT3BlblJvdXRlciBIdWIg0YEg0L/QvtC70L3Ri9C8INC60LDRgtCw0LvQvtCz0L7QvCDQvNC+0LTQtdC70LXQuS4g0KDQsNC30LTQtdC70YsgwqvQktGB0LXCuywgwqvQotC10LrRgdGCwrssIMKr0JjQt9C+0LHRgNCw0LbQtdC90LjRj8K7LCDCq9CS0LjQtNC10L7CuywgwqtTcGVlY2jCuywgwqtUcmFuc2NyaXB0aW9uwrssIMKrRW1iZWRkaW5nc8K7LCDCq1JlcmFua8K7INC4IMKrQXVkaW/CuyDRgdGC0YDQvtGP0YLRgdGPINC/0L4g0LzQtdGC0LDQtNCw0L3QvdGL0LwgT3BlblJvdXRlciwg0LAg0L3QtSDQv9C+INC20ZHRgdGC0LrQvtC80YMg0YHQv9C40YHQutGDIFVtbmlrLgotINCa0LDRgtCw0LvQvtCzINGA0LDQt9C00LXQu9GP0LXRgiDRgtC40L8g0LzQvtC00LXQu9C4INC4INC10ZEg0LLQsNGA0LjQsNC90YIuINCf0L7QtNC00LXRgNC20LjQstCw0Y7RgtGB0Y8gQmF0Y2gsIEZyZWUsIFRoaW5raW5nLCBFeHRlbmRlZCwgT25saW5lLCBOaXRybyDQuCBGbG9vciwg0LAg0YLQsNC60LbQtSDRhNC40LvRjNGC0YDRiyBWaXNpb24sIEF1ZGlvLCBWaWRlbywgUmVhc29uaW5nINC4IFRvb2xzLgotINCg0LXQsNC70LjQt9C+0LLQsNC9INC90LDRgdGC0L7Rj9GJ0LjQuSBPcGVuUm91dGVyIEJhdGNoIEFQSS4gQmF0Y2gt0LzQvtC00LXQu9GMINC40Lcg0L7QsdGL0YfQvdC+0LPQviDRh9Cw0YLQsCDQsNCy0YLQvtC80LDRgtC40YfQtdGB0LrQuCDQvtGC0L/RgNCw0LLQu9GP0LXRgtGB0Y8g0YfQtdGA0LXQtyBgL2FwaS9iZXRhL2JhdGNoZXNgOyDQv9Cw0LrQtdGC0L3Ri9C1INC30LDQtNCw0L3QuNGPINGC0LDQutC20LUg0LzQvtC20L3QviDRgdC+0LfQtNCw0LLQsNGC0Ywg0L7RgtC00LXQu9GM0L3Qvi4gYGJhdGNoX2lkYCDRgdC+0YXRgNCw0L3Rj9C10YLRgdGPINC70L7QutCw0LvRjNC90L4g0LTQviDQvtC/0YDQvtGB0LAg0YDQtdC30YPQu9GM0YLQsNGC0LAsINC/0L7RjdGC0L7QvNGDIFVtbmlrINC90LUg0L/QvtCy0YLQvtGA0Y/QtdGCINC/0LvQsNGC0L3Ri9C5IFBPU1Qg0L/QvtGB0LvQtSDRgdCx0L7RjyDQuNC70Lgg0L/QtdGA0LXQt9Cw0L/Rg9GB0LrQsC4KLSDQkiDQvNC10L3RjiDCqyvCuyDQv9C+0Y/QstC40LvQsNGB0YwgwqtCYXRjaMK7LiDQmtC90L7Qv9C60LAg0LDQutGC0LjQstC90LAg0YLQvtC70YzQutC+INC60L7Qs9C00LAg0YLQtdC60YPRidCw0Y8g0LzQvtC00LXQu9GMINGP0LLQu9GP0LXRgtGB0Y8gYDpiYXRjaGA7INC00LvRjyDQvtCx0YvRh9C90L7QuSDQvNC+0LTQtdC70Lgg0L7QvdCwINCy0LjQtNC90LAsINC90L4g0L3QtdC00L7RgdGC0YPQv9C90LAuCi0gQmF0Y2gg0Lgg0LPQtdC90LXRgNCw0YbQuNGPINCy0LjQtNC10L4g0LLRi9C/0L7Qu9C90Y/RjtGC0YHRjyDQutCw0Log0LLQvtGB0YHRgtCw0L3QsNCy0LvQuNCy0LDQtdC80YvQtSDRgdC10YDQstC10YDQvdGL0LUg0LfQsNC00LDQvdC40Y8uIFdvcmtNYW5hZ2VyINC/0YDQvtC00L7Qu9C20LDQtdGCINC/0YDQvtCy0LXRgNGP0YLRjCDRg9C20LUg0YHQvtC30LTQsNC90L3Ri9C5IGpvYiDQv9C+0YHQu9C1INC30LDQutGA0YvRgtC40Y8g0LjQu9C4INGD0L3QuNGH0YLQvtC20LXQvdC40Y8g0L/RgNC+0YbQtdGB0YHQsCBBbmRyb2lkLCDQsCDQs9C+0YLQvtCy0YvQuSDRgNC10LfRg9C70YzRgtCw0YIg0LLQvtC30LLRgNCw0YnQsNC10YLRgdGPINCyINC40YHRhdC+0LTQvdGL0Lkg0YfQsNGCLgotINCU0L7QsdCw0LLQu9C10L3RiyBFbWJlZGRpbmdzINC4IFJlcmFuayBBUEkuINCSIE9wZW5Sb3V0ZXIgSHViINC80L7QttC90L4g0LLQutC70Y7Rh9C40YLRjCBSQUcg0LTQu9GPINGC0LXQutGB0YLQvtCy0YvRhSDRhNCw0LnQu9C+0LIg0L/RgNC+0LXQutGC0LAg0Lgg0YfQsNGC0LA6IFVtbmlrINGA0LDQt9Cx0LjQstCw0LXRgiDQvNCw0YLQtdGA0LjQsNC7INC90LAg0YTRgNCw0LPQvNC10L3RgtGLLCDQvdCw0YXQvtC00LjRgiDRgNC10LvQtdCy0LDQvdGC0L3Ri9C1IGVtYmVkZGluZ3Mg0Lgg0L/RgNC4INCy0YvQsdGA0LDQvdC90L7QuSByZXJhbmst0LzQvtC00LXQu9C4INGD0YLQvtGH0L3Rj9C10YIg0LLRi9C00LDRh9GDINC/0LXRgNC10LQg0L7RgtC/0YDQsNCy0LrQvtC5INC+0YHQvdC+0LLQvdC+0Lkg0LzQvtC00LXQu9C4LiBSQUcg0LLRi9C60LvRjtGH0LXQvSDQv9C+INGD0LzQvtC70YfQsNC90LjRjjsgUERGINC4INC90LXRgtC10LrRgdGC0L7QstGL0LUg0YTQvtGA0LzQsNGC0Ysg0L/Qvi3Qv9GA0LXQttC90LXQvNGDINC/0LXRgNC10LTQsNGO0YLRgdGPINGI0YLQsNGC0L3Ri9C8INGB0L/QvtGB0L7QsdC+0LwuCi0g0JTQvtCx0LDQstC70LXQvdGLINCw0YHQuNC90YXRgNC+0L3QvdCw0Y8g0LPQtdC90LXRgNCw0YbQuNGPINCy0LjQtNC10L4sINC/0YDQuNC60YDQtdC/0LvQtdC90LjQtSDRgNC10YTQtdGA0LXQvdGB0L7Qsiwg0YHQv9C40YHQvtC6INCy0LjQtNC10L4t0LfQsNC00LDQvdC40Lkg0Lgg0LDQstGC0L7QvNCw0YLQuNGH0LXRgdC60L7QtSDRgdC60LDRh9C40LLQsNC90LjQtSDQs9C+0YLQvtCy0L7Qs9C+IE1QNCDQsiDRhdGA0LDQvdC40LvQuNGJ0LUgVW1uaWsuCi0g0JTQvtCx0LDQstC70LXQvdGLIE9wZW5Sb3V0ZXIgU3BlZWNoLXRvLVRleHQg0LggVGV4dC10by1TcGVlY2g6INC+0YLQtNC10LvRjNC90YvQtSDQvNC+0LTQtdC70Lgg0YDQsNGB0L/QvtC30L3QsNCy0LDQvdC40Y8g0YDQtdGH0Lgg0Lgg0L3QtdC50YDQvtGB0LXRgtC10LLQvtC5INC+0LfQstGD0YfQutC4INCy0YvQsdC40YDQsNGO0YLRgdGPINC40Lcg0L7QsdGJ0LXQs9C+INC60LDRgtCw0LvQvtCz0LAuCi0g0JTQvtCx0LDQstC70LXQvdGLIEZpbGVzIEFQSSwgUmVzcG9uc2VzIEFQSSDQuCBPcGVuUm91dGVyIFNoZWxsLiBTaGVsbCDQvNC+0LbQtdGCINC/0L7Qu9GD0YfQuNGC0Ywg0L/QvtC70YzQt9C+0LLQsNGC0LXQu9GM0YHQutC40LUg0YTQsNC50LvRiyDQstC+INCy0YDQtdC80LXQvdC90YvQuSDQutC+0L3RgtC10LnQvdC10YAsINCy0YvQv9C+0LvQvdC40YLRjCDQstGL0YfQuNGB0LvQtdC90LjRjyDQuCDQstC10YDQvdGD0YLRjCDRgdC+0LfQtNCw0L3QvdGL0LUg0YTQsNC50LvRiyDQvtCx0YDQsNGC0L3QviDQsiDRhdGA0LDQvdC40LvQuNGJ0LUgVW1uaWsuCi0g0JTQvtCx0LDQstC70LXQvdGLIHNlcnZlciB0b29scyBPcGVuUm91dGVyOiBXZWIgU2VhcmNoLCBXZWIgRmV0Y2gsIERhdGVUaW1lLCBJbWFnZSBHZW5lcmF0aW9uLCBGdXNpb24sIEFkdmlzb3IsIFN1YmFnZW50INC4IFNoZWxsLiDQlNC70Y8g0L7QsdGL0YfQvdC+0LPQviDRh9Cw0YLQsCDQvtC90Lgg0L/RgNC40LzQtdC90Y/RjtGC0YHRjyDQvdCwIEhUVFAt0LPRgNCw0L3QuNGG0LUg0YLQvtC70YzQutC+INC6IE9wZW5Sb3V0ZXIsINC90LUg0LzQtdC90Y/RjyDQu9C+0LPQuNC60YMg0LTRgNGD0LPQuNGFINC/0L7QtNC60LvRjtGH0LXQvdC40LkuCi0g0JTQvtCx0LDQstC70LXQvdCwINC80LDRgNGI0YDRg9GC0LjQt9Cw0YbQuNGPIE9wZW5Sb3V0ZXI6INCw0LLRgtC+LCDQvNC40L3QuNC80LDQu9GM0L3QsNGPINGG0LXQvdCwLCDQvNCw0LrRgdC40LzQsNC70YzQvdGL0LkgdGhyb3VnaHB1dCDQuNC70Lgg0LzQuNC90LjQvNCw0LvRjNC90LDRjyBsYXRlbmN5OyBwcm92aWRlciBvcmRlci9vbmx5L2lnbm9yZSwgZmFsbGJhY2tzLCBaRFIsINC30LDQv9GA0LXRgiBkYXRhIGNvbGxlY3Rpb24sINC60LLQsNC90YLQuNC30LDRhtC40Lgg0Lgg0L7Qs9GA0LDQvdC40YfQtdC90LjRjyDQvNCw0LrRgdC40LzQsNC70YzQvdC+0Lkg0YbQtdC90YsuCi0g0J/QvtC0INC+0YLQstC10YLQvtC8IE9wZW5Sb3V0ZXIg0L/QvtC60LDQt9GL0LLQsNGO0YLRgdGPINGE0LDQutGC0LjRh9C10YHQutCw0Y8g0LzQvtC00LXQu9GML9C/0YDQvtCy0LDQudC00LXRgCwg0LLRhdC+0LTQvdGL0LUg0Lgg0LLRi9GF0L7QtNC90YvQtSDRgtC+0LrQtdC90Ysg0Lgg0YHRgtC+0LjQvNC+0YHRgtGMLCDQutC+0LPQtNCwINGN0YLQuCDQt9C90LDRh9C10L3QuNGPINCy0L7Qt9Cy0YDQsNGJ0LXQvdGLIEFQSS4g0KHRgtCw0YDRi9C1INGB0L7RhdGA0LDQvdGR0L3QvdGL0LUg0YfQsNGC0Ysg0L7RgdGC0LDQjtGC0YHRjyDRgdC+0LLQvNC10YHRgtC40LzRi9C80LguCi0g0KHQvtGF0YDQsNC90LXQvdGLINGD0L3QuNCy0LXRgNGB0LDQu9GM0L3QsNGPINC40LXRgNCw0YDRhdC40Y8g0LjQvdGB0YLRgNGD0LrRhtC40Lkg0L/RgNC+0LXQutGC0LAg0LjQtyB2MS41LjIg0Lgg0LfQsNGJ0LjRgtCwINCw0LrRgtC40LLQvdGL0YUg0L7QsdGL0YfQvdGL0YUg0LfQsNC/0YDQvtGB0L7QsiDQvtGCINGB0LLQvtGA0LDRh9C40LLQsNC90LjRjyDQv9GA0LjQu9C+0LbQtdC90LjRjyDQuNC3IHYxLjUuMS4KLSDQktC10YDRgdC40Y86IDEuNi4wIC8gdmVyc2lvbkNvZGUgNjAuCgojIyB2MS41LjIgLSAyMDI2LTA5LTEzCgotINCf0YDQsNCy0LjQu9CwINC/0YDQuNC+0YDQuNGC0LXRgtCwINC80LDRgdGC0LXRgC3QuNC90YHRgtGA0YPQutGG0LjQuCDQv9GA0L7QtdC60YLQsCDRgdC00LXQu9Cw0L3RiyDRg9C90LjQstC10YDRgdCw0LvRjNC90YvQvNC4OiBVbW5payDQsdC+0LvRjNGI0LUg0L3QtSDQstGL0LLQvtC00LjRgiDQuNC3INGC0LXQutGB0YLQsCDQv9GA0L7QtdC60YLQsCDQuCDQvdC1INC30LDRiNC40LLQsNC10YIg0LIg0LrQvtC0INC/0YDQtdC00LzQtdGC0L3Ri9C1INC/0YDQsNCy0LjQu9CwINGE0L7RgNC80LDRgtC40YDQvtCy0LDQvdC40Y8g0LjQu9C4INGB0L7QtNC10YDQttCw0L3QuNGPLgotINCe0LHRidC40Lkg0L/QvtGA0Y/QtNC+0Log0LrQvtC90YLQtdC60YHRgtCwINC/0YDQvtC10LrRgtCwOiDQvNCw0YHRgtC10YAt0LjQvdGB0YLRgNGD0LrRhtC40Y8g0L/RgNC+0LXQutGC0LAsINGP0LLQvdGL0Lkg0YLQtdC60YPRidC40Lkg0LfQsNC/0YDQvtGBLCDQvdCw0YHRgtGA0L7QudC60Lgg0LTQuNCw0LvQvtCz0LAsINC/0L7QtNC60LvRjtGH0ZHQvdC90YvQtSDQvdCw0LLRi9C60LgsINGE0LDQudC70Ysg0L/RgNC+0LXQutGC0LAv0YfQsNGC0LAg0Lgg0L/RgNC+0YTQuNC70Ywg0L/QvtC70YzQt9C+0LLQsNGC0LXQu9GPLgotINCk0LjQvdCw0LvRjNC90LDRjyDRgdCw0LzQvtC/0YDQvtCy0LXRgNC60LAg0L/RgNC+0YHQuNGCINC80L7QtNC10LvRjCDQv9C+0LLRgtC+0YDQvdC+INGB0LLQtdGA0LjRgtGM0YHRjyDRgtC+0LvRjNC60L4g0YEg0YDQtdCw0LvRjNC90YvQvNC4INGC0YDQtdCx0L7QstCw0L3QuNGP0LzQuCDQvNCw0YHRgtC10YAt0LjQvdGB0YLRgNGD0LrRhtC40Lgg0Lgg0L3QtSDQv9GA0LjQtNGD0LzRi9Cy0LDRgtGMINC90L7QstGL0LUg0L7Qs9GA0LDQvdC40YfQtdC90LjRjy4KLSDQktC10YDRgdC40Y86IDEuNS4yIC8gdmVyc2lvbkNvZGUgNTYuCg=="
         run: |
           python3 - <<'PY'
+          import base64, os
           from pathlib import Path
-
-          gradle = Path('app/build.gradle.kts')
-          text = gradle.read_text()
-          text = text.replace('// Umnik v1.5.2', '// Umnik v1.6.0', 1)
-          text = text.replace('versionCode = 56', 'versionCode = 60', 1)
-          text = text.replace('versionName = "1.5.2"', 'versionName = "1.6.0"', 1)
-          gradle.write_text(text)
-
-          changelog = Path('CHANGELOG.md')
-          text = changelog.read_text()
-          marker = '## Unreleased\n'
-          if marker not in text:
-              raise SystemExit('Unreleased section not found')
-          section = r'''
-
-## v1.6.0 - 2026-09-13
-
-- Добавлен OpenRouter Hub с полным каталогом моделей. Разделы «Все», «Текст», «Изображения», «Видео», «Speech», «Transcription», «Embeddings», «Rerank» и «Audio» строятся по метаданным OpenRouter, а не по жёсткому списку Umnik.
-- Каталог разделяет тип модели и её вариант. Поддерживаются Batch, Free, Thinking, Extended, Online, Nitro и Floor, а также фильтры Vision, Audio, Video, Reasoning и Tools.
-- Реализован настоящий OpenRouter Batch API. Batch-модель из обычного чата автоматически отправляется через `/api/beta/batches`; пакетные задания также можно создавать отдельно. `batch_id` сохраняется локально до опроса результата, поэтому Umnik не повторяет платный POST после сбоя или перезапуска.
-- В меню «+» появилась «Batch». Кнопка активна только когда текущая модель является `:batch`; для обычной модели она видна, но недоступна.
-- Batch и генерация видео выполняются как восстанавливаемые серверные задания. WorkManager продолжает проверять уже созданный job после закрытия или уничтожения процесса Android, а готовый результат возвращается в исходный чат.
-- Добавлены Embeddings и Rerank API. В OpenRouter Hub можно включить RAG для текстовых файлов проекта и чата: Umnik разбивает материал на фрагменты, находит релевантные embeddings и при выбранной rerank-модели уточняет выдачу перед отправкой основной модели. RAG выключен по умолчанию; PDF и нетекстовые форматы по-прежнему передаются штатным способом.
-- Добавлены асинхронная генерация видео, прикрепление референсов, список видео-заданий и автоматическое скачивание готового MP4 в хранилище Umnik.
-- Добавлены OpenRouter Speech-to-Text и Text-to-Speech: отдельные модели распознавания речи и нейросетевой озвучки выбираются из общего каталога.
-- Добавлены Files API, Responses API и OpenRouter Shell. Shell может получить пользовательские файлы во временный контейнер, выполнить вычисления и вернуть созданные файлы обратно в хранилище Umnik.
-- Добавлены server tools OpenRouter: Web Search, Web Fetch, DateTime, Image Generation, Fusion, Advisor, Subagent и Shell. Для обычного чата они применяются на HTTP-границе только к OpenRouter, не меняя логику других подключений.
-- Добавлена маршрутизация OpenRouter: авто, минимальная цена, максимальный throughput или минимальная latency; provider order/only/ignore, fallbacks, ZDR, запрет data collection, квантизации и ограничения максимальной цены.
-- Под ответом OpenRouter показываются фактическая модель/провайдер, входные и выходные токены и стоимость, когда эти значения возвращены API. Старые сохранённые чаты остаются совместимыми.
-- Сохранены универсальная иерархия инструкций проекта из v1.5.2 и защита активных обычных запросов от сворачивания приложения из v1.5.1.
-- Версия: 1.6.0 / versionCode 60.
-
-## v1.5.2 - 2026-09-13
-
-- Правила приоритета мастер-инструкции проекта сделаны универсальными: Umnik больше не выводит из текста проекта и не зашивает в код предметные правила форматирования или содержания.
-- Общий порядок контекста проекта: мастер-инструкция проекта, явный текущий запрос, настройки диалога, подключённые навыки, файлы проекта/чата и профиль пользователя.
-- Финальная самопроверка просит модель повторно свериться только с реальными требованиями мастер-инструкции и не придумывать новые ограничения.
-- Версия: 1.5.2 / versionCode 56.
-'''
+          path = Path('CHANGELOG.md')
+          text = path.read_text()
           if '## v1.6.0 - 2026-09-13' not in text:
-              text = text.replace(marker, marker + section, 1)
-          changelog.write_text(text)
-
-          docs = Path('docs/v1.6.0-openrouter.md')
-          docs.parent.mkdir(parents=True, exist_ok=True)
-          docs.write_text(r'''# Umnik 1.6.0: OpenRouter Hub
-
-Umnik 1.6.0 расширяет приложение от обычного чат-клиента до универсального Android-интерфейса возможностей OpenRouter. Новые функции не заменяют стандартный чат и не применяются к NVIDIA или произвольным OpenAI-compatible подключениям, если это явно не поддержано их прежней логикой.
-
-## Каталог моделей
-
-OpenRouter Hub загружает общий каталог с `output_modalities=all` и дополняет его специализированными каталогами изображений, видео и embeddings. Вкладка «Все» не накладывает фильтр категории. Отдельно можно фильтровать категории, варианты модели и входные возможности.
-
-Категории: Text, Image, Video, Speech, Transcription, Embeddings, Rerank, Audio.
-
-Варианты: Standard, Batch, Free, Thinking, Extended, Online, Nitro, Floor. Категория описывает, что модель делает; вариант описывает способ или маршрут её использования.
-
-## Batch
-
-`*:batch` не отправляется через обычный `/chat/completions`. Umnik создаёт асинхронное задание через `/api/beta/batches`, сохраняет возвращённый `batch_id` и после этого только опрашивает состояние. Неоднозначная сетевая ошибка POST не приводит к автоматической повторной отправке платного задания.
-
-В обычном чате выбор Batch-модели автоматически использует Batch API. Для нескольких независимых задач есть вкладка «Задания» в OpenRouter Hub; задания разделяются строкой `---`. В меню `+` кнопка Batch активна только при выбранной Batch-модели.
-
-## Фоновые задания
-
-Batch и Video имеют локальные записи job ID. WorkManager восстанавливает опрос после перезапуска процесса, но не создаёт новую платную задачу. Готовые результаты добавляются в исходный чат без повторной доставки одного и того же job.
-
-## RAG, Embeddings и Rerank
-
-RAG включается вручную и по умолчанию выключен. Для текстовых вложений Umnik делает временное смысловое разбиение, получает embeddings, выбирает подходящие фрагменты и при наличии rerank-модели переранжирует кандидатов. Выбранные фрагменты помечаются как пользовательские данные, а не инструкции. Мастер-инструкция проекта остаётся выше файлов по приоритету.
-
-В 1.6.0 индекс строится для текстового контекста текущего запроса и не является постоянной локальной векторной базой. PDF и другие нетекстовые файлы продолжают использовать существующую передачу OpenRouter. Это сознательное ограничение первого релиза RAG, чтобы не хранить устаревшие embeddings после изменения файлов.
-
-## Audio и Video
-
-Hub позволяет выбрать модели Transcription и Speech для STT/TTS. Видео создаётся через асинхронный Video API; можно приложить до четырёх image/video/audio референсов. Готовый MP4 скачивается в локальное хранилище Umnik.
-
-## Responses, Files и Shell
-
-Shell использует Responses API. Выбранные файлы временно загружаются через Files API, передаются в контейнер OpenRouter, а найденные созданные файлы скачиваются в `generated`. Загруженные для задания исходники удаляются из Files API после завершения попытки.
-
-## Server tools
-
-Доступны Web Search, Web Fetch, DateTime, Image Generation, Fusion, Advisor, Subagent и Shell. Shell переключает обычный OpenRouter-чат на Responses API; остальные поддерживаемые server tools добавляются к запросу Chat Completions.
-
-## Маршрутизация и приватность
-
-OpenRouter Hub позволяет задать sort по price/throughput/latency, provider order/only/ignore, fallback-модели, ZDR, запрет data collection, допустимые квантизации и верхние границы цены. Эти параметры сохраняются локально и добавляются только в запросы OpenRouter.
-
-## Метаданные ответа
-
-Для обычных ответов OpenRouter Umnik сохраняет значения, фактически возвращённые API: модель, провайдер, prompt/completion tokens и стоимость, если она присутствует. Приложение не рассчитывает стоимость самостоятельно по потенциально устаревшему прайсу.
-
-## Совместимость
-
-Формат сохранённых сообщений расширен только nullable-полями с значениями по умолчанию, поэтому старые чаты не требуют миграции. Логика проектов и навыков остаётся универсальной; новые возможности OpenRouter не добавляют предметных правил в системный промпт.
-''')
+              marker = '## Unreleased\n'
+              if marker not in text:
+                  raise SystemExit('Unreleased section not found')
+              section = base64.b64decode(os.environ['SECTION_B64']).decode('utf-8')
+              path.write_text(text.replace(marker, marker + section, 1))
           PY
           git diff --check
-
-      - name: Commit release preparation
-        shell: bash
+      - name: Commit changelog
         run: |
           set -euo pipefail
           if git diff --quiet; then exit 0; fi
           git config user.name "Ayuemin"
           git config user.email "105455063+Ayuemin@users.noreply.github.com"
-          git add app/build.gradle.kts CHANGELOG.md docs/v1.6.0-openrouter.md
-          git commit -m "Prepare Umnik 1.6.0 release [v16-release-prep]"
+          git add CHANGELOG.md
+          git commit -m "Document Umnik 1.6.0 [v16-changelog]"
           git push origin HEAD:feature/openrouter-full-v1.6.0
