@@ -167,7 +167,7 @@ private fun OpenRouterHubDialog(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text("OpenRouter Hub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Umnik 1.6 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Umnik 1.6.1 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                         }
@@ -346,15 +346,15 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
 private fun priceFilterLabel(value: ModelPriceFilter): String = when (value) {
     ModelPriceFilter.ALL -> "Все"
     ModelPriceFilter.FREE -> "Бесплатно"
-    ModelPriceFilter.UP_TO_0_5 -> "≤ $0.5"
-    ModelPriceFilter.UP_TO_1 -> "≤ $1"
-    ModelPriceFilter.UP_TO_5 -> "≤ $5"
-    ModelPriceFilter.UP_TO_10 -> "≤ $10"
+    ModelPriceFilter.UP_TO_0_5 -> "≤ \$0.5"
+    ModelPriceFilter.UP_TO_1 -> "≤ \$1"
+    ModelPriceFilter.UP_TO_5 -> "≤ \$5"
+    ModelPriceFilter.UP_TO_10 -> "≤ \$10"
 }
 
 private fun formatCatalogPrice(value: Double?): String = when {
     value == null -> "—"
-    value == 0.0 -> "$0"
+    value == 0.0 -> "\$0"
     value < 0.01 -> "$" + "%.4f".format(Locale.US, value)
     else -> "$" + "%.2f".format(Locale.US, value)
 }
