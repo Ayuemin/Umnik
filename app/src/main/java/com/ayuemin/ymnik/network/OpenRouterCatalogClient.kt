@@ -124,6 +124,9 @@ internal object OpenRouterModelCatalog {
         val maxCompletionTokens = intOrNull(item.getAsJsonObject("top_provider")?.get("max_completion_tokens"))
             ?.takeIf { it > 0 }
         val parameterOptions = parameterOptions(item.get("supported_parameters"))
+        val pricing = item.getAsJsonObject("pricing")
+        val promptPriceUsdPerMillion = pricePerMillion(pricing?.get("prompt"))
+        val completionPriceUsdPerMillion = pricePerMillion(pricing?.get("completion"))
         val variants = variants(id)
 
         return ModelInfo(
@@ -137,6 +140,8 @@ internal object OpenRouterModelCatalog {
             maxCompletionTokens = maxCompletionTokens,
             reasoningMandatory = boolOrFalse(reasoningInfo?.get("mandatory")),
             reasoningDefaultEnabled = boolOrFalse(reasoningInfo?.get("default_enabled")),
+            promptPriceUsdPerMillion = promptPriceUsdPerMillion,
+            completionPriceUsdPerMillion = completionPriceUsdPerMillion,
             variants = variants
         )
     }
@@ -155,6 +160,8 @@ internal object OpenRouterModelCatalog {
             maxCompletionTokens = maxOfNullable(first.maxCompletionTokens, second.maxCompletionTokens),
             reasoningMandatory = first.reasoningMandatory || second.reasoningMandatory,
             reasoningDefaultEnabled = first.reasoningDefaultEnabled || second.reasoningDefaultEnabled,
+            promptPriceUsdPerMillion = first.promptPriceUsdPerMillion ?: second.promptPriceUsdPerMillion,
+            completionPriceUsdPerMillion = first.completionPriceUsdPerMillion ?: second.completionPriceUsdPerMillion,
             variants = first.variants + second.variants
         )
     }
@@ -221,6 +228,10 @@ internal object OpenRouterModelCatalog {
         }
         ?.toMap()
         .orEmpty()
+
+    private fun pricePerMillion(element: JsonElement?): Double? = runCatching {
+        element?.takeUnless { it.isJsonNull }?.asDouble
+    }.getOrNull()?.takeIf { it >= 0.0 }?.times(1_000_000.0)
 
     private fun intOrNull(element: JsonElement?): Int? = runCatching {
         element?.takeUnless { it.isJsonNull }?.asInt

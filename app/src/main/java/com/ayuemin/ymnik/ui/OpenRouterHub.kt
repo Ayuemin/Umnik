@@ -19,6 +19,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -43,7 +45,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -72,6 +73,7 @@ import com.ayuemin.ymnik.model.ModelCapabilityFilter
 import com.ayuemin.ymnik.model.ModelCatalogFilter
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ModelPriceFilter
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
@@ -93,6 +95,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
+    val appState by viewModel.state.collectAsState()
 
     DisposableEffect(controller) {
         onDispose { controller.close() }
@@ -131,17 +134,8 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
         }
     }
 
-    MaterialTheme {
-        Box(Modifier.fillMaxSize()) {
-            YmnikApp(viewModel)
-            SmallFloatingActionButton(
-                onClick = { requestedPage = HubPage.MODELS; open = true; controller.refreshJobs() },
-                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
-                containerColor = MaterialTheme.colorScheme.tertiaryContainer
-            ) {
-                Text("OR", fontWeight = FontWeight.Bold)
-            }
-        }
+    UmnikTheme(appState.themeChoice, appState.customThemeColor) {
+        YmnikApp(viewModel)
         if (open) {
             OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, onDismiss = { open = false })
         }
@@ -164,6 +158,7 @@ private fun OpenRouterHubDialog(
     ) {
         Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
             Scaffold(
+                modifier = Modifier.statusBarsPadding().navigationBarsPadding(),
                 topBar = {
                     Column {
                         Row(
@@ -172,7 +167,7 @@ private fun OpenRouterHubDialog(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text("OpenRouter Hub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Umnik 1.6 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Umnik 1.6.1 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                         }
@@ -232,9 +227,19 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf<ModelCategory?>(null) }
     var variant by remember { mutableStateOf<ModelVariant?>(null) }
+    var price by remember { mutableStateOf(ModelPriceFilter.ALL) }
     var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
-    val filtered = remember(state.catalog, query, category, variant, capabilities) {
-        ModelCatalogFilter.apply(state.catalog, query, category, variant, capabilities, limit = 700)
+    val availableCategories = remember(state.catalog) {
+        ModelCategory.entries.filter { candidate -> state.catalog.any { candidate in it.categories } }
+    }
+    val variantOrder = remember {
+        listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)
+    }
+    val availableVariants = remember(state.catalog) {
+        variantOrder.filter { candidate -> state.catalog.any { candidate in it.variants } }
+    }
+    val filtered = remember(state.catalog, query, category, variant, price, capabilities) {
+        ModelCatalogFilter.apply(state.catalog, query, category, variant, price, capabilities, limit = 700)
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -254,15 +259,21 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         Text("Категории", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             item { FilterChip(selected = category == null, onClick = { category = null }, label = { Text("Все") }) }
-            items(ModelCategory.entries) { item ->
+            items(availableCategories) { item ->
                 FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
             }
         }
         Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
-            items(listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)) { item ->
+            items(availableVariants) { item ->
                 FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
+            }
+        }
+        Text("Цена (макс. вход/выход за 1M токенов)", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(ModelPriceFilter.entries) { item ->
+                FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item)) })
             }
         }
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -310,6 +321,13 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
+                Text(
+                    "Цена / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (ModelCategory.TEXT in model.categories) SmallAssignButton(if (model.isBatch) "Чат / Batch" else "В чат") { controller.useAsTextModel(model) }
@@ -323,6 +341,22 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
             }
         }
     }
+}
+
+private fun priceFilterLabel(value: ModelPriceFilter): String = when (value) {
+    ModelPriceFilter.ALL -> "Все"
+    ModelPriceFilter.FREE -> "Бесплатно"
+    ModelPriceFilter.UP_TO_0_5 -> "≤ \$0.5"
+    ModelPriceFilter.UP_TO_1 -> "≤ \$1"
+    ModelPriceFilter.UP_TO_5 -> "≤ \$5"
+    ModelPriceFilter.UP_TO_10 -> "≤ \$10"
+}
+
+private fun formatCatalogPrice(value: Double?): String = when {
+    value == null -> "—"
+    value == 0.0 -> "\$0"
+    value < 0.01 -> "$" + "%.4f".format(Locale.US, value)
+    else -> "$" + "%.2f".format(Locale.US, value)
 }
 
 @Composable
