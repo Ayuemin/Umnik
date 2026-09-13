@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   dispatch:
-    runs-on: ubuntu-latest
+    runs-on: macos-latest
     steps:
       - name: Create v1.5.2 tag and start signed release
         env:
@@ -21,7 +21,13 @@ jobs:
           TARGET_SHA: b35d2c592ef6f178194a9edad6b473b2863e8e51
         run: |
           set -euo pipefail
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref='refs/tags/v1.5.2' \
-            -f sha="$TARGET_SHA"
+          if gh release view v1.5.2 --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release v1.5.2 already exists"
+            exit 0
+          fi
+          if ! gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/v1.5.2" >/dev/null 2>&1; then
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+              -f ref='refs/tags/v1.5.2' \
+              -f sha="$TARGET_SHA"
+          fi
           gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=v1.5.2
