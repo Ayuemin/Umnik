@@ -1,6 +1,7 @@
 package com.ayuemin.ymnik.data
 
 import android.content.Context
+import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ChatMessage
 import com.google.gson.Gson
@@ -70,14 +71,17 @@ class ChatRepository(context: Context) {
     fun appendAssistantIfMissing(chatId: String, sourceKey: String, assistant: ChatMessage): List<ChatSession> = synchronized(fileLock) {
         val marker = "async:$sourceKey"
         val chats = list()
+        var changed = false
         val updated = chats.map { chat ->
             if (chat.id != chatId || chat.messages.any { it.role == "assistant" && it.deliveryState == marker }) return@map chat
+            changed = true
             chat.copy(
                 messages = chat.messages + assistant.copy(deliveryState = marker),
                 updatedAt = System.currentTimeMillis()
             )
         }
         save(updated)
+        if (changed) AsyncJobEvents.notifyChanged()
         updated
     }
 
