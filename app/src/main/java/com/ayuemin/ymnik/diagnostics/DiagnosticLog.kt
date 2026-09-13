@@ -3,6 +3,7 @@ package com.ayuemin.ymnik.diagnostics
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
+import com.ayuemin.ymnik.network.OpenRouterRequestEnhancer
 import okhttp3.Interceptor
 import okhttp3.Response
 import java.io.File
@@ -114,8 +115,19 @@ class DiagnosticHttpInterceptor(
     private val context: Context,
     private val source: String
 ) : Interceptor {
+    private val openRouterEnhancer by lazy { OpenRouterRequestEnhancer(context.applicationContext) }
+
     override fun intercept(chain: Interceptor.Chain): Response {
-        val request = chain.request()
+        var request = chain.request()
+
+        // The ordinary OpenRouter chat client stays provider-agnostic. Advanced
+        // OpenRouter-only features are applied at the HTTP boundary instead.
+        if (source == "OpenRouter") {
+            val enhanced = openRouterEnhancer.enhance(request)
+            enhanced.response?.let { return it }
+            request = enhanced.request ?: request
+        }
+
         if (!DiagnosticLog.isEnabled(context)) return chain.proceed(request)
 
         val url = request.url
