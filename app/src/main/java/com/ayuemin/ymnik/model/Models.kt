@@ -23,6 +23,26 @@ enum class ImageApiProtocol {
     NVIDIA_NIM
 }
 
+enum class ModelCategory {
+    TEXT,
+    IMAGE,
+    VIDEO,
+    SPEECH,
+    TRANSCRIPTION,
+    EMBEDDINGS,
+    RERANK,
+    AUDIO
+}
+
+enum class ModelVariant {
+    STANDARD,
+    BATCH,
+    FREE,
+    THINKING,
+    EXTENDED,
+    ONLINE
+}
+
 data class ProviderUsage(
     val providerName: String,
     val daily: Double,
@@ -58,22 +78,49 @@ data class UserProfile(
 data class ModelInfo(
     val id: String,
     val inputModalities: Set<String> = setOf("text"),
+    val outputModalities: Set<String> = setOf("text"),
     val supportedParameters: Set<String> = emptySet(),
     val reasoningEfforts: Set<String> = emptySet(),
     val parameterOptions: Map<String, List<String>> = emptyMap(),
     val contextLength: Int? = null,
     val maxCompletionTokens: Int? = null,
     val reasoningMandatory: Boolean = false,
-    val reasoningDefaultEnabled: Boolean = false
+    val reasoningDefaultEnabled: Boolean = false,
+    val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
+    fun outputs(modality: String): Boolean = modality.lowercase() in outputModalities
     fun parameterValues(parameter: String): List<String> = parameterOptions[parameter.lowercase()].orEmpty()
+
     val supportsReasoning: Boolean
         get() = "reasoning" in supportedParameters || "reasoning_effort" in supportedParameters
     val supportsReasoningEffort: Boolean
         get() = "reasoning_effort" in supportedParameters
     val supportsTools: Boolean
         get() = "tools" in supportedParameters
+    val isBatch: Boolean
+        get() = ModelVariant.BATCH in variants || id.endsWith(":batch", ignoreCase = true)
+    val batchBaseModelId: String
+        get() = if (isBatch) id.removeSuffix(":batch") else id
+
+    val categories: Set<ModelCategory>
+        get() {
+            val categories = linkedSetOf<ModelCategory>()
+            outputModalities.forEach { modality ->
+                when (modality.lowercase()) {
+                    "text" -> categories += ModelCategory.TEXT
+                    "image" -> categories += ModelCategory.IMAGE
+                    "video" -> categories += ModelCategory.VIDEO
+                    "speech" -> categories += ModelCategory.SPEECH
+                    "transcription" -> categories += ModelCategory.TRANSCRIPTION
+                    "embeddings", "embedding" -> categories += ModelCategory.EMBEDDINGS
+                    "rerank", "ranking" -> categories += ModelCategory.RERANK
+                    "audio" -> categories += ModelCategory.AUDIO
+                }
+            }
+            if (categories.isEmpty()) categories += ModelCategory.TEXT
+            return categories
+        }
 }
 
 enum class ReasoningEffort(val apiValue: String) {
