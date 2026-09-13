@@ -1,0 +1,419 @@
+name: Build sidebar navigation redesign v2 once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-sidebar-navigation-v2-once.yml"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  build-change:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply navigation redesign
+        shell: bash
+        run: |
+          set -euo pipefail
+          BRANCH="feat/sidebar-navigation-v1.5.0"
+          git checkout -b "$BRANCH"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re, textwrap
+
+          # Reuse the already reviewed sidebar source embedded in the first one-time workflow.
+          old_workflow = Path('.github/workflows/build-sidebar-navigation-once.yml').read_text()
+          match = re.search(
+              r"cat > app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar\.kt <<'KOTLIN'\n([\s\S]*?)\n          KOTLIN",
+              old_workflow,
+          )
+          if not match:
+              raise SystemExit('NavigationSidebar source block not found')
+          sidebar = textwrap.dedent(match.group(1)) + "\n"
+          # Explicit import keeps weight() available regardless of Compose import inference.
+          sidebar = sidebar.replace(
+              'import androidx.compose.foundation.layout.width\n',
+              'import androidx.compose.foundation.layout.width\nimport androidx.compose.foundation.layout.weight\n',
+              1,
+          )
+          Path('app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt').write_text(sidebar)
+
+          path = Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
+          text = path.read_text()
+
+          text, n = re.subn(
+              r'(    var fileToSave by remember \{ mutableStateOf<GeneratedFile\?>\(null\) \}\n)'
+              r'    var chatsOpen by remember \{ mutableStateOf\(false\) \}\n'
+              r'    var projectsOpen by remember \{ mutableStateOf\(false\) \}\n',
+              r'\1    var sidebarOpen by remember { mutableStateOf(false) }\n'
+              r'    var projectsOpen by remember { mutableStateOf(false) }\n'
+              r'    var selectedProjectId by remember { mutableStateOf<String?>(null) }\n',
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'navigation state replacement count={n}')
+
+          text = text.replace('    var menuSwipeSignal by remember { mutableIntStateOf(0) }\n', '', 1)
+          if '                            menuSwipeSignal += 1' not in text:
+              raise SystemExit('swipe anchor not found')
+          text = text.replace('                            menuSwipeSignal += 1', '                            sidebarOpen = true', 1)
+
+          text, n = re.subn(
+              r'        ChatHeader\([\s\S]*?\n        \)\n\n        LazyColumn\(',
+              '''        ChatHeader(
+              state = state,
+              vm = vm,
+              onOpenSidebar = { sidebarOpen = true }
+          )
+
+          LazyColumn('''.replace('          ', '        '),
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'ChatHeader call replacement count={n}')
+
+          sidebar_block = '''
+              if (sidebarOpen) {
+                  NavigationSidebar(
+                      state = state,
+                      vm = vm,
+                      onDismiss = { sidebarOpen = false },
+                      onNewChat = {
+                          val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+                          vm.createChat(projectId)
+                          sidebarOpen = false
+                      },
+                      onOpenProjects = {
+                          selectedProjectId = null
+                          projectsOpen = true
+                          sidebarOpen = false
+                      },
+                      onOpenProject = { projectId ->
+                          selectedProjectId = projectId
+                          projectsOpen = true
+                          sidebarOpen = false
+                      },
+                      onOpenSkills = {
+                          sidebarOpen = false
+                          onOpenSkills()
+                      },
+                      onOpenSettings = {
+                          sidebarOpen = false
+                          onOpenSettings()
+                      },
+                      onClearChat = {
+                          vm.clearChat()
+                          sidebarOpen = false
+                      }
+                  )
+              }
+          '''.replace('          ', '    ')
+          anchor = '\n    if (actionsOpen) {'
+          if anchor not in text:
+              raise SystemExit('actionsOpen anchor not found')
+          text = text.replace(anchor, sidebar_block + anchor, 1)
+
+          text, n = re.subn(
+              r'\n    if \(chatsOpen\) \{[\s\S]*?\n    \}\n\n    if \(projectsOpen\) \{',
+              '\n    if (projectsOpen) {',
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'ChatsHub removal count={n}')
+
+          text, n = re.subn(
+              r'''    if \(projectsOpen\) \{\n        ProjectsDialog\(\n            state = state,\n            vm = vm,\n            onDismiss = \{ projectsOpen = false \}\n        \)\n    \}''',
+              '''    if (projectsOpen) {
+                  ProjectsDialog(
+                      state = state,
+                      vm = vm,
+                      onDismiss = {
+                          projectsOpen = false
+                          selectedProjectId = null
+                      },
+                      initialProjectId = selectedProjectId
+                  )
+              }'''.replace('              ', '    '),
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'ProjectsDialog call replacement count={n}')
+
+          # Simplify the main top bar while preserving quick model and usage details.
+          header = '''@Composable
+          private fun ChatHeader(
+              state: UiState,
+              vm: ChatViewModel,
+              onOpenSidebar: () -> Unit
+          ) {
+              var quickModelsOpen by remember { mutableStateOf(false) }
+              var usageOpen by remember { mutableStateOf(false) }
+              val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
+              val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
+              val activeTextModel = state.currentChatTextModel ?: state.textModel
+              val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
+              val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
+              val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
+              val quickCandidates = (listOf(currentRef, defaultRef) + state.quickTextModels)
+                  .filter { quickModelId(it).isNotBlank() }
+                  .distinct()
+              val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+
+              Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
+                  Row(
+                      modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+                      verticalAlignment = Alignment.CenterVertically
+                  ) {
+                      IconButton(onClick = onOpenSidebar, modifier = Modifier.size(42.dp)) {
+                          Icon(
+                              Icons.Outlined.Menu,
+                              contentDescription = "Открыть проекты и историю",
+                              modifier = Modifier.size(25.dp),
+                              tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                          )
+                      }
+
+                      activeUsage?.let { usage ->
+                          Spacer(Modifier.width(2.dp))
+                          Surface(
+                              onClick = {
+                                  usageOpen = true
+                                  vm.refreshProviderUsage()
+                              },
+                              shape = RoundedCornerShape(10.dp),
+                              color = MaterialTheme.colorScheme.surfaceContainerHigh
+                          ) {
+                              Text(
+                                  formatUsd(usage.daily),
+                                  modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+                                  style = MaterialTheme.typography.labelSmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                  maxLines = 1
+                              )
+                          }
+                          Spacer(Modifier.width(4.dp))
+                      }
+
+                      Box(modifier = Modifier.weight(1f)) {
+                          TextButton(
+                              onClick = { quickModelsOpen = true },
+                              enabled = !state.isLoading,
+                              modifier = Modifier.fillMaxWidth(),
+                              contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
+                          ) {
+                              Text(
+                                  shortModelName,
+                                  style = MaterialTheme.typography.titleSmall,
+                                  fontWeight = FontWeight.SemiBold,
+                                  maxLines = 1,
+                                  overflow = TextOverflow.Ellipsis
+                              )
+                              Spacer(Modifier.width(3.dp))
+                              Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(20.dp))
+                          }
+
+                          DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
+                              quickCandidates.forEach { ref ->
+                                  val id = quickModelId(ref)
+                                  val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
+                                  val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
+                                  val current = ref == currentRef
+                                  DropdownMenuItem(
+                                      text = {
+                                          Column {
+                                              Text(
+                                                  id.substringAfter('/').ifBlank { id },
+                                                  fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+                                                  maxLines = 1,
+                                                  overflow = TextOverflow.Ellipsis
+                                              )
+                                              Text(
+                                                  when {
+                                                      current -> "Текущая модель"
+                                                      ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
+                                                      else -> connection?.name ?: id
+                                                  },
+                                                  style = MaterialTheme.typography.bodySmall,
+                                                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                  maxLines = 1,
+                                                  overflow = TextOverflow.Ellipsis
+                                              )
+                                          }
+                                      },
+                                      onClick = {
+                                          if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
+                                          quickModelsOpen = false
+                                      }
+                                  )
+                              }
+                          }
+                      }
+                  }
+              }
+
+              if (usageOpen && activeUsage != null) {
+                  AlertDialog(
+                      onDismissRequest = { usageOpen = false },
+                      title = { Text(activeUsage.providerName) },
+                      text = {
+                          Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                              listOf(
+                                  "Сегодня" to activeUsage.daily,
+                                  "Неделя" to activeUsage.weekly,
+                                  "Месяц" to activeUsage.monthly,
+                                  "Всего этим ключом" to activeUsage.total
+                              ).forEach { (label, value) ->
+                                  Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                      Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                      Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
+                                  }
+                              }
+                              Text(
+                                  "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
+                                  style = MaterialTheme.typography.bodySmall,
+                                  color = MaterialTheme.colorScheme.onSurfaceVariant
+                              )
+                          }
+                      },
+                      confirmButton = { TextButton(onClick = { usageOpen = false }) { Text("Закрыть") } },
+                      dismissButton = {
+                          TextButton(onClick = { vm.refreshProviderUsage() }) {
+                              Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                              Spacer(Modifier.width(5.dp))
+                              Text("Обновить")
+                          }
+                      }
+                  )
+              }
+          }
+          '''.replace('          ', '')
+
+          text, n = re.subn(
+              r'@Composable\nprivate fun ChatHeader\([\s\S]*?\n\}\n\n@Composable\nprivate fun ComposerActionTile\(',
+              header + '\n@Composable\nprivate fun ComposerActionTile(',
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'ChatHeader function replacement count={n}')
+          path.write_text(text)
+
+          # Allow the sidebar to jump directly into one selected project and add chat deletion there.
+          p = Path('app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt')
+          text = p.read_text()
+          text, n = re.subn(
+              r'fun ProjectsDialog\(state: UiState, vm: ChatViewModel, onDismiss: \(\) -> Unit\) \{\n    var openProjectId by remember \{ mutableStateOf<String\?>\(null\) \}',
+              'fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit, initialProjectId: String? = null) {\n    var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }',
+              text,
+              count=1,
+          )
+          if n != 1:
+              raise SystemExit(f'ProjectsDialog signature replacement count={n}')
+
+          needle = '    var editOpen by remember { mutableStateOf(false) }\n    var deleteConfirm by remember { mutableStateOf(false) }'
+          if needle not in text:
+              raise SystemExit('Project detail state anchor not found')
+          text = text.replace(
+              needle,
+              needle + '\n    var deleteChatTarget by remember { mutableStateOf<ChatSession?>(null) }',
+              1,
+          )
+
+          favorite = '''                        IconButton(onClick = { vm.setChatFavorite(chat.id, !chat.isFavorite) }) {
+                              Icon(
+                                  if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                                  contentDescription = "Избранное"
+                              )
+                          }'''.replace('                          ', '                        ')
+          if favorite not in text:
+              raise SystemExit('Project chat favorite button anchor not found')
+          replacement = favorite.replace('contentDescription = "Избранное"', 'contentDescription = if (chat.isFavorite) "Открепить чат" else "Закрепить чат"') + '''
+                          IconButton(onClick = { deleteChatTarget = chat }, enabled = !state.isLoading) {
+                              Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить чат")
+                          }'''.replace('                          ', '                        ')
+          text = text.replace(favorite, replacement, 1)
+
+          confirm = '''
+              deleteChatTarget?.let { chat ->
+                  AlertDialog(
+                      onDismissRequest = { deleteChatTarget = null },
+                      title = { Text("Удалить чат из проекта?") },
+                      text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
+                      confirmButton = {
+                          TextButton(onClick = {
+                              vm.deleteChat(chat.id)
+                              deleteChatTarget = null
+                          }) { Text("Удалить") }
+                      },
+                      dismissButton = { TextButton(onClick = { deleteChatTarget = null }) { Text("Отмена") } }
+                  )
+              }
+          '''.replace('          ', '    ')
+          edit_anchor = '\n    if (editOpen) {'
+          if edit_anchor not in text:
+              raise SystemExit('Project detail edit anchor not found')
+          text = text.replace(edit_anchor, confirm + edit_anchor, 1)
+          p.write_text(text)
+
+          b = Path('app/build.gradle.kts')
+          text = b.read_text()
+          if 'versionCode = 53' not in text or 'versionName = "1.4.1-rc.1"' not in text:
+              raise SystemExit('Unexpected current app version')
+          text = text.replace('// Umnik v1.4.1-rc.1', '// Umnik v1.5.0', 1)
+          text = text.replace('versionCode = 53', 'versionCode = 54', 1)
+          text = text.replace('versionName = "1.4.1-rc.1"', 'versionName = "1.5.0"', 1)
+          b.write_text(text)
+
+          c = Path('CHANGELOG.md')
+          text = c.read_text()
+          marker = '## Unreleased\n'
+          section = '''## v1.5.0 - 2026-09-13
+
+          - Навигация проектов и истории перенесена в левую боковую панель шириной около 70% экрана. Она открывается кнопкой в шапке или свайпом слева направо.
+          - Вверху панели находятся Umnik и поиск по чатам; проекты показаны первыми, ниже расположена прокручиваемая история чатов.
+          - Чаты и проекты можно закреплять прямо в боковой панели; закреплённые элементы поднимаются вверх списка.
+          - Внизу панели слева находится «Новый чат», справа — «Меню» с проектами, навыками, настройками и очисткой текущего чата.
+          - На основном экране в верхней строке оставлены только кнопка боковой панели, баланс OpenRouter и быстрая модель.
+          - Внутри проекта у каждого чата появилась отдельная кнопка удаления с подтверждением.
+          - Версия: 1.5.0 / versionCode 54.
+
+          '''.replace('          ', '')
+          if marker not in text:
+              raise SystemExit('CHANGELOG marker not found')
+          text = text.replace(marker, marker + '\n' + section, 1)
+          c.write_text(text)
+          PY
+
+          rm .github/workflows/build-sidebar-navigation-once.yml
+          rm .github/workflows/build-sidebar-navigation-v2-once.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Redesign chat and project navigation for v1.5.0"
+          git push origin "$BRANCH"
+
+      - name: Open pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh pr create \
+            --base main \
+            --head feat/sidebar-navigation-v1.5.0 \
+            --title "Redesign sidebar navigation (v1.5.0)" \
+            --body $'## Changes\n- Replace separate project/history access with a 72% left sidebar opened by swipe or header button.\n- Put projects first and chat history below in one vertically scrollable list, with chat search and pinning.\n- Move New chat and Menu to the bottom of the drawer.\n- Simplify the main header to drawer / balance / quick model.\n- Add per-chat delete controls inside project details.\n\nVersion: 1.5.0 / 54.'
