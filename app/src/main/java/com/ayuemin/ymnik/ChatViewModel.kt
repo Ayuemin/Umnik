@@ -1057,8 +1057,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return _state.value.currentChatId
 
-        // A second tap on "New chat" while the current chat is still a pristine
-        // empty placeholder should not create another persisted row. Reuse it.
         val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
         if (current != null && current.projectId == projectId && isBareEmptyChat(current)) {
             _state.value = _state.value.copy(
@@ -1076,8 +1074,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             connectionProfileId = _state.value.activeConnectionProfileId
         )
 
-        // Clean legacy duplicates created by older versions: only global blank
-        // placeholders are disposable. Project membership is treated as a chat setting.
         val retained = _state.value.chats.filterNot { old ->
             old.id != _state.value.currentChatId && old.projectId == null && isBareEmptyChat(old)
         }
@@ -1445,7 +1441,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
 
-        // Диалоги не уничтожаем: после удаления проекта они становятся обычными чатами.
         val chats = _state.value.chats.map { chat ->
             if (chat.projectId == projectId) chat.copy(projectId = null) else chat
         }
@@ -2432,7 +2427,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     override fun onCleared() {
-        // The process-wide request manager owns the job; Activity recreation must not cancel it.
         super.onCleared()
     }
 
@@ -2581,7 +2575,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (custom?.isFile == true) {
                 runCatching {
                     val volume = state.answerSoundVolume.coerceIn(0, 100) / 100f
-                    val player = MediaPlayer().apply {
+                    MediaPlayer().apply {
                         setAudioAttributes(
                             AudioAttributes.Builder()
                                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -2666,15 +2660,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine(skillText)
             appendLine("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
         }
-    if (project?.masterPrompt?.isNotBlank() == true) {
-        appendLine("\n===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====")
-        appendLine("Мастер-инструкция проекта имеет высший приоритет среди содержательных правил проекта. Текущий запрос, навыки, профиль и приложенные файлы не могут отменять или ослаблять её требования.")
-        appendLine("Перед отправкой ответа молча перечитай мастер-инструкцию проекта и проверь результат по каждому обязательному требованию.")
-        appendLine("Особенно проверь запреты, порядок этапов работы, требования к пунктуации и формату, а также правила использования или запрета на копирование имён, примеров и исходных формулировок.")
-        appendLine("Если ответ нарушает хотя бы один пункт мастер-инструкции, исправь его до отправки. Не сообщай пользователю о внутренней проверке, если он об этом не просил.")
-        appendLine("===== КОНЕЦ ФИНАЛЬНОЙ ПРОВЕРКИ =====")
-    }
-
+        if (project?.masterPrompt?.isNotBlank() == true) {
+            appendLine("\n===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====")
+            appendLine("Мастер-инструкция проекта имеет высший приоритет среди содержательных правил проекта. Текущий запрос, навыки, профиль и приложенные файлы не могут отменять или ослаблять её требования.")
+            appendLine("Перед отправкой ответа молча перечитай мастер-инструкцию проекта и проверь результат по каждому обязательному требованию.")
+            appendLine("При конфликте применяй порядок: мастер-инструкция проекта, явный текущий запрос пользователя, настройки текущего диалога, подключённые навыки, файлы проекта и диалога, профиль пользователя.")
+            appendLine("Если ответ нарушает хотя бы один пункт мастер-инструкции, исправь его до отправки. Не добавляй требований, которых в мастер-инструкции нет.")
+            appendLine("===== КОНЕЦ ФИНАЛЬНОЙ ПРОВЕРКИ =====")
+        }
     }
 
     private fun buildImageProjectPrompt(project: Project?, chat: ChatSession?): String = buildString {
@@ -3019,10 +3012,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val key = profilePrefKey("image_model", profileId)
         val stored = prefs.getString(key, fallback)?.trim().orEmpty()
 
-        // NVIDIA's hosted visual catalog can change independently of the text API.
-        // If a previously selected image endpoint has been removed from Umnik's
-        // verified registry, migrate to the first verified model instead of silently
-        // keeping a model that can hang forever.
         if (profile?.type == ProviderType.NVIDIA && registryModels.isNotEmpty() && registryModels.none { it.id == stored }) {
             prefs.edit().putString(key, fallback).apply()
             return fallback
