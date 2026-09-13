@@ -1,0 +1,362 @@
+from pathlib import Path
+
+
+def replace(path, old, new, count=1):
+    p = Path(path)
+    text = p.read_text()
+    if old not in text:
+        raise SystemExit(f"pattern not found in {path}: {old[:120]!r}")
+    p.write_text(text.replace(old, new, count))
+
+
+# Model price metadata + price filter enum.
+path = "app/src/main/java/com/ayuemin/ymnik/model/Models.kt"
+replace(path,
+'''enum class ModelVariant {
+    STANDARD,
+    BATCH,
+    FREE,
+    THINKING,
+    EXTENDED,
+    ONLINE,
+    NITRO,
+    FLOOR
+}
+''',
+'''enum class ModelVariant {
+    STANDARD,
+    BATCH,
+    FREE,
+    THINKING,
+    EXTENDED,
+    ONLINE,
+    NITRO,
+    FLOOR
+}
+
+enum class ModelPriceFilter(val ceilingUsdPerMillion: Double?, val freeOnly: Boolean = false) {
+    ALL(null),
+    FREE(0.0, true),
+    UP_TO_0_5(0.5),
+    UP_TO_1(1.0),
+    UP_TO_5(5.0),
+    UP_TO_10(10.0)
+}
+''')
+replace(path,
+'''    val reasoningMandatory: Boolean = false,
+    val reasoningDefaultEnabled: Boolean = false,
+    val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
+) {''',
+'''    val reasoningMandatory: Boolean = false,
+    val reasoningDefaultEnabled: Boolean = false,
+    val promptPriceUsdPerMillion: Double? = null,
+    val completionPriceUsdPerMillion: Double? = null,
+    val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
+) {''')
+replace(path,
+'''    val batchBaseModelId: String
+        get() = if (isBatch) id.removeSuffix(":batch") else id
+
+    val categories: Set<ModelCategory>''',
+'''    val batchBaseModelId: String
+        get() = if (isBatch) id.removeSuffix(":batch") else id
+    val maxTextPriceUsdPerMillion: Double?
+        get() = listOfNotNull(promptPriceUsdPerMillion, completionPriceUsdPerMillion).maxOrNull()
+
+    val categories: Set<ModelCategory>''')
+
+# Parse OpenRouter pricing from the live catalog.
+path = "app/src/main/java/com/ayuemin/ymnik/network/OpenRouterCatalogClient.kt"
+replace(path,
+'''        val parameterOptions = parameterOptions(item.get("supported_parameters"))
+        val variants = variants(id)
+
+        return ModelInfo(''',
+'''        val parameterOptions = parameterOptions(item.get("supported_parameters"))
+        val pricing = item.getAsJsonObject("pricing")
+        val promptPriceUsdPerMillion = pricePerMillion(pricing?.get("prompt"))
+        val completionPriceUsdPerMillion = pricePerMillion(pricing?.get("completion"))
+        val variants = variants(id)
+
+        return ModelInfo(''')
+replace(path,
+'''            reasoningMandatory = boolOrFalse(reasoningInfo?.get("mandatory")),
+            reasoningDefaultEnabled = boolOrFalse(reasoningInfo?.get("default_enabled")),
+            variants = variants
+        )''',
+'''            reasoningMandatory = boolOrFalse(reasoningInfo?.get("mandatory")),
+            reasoningDefaultEnabled = boolOrFalse(reasoningInfo?.get("default_enabled")),
+            promptPriceUsdPerMillion = promptPriceUsdPerMillion,
+            completionPriceUsdPerMillion = completionPriceUsdPerMillion,
+            variants = variants
+        )''')
+replace(path,
+'''            reasoningMandatory = first.reasoningMandatory || second.reasoningMandatory,
+            reasoningDefaultEnabled = first.reasoningDefaultEnabled || second.reasoningDefaultEnabled,
+            variants = first.variants + second.variants
+        )''',
+'''            reasoningMandatory = first.reasoningMandatory || second.reasoningMandatory,
+            reasoningDefaultEnabled = first.reasoningDefaultEnabled || second.reasoningDefaultEnabled,
+            promptPriceUsdPerMillion = first.promptPriceUsdPerMillion ?: second.promptPriceUsdPerMillion,
+            completionPriceUsdPerMillion = first.completionPriceUsdPerMillion ?: second.completionPriceUsdPerMillion,
+            variants = first.variants + second.variants
+        )''')
+replace(path,
+'''    private fun intOrNull(element: JsonElement?): Int? = runCatching {''',
+'''    private fun pricePerMillion(element: JsonElement?): Double? = runCatching {
+        element?.takeUnless { it.isJsonNull }?.asDouble
+    }.getOrNull()?.takeIf { it >= 0.0 }?.times(1_000_000.0)
+
+    private fun intOrNull(element: JsonElement?): Int? = runCatching {''')
+
+# Add a price filter to catalog filtering.
+path = "app/src/main/java/com/ayuemin/ymnik/model/ModelCatalogFilter.kt"
+replace(path,
+'''        variant: ModelVariant? = null,
+        capabilities: ModelCapabilityFilter = ModelCapabilityFilter(),''',
+'''        variant: ModelVariant? = null,
+        price: ModelPriceFilter = ModelPriceFilter.ALL,
+        capabilities: ModelCapabilityFilter = ModelCapabilityFilter(),''')
+replace(path,
+'''            .filter { model -> !capabilities.imageInput || model.accepts("image") }''',
+'''            .filter { model ->
+                if (price == ModelPriceFilter.ALL) return@filter true
+                val value = model.maxTextPriceUsdPerMillion ?: return@filter false
+                if (price.freeOnly) value <= 0.0
+                else price.ceilingUsdPerMillion?.let { value <= it } ?: true
+            }
+            .filter { model -> !capabilities.imageInput || model.accepts("image") }''')
+
+# OpenRouter Hub: use Umnik theme, respect system bars, remove floating OR,
+# hide empty categories/variants and add price filtering.
+path = "app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt"
+replace(path,
+'''import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size''',
+'''import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.size''')
+replace(path, 'import androidx.compose.material3.SmallFloatingActionButton\n', '')
+replace(path,
+'''import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ModelVariant''',
+'''import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ModelPriceFilter
+import com.ayuemin.ymnik.model.ModelVariant''')
+replace(path,
+'''    val asyncSequence by AsyncJobEvents.sequence.collectAsState()
+    val hubRequest by AsyncJobEvents.hubRequest.collectAsState()''',
+'''    val asyncSequence by AsyncJobEvents.sequence.collectAsState()
+    val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
+    val appState by viewModel.state.collectAsState()''')
+replace(path,
+'''    MaterialTheme {
+        Box(Modifier.fillMaxSize()) {
+            YmnikApp(viewModel)
+            SmallFloatingActionButton(
+                onClick = { requestedPage = HubPage.MODELS; open = true; controller.refreshJobs() },
+                modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer
+            ) {
+                Text("OR", fontWeight = FontWeight.Bold)
+            }
+        }
+        if (open) {
+            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, onDismiss = { open = false })
+        }
+    }''',
+'''    UmnikTheme(appState.themeChoice, appState.customThemeColor) {
+        YmnikApp(viewModel)
+        if (open) {
+            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, onDismiss = { open = false })
+        }
+    }''')
+replace(path,
+'''        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Scaffold(''',
+'''        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.surface) {
+            Scaffold(
+                modifier = Modifier.statusBarsPadding().navigationBarsPadding(),''')
+replace(path,
+'''    var variant by remember { mutableStateOf<ModelVariant?>(null) }
+    var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
+    val filtered = remember(state.catalog, query, category, variant, capabilities) {
+        ModelCatalogFilter.apply(state.catalog, query, category, variant, capabilities, limit = 700)
+    }''',
+'''    var variant by remember { mutableStateOf<ModelVariant?>(null) }
+    var price by remember { mutableStateOf(ModelPriceFilter.ALL) }
+    var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
+    val availableCategories = remember(state.catalog) {
+        ModelCategory.entries.filter { candidate -> state.catalog.any { candidate in it.categories } }
+    }
+    val variantOrder = remember {
+        listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)
+    }
+    val availableVariants = remember(state.catalog) {
+        variantOrder.filter { candidate -> state.catalog.any { candidate in it.variants } }
+    }
+    val filtered = remember(state.catalog, query, category, variant, price, capabilities) {
+        ModelCatalogFilter.apply(state.catalog, query, category, variant, price, capabilities, limit = 700)
+    }''')
+replace(path,
+'''            items(ModelCategory.entries) { item ->
+                FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+            }''',
+'''            items(availableCategories) { item ->
+                FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+            }''')
+replace(path,
+'''            items(listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)) { item ->
+                FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
+            }
+        }
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {''',
+'''            items(availableVariants) { item ->
+                FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
+            }
+        }
+        Text("Цена (макс. вход/выход за 1M токенов)", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            items(ModelPriceFilter.entries) { item ->
+                FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item)) })
+            }
+        }
+        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {''')
+replace(path,
+'''            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {''',
+'''            if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
+                Text(
+                    "Цена / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {''')
+replace(path,
+'''@Composable
+private fun SmallAssignButton(label: String, onClick: () -> Unit) {''',
+'''private fun priceFilterLabel(value: ModelPriceFilter): String = when (value) {
+    ModelPriceFilter.ALL -> "Все"
+    ModelPriceFilter.FREE -> "Бесплатно"
+    ModelPriceFilter.UP_TO_0_5 -> "≤ $0.5"
+    ModelPriceFilter.UP_TO_1 -> "≤ $1"
+    ModelPriceFilter.UP_TO_5 -> "≤ $5"
+    ModelPriceFilter.UP_TO_10 -> "≤ $10"
+}
+
+private fun formatCatalogPrice(value: Double?): String = when {
+    value == null -> "—"
+    value == 0.0 -> "$0"
+    value < 0.01 -> "$" + "%.4f".format(Locale.US, value)
+    else -> "$" + "%.2f".format(Locale.US, value)
+}
+
+@Composable
+private fun SmallAssignButton(label: String, onClick: () -> Unit) {''')
+
+# Move Hub entry into the existing + sheet.
+path = "app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt"
+replace(path,
+'''            Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+''',
+'''            Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            FilledTonalButton(
+                onClick = {
+                    actionsOpen = false
+                    com.ayuemin.ymnik.AsyncJobEvents.requestHub("models")
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.Extension, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("OpenRouter Hub")
+            }
+''')
+
+# Tests for pricing and filtering.
+path = "app/src/test/java/com/ayuemin/ymnik/model/ModelCatalogFilterTest.kt"
+replace(path,
+'''            supportedParameters = setOf("tools", "reasoning")
+        ),''',
+'''            supportedParameters = setOf("tools", "reasoning"),
+            promptPriceUsdPerMillion = 0.2,
+            completionPriceUsdPerMillion = 0.8
+        ),''')
+replace(path,
+'''            outputModalities = setOf("text"),
+            variants = setOf(ModelVariant.BATCH)
+        ),''',
+'''            outputModalities = setOf("text"),
+            promptPriceUsdPerMillion = 0.0,
+            completionPriceUsdPerMillion = 0.0,
+            variants = setOf(ModelVariant.BATCH)
+        ),''')
+replace(path,
+'''    @Test
+    fun capabilityFiltersCanBeCombined() {''',
+'''    @Test
+    fun filtersByMaximumTokenPrice() {
+        assertEquals(
+            listOf("vendor/chat:batch"),
+            ModelCatalogFilter.apply(models, price = ModelPriceFilter.FREE).map { it.id }
+        )
+        assertEquals(
+            listOf("vendor/chat", "vendor/chat:batch"),
+            ModelCatalogFilter.apply(models, price = ModelPriceFilter.UP_TO_1).map { it.id }
+        )
+    }
+
+    @Test
+    fun capabilityFiltersCanBeCombined() {''')
+
+path = "app/src/test/java/com/ayuemin/ymnik/network/OpenRouterModelCatalogTest.kt"
+replace(path,
+'''              "context_length": 131072,
+              "top_provider": {"max_completion_tokens": 8192}''',
+'''              "context_length": 131072,
+              "pricing": {"prompt": "0.00000066", "completion": "0.00000198"},
+              "top_provider": {"max_completion_tokens": 8192}''')
+replace(path,
+'''        assertTrue(ModelCategory.TEXT in info.categories)
+        assertTrue(ModelVariant.BATCH in info.variants)''',
+'''        assertTrue(ModelCategory.TEXT in info.categories)
+        assertTrue(ModelVariant.BATCH in info.variants)
+        assertEquals(0.66, info.promptPriceUsdPerMillion!!, 0.000001)
+        assertEquals(1.98, info.completionPriceUsdPerMillion!!, 0.000001)''')
+
+# Version and changelog.
+path = "app/build.gradle.kts"
+replace(path, '// Umnik v1.6.0', '// Umnik v1.6.1')
+replace(path, 'versionCode = 60', 'versionCode = 61')
+replace(path, 'versionName = "1.6.0"', 'versionName = "1.6.1"')
+
+path = "CHANGELOG.md"
+replace(path,
+'''## Unreleased
+
+
+## v1.6.0''',
+'''## Unreleased
+
+
+## v1.6.1 - 2026-09-13
+
+- OpenRouter Hub больше не висит отдельной кнопкой поверх чата: вход перенесён в меню «+» как «OpenRouter Hub».
+- Hub теперь использует выбранную цветовую схему Umnik и учитывает верхнюю и нижнюю системные панели Android.
+- Каталог скрывает категории и варианты, для которых в текущем ответе OpenRouter нет ни одной модели, поэтому пустые Thinking/Extended/Online/Nitro/Floor больше не создают ложное впечатление неисправности.
+- Добавлен фильтр моделей по максимальной цене входа/выхода за 1M токенов: бесплатно, до $0.5, $1, $5 и $10. Карточка модели показывает цены, если OpenRouter их вернул.
+- Версия: 1.6.1 / versionCode 61.
+
+## v1.6.0''')
+
+# Clean one-time helper files from resulting branch.
+for helper in [
+    Path('.github/workflows/patch-v1.6.1-once.yml'),
+    Path('tools/patch_v161.py'),
+]:
+    if helper.exists():
+        helper.unlink()
