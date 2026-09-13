@@ -9,10 +9,14 @@ internal object OpenRouterResponseParser {
         val message: JsonObject,
         val id: String,
         val provider: String,
+        val model: String,
         val finishReason: String,
         val nativeFinishReason: String,
+        val promptTokens: Int?,
         val completionTokens: Int?,
-        val reasoningTokens: Int?
+        val totalTokens: Int?,
+        val reasoningTokens: Int?,
+        val costUsd: Double?
     )
 
     fun parse(body: String, allowEmpty: Boolean = false): Completion {
@@ -41,10 +45,15 @@ internal object OpenRouterResponseParser {
             message = message,
             id = root.get("id")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
             provider = root.get("provider")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
+            model = root.get("model")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
             finishReason = finish,
             nativeFinishReason = nativeFinish,
+            promptTokens = runCatching { usage?.get("prompt_tokens")?.asInt }.getOrNull(),
             completionTokens = runCatching { usage?.get("completion_tokens")?.asInt }.getOrNull(),
-            reasoningTokens = reasoningTokens
+            totalTokens = runCatching { usage?.get("total_tokens")?.asInt }.getOrNull(),
+            reasoningTokens = reasoningTokens,
+            costUsd = runCatching { usage?.get("cost")?.asDouble }.getOrNull()
+                ?: runCatching { root.get("cost")?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
         )
     }
 

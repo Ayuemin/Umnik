@@ -1614,6 +1614,21 @@ private fun MessageCard(
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSaveGenerated)
                 }
+                val usageMeta = listOfNotNull(
+                    message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
+                    message.providerName?.takeIf { it.isNotBlank() },
+                    message.inputTokens?.let { "in $it" },
+                    message.outputTokens?.let { "out $it" },
+                    message.costUsd?.takeIf { it >= 0.0 }?.let { formatUsd(it) }
+                ).joinToString(" · ")
+                if (usageMeta.isNotBlank()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        usageMeta,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                    )
+                }
             }
         }
 

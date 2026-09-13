@@ -2158,7 +2158,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
                     text = finalText.ifBlank { "Готово." },
-                    generatedFiles = result.files
+                    generatedFiles = result.files,
+                    modelId = result.modelId ?: if (mode == ChatMode.TEXT) textModel else imageModel,
+                    providerName = result.providerName,
+                    costUsd = result.costUsd,
+                    inputTokens = result.inputTokens,
+                    outputTokens = result.outputTokens
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(

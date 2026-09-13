@@ -268,7 +268,12 @@ data class ChatMessage(
     val imageGeneration: Boolean = false,
     val timestamp: Long = System.currentTimeMillis(),
     // Null means an existing/completed message; older stored chats need no migration.
-    val deliveryState: String? = null
+    val deliveryState: String? = null,
+    val modelId: String? = null,
+    val providerName: String? = null,
+    val costUsd: Double? = null,
+    val inputTokens: Int? = null,
+    val outputTokens: Int? = null
 )
 
 data class ChatSession(
