@@ -1,0 +1,12 @@
+name: Trigger sidebar CI once
+
+on:
+  push:
+    branches:
+      - feat/sidebar-navigation-v1.5.0
+
+jobs:
+  noop:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Sidebar branch validation trigger"
