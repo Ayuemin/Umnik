@@ -20,9 +20,10 @@ import java.util.concurrent.TimeUnit
 /**
  * Loads OpenRouter's complete model catalog.
  *
- * Some specialized model families (for example transcription) are only returned
- * when /models is queried with output_modalities, so the "All" catalog is the
- * union of the general endpoint and the documented output-modality views.
+ * The regular /models endpoint defaults to text output. `output_modalities=all`
+ * is therefore mandatory for Umnik's "All" view. Dedicated image, video and
+ * embeddings model endpoints are also merged in because they expose richer
+ * capability descriptors than the general catalog for those model families.
  */
 class OpenRouterCatalogClient(private val context: Context) {
     private val gson = Gson()
@@ -39,16 +40,16 @@ class OpenRouterCatalogClient(private val context: Context) {
         apiKey: String,
         baseUrl: String = "https://openrouter.ai/api/v1"
     ): List<ModelInfo> = withContext(Dispatchers.IO) {
-        val general = fetch(apiKey, modelsUrl(baseUrl, null))
-        val specialized = coroutineScope {
-            OUTPUT_MODALITY_FILTERS.map { modality ->
+        val all = fetch(apiKey, modelsUrl(baseUrl, "all"))
+        val enriched = coroutineScope {
+            DEDICATED_MODEL_PATHS.map { path ->
                 async {
-                    runCatching { fetch(apiKey, modelsUrl(baseUrl, modality)) }
+                    runCatching { fetch(apiKey, endpoint(baseUrl, path)) }
                         .getOrDefault(emptyList())
                 }
             }.awaitAll().flatten()
         }
-        merge(general + specialized)
+        merge(all + enriched)
     }
 
     suspend fun modelsForOutput(
@@ -82,22 +83,17 @@ class OpenRouterCatalogClient(private val context: Context) {
         .map { duplicates -> duplicates.reduce(OpenRouterModelCatalog::merge) }
         .sortedBy { it.id }
 
-    private fun modelsUrl(baseUrl: String, outputModality: String?): String {
-        val root = baseUrl.trimEnd('/')
-        return if (outputModality.isNullOrBlank()) "$root/models"
-        else "$root/models?output_modalities=$outputModality"
-    }
+    private fun modelsUrl(baseUrl: String, outputModality: String): String =
+        "${baseUrl.trimEnd('/')}/models?output_modalities=$outputModality"
+
+    private fun endpoint(baseUrl: String, path: String): String =
+        "${baseUrl.trimEnd('/')}/${path.trimStart('/')}"
 
     companion object {
-        private val OUTPUT_MODALITY_FILTERS = listOf(
-            "text",
-            "image",
-            "video",
-            "audio",
-            "speech",
-            "transcription",
-            "embeddings",
-            "rerank"
+        private val DEDICATED_MODEL_PATHS = listOf(
+            "images/models",
+            "videos/models",
+            "embeddings/models"
         )
     }
 }
@@ -184,7 +180,12 @@ internal object OpenRouterModelCatalog {
     private fun stringSet(element: JsonElement?): Set<String> = element
         ?.takeIf { it.isJsonArray }
         ?.asJsonArray
-        ?.mapNotNull { value -> value.takeIf { it.isJsonPrimitive }?.asString?.lowercase()?.takeIf(String::isNotBlank) }
+        ?.mapNotNull { value ->
+            value.takeIf { it.isJsonPrimitive }
+                ?.asString
+                ?.lowercase()
+                ?.takeIf { it.isNotBlank() }
+        }
         ?.toSet()
         .orEmpty()
 
@@ -193,7 +194,7 @@ internal object OpenRouterModelCatalog {
         element.isJsonArray -> element.asJsonArray
             .mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
             .toSet()
-        element.isJsonObject -> element.asJsonObject.keySet().map(String::lowercase).toSet()
+        element.isJsonObject -> element.asJsonObject.keySet().map { it.lowercase() }.toSet()
         else -> emptySet()
     }
 
@@ -207,7 +208,11 @@ internal object OpenRouterModelCatalog {
                 ?.get("values")
                 ?.takeIf { it.isJsonArray }
                 ?.asJsonArray
-                ?.mapNotNull { value -> value.takeIf { it.isJsonPrimitive }?.asString?.takeIf(String::isNotBlank) }
+                ?.mapNotNull { value ->
+                    value.takeIf { it.isJsonPrimitive }
+                        ?.asString
+                        ?.takeIf { it.isNotBlank() }
+                }
                 .orEmpty()
                 .distinct()
             if (values.isEmpty()) null else name.lowercase() to values
