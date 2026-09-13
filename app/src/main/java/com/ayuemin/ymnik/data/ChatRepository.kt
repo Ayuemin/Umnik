@@ -35,7 +35,7 @@ class ChatRepository(context: Context) {
     }
 
     @Synchronized
-    fun updateMessage(chatId: String, messageId: String, transform: (com.ayuemin.ymnik.model.ChatMessage) -> com.ayuemin.ymnik.model.ChatMessage) {
+    fun updateMessage(chatId: String, messageId: String, transform: (ChatMessage) -> ChatMessage) {
         synchronized(fileLock) {
             val chats = list()
             save(chats.map { chat ->
@@ -46,7 +46,7 @@ class ChatRepository(context: Context) {
         }
     }
 
-    /** Complete only the originating chat, using the latest on-disk state rather than a ViewModel snapshot. */
+    /** Complete only the originating synchronous request using the latest on-disk state. */
     fun finishRequest(chatId: String, messageId: String, assistant: ChatMessage?): List<ChatSession> = synchronized(fileLock) {
         val chats = list()
         val updated = chats.map { chat ->
@@ -56,7 +56,26 @@ class ChatRepository(context: Context) {
             val messages = chat.messages.toMutableList()
             messages[userIndex] = messages[userIndex].copy(deliveryState = if (assistant == null) "failed" else null)
             if (assistant != null) messages.add(userIndex + 1, assistant)
-            chat.copy(messages = messages)
+            chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
+        }
+        save(updated)
+        updated
+    }
+
+    /**
+     * Append an asynchronous result exactly once. `sourceKey` is stored only in
+     * the assistant message deliveryState; the UI ignores it for completed
+     * assistant messages, while background retries can use it for de-duplication.
+     */
+    fun appendAssistantIfMissing(chatId: String, sourceKey: String, assistant: ChatMessage): List<ChatSession> = synchronized(fileLock) {
+        val marker = "async:$sourceKey"
+        val chats = list()
+        val updated = chats.map { chat ->
+            if (chat.id != chatId || chat.messages.any { it.role == "assistant" && it.deliveryState == marker }) return@map chat
+            chat.copy(
+                messages = chat.messages + assistant.copy(deliveryState = marker),
+                updatedAt = System.currentTimeMillis()
+            )
         }
         save(updated)
         updated
