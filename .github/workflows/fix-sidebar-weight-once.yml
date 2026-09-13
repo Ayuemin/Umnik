@@ -1,0 +1,30 @@
+name: Fix sidebar weight import once
+
+on:
+  push:
+    branches:
+      - feat/sidebar-navigation-v1.5.0
+    paths:
+      - ".github/workflows/fix-sidebar-weight-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/sidebar-navigation-v1.5.0
+      - name: Remove invalid explicit weight import
+        shell: bash
+        run: |
+          set -euo pipefail
+          sed -i '/^import androidx\.compose\.foundation\.layout\.weight$/d' app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt
+          git rm .github/workflows/fix-sidebar-weight-once.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt
+          git commit -m "Fix Compose weight import"
+          git push origin HEAD:feat/sidebar-navigation-v1.5.0
