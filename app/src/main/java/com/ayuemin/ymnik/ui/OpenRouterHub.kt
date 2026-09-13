@@ -90,7 +90,9 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     val context = LocalContext.current
     val controller = remember(viewModel) { OpenRouterHubController(context.applicationContext, viewModel) }
     var open by remember { mutableStateOf(false) }
+    var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
+    val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
 
     DisposableEffect(controller) {
         onDispose { controller.close() }
@@ -113,11 +115,27 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
         }
     }
 
+    LaunchedEffect(hubRequest) {
+        when (hubRequest) {
+            "jobs", "batch" -> {
+                requestedPage = HubPage.JOBS
+                controller.refreshJobs()
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "models" -> {
+                requestedPage = HubPage.MODELS
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+        }
+    }
+
     MaterialTheme {
         Box(Modifier.fillMaxSize()) {
             YmnikApp(viewModel)
             SmallFloatingActionButton(
-                onClick = { open = true; controller.refreshJobs() },
+                onClick = { requestedPage = HubPage.MODELS; open = true; controller.refreshJobs() },
                 modifier = Modifier.align(Alignment.CenterEnd).padding(end = 6.dp),
                 containerColor = MaterialTheme.colorScheme.tertiaryContainer
             ) {
@@ -125,7 +143,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
             }
         }
         if (open) {
-            OpenRouterHubDialog(controller = controller, viewModel = viewModel, onDismiss = { open = false })
+            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, onDismiss = { open = false })
         }
     }
 }
@@ -134,10 +152,11 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
 private fun OpenRouterHubDialog(
     controller: OpenRouterHubController,
     viewModel: ChatViewModel,
+    initialPage: HubPage,
     onDismiss: () -> Unit
 ) {
     val state by controller.state.collectAsState()
-    var page by remember { mutableStateOf(HubPage.MODELS) }
+    var page by remember(initialPage) { mutableStateOf(initialPage) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -242,7 +261,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
         LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
-            items(listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE)) { item ->
+            items(listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)) { item ->
                 FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
             }
         }
@@ -604,6 +623,8 @@ private fun variantLabel(value: ModelVariant): String = when (value) {
     ModelVariant.THINKING -> "Thinking"
     ModelVariant.EXTENDED -> "Extended"
     ModelVariant.ONLINE -> "Online"
+    ModelVariant.NITRO -> "Nitro"
+    ModelVariant.FLOOR -> "Floor"
 }
 
 private fun routeLabel(value: ProviderRouteStrategy): String = when (value) {

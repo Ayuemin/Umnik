@@ -104,7 +104,9 @@ internal object OpenRouterModelCatalog {
         "free" to ModelVariant.FREE,
         "thinking" to ModelVariant.THINKING,
         "extended" to ModelVariant.EXTENDED,
-        "online" to ModelVariant.ONLINE
+        "online" to ModelVariant.ONLINE,
+        "nitro" to ModelVariant.NITRO,
+        "floor" to ModelVariant.FLOOR
     )
 
     fun parse(element: JsonElement): ModelInfo? {

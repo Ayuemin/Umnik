@@ -40,7 +40,9 @@ enum class ModelVariant {
     FREE,
     THINKING,
     EXTENDED,
-    ONLINE
+    ONLINE,
+    NITRO,
+    FLOOR
 }
 
 enum class BatchJobStatus {
