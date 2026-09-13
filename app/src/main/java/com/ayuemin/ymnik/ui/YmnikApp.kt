@@ -251,8 +251,9 @@ private fun ChatScreen(
 ) {
     var text by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
-    var chatsOpen by remember { mutableStateOf(false) }
+    var sidebarOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
+    var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
@@ -264,7 +265,6 @@ private fun ChatScreen(
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
     var requestElapsedSeconds by remember { mutableIntStateOf(0) }
-    var menuSwipeSignal by remember { mutableIntStateOf(0) }
 
     DisposableEffect(voiceRecorder) {
         onDispose { voiceRecorder.cancel() }
@@ -392,7 +392,7 @@ private fun ChatScreen(
                             horizontalDistance >= menuSwipeTriggerPx &&
                             horizontalDistance > kotlin.math.abs(verticalDistance) * 1.25f
                         ) {
-                            menuSwipeSignal += 1
+                            sidebarOpen = true
                             opened = true
                         }
 
@@ -404,21 +404,12 @@ private fun ChatScreen(
             }
     ) {
         ChatHeader(
-            state = state,
-            vm = vm,
-            openMenuSignal = menuSwipeSignal,
-            onChats = { chatsOpen = true },
-            onProjects = { projectsOpen = true },
-            onOpenSkills = onOpenSkills,
-            onOpenSettings = onOpenSettings,
-            onNewChat = {
-                val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
-                vm.createChat(projectId)
-            },
-            onClear = vm::clearChat
-        )
+    state = state,
+    vm = vm,
+    onOpenSidebar = { sidebarOpen = true }
+)
 
-        LazyColumn(
+LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
@@ -697,6 +688,41 @@ onBranch = if (message.role == "assistant") {
         }
     }
 
+    if (sidebarOpen) {
+        NavigationSidebar(
+      state = state,
+      vm = vm,
+      onDismiss = { sidebarOpen = false },
+      onNewChat = {
+          val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+          vm.createChat(projectId)
+          sidebarOpen = false
+      },
+      onOpenProjects = {
+          selectedProjectId = null
+          projectsOpen = true
+          sidebarOpen = false
+      },
+      onOpenProject = { projectId ->
+          selectedProjectId = projectId
+          projectsOpen = true
+          sidebarOpen = false
+      },
+      onOpenSkills = {
+          sidebarOpen = false
+          onOpenSkills()
+      },
+      onOpenSettings = {
+          sidebarOpen = false
+          onOpenSettings()
+      },
+      onClearChat = {
+          vm.clearChat()
+          sidebarOpen = false
+      }
+        )
+    }
+
     if (actionsOpen) {
         ModalBottomSheet(onDismissRequest = { actionsOpen = false }) {
             Column(
@@ -774,19 +800,15 @@ onBranch = if (message.role == "assistant") {
         }
     }
 
-    if (chatsOpen) {
-        ChatsHubDialog(
-            state = state,
-            vm = vm,
-            onDismiss = { chatsOpen = false }
-        )
-    }
-
     if (projectsOpen) {
         ProjectsDialog(
             state = state,
             vm = vm,
-            onDismiss = { projectsOpen = false }
+            onDismiss = {
+      projectsOpen = false
+      selectedProjectId = null
+            },
+            initialProjectId = selectedProjectId
         )
     }
 }
@@ -907,18 +929,10 @@ private fun formatRequestDuration(seconds: Int): String {
 private fun ChatHeader(
     state: UiState,
     vm: ChatViewModel,
-    openMenuSignal: Int,
-    onChats: () -> Unit,
-    onProjects: () -> Unit,
-    onOpenSkills: () -> Unit,
-    onOpenSettings: () -> Unit,
-    onNewChat: () -> Unit,
-    onClear: () -> Unit
+    onOpenSidebar: () -> Unit
 ) {
     var quickModelsOpen by remember { mutableStateOf(false) }
-    var hubOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
-    var clearConfirm by remember { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
@@ -930,197 +944,130 @@ private fun ChatHeader(
         .distinct()
     val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
 
-    LaunchedEffect(openMenuSignal) {
-        if (openMenuSignal > 0) hubOpen = true
-    }
-
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically
+  modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
+  verticalAlignment = Alignment.CenterVertically
         ) {
-            Box {
-                IconButton(
-                    onClick = { hubOpen = true },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.size(42.dp)
-                ) {
-                    Icon(
-                        Icons.Outlined.Menu,
-                        contentDescription = "Меню",
-                        modifier = Modifier.size(25.dp),
-                        tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+  IconButton(onClick = onOpenSidebar, modifier = Modifier.size(42.dp)) {
+      Icon(
+Icons.Outlined.Menu,
+contentDescription = "Открыть проекты и историю",
+modifier = Modifier.size(25.dp),
+tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+      )
+  }
 
-                DropdownMenu(expanded = hubOpen, onDismissRequest = { hubOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("Проекты") },
-                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
-                        onClick = { hubOpen = false; onProjects() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("История чатов") },
-                        leadingIcon = { Icon(Icons.Outlined.History, contentDescription = null) },
-                        onClick = { hubOpen = false; onChats() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Навыки") },
-                        leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                        onClick = { hubOpen = false; onOpenSkills() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Настройки") },
-                        leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-                        onClick = { hubOpen = false; onOpenSettings() }
-                    )
-                    if (state.messages.isNotEmpty()) {
-                        HorizontalDivider()
-                        DropdownMenuItem(
-                            text = { Text("Очистить чат") },
-                            leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
-                            onClick = {
-                                hubOpen = false
-                                clearConfirm = true
-                            }
-                        )
-                    }
-                }
-            }
+  activeUsage?.let { usage ->
+      Spacer(Modifier.width(2.dp))
+      Surface(
+onClick = {
+    usageOpen = true
+    vm.refreshProviderUsage()
+},
+shape = RoundedCornerShape(10.dp),
+color = MaterialTheme.colorScheme.surfaceContainerHigh
+      ) {
+Text(
+    formatUsd(usage.daily),
+    modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
+    style = MaterialTheme.typography.labelSmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    maxLines = 1
+)
+      }
+      Spacer(Modifier.width(4.dp))
+  }
 
-            IconButton(onClick = onNewChat, enabled = !state.isLoading, modifier = Modifier.size(42.dp)) {
-                Icon(Icons.Outlined.AddComment, contentDescription = "Новый чат", modifier = Modifier.size(24.dp))
-            }
+  Box(modifier = Modifier.weight(1f)) {
+      TextButton(
+onClick = { quickModelsOpen = true },
+enabled = !state.isLoading,
+modifier = Modifier.fillMaxWidth(),
+contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
+      ) {
+Text(
+    shortModelName,
+    style = MaterialTheme.typography.titleSmall,
+    fontWeight = FontWeight.SemiBold,
+    maxLines = 1,
+    overflow = TextOverflow.Ellipsis
+)
+Spacer(Modifier.width(3.dp))
+Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(20.dp))
+      }
 
-            activeUsage?.let { usage ->
-                Spacer(Modifier.width(2.dp))
-                Surface(
-                    onClick = {
-                        usageOpen = true
-                        vm.refreshProviderUsage()
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                    color = MaterialTheme.colorScheme.surfaceContainerHigh
-                ) {
-                    Text(
-                        formatUsd(usage.daily),
-                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1
-                    )
-                }
-                Spacer(Modifier.width(4.dp))
-            }
-
-            Box(modifier = Modifier.weight(1f)) {
-                TextButton(
-                    onClick = { quickModelsOpen = true },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
-                ) {
-                    Text(
-                        shortModelName,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.width(3.dp))
-                    Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(20.dp))
-                }
-
-                DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
-                    quickCandidates.forEach { ref ->
-                        val id = quickModelId(ref)
-                        val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
-                        val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
-                        val current = ref == currentRef
-                        DropdownMenuItem(
-                            text = {
-                                Column {
-                                    Text(
-                                        id.substringAfter('/').ifBlank { id },
-                                        fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        when {
-                                            current -> "Текущая модель"
-                                            ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
-                                            else -> connection?.name ?: id
-                                        },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                            },
-                            onClick = {
-                                if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
-                                quickModelsOpen = false
-                            }
-                        )
-                    }
-                }
-            }
+      DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
+quickCandidates.forEach { ref ->
+    val id = quickModelId(ref)
+    val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
+    val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
+    val current = ref == currentRef
+    DropdownMenuItem(
+        text = {
+  Column {
+      Text(
+id.substringAfter('/').ifBlank { id },
+fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
+maxLines = 1,
+overflow = TextOverflow.Ellipsis
+      )
+      Text(
+when {
+    current -> "Текущая модель"
+    ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
+    else -> connection?.name ?: id
+},
+style = MaterialTheme.typography.bodySmall,
+color = MaterialTheme.colorScheme.onSurfaceVariant,
+maxLines = 1,
+overflow = TextOverflow.Ellipsis
+      )
+  }
+        },
+        onClick = {
+  if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
+  quickModelsOpen = false
         }
-    }
-
-    if (clearConfirm) {
-        AlertDialog(
-            onDismissRequest = { clearConfirm = false },
-            title = { Text("Очистить текущий чат?") },
-            text = { Text("Переписка и файлы контекста этого чата будут удалены. Сгенерированные файлы в хранилище Umnik останутся.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearConfirm = false
-                    onClear()
-                }) { Text("Очистить") }
-            },
-            dismissButton = {
-                TextButton(onClick = { clearConfirm = false }) { Text("Отмена") }
-            }
-        )
+    )
+}
+      }
+  }
+        }
     }
 
     if (usageOpen && activeUsage != null) {
         AlertDialog(
-            onDismissRequest = { usageOpen = false },
-            title = { Text(activeUsage.providerName) },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf(
-                        "Сегодня" to activeUsage.daily,
-                        "Неделя" to activeUsage.weekly,
-                        "Месяц" to activeUsage.monthly,
-                        "Всего этим ключом" to activeUsage.total
-                    ).forEach { (label, value) ->
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
-                        }
-                    }
-                    Text(
-                        "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { usageOpen = false }) { Text("Закрыть") }
-            },
-            dismissButton = {
-                TextButton(onClick = { vm.refreshProviderUsage() }) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(5.dp))
-                    Text("Обновить")
-                }
-            }
+  onDismissRequest = { usageOpen = false },
+  title = { Text(activeUsage.providerName) },
+  text = {
+      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+listOf(
+    "Сегодня" to activeUsage.daily,
+    "Неделя" to activeUsage.weekly,
+    "Месяц" to activeUsage.monthly,
+    "Всего этим ключом" to activeUsage.total
+).forEach { (label, value) ->
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
+    }
+}
+Text(
+    "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
+    style = MaterialTheme.typography.bodySmall,
+    color = MaterialTheme.colorScheme.onSurfaceVariant
+)
+      }
+  },
+  confirmButton = { TextButton(onClick = { usageOpen = false }) { Text("Закрыть") } },
+  dismissButton = {
+      TextButton(onClick = { vm.refreshProviderUsage() }) {
+Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+Spacer(Modifier.width(5.dp))
+Text("Обновить")
+      }
+  }
         )
     }
 }
