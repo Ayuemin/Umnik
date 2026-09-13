@@ -6,17 +6,16 @@ on:
     paths: [".github/workflows/release-v1.6.0-once.yml"]
 
 permissions:
-  contents: write
+  actions: write
+  contents: read
 
 jobs:
-  tag:
+  dispatch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Create release tag
+      - name: Start signed release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          git tag v1.6.0 95c172583338858dbe8e3536a2fc64f196131e32
-          git push origin v1.6.0
+          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=v1.6.0
