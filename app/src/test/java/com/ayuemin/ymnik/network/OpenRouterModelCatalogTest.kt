@@ -20,6 +20,7 @@ class OpenRouterModelCatalogTest {
               },
               "supported_parameters": ["tools", "reasoning"],
               "context_length": 131072,
+              "pricing": {"prompt": "0.00000066", "completion": "0.00000198"},
               "top_provider": {"max_completion_tokens": 8192}
             }
             """.trimIndent()
@@ -34,6 +35,8 @@ class OpenRouterModelCatalogTest {
         assertEquals("deepseek/deepseek-v4-pro-0813", info.batchBaseModelId)
         assertTrue(ModelCategory.TEXT in info.categories)
         assertTrue(ModelVariant.BATCH in info.variants)
+        assertEquals(0.66, info.promptPriceUsdPerMillion!!, 0.000001)
+        assertEquals(1.98, info.completionPriceUsdPerMillion!!, 0.000001)
     }
 
     @Test

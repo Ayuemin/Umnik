@@ -45,6 +45,15 @@ enum class ModelVariant {
     FLOOR
 }
 
+enum class ModelPriceFilter(val ceilingUsdPerMillion: Double?, val freeOnly: Boolean = false) {
+    ALL(null),
+    FREE(0.0, true),
+    UP_TO_0_5(0.5),
+    UP_TO_1(1.0),
+    UP_TO_5(5.0),
+    UP_TO_10(10.0)
+}
+
 enum class BatchJobStatus {
     VALIDATING,
     QUEUED,
@@ -144,6 +153,8 @@ data class ModelInfo(
     val maxCompletionTokens: Int? = null,
     val reasoningMandatory: Boolean = false,
     val reasoningDefaultEnabled: Boolean = false,
+    val promptPriceUsdPerMillion: Double? = null,
+    val completionPriceUsdPerMillion: Double? = null,
     val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
@@ -160,6 +171,8 @@ data class ModelInfo(
         get() = ModelVariant.BATCH in variants || id.endsWith(":batch", ignoreCase = true)
     val batchBaseModelId: String
         get() = if (isBatch) id.removeSuffix(":batch") else id
+    val maxTextPriceUsdPerMillion: Double?
+        get() = listOfNotNull(promptPriceUsdPerMillion, completionPriceUsdPerMillion).maxOrNull()
 
     val categories: Set<ModelCategory>
         get() {

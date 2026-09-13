@@ -730,6 +730,17 @@ onBranch = if (message.role == "assistant") {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            FilledTonalButton(
+                onClick = {
+                    actionsOpen = false
+                    com.ayuemin.ymnik.AsyncJobEvents.requestHub("models")
+                },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.Extension, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("OpenRouter Hub")
+            }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),

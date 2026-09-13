@@ -17,6 +17,7 @@ object ModelCatalogFilter {
         query: String = "",
         category: ModelCategory? = null,
         variant: ModelVariant? = null,
+        price: ModelPriceFilter = ModelPriceFilter.ALL,
         capabilities: ModelCapabilityFilter = ModelCapabilityFilter(),
         limit: Int = Int.MAX_VALUE
     ): List<ModelInfo> {
@@ -30,6 +31,12 @@ object ModelCatalogFilter {
                     ModelVariant.STANDARD -> model.variants == setOf(ModelVariant.STANDARD)
                     else -> variant in model.variants
                 }
+            }
+            .filter { model ->
+                if (price == ModelPriceFilter.ALL) return@filter true
+                val value = model.maxTextPriceUsdPerMillion ?: return@filter false
+                if (price.freeOnly) value <= 0.0
+                else price.ceilingUsdPerMillion?.let { value <= it } ?: true
             }
             .filter { model -> !capabilities.imageInput || model.accepts("image") }
             .filter { model -> !capabilities.audioInput || model.accepts("audio") }

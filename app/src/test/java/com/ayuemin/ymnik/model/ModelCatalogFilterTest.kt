@@ -9,12 +9,16 @@ class ModelCatalogFilterTest {
             id = "vendor/chat",
             inputModalities = setOf("text", "image"),
             outputModalities = setOf("text"),
-            supportedParameters = setOf("tools", "reasoning")
+            supportedParameters = setOf("tools", "reasoning"),
+            promptPriceUsdPerMillion = 0.2,
+            completionPriceUsdPerMillion = 0.8
         ),
         ModelInfo(
             id = "vendor/chat:batch",
             inputModalities = setOf("text"),
             outputModalities = setOf("text"),
+            promptPriceUsdPerMillion = 0.0,
+            completionPriceUsdPerMillion = 0.0,
             variants = setOf(ModelVariant.BATCH)
         ),
         ModelInfo(
@@ -51,6 +55,18 @@ class ModelCatalogFilterTest {
         assertEquals(
             listOf("vendor/chat", "vendor/chat:batch"),
             ModelCatalogFilter.apply(models, category = ModelCategory.TEXT).map { it.id }
+        )
+    }
+
+    @Test
+    fun filtersByMaximumTokenPrice() {
+        assertEquals(
+            listOf("vendor/chat:batch"),
+            ModelCatalogFilter.apply(models, price = ModelPriceFilter.FREE).map { it.id }
+        )
+        assertEquals(
+            listOf("vendor/chat", "vendor/chat:batch"),
+            ModelCatalogFilter.apply(models, price = ModelPriceFilter.UP_TO_1).map { it.id }
         )
     }
 
