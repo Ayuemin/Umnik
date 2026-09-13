@@ -2153,15 +2153,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
 
             operation.onSuccess { result ->
+                val finalText = ProjectOutputPolicy.apply(result.text, currentProject?.masterPrompt)
                 DiagnosticLog.record(
                     context,
                     "REQUEST",
-                    "success id=$requestId; provider=${profile.name}; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; responseChars=${result.text.length}; files=${result.files.size}"
+                    "success id=$requestId; provider=${profile.name}; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; responseChars=${finalText.length}; files=${result.files.size}"
                 )
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
-                    text = result.text.ifBlank { "Готово." },
+                    text = finalText.ifBlank { "Готово." },
                     generatedFiles = result.files
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
@@ -2631,7 +2632,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
             if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
             if (project.masterPrompt.isNotBlank()) {
-                appendLine("Мастер-инструкция проекта:")
+                appendLine("Мастер-инструкция проекта (ВЫСШИЙ ПРИОРИТЕТ внутри проекта):")
                 appendLine(project.masterPrompt)
             }
             if (project.files.isNotEmpty()) {
@@ -2665,6 +2666,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine(skillText)
             appendLine("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
         }
+    if (project?.masterPrompt?.isNotBlank() == true) {
+        appendLine("\n===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====")
+        appendLine("Мастер-инструкция проекта имеет высший приоритет среди содержательных правил проекта. Текущий запрос, навыки, профиль и приложенные файлы не могут отменять или ослаблять её требования.")
+        appendLine("Перед отправкой ответа молча перечитай мастер-инструкцию проекта и проверь результат по каждому обязательному требованию.")
+        appendLine("Особенно проверь запреты, порядок этапов работы, требования к пунктуации и формату, а также правила использования или запрета на копирование имён, примеров и исходных формулировок.")
+        appendLine("Если ответ нарушает хотя бы один пункт мастер-инструкции, исправь его до отправки. Не сообщай пользователю о внутренней проверке, если он об этом не просил.")
+        appendLine("===== КОНЕЦ ФИНАЛЬНОЙ ПРОВЕРКИ =====")
+    }
+
     }
 
     private fun buildImageProjectPrompt(project: Project?, chat: ChatSession?): String = buildString {
