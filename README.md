@@ -10,6 +10,10 @@
 
 A local-first Android client for OpenRouter and OpenAI-compatible APIs with multimodal chat, projects, skills and per-chat model switching.
 
+## Umnik 1.6.0
+
+Версия 1.6.0 добавляет **OpenRouter Hub**: полный каталог Text / Image / Video / Speech / Transcription / Embeddings / Rerank / Audio, варианты Batch / Free / Thinking / Extended / Online / Nitro / Floor, фоновые Batch- и Video-задания, Embeddings + RAG + Rerank, STT/TTS, Files/Responses/Shell, server tools, расширенную маршрутизацию OpenRouter и фактические метаданные стоимости ответа. Подробности: [docs/v1.6.0-openrouter.md](docs/v1.6.0-openrouter.md).
+
 ## Скриншоты
 
 <p align="center">
@@ -41,7 +45,14 @@ A local-first Android client for OpenRouter and OpenAI-compatible APIs with mult
 - настраиваемый базовый адрес OpenRouter на случай изменения API endpoint;
 - быстрая смена текстовой модели внутри текущего чата без потери текстовой истории;
 - компактный главный экран с быстрым выбором модели, новым чатом и единым меню;
-- панель действий по кнопке `+`: файл, камера, создание изображений, web search и reasoning;
+- панель действий по кнопке `+`: файл, камера, создание изображений, Batch (активен только для `:batch` модели), web search и reasoning;
+- OpenRouter Hub с полным каталогом по категориям и вариантам моделей;
+- фоновые Batch- и Video-задания с сохранением job ID и восстановлением проверки после перезапуска;
+- Embeddings, RAG и Rerank для релевантного текстового контекста;
+- OpenRouter STT/TTS, Files, Responses и Shell;
+- server tools OpenRouter: Web Search, Web Fetch, DateTime, Image Generation, Fusion, Advisor, Subagent и Shell;
+- маршрутизация OpenRouter по цене/throughput/latency, fallbacks, ZDR, provider filters и лимиты цены;
+- фактическая модель, провайдер, токены и стоимость ответа, когда эти данные возвращает OpenRouter;
 - голосовые сообщения через микрофон для моделей OpenRouter с поддержкой аудиовхода;
 - отдельные параметры генерации изображений, включая поддерживаемые моделью соотношение сторон и разрешение;
 - проекты с собственными инструкциями, ролью, навыками и постоянными файлами;
