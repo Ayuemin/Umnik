@@ -1,0 +1,53 @@
+name: Build sidebar navigation redesign v5 once
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-sidebar-navigation-v5-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  build-change:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply corrected navigation patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          wf = Path('.github/workflows/build-sidebar-navigation-v2-once.yml').read_text()
+          section = wf.index('      - name: Apply navigation redesign')
+          run_at = wf.index('        run: |\n', section) + len('        run: |\n')
+          end = wf.index('\n      - name: Open pull request', run_at)
+          script = textwrap.dedent(wf[run_at:end])
+
+          start = script.index("favorite = '''")
+          finish = script.index("\nconfirm = '''", start)
+          corrected = '''project_chats_at = text.index('items(projectChats, key = { it.id })')
+          favorite_at = text.index('contentDescription = "Избранное"', project_chats_at)
+          old_label = 'contentDescription = "Избранное"'
+          new_label = 'contentDescription = if (chat.isFavorite) "Открепить чат" else "Закрепить чат"'
+          text = text[:favorite_at] + new_label + text[favorite_at + len(old_label):]
+          row_end_marker = '\\n                    }\\n                    HorizontalDivider()'
+          row_end = text.index(row_end_marker, favorite_at)
+          delete_button = '\\n                        IconButton(onClick = { deleteChatTarget = chat }, enabled = !state.isLoading) {\\n                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить чат")\\n                        }'
+          text = text[:row_end] + delete_button + text[row_end:]
+          '''
+          script = script[:start] + textwrap.dedent(corrected) + script[finish + 1:]
+          script = script.replace(
+              'rm .github/workflows/build-sidebar-navigation-v2-once.yml\n',
+              'rm .github/workflows/build-sidebar-navigation-v2-once.yml\nrm .github/workflows/build-sidebar-navigation-v3-once.yml\nrm .github/workflows/build-sidebar-navigation-v4-once.yml\nrm .github/workflows/build-sidebar-navigation-v5-once.yml\n',
+              1,
+          )
+          Path('/tmp/apply-sidebar.sh').write_text(script)
+          PY
+          bash /tmp/apply-sidebar.sh
