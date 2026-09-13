@@ -256,8 +256,8 @@ private fun ChatProfileDialog(chat: ChatSession, vm: ChatViewModel, onDismiss: (
 }
 
 @Composable
-fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
-    var openProjectId by remember { mutableStateOf<String?>(null) }
+fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit, initialProjectId: String? = null) {
+    var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }
     var createOpen by remember { mutableStateOf(false) }
     val projects = state.projects.sortedWith(compareByDescending<Project> { it.isFavorite }.thenByDescending { it.updatedAt })
     val favorites = projects.filter { it.isFavorite }
@@ -366,6 +366,7 @@ private fun ProjectDetailDialog(
 ) {
     var editOpen by remember { mutableStateOf(false) }
     var deleteConfirm by remember { mutableStateOf(false) }
+    var deleteChatTarget by remember { mutableStateOf<ChatSession?>(null) }
     val projectChats = state.chats.filter { it.projectId == project.id }
         .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
 
@@ -428,8 +429,11 @@ private fun ProjectDetailDialog(
                         IconButton(onClick = { vm.setChatFavorite(chat.id, !chat.isFavorite) }) {
                             Icon(
                                 if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                                contentDescription = "Избранное"
+                                contentDescription = if (chat.isFavorite) "Открепить чат" else "Закрепить чат"
                             )
+                        }
+                        IconButton(onClick = { deleteChatTarget = chat }, enabled = !state.isLoading) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить чат")
                         }
                     }
                     HorizontalDivider()
@@ -511,6 +515,21 @@ private fun ProjectDetailDialog(
                 }
             }
         }
+    }
+
+    deleteChatTarget?.let { chat ->
+        AlertDialog(
+      onDismissRequest = { deleteChatTarget = null },
+      title = { Text("Удалить чат из проекта?") },
+      text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
+      confirmButton = {
+          TextButton(onClick = {
+        vm.deleteChat(chat.id)
+        deleteChatTarget = null
+          }) { Text("Удалить") }
+      },
+      dismissButton = { TextButton(onClick = { deleteChatTarget = null }) { Text("Отмена") } }
+        )
     }
 
     if (editOpen) {
