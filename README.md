@@ -24,7 +24,7 @@ A local-first Android client for OpenRouter and OpenAI-compatible APIs with mult
   <img src="docs/screenshots/umnik-v1.2.1-04.jpg" alt="Umnik v1.2.1 — экран 4" width="47%">
 </p>
 
-Актуальные экраны Umnik v1.2.1.
+Скриншоты выше сделаны на Umnik v1.2.1; интерфейс более новых версий может отличаться.
 
 ## Зачем Umnik
 
