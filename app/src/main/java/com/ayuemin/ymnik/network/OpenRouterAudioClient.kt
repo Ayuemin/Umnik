@@ -123,7 +123,7 @@ class OpenRouterAudioClient(private val context: Context) {
                 val body = response.body?.string().orEmpty()
                 error(apiError(response.code, body))
             }
-            val bytes = response.body?.bytes().orEmpty()
+            val bytes = response.body?.bytes() ?: ByteArray(0)
             if (bytes.isEmpty()) error("OpenRouter вернул пустой аудиофайл")
             SpeechResult(
                 bytes = bytes,
