@@ -1,0 +1,89 @@
+name: Apply v1.10.7
+
+on:
+  push:
+    branches: [ "main" ]
+    paths:
+      - ".github/workflows/apply-v1.10.7.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Apply v1.10.7 migration
+        run: python3 tools/patch_v1_10_7.py
+
+      - name: Verify intended changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'versionName = "1.10.7"' app/build.gradle.kts
+          grep -q 'versionCode = 107' app/build.gradle.kts
+          grep -q 'openRouterSpeechResponseFormat' app/src/main/java/com/ayuemin/ymnik/model/Models.kt
+          grep -q 'resolveSpeechResponseFormat' app/src/main/java/com/ayuemin/ymnik/network/OpenRouterAudioClient.kt
+          grep -q 'pcmToWav' app/src/main/java/com/ayuemin/ymnik/network/OpenRouterAudioClient.kt
+          grep -q 'Сохранить без голоса' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
+          grep -q 'Авто / MP3 / PCM' CHANGELOG.md
+
+      - name: Unit tests and debug APK
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Commit verified source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts CHANGELOG.md \
+            app/src/main/java/com/ayuemin/ymnik/model/OpenRouterAdvancedSettings.kt \
+            app/src/main/java/com/ayuemin/ymnik/model/Models.kt \
+            app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
+            app/src/main/java/com/ayuemin/ymnik/network/OpenRouterAudioClient.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterSpeechPlayer.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHubController.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+            app/src/main/java/com/ayuemin/ymnik/help/UmnikUsageGuide.kt \
+            app/src/test/java/com/ayuemin/ymnik/network/OpenRouterAudioClientTest.kt
+          git commit -m "release: prepare Umnik v1.10.7"
+
+      - name: Remove one-time migration files
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm tools/patch_v1_10_7.py .github/workflows/apply-v1.10.7.yml
+          git commit -m "chore: remove v1.10.7 migration helpers"
+
+      - name: Create release tag and push
+        shell: bash
+        run: |
+          set -euo pipefail
+          git tag -a v1.10.7 -m "Umnik v1.10.7"
+          git push origin HEAD:main
+          git push origin v1.10.7
