@@ -7,8 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   build:
@@ -17,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -37,53 +34,5 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Apply pending v1.7.0 UX migration
-        id: migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f tools/patch_v1_7_0.py ]; then
-            python3 tools/patch_v1_7_0.py
-            echo "applied=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "applied=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Verify v1.7.0 migration
-        if: steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'versionCode = 70' app/build.gradle.kts
-          grep -q 'versionName = "1.7.0"' app/build.gradle.kts
-          grep -q 'requestHub("stt")' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'requestHub("models-settings")' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'Расшифровка готова и добавлена в чат' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHubController.kt
-          grep -q 'Аудио создано и добавлено в чат' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHubController.kt
-
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
-
-      - name: Commit tested v1.7.0 changes
-        if: github.event_name == 'push' && steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: redesign OpenRouter workflow UX for v1.7.0"
-          git push origin HEAD:main
-          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Create tag and start signed v1.7.0 release
-        if: github.event_name == 'push' && steps.migration.outputs.applied == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref='refs/tags/v1.7.0' \
-            -f sha="$RELEASE_SHA"
-          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=v1.7.0
