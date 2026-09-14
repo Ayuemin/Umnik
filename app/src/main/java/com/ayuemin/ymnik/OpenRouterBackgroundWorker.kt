@@ -44,6 +44,16 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
         var retry = false
 
         batchJobs.forEach { stored ->
+            // A single Batch submitted from ordinary chat is polled by the live chat request.
+            // WorkManager takes over only after that foreground request/process disappears.
+            if (RequestExecutionManager.hasActiveRequest() &&
+                stored.chatId != null &&
+                stored.chatId == RequestExecutionManager.snapshots.value.activeChatId
+            ) {
+                retry = true
+                return@forEach
+            }
+            if (batches.list().none { it.id == stored.id }) return@forEach
             val key = secrets.getProfileApiKey(stored.connectionProfileId)
             if (key.isNullOrBlank()) { retry = true; return@forEach }
             runCatching {
@@ -57,17 +67,32 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                         updatedAt = System.currentTimeMillis()
                     )
                 }
+                // Stop in the main chat removes local tracking. Do not resurrect a removed job
+                // if a network poll happened to finish after the user pressed Stop.
+                if (batches.list().none { it.id == stored.id }) return@runCatching
                 if (current.status.terminal) {
                     current.chatId?.let { chatId ->
+                        current.userMessageId?.let { messageId ->
+                            chats.updateMessage(chatId, messageId) { message ->
+                                if (message.deliveryState == "pending") message.copy(deliveryState = null) else message
+                            }
+                        }
                         chats.appendAssistantIfMissing(
                             chatId,
                             "batch:${current.remoteId}",
-                            ChatMessage(UUID.randomUUID().toString(), "assistant", renderBatch(current))
+                            ChatMessage(
+                                id = UUID.randomUUID().toString(),
+                                role = "assistant",
+                                text = renderBatch(current),
+                                modelId = current.modelId,
+                                providerName = "OpenRouter"
+                            )
                         )
                     }
                     markDelivered("batches", current.remoteId)
                 } else retry = true
                 batches.upsert(current)
+                AsyncJobEvents.notifyChanged()
             }.onFailure { retry = true }
         }
 
