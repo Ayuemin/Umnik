@@ -59,10 +59,27 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
             generation
         }
 
-        // Batch cannot pause for Umnik's local create_file callback. Everything else in
-        // the already-built request (history, files, project prompt, web plugin,
-        // reasoning) is preserved unchanged.
-        val body = originalPayload.deepCopy().apply { remove("tools") }
+        // Batch cannot pause for Umnik's local create_file callback. Keep all normal
+        // chat context and provider-side options, but remove the local-only tool schema
+        // and its matching instruction from the already-built request.
+        val body = originalPayload.deepCopy().apply {
+            remove("tools")
+            val messages = getAsJsonArray("messages")
+            val system = messages?.firstOrNull()
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.takeIf { it.get("role")?.asString == "system" }
+            val content = system?.get("content")?.takeIf { it.isJsonPrimitive }?.asString
+            if (content != null) {
+                system.addProperty(
+                    "content",
+                    content.replace(
+                        "У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.\n",
+                        ""
+                    )
+                )
+            }
+        }
         val originChatId = RequestExecutionManager.snapshots.value.activeChatId
         val originChat = chats.list().firstOrNull { it.id == originChatId }
         val originMessageId = originChat?.messages
