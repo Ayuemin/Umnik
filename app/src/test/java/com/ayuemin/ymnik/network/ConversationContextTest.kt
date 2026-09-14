@@ -2,7 +2,6 @@ package com.ayuemin.ymnik.network
 
 import com.ayuemin.ymnik.model.ChatMessage
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ConversationContextTest {
@@ -37,11 +36,14 @@ class ConversationContextTest {
         assertEquals(listOf("user-2", "answer-2"), selected.map { it.id })
     }
 
-    @Test fun oversizedFixedContextFailsClearly() {
-        val error = runCatching {
-            ConversationContext.select(emptyList(), "", "привет", 80_000, 32_000, 8_000)
-        }.exceptionOrNull()
-        assertTrue(error is IllegalArgumentException)
-        assertTrue(error?.message.orEmpty().contains("файлы"))
+    @Test fun oversizedFixedContextIsSentToProviderWithoutClientRejection() {
+        val selected = ConversationContext.select(emptyList(), "", "привет", 80_000, 32_000, 8_000)
+        assertEquals(emptyList<ChatMessage>(), selected)
+    }
+
+    @Test fun unknownProviderWindowKeepsCompleteHistory() {
+        val history = (1..90).flatMap { listOf(user(it), answer(it)) }
+        val selected = ConversationContext.select(history, "инструкция", "вопрос", 0, null, 0)
+        assertEquals(180, selected.size)
     }
 }

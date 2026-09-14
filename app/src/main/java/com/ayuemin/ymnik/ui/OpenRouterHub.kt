@@ -169,7 +169,7 @@ private fun OpenRouterHubDialog(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text("OpenRouter Hub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Umnik 1.6.2 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Umnik 1.6.4 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                         }
@@ -558,8 +558,9 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
     Column(Modifier.fillMaxSize()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             item {
-                Text("Пакетная обработка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("Пакет из нескольких заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("Модель: ${state.media.batchModel.ifBlank { "не выбрана" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Один Batch-запрос отправляйте прямо из обычного чата кнопкой отправки. Этот экран нужен только для нескольких независимых заданий.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = input,
                     onValueChange = { input = it },

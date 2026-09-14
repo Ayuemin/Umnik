@@ -22,16 +22,13 @@ class OpenRouterBatchBodyBuilder(private val context: Context) {
         reasoningEffort: String?,
         modelInfo: ModelInfo?
     ): JsonObject {
-        ConversationContext.checkTransferSize(attachments)
-        val outputTokens = (if (reasoningEnabled || modelInfo?.reasoningMandatory == true) 12_000 else 8_000)
-            .coerceAtMost(modelInfo?.maxCompletionTokens ?: 12_000)
         val selectedHistory = ConversationContext.select(
             history,
             systemPrompt,
             prompt,
             ConversationContext.attachmentTokens(attachments),
             modelInfo?.contextLength,
-            outputTokens
+            0
         )
         val messages = JsonArray().apply {
             add(message("system", systemPrompt))
@@ -41,7 +38,6 @@ class OpenRouterBatchBodyBuilder(private val context: Context) {
         return JsonObject().apply {
             addProperty("model", OpenRouterBatchCodec.baseModelId(model))
             add("messages", messages)
-            addProperty("max_tokens", outputTokens)
             if (reasoningEnabled) {
                 add("reasoning", JsonObject().apply {
                     addProperty("enabled", true)
