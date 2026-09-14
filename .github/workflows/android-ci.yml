@@ -43,6 +43,18 @@ jobs:
         run: |
           set -euo pipefail
           if [ -f tools/patch_v1_8_0.py ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          p = Path("tools/patch_v1_8_0.py")
+          s = p.read_text(encoding="utf-8")
+          old = '''text = replace_once(text, "horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", "first compact row spacing")
+          # The sheet has three action rows; compact the next two occurrences as well.
+          text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", 2)'''
+          new = '''text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)")'''
+          if old not in s:
+              raise SystemExit("migration runner: spacing patch anchor not found")
+          p.write_text(s.replace(old, new, 1), encoding="utf-8")
+          PY
             python3 tools/patch_v1_8_0.py
             echo "applied=true" >> "$GITHUB_OUTPUT"
           else
@@ -59,9 +71,9 @@ jobs:
           grep -q 'Text("Новый чат", maxLines = 1)' app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt
           grep -q 'label = "В текст"' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
           grep -q 'Слушать в чате' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'selected first' CHANGELOG.md || grep -q 'Выбранные модели поднимаются' CHANGELOG.md
+          grep -q 'Выбранные модели поднимаются' CHANGELOG.md
           grep -q 'Batch-модель нельзя назначить обычному чату' app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
-          grep -q 'selected models' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt || grep -q 'выбранные модели сверху' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
+          grep -q 'выбранные модели сверху' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
 
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
