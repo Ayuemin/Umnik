@@ -408,6 +408,7 @@ data class UiState(
     val imageModel: String = "bytedance-seed/seedream-4.5",
     val imageAspectRatio: String? = null,
     val imageResolution: String? = null,
+    val openRouterSpeechModel: String = "",
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,

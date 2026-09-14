@@ -428,6 +428,8 @@ LazyColumn(
                 MessageCard(
                     message = message,
                     tts = tts,
+                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
+                    onOpenRouterSpeech = { com.ayuemin.ymnik.AsyncJobEvents.requestSpeech(state.currentChatId, message.text) },
                     onSaveGenerated = { file ->
                         fileToSave = file
                         save.launch(file.name)
@@ -782,17 +784,6 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                if (!imagePromptMode) {
-                    ComposerToolRow(
-                        icon = Icons.Outlined.Language,
-                        title = "Поиск в сети",
-                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
-                        checked = state.webSearchEnabled,
-                        enabled = openRouterProfile,
-                        onCheckedChange = vm::setWebSearchEnabled
-                    )
-                }
-
                 Text(
                     "Инструменты OpenRouter",
                     style = MaterialTheme.typography.titleSmall,
@@ -871,7 +862,14 @@ onBranch = if (message.role == "assistant") {
                         enabled = reasoningAvailable,
                         onCheckedChange = vm::setReasoningEnabled
                     )
-
+                    ComposerToolRow(
+                        icon = Icons.Outlined.Language,
+                        title = "Поиск в сети",
+                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
+                        checked = state.webSearchEnabled,
+                        enabled = openRouterProfile,
+                        onCheckedChange = vm::setWebSearchEnabled
+                    )
                 }
             }
         }
@@ -973,6 +971,32 @@ private fun CompactMessageAction(
             modifier = Modifier.size(18.dp),
             tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+@Composable
+private fun OpenRouterSpeechAction(enabled: Boolean, onClick: () -> Unit) {
+    val tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier.size(38.dp)
+    ) {
+        Box(Modifier.size(25.dp)) {
+            Icon(
+                Icons.Outlined.VolumeUp,
+                contentDescription = "Озвучить через OpenRouter",
+                modifier = Modifier.size(18.dp).align(Alignment.CenterStart),
+                tint = tint
+            )
+            Text(
+                "OR",
+                modifier = Modifier.align(Alignment.BottomEnd).scale(0.72f),
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = tint
+            )
+        }
     }
 }
 
@@ -1633,6 +1657,8 @@ private fun EmptyChatCard(mode: ChatMode) {
 private fun MessageCard(
     message: ChatMessage,
     tts: TtsController,
+    openRouterSpeechEnabled: Boolean,
+    onOpenRouterSpeech: () -> Unit,
     onSaveGenerated: (GeneratedFile) -> Unit,
     onExportText: () -> Unit,
     onBranch: (() -> Unit)?,
@@ -1756,6 +1782,10 @@ private fun MessageCard(
                         description = if (tts.speakingMessageId == message.id) "Остановить озвучку" else "Озвучить",
                         active = tts.speakingMessageId == message.id,
                         onClick = { tts.toggle(message.id, message.text) }
+                    )
+                    OpenRouterSpeechAction(
+                        enabled = openRouterSpeechEnabled,
+                        onClick = onOpenRouterSpeech
                     )
                     CompactMessageAction(
                         icon = Icons.Outlined.Download,
@@ -2301,6 +2331,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
+    var openRouterSpeechExpanded by remember { mutableStateOf(false) }
     var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
@@ -2575,6 +2606,39 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             Icon(Icons.Outlined.VolumeUp, contentDescription = null)
                             Spacer(Modifier.width(7.dp))
                             Text("Проверить звук")
+                        }
+                    }
+                }
+            }
+
+            item {
+                ExpandableSettingsCard(
+                    title = "Озвучивание OpenRouter",
+                    subtitle = state.openRouterSpeechModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    icon = Icons.Outlined.VolumeUp,
+                    expanded = openRouterSpeechExpanded,
+                    onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded }
+                ) {
+                    Text(
+                        "Эта модель используется кнопкой OR под ответами. Если модель не выбрана, кнопка остаётся неактивной.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Выбрать модель озвучивания", fontWeight = FontWeight.Medium)
+                            Text(
+                                state.openRouterSpeechModel.ifBlank { "Не выбрана" },
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
                         }
                     }
                 }
@@ -2866,39 +2930,22 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             item {
                 ElevatedCard(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(22.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                 ) {
-                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Outlined.Description, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Памятка по использованию Umnik", fontWeight = FontWeight.Bold)
-                                Text(
-                                    "Короткие сценарии по возможностям приложения",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(10.dp))
-                        Text(
-                            "Откроется в новом чате. Памятка встроена в Umnik и не расходует API при открытии.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
-                        FilledTonalButton(
-                            onClick = {
-                                vm.openUsageGuide()
-                                onBack()
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text("Открыть памятку в новом чате")
+                    TextButton(
+                        onClick = {
+                            vm.openUsageGuide()
+                            onBack()
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                    ) {
+                        Icon(Icons.Outlined.Description, contentDescription = null)
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Памятка Umnik", fontWeight = FontWeight.Bold)
+                            Text("Краткое руководство", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }

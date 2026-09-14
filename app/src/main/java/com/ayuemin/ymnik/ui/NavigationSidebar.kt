@@ -1,8 +1,10 @@
 package com.ayuemin.ymnik.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Star
@@ -98,16 +101,14 @@ fun NavigationSidebar(
         compareByDescending<Project> { it.isFavorite }.thenByDescending { it.updatedAt }
     )
     val normalized = query.trim()
-    val chats = state.chats
+    val filteredChats = state.chats
         .filter { it.projectId == null }
-        .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
+        .sortedByDescending { it.updatedAt }
         .filter { chat ->
-            normalized.isBlank() ||
-                chat.title.contains(normalized, ignoreCase = true) ||
-                chat.projectId?.let { projectId ->
-                    state.projects.firstOrNull { it.id == projectId }?.name?.contains(normalized, ignoreCase = true)
-                } == true
+            normalized.isBlank() || chat.title.contains(normalized, ignoreCase = true)
         }
+    val favoriteChats = filteredChats.filter { it.isFavorite }
+    val chats = filteredChats.filterNot { it.isFavorite }
 
     Box(Modifier.fillMaxSize()) {
         Box(
@@ -178,19 +179,44 @@ fun NavigationSidebar(
                         }
                     }
 
+                    if (favoriteChats.isNotEmpty()) {
+                        item {
+                            HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                            SidebarSectionTitle("Избранные")
+                        }
+                        items(favoriteChats, key = { "favorite-${it.id}" }) { chat ->
+                            SidebarChatRow(
+                                chat = chat,
+                                state = state,
+                                vm = vm,
+                                onOpen = {
+                                    vm.switchChat(chat.id)
+                                    onDismiss()
+                                },
+                                onDelete = { deleteTarget = chat },
+                                onRename = {
+                                    renameTarget = chat
+                                    renameValue = chat.title
+                                }
+                            )
+                        }
+                    }
+
                     item {
                         HorizontalDivider(Modifier.padding(vertical = 8.dp))
                         SidebarSectionTitle("История чатов")
                     }
 
                     if (chats.isEmpty()) {
-                        item {
-                            Text(
-                                if (normalized.isBlank()) "Чатов пока нет" else "Ничего не найдено",
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        if (favoriteChats.isEmpty()) {
+                            item {
+                                Text(
+                                    if (normalized.isBlank()) "Чатов пока нет" else "Ничего не найдено",
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     } else {
                         items(chats, key = { "chat-${it.id}" }) { chat ->
@@ -396,6 +422,7 @@ private fun SidebarProjectRow(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SidebarChatRow(
     chat: ChatSession,
@@ -405,62 +432,78 @@ private fun SidebarChatRow(
     onDelete: () -> Unit,
     onRename: () -> Unit
 ) {
+    var actionsOpen by remember(chat.id) { mutableStateOf(false) }
     val projectName = chat.projectId?.let { id -> state.projects.firstOrNull { it.id == id }?.name }
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 1.dp)
+            .combinedClickable(
+                onClick = onOpen,
+                onLongClick = { actionsOpen = true }
+            ),
         shape = RoundedCornerShape(10.dp),
         color = if (chat.id == state.currentChatId)
             MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
         else Color.Transparent
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(
-                onClick = onOpen,
-                modifier = Modifier.weight(1f),
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-            ) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(
-                        chat.title,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        fontWeight = if (chat.id == state.currentChatId) FontWeight.Bold else FontWeight.Medium
-                    )
-                    Text(
-                        buildString {
-                            if (projectName != null) append("$projectName · ")
-                            append(sidebarDate(chat.updatedAt))
-                        },
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-            IconButton(
-                onClick = { vm.setChatFavorite(chat.id, !chat.isFavorite) },
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(
-                    if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                    contentDescription = if (chat.isFavorite) "Открепить чат" else "Закрепить чат",
-                    modifier = Modifier.size(19.dp)
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    chat.title,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontWeight = if (chat.id == state.currentChatId) FontWeight.Bold else FontWeight.Medium
+                )
+                Text(
+                    buildString {
+                        if (projectName != null) append("$projectName · ")
+                        append(sidebarDate(chat.updatedAt))
+                    },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            IconButton(
-                onClick = onRename,
-                enabled = !state.isLoading,
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(Icons.Outlined.Edit, contentDescription = "Переименовать чат", modifier = Modifier.size(19.dp))
-            }
-            IconButton(
-                onClick = onDelete,
-                enabled = !state.isLoading,
-                modifier = Modifier.size(36.dp)
-            ) {
-                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить чат", modifier = Modifier.size(19.dp))
+            Box {
+                IconButton(
+                    onClick = { actionsOpen = true },
+                    modifier = Modifier.size(38.dp)
+                ) {
+                    Icon(Icons.Outlined.MoreVert, contentDescription = "Действия с чатом", modifier = Modifier.size(20.dp))
+                }
+                DropdownMenu(expanded = actionsOpen, onDismissRequest = { actionsOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text(if (chat.isFavorite) "Убрать из избранного" else "В избранное") },
+                        leadingIcon = { Icon(if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = null) },
+                        onClick = {
+                            actionsOpen = false
+                            vm.setChatFavorite(chat.id, !chat.isFavorite)
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Переименовать") },
+                        leadingIcon = { Icon(Icons.Outlined.Edit, contentDescription = null) },
+                        enabled = !state.isLoading,
+                        onClick = {
+                            actionsOpen = false
+                            onRename()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Удалить") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
+                        enabled = !state.isLoading,
+                        onClick = {
+                            actionsOpen = false
+                            onDelete()
+                        }
+                    )
+                }
             }
         }
     }

@@ -210,6 +210,7 @@ class OpenRouterHubController(
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
                 val media = mutableState.value.media.copy(speechModel = model.id)
                 featurePrefs.saveMedia(media)
+                viewModel.setOpenRouterSpeechModel(model.id)
                 mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания")
             }
             ModelCategory.TRANSCRIPTION -> {
@@ -247,7 +248,9 @@ class OpenRouterHubController(
             }
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
                 val media = mutableState.value.media.copy(speechModel = "")
-                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания снята")
+                featurePrefs.saveMedia(media)
+                viewModel.setOpenRouterSpeechModel("")
+                mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания снята")
             }
             ModelCategory.TRANSCRIPTION -> {
                 val media = mutableState.value.media.copy(transcriptionModel = "")
@@ -270,8 +273,24 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(media = media, status = "Batch-модель снята")
     }
 
-    fun submitBatch(raw: String, fileUris: List<Uri> = emptyList()) {
-        DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}; files=${fileUris.size}")
+    fun clearFinishedBatchHistory() {
+        runCatching {
+            val remaining = batchRepository.list().filterNot { it.status.terminal }
+            batchRepository.save(remaining)
+            remaining
+        }.onSuccess { remaining ->
+            mutableState.value = mutableState.value.copy(
+                batches = remaining,
+                status = if (remaining.isEmpty()) "История Batch очищена" else "Завершённая история Batch очищена; активные задачи сохранены"
+            )
+        }.onFailure { error ->
+            mutableState.value = mutableState.value.copy(status = error.message ?: "Не удалось очистить историю Batch")
+        }
+    }
+
+    fun submitBatch(raw: String, taskFileUris: List<List<Uri>> = emptyList()) {
+        val totalFiles = taskFileUris.sumOf { it.size }
+        DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}; taskFiles=$totalFiles")
         val input = raw.trim()
         if (input.isBlank()) {
             mutableState.value = mutableState.value.copy(status = "Введите хотя бы одно задание")
@@ -292,6 +311,7 @@ class OpenRouterHubController(
             .map(String::trim)
             .filter(String::isNotBlank)
         if (prompts.isEmpty()) return
+        val filesPerPrompt = prompts.indices.map { index -> taskFileUris.getOrNull(index).orEmpty().take(6) }
 
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Отправляю Batch…", status = null)
@@ -300,12 +320,13 @@ class OpenRouterHubController(
                 val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
                 val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
                 val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
-                // OpenRouter Batch rejects ordinary file/image content parts. Selected text
-                // files are therefore inserted into the prompt as plain text instead.
-                val inlineFiles = withContext(Dispatchers.IO) { batchTextContext(fileUris.take(6)) }
+                // Batch API не принимает обычные file/image parts. Текстовые файлы
+                // конкретной задачи безопасно встраиваются только в её prompt.
+                val fileContexts = withContext(Dispatchers.IO) { filesPerPrompt.map(::batchTextContext) }
                 val system = buildSystemPrompt(chat, project)
                 val requests = prompts.mapIndexed { index, prompt ->
-                    val promptWithFiles = if (inlineFiles.isBlank()) prompt else "$prompt\n\n===== ПРИЛОЖЕННЫЕ ФАЙЛЫ =====\n$inlineFiles"
+                    val inlineFiles = fileContexts[index]
+                    val promptWithFiles = if (inlineFiles.isBlank()) prompt else "$prompt\n\n===== ФАЙЛЫ ЭТОЙ ЗАДАЧИ =====\n$inlineFiles"
                     OpenRouterBatchClient.BatchRequest(
                         customId = "hub-${index + 1}-${UUID.randomUUID()}",
                         label = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Задание ${index + 1}",
@@ -336,7 +357,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 batchRepository.upsert(job)
-                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}${if (fileUris.isNotEmpty()) " · файлов: ${fileUris.size}" else ""}]\n$input")
+                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}${if (totalFiles > 0) " · файлов: $totalFiles" else ""}]\n$input")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -481,6 +502,50 @@ class OpenRouterHubController(
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать аудио")
+            }
+        }
+    }
+
+    fun synthesizeAnswer(chatId: String, textRaw: String) {
+        val text = textRaw.trim()
+        if (text.isBlank() || chatId.isBlank()) return
+        if (mutableState.value.loading) {
+            mutableState.value = mutableState.value.copy(status = "Дождитесь завершения текущей операции OpenRouter")
+            return
+        }
+        val profile = openRouterProfile()
+        val media = featurePrefs.media()
+        val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
+        if (profile == null || key.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
+            return
+        }
+        if (media.speechModel.isBlank()) {
+            viewModel.setOpenRouterSpeechModel("")
+            mutableState.value = mutableState.value.copy(status = "Сначала выберите модель озвучивания OpenRouter")
+            return
+        }
+        scope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, operation = "Озвучиваю ответ через OpenRouter…", status = null)
+            runCatching {
+                val result = audioClient.synthesize(
+                    apiKey = key,
+                    model = media.speechModel,
+                    input = text,
+                    voice = media.voice.takeIf { it.isNotBlank() },
+                    baseUrl = viewModel.connectionTextEndpoint(profile.id)
+                )
+                saveGeneratedAudio(result.bytes, result.mimeType, result.format)
+            }.onSuccess { file ->
+                appendHubAssistantResult(
+                    chatId = chatId,
+                    assistantText = "Озвучка OpenRouter · ${media.speechModel.substringAfterLast('/')}",
+                    files = listOf(file)
+                )
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Озвучка OpenRouter добавлена в чат")
+                AsyncJobEvents.notifyChanged()
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось озвучить ответ через OpenRouter")
             }
         }
     }
@@ -638,6 +703,25 @@ class OpenRouterHubController(
         }
         chats.save(next)
         DiagnosticLog.record(context, "CHAT_RESULT", "hub exchange added; chat=${chatId.take(8)}; assistantChars=${assistantText.length}; files=${files.size}; fileTypes=${files.map { it.mimeType }.distinct().joinToString(",")}")
+    }
+
+    private fun appendHubAssistantResult(chatId: String, assistantText: String, files: List<GeneratedFile>) {
+        val all = chats.list()
+        val marker = "hub:${UUID.randomUUID()}"
+        val next = all.map { chat ->
+            if (chat.id == chatId) chat.copy(
+                messages = chat.messages + ChatMessage(
+                    UUID.randomUUID().toString(),
+                    "assistant",
+                    assistantText,
+                    generatedFiles = files,
+                    deliveryState = marker
+                ),
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chats.save(next)
+        DiagnosticLog.record(context, "CHAT_RESULT", "hub assistant result added; chat=${chatId.take(8)}; files=${files.size}")
     }
 
     private fun ensureTextFile(data: UriData) {

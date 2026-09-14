@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
+import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
@@ -67,6 +68,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val chatsRepository = ChatRepository(context)
     private val chatFilesRepository = ChatFileRepository(context)
     private val projectsRepository = ProjectRepository(context)
+    private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val compatibleApi = CompatibleApiClient(context)
@@ -123,6 +125,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             imageModel = initialImageModel,
             imageAspectRatio = initialImageAspectRatio,
             imageResolution = initialImageResolution,
+            openRouterSpeechModel = openRouterFeaturePrefs.media().speechModel,
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
             reasoningEffort = runCatching {
@@ -191,6 +194,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         viewModelScope.launch {
             if (providerRegistry.refreshIfStale()) refreshModelCapabilities()
         }
+    }
+
+    fun setOpenRouterSpeechModel(modelId: String) {
+        val clean = modelId.trim()
+        val media = openRouterFeaturePrefs.media().copy(speechModel = clean)
+        openRouterFeaturePrefs.saveMedia(media)
+        _state.value = _state.value.copy(
+            openRouterSpeechModel = clean,
+            status = if (clean.isBlank()) "Модель озвучивания OpenRouter не выбрана" else "Модель озвучивания OpenRouter сохранена"
+        )
     }
 
     fun isDiagnosticLoggingEnabled(): Boolean = DiagnosticLog.isEnabled(context)

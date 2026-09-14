@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -101,6 +102,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     var requestedMediaSection by remember { mutableStateOf(MediaSection.ALL) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
+    val speechRequest by AsyncJobEvents.speechRequest.collectAsState()
     val appState by viewModel.state.collectAsState()
 
     DisposableEffect(controller) {
@@ -115,6 +117,12 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
         if (asyncSequence <= 0L) return@LaunchedEffect
         viewModel.refreshAsyncResults()
         controller.refreshJobs()
+    }
+
+    LaunchedEffect(speechRequest) {
+        val request = speechRequest ?: return@LaunchedEffect
+        AsyncJobEvents.consumeSpeechRequest()
+        controller.synthesizeAnswer(request.chatId, request.text)
     }
 
     LaunchedEffect(hubRequest) {
@@ -718,16 +726,25 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
     }
 }
 
+private data class BatchDraftTask(
+    val text: String = "",
+    val files: List<Uri> = emptyList()
+)
+
 @Composable
 private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
-    val tasks = remember { mutableStateListOf("") }
-    val batchFiles = remember { mutableStateListOf<Uri>() }
+    val tasks = remember { mutableStateListOf(BatchDraftTask()) }
     var bulkInput by remember { mutableStateOf("") }
-    val batchFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        batchFiles.clear()
-        batchFiles.addAll(uris.take(6))
+    var fileTargetIndex by remember { mutableStateOf<Int?>(null) }
+    var clearHistoryConfirm by remember { mutableStateOf(false) }
+    val taskFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        val index = fileTargetIndex
+        if (index != null && index in tasks.indices) {
+            tasks[index] = tasks[index].copy(files = uris.take(6))
+        }
+        fileTargetIndex = null
     }
-    val readyCount = tasks.count { it.isNotBlank() }
+    val readyCount = tasks.count { it.text.isNotBlank() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -744,51 +761,51 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
                 onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
             )
-            FilledTonalButton(
-                onClick = { batchFilePicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown")) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
-            ) {
-                Text(if (batchFiles.isEmpty()) "Добавить текстовые файлы" else "Файлы к пакету: ${batchFiles.size}")
-            }
-            if (batchFiles.isNotEmpty()) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "Содержимое будет добавлено к каждой задаче",
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    TextButton(onClick = { batchFiles.clear() }) { Text("Убрать") }
-                }
-            }
         }
 
         item {
             Text("Задания", fontWeight = FontWeight.Bold)
-            Text("Каждое поле — отдельный запрос.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Каждое поле — отдельный запрос. Файлы можно добавить отдельно к нужной задаче.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                tasks.forEachIndexed { index, value ->
+                tasks.forEachIndexed { index, task ->
                     ElevatedCard(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(10.dp)) {
                             OutlinedTextField(
-                                value = value,
-                                onValueChange = { tasks[index] = it },
+                                value = task.text,
+                                onValueChange = { tasks[index] = task.copy(text = it) },
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Задача ${index + 1}") },
                                 placeholder = { Text(if (index == 0) "Например: сделай краткое резюме текста" else "Введите независимое задание") },
                                 minLines = 2,
                                 maxLines = 7
                             )
-                            if (tasks.size > 1) {
-                                TextButton(onClick = { tasks.removeAt(index) }, modifier = Modifier.align(Alignment.End)) { Text("Удалить задачу") }
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                TextButton(
+                                    onClick = {
+                                        fileTargetIndex = index
+                                        taskFilePicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown", "application/yaml"))
+                                    }
+                                ) {
+                                    Text(if (task.files.isEmpty()) "+ Файлы к задаче" else "Файлы: ${task.files.size}")
+                                }
+                                Spacer(Modifier.weight(1f))
+                                if (task.files.isNotEmpty()) {
+                                    TextButton(onClick = { tasks[index] = task.copy(files = emptyList()) }) { Text("Убрать файлы") }
+                                }
+                                if (tasks.size > 1) {
+                                    TextButton(onClick = { tasks.removeAt(index) }) { Text("Удалить") }
+                                }
                             }
                         }
                     }
                 }
-                FilledTonalButton(onClick = { tasks.add("") }, modifier = Modifier.fillMaxWidth()) { Text("+ Добавить задачу") }
+                FilledTonalButton(onClick = { tasks.add(BatchDraftTask()) }, modifier = Modifier.fillMaxWidth()) { Text("+ Добавить задачу") }
             }
         }
 
@@ -808,8 +825,8 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 onClick = {
                     val imported = bulkInput.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
                     if (imported.isNotEmpty()) {
-                        if (tasks.size == 1 && tasks.first().isBlank()) tasks.clear()
-                        tasks.addAll(imported)
+                        if (tasks.size == 1 && tasks.first().text.isBlank() && tasks.first().files.isEmpty()) tasks.clear()
+                        tasks.addAll(imported.map { BatchDraftTask(text = it) })
                         bulkInput = ""
                     }
                 },
@@ -821,9 +838,9 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
         item {
             Button(
                 onClick = {
-                    val raw = tasks.map(String::trim).filter(String::isNotBlank).joinToString("\n---\n")
-                    controller.submitBatch(raw, batchFiles.toList())
-                    batchFiles.clear()
+                    val readyTasks = tasks.filter { it.text.isNotBlank() }
+                    val raw = readyTasks.joinToString("\n---\n") { it.text.trim() }
+                    controller.submitBatch(raw, readyTasks.map { it.files })
                 },
                 enabled = state.media.batchModel.endsWith(":batch", true) && readyCount > 0 && !state.loading,
                 modifier = Modifier.fillMaxWidth()
@@ -833,7 +850,15 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("История Batch", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                TextButton(onClick = controller::refreshJobs) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Обновить") }
+                TextButton(
+                    onClick = { clearHistoryConfirm = true },
+                    enabled = state.batches.any { it.status.terminal }
+                ) { Text("Очистить") }
+                TextButton(onClick = controller::refreshJobs) {
+                    Icon(Icons.Outlined.Refresh, null)
+                    Spacer(Modifier.width(4.dp))
+                    Text("Обновить")
+                }
             }
         }
         if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
@@ -859,6 +884,21 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 }
             }
         }
+    }
+
+    if (clearHistoryConfirm) {
+        AlertDialog(
+            onDismissRequest = { clearHistoryConfirm = false },
+            title = { Text("Очистить историю Batch?") },
+            text = { Text("Готовые, ошибочные и отменённые записи будут удалены. Активные задания останутся и продолжат выполняться.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    clearHistoryConfirm = false
+                    controller.clearFinishedBatchHistory()
+                }) { Text("Очистить") }
+            },
+            dismissButton = { TextButton(onClick = { clearHistoryConfirm = false }) { Text("Отмена") } }
+        )
     }
 }
 
