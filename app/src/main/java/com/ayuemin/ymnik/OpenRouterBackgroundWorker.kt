@@ -121,6 +121,7 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                     markDelivered("videos", current.remoteId)
                 } else retry = true
                 videos.upsert(current)
+                AsyncJobEvents.notifyChanged()
             }.onFailure { retry = true }
         }
 

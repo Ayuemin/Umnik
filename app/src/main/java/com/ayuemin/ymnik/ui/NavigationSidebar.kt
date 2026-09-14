@@ -152,20 +152,6 @@ fun NavigationSidebar(
                     )
                 }
 
-                FilledTonalButton(
-                    onClick = {
-                        focusManager.clearFocus(force = true)
-                        keyboardController?.hide()
-                        onNewChat()
-                    },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(21.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text("Новый чат")
-                }
-
                 HorizontalDivider()
 
                 LazyColumn(
@@ -223,6 +209,19 @@ fun NavigationSidebar(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    TextButton(
+                        onClick = {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            onNewChat()
+                        },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(21.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Новый чат", maxLines = 1)
+                    }
                     Box(Modifier.weight(1f)) {
                         TextButton(
                             onClick = { menuOpen = true },

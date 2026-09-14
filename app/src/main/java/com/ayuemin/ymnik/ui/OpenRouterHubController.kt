@@ -157,18 +157,23 @@ class OpenRouterHubController(
             mutableState.value = mutableState.value.copy(status = "Эта модель не является текстовой")
             return
         }
+        if (model.isBatch) {
+            val media = mutableState.value.media.copy(batchModel = model.id)
+            featurePrefs.saveMedia(media)
+            mutableState.value = mutableState.value.copy(media = media, status = "${model.id} выбрана только для пакетных задач")
+            return
+        }
         val profile = openRouterProfile() ?: return
         viewModel.selectDefaultTextModel(profile.id, model.id)
-        val media = mutableState.value.media.let { if (model.isBatch) it.copy(batchModel = model.id) else it }
-        if (media != mutableState.value.media) {
-            featurePrefs.saveMedia(media)
-            mutableState.value = mutableState.value.copy(media = media)
-        }
         mutableState.value = mutableState.value.copy(status = "${model.id} выбрана для обычного чата")
     }
 
     fun toggleQuickTextModel(model: ModelInfo) {
         if (ModelCategory.TEXT !in model.categories) return
+        if (model.isBatch) {
+            mutableState.value = mutableState.value.copy(status = "Batch-модель нельзя добавить в быстрые")
+            return
+        }
         val profile = openRouterProfile() ?: return
         viewModel.toggleQuickTextModelForConnection(profile.id, model.id)
         mutableState.value = mutableState.value.copy(status = "Список быстрых моделей обновлён")
@@ -222,6 +227,46 @@ class OpenRouterHubController(
                 mutableState.value = mutableState.value.copy(rag = rag, status = "${model.id} назначена для точной сортировки результатов")
             }
         }
+    }
+
+    fun clearAssignedModel(category: ModelCategory) {
+        when (category) {
+            ModelCategory.TEXT -> {
+                val profile = openRouterProfile() ?: return
+                viewModel.selectDefaultTextModel(profile.id, "openrouter/auto")
+                mutableState.value = mutableState.value.copy(status = "Модель чата сброшена на OpenRouter Auto")
+            }
+            ModelCategory.IMAGE -> {
+                viewModel.clearImageModel()
+                mutableState.value = mutableState.value.copy(status = "Модель изображений снята")
+            }
+            ModelCategory.VIDEO -> {
+                val media = mutableState.value.media.copy(videoModel = "")
+                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель видео снята")
+            }
+            ModelCategory.SPEECH, ModelCategory.AUDIO -> {
+                val media = mutableState.value.media.copy(speechModel = "")
+                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания снята")
+            }
+            ModelCategory.TRANSCRIPTION -> {
+                val media = mutableState.value.media.copy(transcriptionModel = "")
+                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель распознавания снята")
+            }
+            ModelCategory.EMBEDDINGS -> {
+                val rag = mutableState.value.rag.copy(embeddingModel = "")
+                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Embedding-модель снята")
+            }
+            ModelCategory.RERANK -> {
+                val rag = mutableState.value.rag.copy(rerankModel = "")
+                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Rerank-модель снята")
+            }
+        }
+    }
+
+    fun clearBatchModel() {
+        val media = mutableState.value.media.copy(batchModel = "")
+        featurePrefs.saveMedia(media)
+        mutableState.value = mutableState.value.copy(media = media, status = "Batch-модель снята")
     }
 
     fun submitBatch(raw: String) {

@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.content.Intent
 import android.graphics.BitmapFactory
+import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -280,9 +281,9 @@ private fun ChatScreen(
     val microphoneAvailable = !imagePromptMode && activeProfile.type == ProviderType.OPENROUTER && textModelInfo?.accepts("audio") == true
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
     val cameraAvailable = if (imagePromptMode) {
-        imageProfile.type == ProviderType.OPENROUTER && imageModelInfo?.accepts("image") != false
+        state.imageModel.isNotBlank() && imageProfile.type == ProviderType.OPENROUTER && imageModelInfo?.accepts("image") != false
     } else {
-        textModelInfo?.accepts("image") == true
+        !activeTextModel.endsWith(":batch", ignoreCase = true) && textModelInfo?.accepts("image") == true
     }
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
@@ -726,14 +727,14 @@ onBranch = if (message.role == "assistant") {
     if (actionsOpen) {
         ModalBottomSheet(onDismissRequest = { actionsOpen = false }) {
             Column(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp).padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 18.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ComposerActionTile(
                         icon = Icons.Outlined.AttachFile,
@@ -767,7 +768,7 @@ onBranch = if (message.role == "assistant") {
                     ComposerActionTile(
                         icon = Icons.Outlined.Image,
                         label = "Создать",
-                        enabled = !state.isLoading && imageConnectionAvailable,
+                        enabled = !state.isLoading && imageConnectionAvailable && state.imageModel.isNotBlank(),
                         modifier = Modifier.weight(1f),
                         onClick = {
                             actionsOpen = false
@@ -783,11 +784,11 @@ onBranch = if (message.role == "assistant") {
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ComposerActionTile(
                         icon = Icons.Outlined.Mic,
-                        label = "Речь → текст",
+                        label = "В текст",
                         enabled = !state.isLoading,
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -818,7 +819,7 @@ onBranch = if (message.role == "assistant") {
                 }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ComposerActionTile(
                         icon = Icons.Outlined.Description,
@@ -1150,17 +1151,23 @@ private fun ComposerActionTile(
     ElevatedCard(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(96.dp),
-        shape = RoundedCornerShape(18.dp)
+        modifier = modifier.height(80.dp),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(
-            modifier = Modifier.fillMaxSize().padding(12.dp),
+            modifier = Modifier.fillMaxSize().padding(horizontal = 7.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.height(8.dp))
-            Text(label, style = MaterialTheme.typography.labelLarge, maxLines = 1)
+            Icon(icon, contentDescription = null, modifier = Modifier.size(23.dp))
+            Spacer(Modifier.height(5.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.labelMedium,
+                maxLines = 2,
+                textAlign = TextAlign.Center,
+                overflow = TextOverflow.Ellipsis
+            )
         }
     }
 }
@@ -2072,6 +2079,8 @@ private fun splitRichBlocks(text: String): List<MessagePart> {
 private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Unit) {
     val context = LocalContext.current
     val isImage = file.mimeType.startsWith("image/")
+    val isAudio = file.mimeType.startsWith("audio/")
+    val isVideo = file.mimeType.startsWith("video/")
     val bitmap = remember(file.localPath, file.mimeType) {
         if (isImage && file.mimeType.lowercase() != "image/svg+xml") {
             BitmapFactory.decodeFile(file.localPath)
@@ -2124,6 +2133,21 @@ private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Un
         Spacer(Modifier.height(7.dp))
     }
 
+    if (isAudio) {
+        GeneratedAudioPlayer(file)
+        Spacer(Modifier.height(8.dp))
+    } else if (isVideo) {
+        FilledTonalButton(
+            onClick = { openGeneratedFile(context, file) },
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp)
+        ) {
+            Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(7.dp))
+            Text("Открыть видео")
+        }
+        Spacer(Modifier.height(8.dp))
+    }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2330,25 +2354,49 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     expanded = modelsExpanded,
                     onToggle = { modelsExpanded = !modelsExpanded }
                 ) {
-                    FilledTonalButton(onClick = { modelPicker = ChatMode.TEXT }, modifier = Modifier.fillMaxWidth()) {
+                    FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.TextFields, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Текстовая по умолчанию", fontWeight = FontWeight.Medium)
+                            Text("Чат по умолчанию", fontWeight = FontWeight.Medium)
                             Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         }
                     }
                     Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(onClick = { quickModelsSettingsOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                    FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
                         Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
                             Text("Быстрые модели", fontWeight = FontWeight.Medium)
                             Text(
-                                if (state.quickTextModels.isEmpty()) "Только модель по умолчанию" else "Добавлено: ${state.quickTextModels.size}",
+                                if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size} · нажмите для каталога",
                                 style = MaterialTheme.typography.bodySmall
                             )
                         }
+                    }
+                    if (state.quickTextModels.isNotEmpty()) {
+                        Spacer(Modifier.height(5.dp))
+                        state.quickTextModels.forEach { ref ->
+                            val modelId = quickModelId(ref)
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    modelId,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                TextButton(onClick = { vm.toggleQuickTextModelForConnection("openrouter", modelId) }) {
+                                    Text("Убрать")
+                                }
+                            }
+                        }
+                    }
+                    if (state.textModel != "openrouter/auto") {
+                        TextButton(
+                            onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Сбросить модель чата на Auto") }
                     }
                     Spacer(Modifier.height(7.dp))
                     FilledTonalButton(
@@ -2380,25 +2428,30 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     onToggle = { imageModelsExpanded = !imageModelsExpanded }
                 ) {
                     Text(
-                        "Модель используется только для «+ → Создать». Обычная модель чата не меняется.",
+                        "Выбор модели выполняется в общем каталоге OpenRouter. Здесь показана текущая модель для «+ → Создать».",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(9.dp))
                     FilledTonalButton(
-                        onClick = { modelPicker = ChatMode.IMAGE },
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Outlined.Image, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Column(Modifier.weight(1f)) {
-                            Text("Выбрать модель", fontWeight = FontWeight.Medium)
+                            Text("Модель изображений", fontWeight = FontWeight.Medium)
                             Text(
-                                state.imageModel,
+                                state.imageModel.ifBlank { "Не выбрана" },
                                 style = MaterialTheme.typography.bodySmall,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
+                        }
+                    }
+                    if (state.imageModel.isNotBlank()) {
+                        TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
+                            Text("Снять выбор модели изображений")
                         }
                     }
                     Spacer(Modifier.height(7.dp))
@@ -2624,7 +2677,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             Surface(
                                 shape = CircleShape,
@@ -2664,8 +2717,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             item {
                 val enabledCount = state.connectionProfiles.count { it.id !in state.disabledConnectionIds }
                 ExpandableSettingsCard(
-                    title = "Подключения",
-                    subtitle = "Включено: $enabledCount из ${state.connectionProfiles.size}",
+                    title = "OpenRouter",
+                    subtitle = "API-ключ и соединение",
                     icon = Icons.Outlined.Language,
                     expanded = connectionsExpanded,
                     onToggle = { connectionsExpanded = !connectionsExpanded }
@@ -3367,7 +3420,7 @@ private fun QuickModelsSettingsDialog(state: UiState, vm: ChatViewModel, onDismi
 
     FullScreenPanel(title = "Быстрые модели", onBack = onDismiss) {
         Text(
-            "Закрепите до 10 моделей из разных подключений. В чате Umnik сам выберет нужное подключение при нажатии на модель.",
+            "Быстрые модели выбираются в общем каталоге OpenRouter. Ограничения по количеству больше нет.",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -3754,6 +3807,58 @@ private fun markdownToShareText(markdown: String): String {
         }
         .joinToString("\\n")
         .trim()
+}
+
+@Composable
+private fun GeneratedAudioPlayer(file: GeneratedFile) {
+    var playing by remember(file.localPath) { mutableStateOf(false) }
+    val player = remember(file.localPath) {
+        runCatching {
+            MediaPlayer().apply {
+                setDataSource(file.localPath)
+                prepare()
+            }
+        }.getOrNull()
+    }
+    DisposableEffect(player) {
+        player?.setOnCompletionListener { playing = false }
+        onDispose { runCatching { player?.release() } }
+    }
+    FilledTonalButton(
+        onClick = {
+            player?.let {
+                if (playing) {
+                    it.pause()
+                    playing = false
+                } else {
+                    it.start()
+                    playing = true
+                }
+            }
+        },
+        enabled = player != null,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Icon(if (playing) Icons.Outlined.Stop else Icons.Outlined.VolumeUp, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(Modifier.width(7.dp))
+        Text(if (playing) "Пауза" else "Слушать в чате")
+    }
+}
+
+private fun openGeneratedFile(context: Context, file: GeneratedFile) {
+    val localFile = File(file.localPath)
+    if (!localFile.isFile) {
+        Toast.makeText(context, "Файл больше недоступен", Toast.LENGTH_SHORT).show()
+        return
+    }
+    val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", localFile)
+    val intent = Intent(Intent.ACTION_VIEW).apply {
+        setDataAndType(uri, file.mimeType.ifBlank { "application/octet-stream" })
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    runCatching { context.startActivity(intent) }
+        .onFailure { Toast.makeText(context, "На устройстве нет приложения для открытия файла", Toast.LENGTH_SHORT).show() }
 }
 
 private fun shareGeneratedFile(context: Context, file: GeneratedFile) {

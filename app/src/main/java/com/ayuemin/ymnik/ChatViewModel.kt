@@ -610,6 +610,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun clearImageModel() {
+        val profileId = _state.value.imageConnectionProfileId
+        prefs.edit().putString(profilePrefKey("image_model", profileId), "").apply()
+        _state.value = _state.value.copy(
+            imageModel = "",
+            imageAspectRatio = null,
+            imageResolution = null,
+            status = "Модель изображений снята. Выберите новую в каталоге OpenRouter."
+        )
+    }
+
     fun setImageAspectRatio(value: String?) {
         setImageParameter("aspect_ratio", value)
     }
@@ -644,17 +655,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun toggleQuickTextModelForConnection(profileId: String, model: String) {
         val clean = model.trim()
         if (clean.isBlank()) return
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        val stored = loadQuickTextModels(profileId)
-        val alreadySelected = clean in stored
-        if (!alreadySelected && totalStoredQuickModels(_state.value.connectionProfiles) >= 10) {
-            _state.value = _state.value.copy(status = "Можно закрепить до 10 быстрых моделей")
+        if (clean.endsWith(":batch", ignoreCase = true)) {
+            _state.value = _state.value.copy(status = "Batch-модель можно использовать только для пакетных задач")
             return
         }
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        val stored = loadQuickTextModels(profileId).filterNot { it.endsWith(":batch", ignoreCase = true) }
+        val alreadySelected = clean in stored
         val nextForProfile = if (alreadySelected) stored.filterNot { it == clean } else stored + clean
         prefs.edit().putString(
             profilePrefKey("quick_text_models_json", profileId),
-            gson.toJson(nextForProfile.distinct().take(10))
+            gson.toJson(nextForProfile.distinct())
         ).apply()
         _state.value = _state.value.copy(
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
@@ -714,6 +725,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun selectDefaultTextModel(profileId: String, model: String) {
         val clean = model.trim()
         if (clean.isBlank()) return
+        if (clean.endsWith(":batch", ignoreCase = true)) {
+            _state.value = _state.value.copy(status = "Batch-модель нельзя назначить обычному чату")
+            return
+        }
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) return
         if (!isProfileConfigured(profile)) return
@@ -1179,7 +1194,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun switchChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
-        val original = _state.value.chats.firstOrNull { it.id == id } ?: return
+        val refreshedChats = chatsRepository.list()
+        val original = refreshedChats.firstOrNull { it.id == id }
+            ?: _state.value.chats.firstOrNull { it.id == id }
+            ?: return
         val requestedProfileId = original.connectionProfileId
             ?: prefs.getString("active_connection_profile", "openrouter")
             ?: "openrouter"
@@ -1196,7 +1214,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             mode = ChatMode.TEXT,
             updatedAt = System.currentTimeMillis()
         ) else original
-        val chats = if (migrated) _state.value.chats.map { if (it.id == id) chat else it } else _state.value.chats
+        val baseChats = if (refreshedChats.isNotEmpty()) refreshedChats else _state.value.chats
+        val chats = if (migrated) baseChats.map { if (it.id == id) chat else it } else baseChats
         if (migrated) chatsRepository.save(chats)
         val nextMode = ChatMode.TEXT
         val defaultModel = loadTextModelForProfile(profile)
@@ -2784,15 +2803,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         .asSequence()
         .filter { it.id !in disabled }
         .flatMap { profile -> loadQuickTextModels(profile.id).asSequence().map { quickModelRef(profile.id, it) } }
+        .filterNot { it.substringAfter(QUICK_MODEL_SEPARATOR).endsWith(":batch", ignoreCase = true) }
         .distinct()
-        .take(10)
         .toList()
 
     private fun totalStoredQuickModels(profiles: List<ConnectionProfile>): Int =
         profiles.sumOf { loadQuickTextModels(it.id).size }
 
-    private fun loadDisabledConnectionIds(): Set<String> =
-        prefs.getStringSet("disabled_connection_profiles", emptySet())?.toSet() ?: emptySet()
+    private fun loadDisabledConnectionIds(): Set<String> = emptySet()
 
     private fun defaultOpenRouterProfile() = ConnectionProfile(
         id = "openrouter",
@@ -2865,8 +2883,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     useProviderDefaults = false
                 )
             }
-        listOf(openRouter, nvidia) + remaining
-    }.getOrElse { listOf(defaultOpenRouterProfile(), defaultNvidiaProfile()) }
+        listOf(openRouter)
+    }.getOrElse { listOf(defaultOpenRouterProfile()) }
 
     private fun saveConnectionProfiles(profiles: List<ConnectionProfile>) {
         prefs.edit().putString("connection_profiles_json", gson.toJson(profiles)).apply()
@@ -2987,10 +3005,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun chooseImageModel(profile: ConnectionProfile, infos: List<ModelInfo>): String {
+        val key = profilePrefKey("image_model", profile.id)
         var selected = loadImageModelForProfile(profile.id)
+        if (selected.isBlank() && prefs.contains(key)) return ""
         if (infos.isNotEmpty() && infos.none { it.id == selected }) {
             selected = infos.first().id
-            prefs.edit().putString(profilePrefKey("image_model", profile.id), selected).apply()
+            prefs.edit().putString(key, selected).apply()
         }
         return selected
     }
@@ -3000,7 +3020,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun loadTextModelForProfile(profile: ConnectionProfile): String {
         val fallback = if (profile.type == ProviderType.OPENROUTER) "openrouter/auto" else ""
-        return prefs.getString(profilePrefKey("text_model", profile.id), fallback) ?: fallback
+        val stored = prefs.getString(profilePrefKey("text_model", profile.id), fallback)?.trim().orEmpty()
+        val safe = if (stored.endsWith(":batch", ignoreCase = true)) stored.removeSuffix(":batch") else stored
+        return safe.ifBlank { fallback }
     }
 
     private fun loadImageModelForProfile(profileId: String): String {
@@ -3052,7 +3074,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }.getOrDefault(emptyMap())
 
     private fun loadInitialChats(): List<ChatSession> {
-        val existing = chatsRepository.list()
+        val storedChats = chatsRepository.list()
+        val existing = storedChats.map { chat ->
+            val override = chat.textModelOverride
+            if (override?.endsWith(":batch", ignoreCase = true) == true) {
+                chat.copy(textModelOverride = override.removeSuffix(":batch"), mode = ChatMode.TEXT)
+            } else chat
+        }
+        if (existing != storedChats && existing.isNotEmpty()) chatsRepository.save(existing)
         if (existing.isNotEmpty()) return existing
         if (chatsRepository.loadError != null) {
             return listOf(ChatSession(id = UUID.randomUUID().toString(), title = "Хранилище чатов недоступно"))

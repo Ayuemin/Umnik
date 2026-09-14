@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -81,6 +82,7 @@ import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
+import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.VideoJobStatus
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
@@ -199,6 +201,7 @@ private fun OpenRouterHubDialog(
     onDismiss: () -> Unit
 ) {
     val state by controller.state.collectAsState()
+    val appState by viewModel.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
     val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
 
@@ -261,7 +264,7 @@ private fun OpenRouterHubDialog(
                         }
                     }
                     when (page) {
-                        HubPage.MODELS -> ModelsPage(state, controller)
+                        HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
                         HubPage.TOOLS -> ToolsPage(state.tools, state.rag, controller)
                         HubPage.JOBS -> JobsPage(state, controller)
@@ -292,12 +295,14 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
 }
 
 @Composable
-private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
+private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf<ModelCategory?>(null) }
     var variant by remember { mutableStateOf<ModelVariant?>(null) }
     var price by remember { mutableStateOf(ModelPriceFilter.ALL) }
     var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
+    var filtersExpanded by remember { mutableStateOf(true) }
+    val listState = rememberLazyListState()
     val availableCategories = remember(state.catalog) {
         ModelCategory.entries.filter { candidate -> state.catalog.any { candidate in it.categories } }
     }
@@ -307,8 +312,36 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     val availableVariants = remember(state.catalog) {
         variantOrder.filter { candidate -> state.catalog.any { candidate in it.variants } }
     }
-    val filtered = remember(state.catalog, query, category, variant, price, capabilities) {
+    val selectedIds = remember(
+        appState.textModel,
+        appState.currentChatTextModel,
+        appState.quickTextModels,
+        appState.imageModel,
+        state.media,
+        state.rag
+    ) {
+        buildSet {
+            add(appState.textModel)
+            appState.currentChatTextModel?.let(::add)
+            appState.quickTextModels.forEach { add(it.substringAfter('\u001F')) }
+            add(appState.imageModel)
+            add(state.media.batchModel)
+            add(state.media.videoModel)
+            add(state.media.speechModel)
+            add(state.media.transcriptionModel)
+            add(state.rag.embeddingModel)
+            add(state.rag.rerankModel)
+        }.filter(String::isNotBlank).toSet()
+    }
+    val filtered = remember(state.catalog, query, category, variant, price, capabilities, selectedIds) {
         ModelCatalogFilter.apply(state.catalog, query, category, variant, price, capabilities, limit = 700)
+            .sortedWith(compareByDescending<ModelInfo> { it.id in selectedIds }.thenBy { it.id })
+    }
+
+    LaunchedEffect(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
+        if (filtersExpanded && (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 48)) {
+            filtersExpanded = false
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -319,48 +352,57 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Поиск по всему OpenRouter") }
+                placeholder = { Text("Поиск по OpenRouter") }
             )
+            TextButton(onClick = { filtersExpanded = !filtersExpanded }) {
+                Text(if (filtersExpanded) "Свернуть" else "Фильтры")
+            }
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
         }
-        Text("Категории", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
-        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            item { FilterChip(selected = category == null, onClick = { category = null }, label = { Text("Все") }) }
-            items(availableCategories) { item ->
-                FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+        if (filtersExpanded) {
+            Text("Категории", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item { FilterChip(selected = category == null, onClick = { category = null }, label = { Text("Все") }) }
+                items(availableCategories) { item ->
+                    FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
+                }
             }
-        }
-        Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
-        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
-            items(availableVariants) { item ->
-                FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
+            Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
+                items(availableVariants) { item ->
+                    FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
+                }
             }
-        }
-        val priceOptions = remember(category) {
-            when (category) {
+            val priceOptions = when (category) {
                 ModelCategory.TEXT, ModelCategory.IMAGE -> ModelPriceFilter.entries.toList()
                 else -> listOf(ModelPriceFilter.ALL, ModelPriceFilter.FREE)
             }
-        }
-        Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
-        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(priceOptions) { item ->
-                FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item, category)) })
+            Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(priceOptions) { item ->
+                    FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item, category)) })
+                }
+            }
+            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                item { CapabilityChip("Vision", capabilities.imageInput) { capabilities = capabilities.copy(imageInput = !capabilities.imageInput) } }
+                item { CapabilityChip("Audio", capabilities.audioInput) { capabilities = capabilities.copy(audioInput = !capabilities.audioInput) } }
+                item { CapabilityChip("Video", capabilities.videoInput) { capabilities = capabilities.copy(videoInput = !capabilities.videoInput) } }
+                item { CapabilityChip("Reasoning", capabilities.reasoning) { capabilities = capabilities.copy(reasoning = !capabilities.reasoning) } }
+                item { CapabilityChip("Tools", capabilities.tools) { capabilities = capabilities.copy(tools = !capabilities.tools) } }
             }
         }
-        LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            item { CapabilityChip("Vision", capabilities.imageInput) { capabilities = capabilities.copy(imageInput = !capabilities.imageInput) } }
-            item { CapabilityChip("Audio", capabilities.audioInput) { capabilities = capabilities.copy(audioInput = !capabilities.audioInput) } }
-            item { CapabilityChip("Video", capabilities.videoInput) { capabilities = capabilities.copy(videoInput = !capabilities.videoInput) } }
-            item { CapabilityChip("Reasoning", capabilities.reasoning) { capabilities = capabilities.copy(reasoning = !capabilities.reasoning) } }
-            item { CapabilityChip("Tools", capabilities.tools) { capabilities = capabilities.copy(tools = !capabilities.tools) } }
-        }
-        Text("Показано ${filtered.size} из ${state.catalog.size}", modifier = Modifier.padding(horizontal = 14.dp, vertical = 3.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Показано ${filtered.size} из ${state.catalog.size} · выбранные модели сверху",
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
 
         LazyColumn(
+            state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -368,7 +410,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             if (filtered.isEmpty()) {
                 item { Text(if (state.loading) "Каталог загружается…" else "По фильтрам моделей нет", modifier = Modifier.padding(16.dp)) }
             }
-            items(filtered, key = { it.id }) { model -> ModelCatalogCard(model, controller) }
+            items(filtered, key = { it.id }) { model -> ModelCatalogCard(model, controller, appState, state) }
         }
     }
 }
@@ -379,7 +421,7 @@ private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit
 }
 
 @Composable
-private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController) {
+private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
     val context = LocalContext.current
     var menuOpen by remember(model.id) { mutableStateOf(false) }
     ElevatedCard(
@@ -400,7 +442,7 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                         Text("⋮", style = MaterialTheme.typography.titleLarge)
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                        if (ModelCategory.TEXT in model.categories) {
+                        if (ModelCategory.TEXT in model.categories && !model.isBatch) {
                             DropdownMenuItem(
                                 text = { Text("Выбрать для чата") },
                                 onClick = { menuOpen = false; controller.useAsTextModel(model) }
@@ -409,12 +451,50 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                                 text = { Text("Добавить / убрать из быстрых") },
                                 onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
                             )
+                            if (appState.textModel == model.id) {
+                                DropdownMenuItem(
+                                    text = { Text("Сбросить чат на OpenRouter Auto") },
+                                    onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TEXT) }
+                                )
+                            }
+                        }
+                        if (model.isBatch) {
+                            DropdownMenuItem(
+                                text = { Text("Выбрать для пакетных задач") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) }
+                            )
+                            if (hubState.media.batchModel == model.id) {
+                                DropdownMenuItem(text = { Text("Снять с пакетных задач") }, onClick = { menuOpen = false; controller.clearBatchModel() })
+                            }
                         }
                         if (ModelCategory.IMAGE in model.categories) {
                             DropdownMenuItem(
-                                text = { Text("Выбрать для изображений") },
+                                text = { Text("Выбрать для создания изображений") },
                                 onClick = { menuOpen = false; controller.useAsImageModel(model) }
                             )
+                            if (appState.imageModel == model.id) {
+                                DropdownMenuItem(text = { Text("Снять с изображений") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.IMAGE) })
+                            }
+                        }
+                        if (ModelCategory.VIDEO in model.categories) {
+                            DropdownMenuItem(text = { Text("Выбрать для видео") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.VIDEO) })
+                            if (hubState.media.videoModel == model.id) DropdownMenuItem(text = { Text("Снять с видео") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.VIDEO) })
+                        }
+                        if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) {
+                            DropdownMenuItem(text = { Text("Выбрать для озвучивания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.SPEECH) })
+                            if (hubState.media.speechModel == model.id) DropdownMenuItem(text = { Text("Снять с озвучивания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.SPEECH) })
+                        }
+                        if (ModelCategory.TRANSCRIPTION in model.categories) {
+                            DropdownMenuItem(text = { Text("Выбрать для распознавания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TRANSCRIPTION) })
+                            if (hubState.media.transcriptionModel == model.id) DropdownMenuItem(text = { Text("Снять с распознавания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TRANSCRIPTION) })
+                        }
+                        if (ModelCategory.EMBEDDINGS in model.categories) {
+                            DropdownMenuItem(text = { Text("Выбрать для поиска по документам") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.EMBEDDINGS) })
+                            if (hubState.rag.embeddingModel == model.id) DropdownMenuItem(text = { Text("Снять с поиска по документам") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.EMBEDDINGS) })
+                        }
+                        if (ModelCategory.RERANK in model.categories) {
+                            DropdownMenuItem(text = { Text("Выбрать для точной сортировки") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.RERANK) })
+                            if (hubState.rag.rerankModel == model.id) DropdownMenuItem(text = { Text("Снять с точной сортировки") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.RERANK) })
                         }
                         DropdownMenuItem(
                             text = { Text("Копировать ID модели") },
@@ -443,7 +523,6 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (ModelCategory.TEXT in model.categories && !model.isBatch) SmallAssignButton("Использовать в чате") { controller.useAsTextModel(model) }
-                if (model.isBatch) SmallAssignButton("Batch в чате") { controller.useAsTextModel(model) }
                 if (ModelCategory.IMAGE in model.categories) SmallAssignButton("Для изображений") { controller.useAsImageModel(model) }
                 if (model.isBatch) SmallAssignButton("Для пакета задач") { controller.assignModel(model, ModelCategory.TEXT) }
                 if (ModelCategory.VIDEO in model.categories) SmallAssignButton("Для видео") { controller.assignModel(model, ModelCategory.VIDEO) }

@@ -49,17 +49,26 @@ private fun baseLight(
     onPrimaryContainer = onPrimaryContainer,
     secondary = secondary,
     onSecondary = Color.White,
-    secondaryContainer = Color(0xFFE6E1DD),
-    onSecondaryContainer = Color(0xFF241F1C),
+    secondaryContainer = lerp(primary, Color.White, 0.86f),
+    onSecondaryContainer = lerp(primary, Color.Black, 0.76f),
     tertiary = tertiary,
     onTertiary = Color.White,
+    tertiaryContainer = lerp(tertiary, Color.White, 0.84f),
+    onTertiaryContainer = lerp(tertiary, Color.Black, 0.76f),
     background = Color(0xFFF9F9FA),
     onBackground = Color(0xFF1A1C1E),
     surface = Color(0xFFF9F9FA),
     onSurface = Color(0xFF1A1C1E),
-    surfaceVariant = Color(0xFFE2E2E6),
-    onSurfaceVariant = Color(0xFF45464B),
-    outline = Color(0xFF76777C)
+    surfaceTint = primary,
+    surfaceVariant = lerp(primary, Color.White, 0.90f),
+    onSurfaceVariant = lerp(primary, Color.Black, 0.70f),
+    outline = lerp(primary, Color.Gray, 0.68f),
+    outlineVariant = lerp(primary, Color.White, 0.72f),
+    surfaceContainerLowest = Color.White,
+    surfaceContainerLow = lerp(primary, Color.White, 0.965f),
+    surfaceContainer = lerp(primary, Color.White, 0.94f),
+    surfaceContainerHigh = lerp(primary, Color.White, 0.91f),
+    surfaceContainerHighest = lerp(primary, Color.White, 0.87f)
 )
 
 private fun baseDark(
@@ -75,17 +84,26 @@ private fun baseDark(
     onPrimaryContainer = onPrimaryContainer,
     secondary = secondary,
     onSecondary = Color(0xFF17181A),
-    secondaryContainer = Color(0xFF403A36),
-    onSecondaryContainer = Color(0xFFE6E1DD),
+    secondaryContainer = lerp(primary, Color.Black, 0.62f),
+    onSecondaryContainer = lerp(primary, Color.White, 0.84f),
     tertiary = tertiary,
     onTertiary = Color(0xFF17181A),
+    tertiaryContainer = lerp(tertiary, Color.Black, 0.60f),
+    onTertiaryContainer = lerp(tertiary, Color.White, 0.84f),
     background = Color(0xFF111315),
     onBackground = Color(0xFFE3E3E6),
     surface = Color(0xFF111315),
     onSurface = Color(0xFFE3E3E6),
-    surfaceVariant = Color(0xFF44464B),
-    onSurfaceVariant = Color(0xFFC5C6CA),
-    outline = Color(0xFF8F9095)
+    surfaceTint = primary,
+    surfaceVariant = lerp(primary, Color.Black, 0.72f),
+    onSurfaceVariant = lerp(primary, Color.White, 0.73f),
+    outline = lerp(primary, Color.Gray, 0.58f),
+    outlineVariant = lerp(primary, Color.Black, 0.50f),
+    surfaceContainerLowest = lerp(primary, Color.Black, 0.91f),
+    surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
+    surfaceContainer = lerp(primary, Color.Black, 0.82f),
+    surfaceContainerHigh = lerp(primary, Color.Black, 0.77f),
+    surfaceContainerHighest = lerp(primary, Color.Black, 0.72f)
 )
 
 private fun customLight(primary: Color) = baseLight(
