@@ -47,13 +47,57 @@ jobs:
           from pathlib import Path
           p = Path("tools/patch_v1_8_0.py")
           s = p.read_text(encoding="utf-8")
+
           old = '''text = replace_once(text, "horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", "first compact row spacing")
           # The sheet has three action rows; compact the next two occurrences as well.
           text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", 2)'''
           new = '''text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)")'''
           if old not in s:
               raise SystemExit("migration runner: spacing patch anchor not found")
-          p.write_text(s.replace(old, new, 1), encoding="utf-8")
+          s = s.replace(old, new, 1)
+
+          start_marker = "# Add an explicit clear action after the image-model catalog button."
+          end_marker = "# OpenRouter-only connection wording and remove add-provider entry."
+          start = s.find(start_marker)
+          end = s.find(end_marker, start)
+          if start < 0 or end < 0:
+              raise SystemExit("migration runner: image settings patch markers not found")
+          image_patch = """# Add an explicit clear action after the image-model catalog button.
+          text = replace_once(
+              text,
+              '''                        Column(Modifier.weight(1f)) {
+                                      Text("Выбрать модель", fontWeight = FontWeight.Medium)
+                                      Text(
+                                          state.imageModel,
+                                          style = MaterialTheme.typography.bodySmall,
+                                          maxLines = 1,
+                                          overflow = TextOverflow.Ellipsis
+                                      )
+                                  }
+                              }
+          ''',
+              '''                        Column(Modifier.weight(1f)) {
+                                      Text("Модель изображений", fontWeight = FontWeight.Medium)
+                                      Text(
+                                          state.imageModel.ifBlank { "Не выбрана" },
+                                          style = MaterialTheme.typography.bodySmall,
+                                          maxLines = 1,
+                                          overflow = TextOverflow.Ellipsis
+                                      )
+                                  }
+                              }
+                              if (state.imageModel.isNotBlank()) {
+                                  TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
+                                      Text("Снять выбор модели изображений")
+                                  }
+                              }
+          ''',
+              "clear image model setting",
+          )
+
+          """
+          s = s[:start] + image_patch + s[end:]
+          p.write_text(s, encoding="utf-8")
           PY
             python3 tools/patch_v1_8_0.py
             echo "applied=true" >> "$GITHUB_OUTPUT"
