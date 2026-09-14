@@ -102,10 +102,9 @@ class CompatibleApiClient(private val context: Context) {
         val isNvidia = isNvidiaHosted(baseUrl)
 
         try {
-            ConversationContext.checkTransferSize(attachments)
             val selectedHistory = ConversationContext.select(
                 history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
-                modelInfo?.contextLength, if (isNvidia) 8_192 else 4_096
+                modelInfo?.contextLength, 0
             )
             val messages = JsonArray()
             if (systemPrompt.isNotBlank()) messages.add(message("system", systemPrompt))
@@ -117,7 +116,6 @@ class CompatibleApiClient(private val context: Context) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
-                if (!isNvidia) addProperty("max_tokens", 4096)
                 addProperty("stream", false)
                 // DeepSeek V4 on NVIDIA defaults to high reasoning. For normal Umnik
                 // chat explicitly disable hidden thinking; otherwise even «привет» can

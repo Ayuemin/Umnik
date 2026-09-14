@@ -6,9 +6,6 @@ import java.io.File
 
 /** The complete conversation stays on disk. Only the oldest completed turns are omitted from a request. */
 internal object ConversationContext {
-    private const val DEFAULT_WINDOW = 128_000
-    private const val MAX_WINDOW = 1_048_576
-
     fun completedTextTurns(history: List<ChatMessage>): List<ChatMessage> {
         val turns = mutableListOf<ChatMessage>()
         var user: ChatMessage? = null
@@ -49,15 +46,8 @@ internal object ConversationContext {
         }
     }
 
-    fun checkTransferSize(attachments: List<PendingAttachment>) {
-        val total = attachments.sumOf { attachment ->
-            attachment.localPath?.let { File(it).takeIf(File::isFile)?.length() }
-                ?: attachment.size.coerceAtLeast(0L)
-        }
-        require(total <= 32L * 1024 * 1024) {
-            "Общий объём файлов в одном запросе превышает 32 МБ. Уберите часть файлов из чата или проекта."
-        }
-    }
+    /** No Umnik size cap: provider/model/device limits are authoritative. */
+    fun checkTransferSize(attachments: List<PendingAttachment>) = Unit
 
     fun select(
         history: List<ChatMessage>,
@@ -67,14 +57,12 @@ internal object ConversationContext {
         contextLength: Int?,
         outputTokens: Int
     ): List<ChatMessage> {
-        val window = (contextLength ?: DEFAULT_WINDOW).coerceIn(8_192, MAX_WINDOW)
-        val inputBudget = ((window - outputTokens - 1_024).coerceAtLeast(0) * 0.85).toInt()
-        val fixed = estimateTokens(systemPrompt).toLong() + estimateTokens(prompt) + attachmentTokens + 256
-        require(fixed <= inputBudget) {
-            "Инструкции, запрос и файлы превышают контекстное окно модели. Уберите часть файлов из чата/проекта или выберите модель с большим контекстом."
-        }
-
         val completed = completedTextTurns(history)
+        // Unknown window: send the complete stored conversation and let the provider decide.
+        // Known window: trim only the oldest completed turns. Fixed prompt/files are never
+        // blocked by Umnik; provider/model limits remain authoritative.
+        val inputBudget = contextLength?.takeIf { it > 0 }?.toLong() ?: return completed
+        val fixed = estimateTokens(systemPrompt).toLong() + estimateTokens(prompt) + attachmentTokens + 256
         val selected = mutableListOf<ChatMessage>()
         var used = fixed
         for (index in completed.size - 2 downTo 0 step 2) {

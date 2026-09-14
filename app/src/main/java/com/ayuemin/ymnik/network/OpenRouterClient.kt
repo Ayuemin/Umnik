@@ -201,12 +201,9 @@ class OpenRouterClient(private val context: Context) {
         baseUrl: String = DEFAULT_BASE_URL,
         modelInfo: ModelInfo? = null
     ): Result = withContext(Dispatchers.IO) {
-        ConversationContext.checkTransferSize(attachments)
-        val outputTokens = (if (reasoningEnabled || modelInfo?.reasoningMandatory == true) 12_000 else 8_000)
-            .coerceAtMost(modelInfo?.maxCompletionTokens ?: 12_000)
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
-            modelInfo?.contextLength, outputTokens
+            modelInfo?.contextLength, 0
         )
         val messages = JsonArray()
         messages.add(message("system", systemPrompt))
@@ -214,7 +211,7 @@ class OpenRouterClient(private val context: Context) {
             messages.add(message(item.role, item.text))
         }
         messages.add(userMessage(prompt, attachments))
-        DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: 128_000}; output=$outputTokens; attachments=${attachments.size}")
+        DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: "provider"}; output=provider; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
         var loops = 0
@@ -222,7 +219,6 @@ class OpenRouterClient(private val context: Context) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
-                addProperty("max_tokens", outputTokens)
                 if (toolsEnabled) add("tools", tools())
 
                 if (webSearchEnabled) {

@@ -785,16 +785,6 @@ onBranch = if (message.role == "assistant") {
                             if (vm.prepareImageGeneration()) imagePromptMode = true
                         }
                     )
-                    ComposerActionTile(
-                        icon = Icons.Outlined.SwapHoriz,
-                        label = "Batch",
-                        enabled = !state.isLoading && !imagePromptMode && (state.currentChatTextModel ?: state.textModel).endsWith(":batch", ignoreCase = true),
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
-                        }
-                    )
                 }
 
                 HorizontalDivider()
