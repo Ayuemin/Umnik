@@ -51,7 +51,7 @@ jobs:
           new = '''    if count != 1:
                   if label == "generated file card call":
                       next_text, fallback_count = re.subn(
-                          r"GeneratedFileCard\\(file\\s*,\\s*onSaveGenerated\\)",
+                          r"GeneratedFileCard\(file\s*,\s*onSaveGenerated\)",
                           "GeneratedFileCard(file)",
                           text,
                           count=1,
