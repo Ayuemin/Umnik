@@ -37,7 +37,9 @@ jobs:
           gradle-version: "8.13"
 
       - name: Apply source migration
-        run: python3 tools/patch_v1_10_0.py
+        run: |
+          python3 tools/patch_v1_10_0.py
+          python3 tools/patch_v1_10_0_followup.py
 
       - name: Verify intended changes
         shell: bash
@@ -48,11 +50,14 @@ jobs:
           grep -q 'filter { it.projectId == null }' app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt
           grep -q 'Разбить по строкам' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
           grep -q 'Памятка по использованию Umnik' app/src/main/java/com/ayuemin/ymnik/help/UmnikUsageGuide.kt
+          grep -q 'data class ProjectStage' app/src/main/java/com/ayuemin/ymnik/model/Models.kt
+          grep -q 'Этапы работы' app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt
+          grep -q 'fun runProjectStages' app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
 
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
 
-      - name: Commit verified source changes
+      - name: Commit verified source changes and create release tag
         shell: bash
         run: |
           set -euo pipefail
@@ -60,11 +65,16 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/build.gradle.kts CHANGELOG.md \
             app/src/main/java/com/ayuemin/ymnik/help/UmnikUsageGuide.kt \
+            app/src/main/java/com/ayuemin/ymnik/model/Models.kt \
             app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt \
+            app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt \
             app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
             app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt \
             app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHubController.kt \
             app/src/main/java/com/ayuemin/ymnik/OpenRouterBackgroundWorker.kt \
             app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
+          git rm tools/patch_v1_10_0.py tools/patch_v1_10_0_followup.py .github/workflows/apply-v1.10.0.yml
           git commit -m "release: prepare Umnik v1.10.0"
           git push origin HEAD:main
+          git tag v1.10.0
+          git push origin v1.10.0
