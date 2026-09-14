@@ -363,26 +363,31 @@ private fun ChatScreen(
         }
     }
 
-    val menuSwipeTriggerPx = with(LocalDensity.current) { 76.dp.toPx() }
+    val density = LocalDensity.current
+    val menuSwipeTriggerPx = with(density) { 52.dp.toPx() }
+    val menuEdgeTriggerPx = with(density) { 30.dp.toPx() }
+    val menuEdgeWidthPx = with(density) { 76.dp.toPx() }
 
     Column(
         Modifier
             .fillMaxSize()
-            .pointerInput(menuSwipeTriggerPx) {
+            .pointerInput(menuSwipeTriggerPx, menuEdgeTriggerPx, menuEdgeWidthPx) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false)
+                    val startedAtEdge = down.position.x <= menuEdgeWidthPx
+                    val requiredDistance = if (startedAtEdge) menuEdgeTriggerPx else menuSwipeTriggerPx
                     var horizontalDistance = 0f
                     var verticalDistance = 0f
                     var blockedByChild = false
                     var opened = false
 
                     while (true) {
-                        // Final pass lets nested horizontally scrollable content consume
-                        // the gesture first. A Markdown table therefore scrolls instead
-                        // of opening the menu, while an ordinary chat area still swipes.
+                        // Свайп от левого края имеет приоритет над LazyColumn: это делает
+                        // открытие панели надёжным даже когда палец попал на сообщение.
+                        // В остальной области сохраняем защиту горизонтальных таблиц/списков.
                         val event = awaitPointerEvent(PointerEventPass.Final)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (change.isConsumed) blockedByChild = true
+                        if (change.isConsumed && !startedAtEdge) blockedByChild = true
 
                         horizontalDistance += change.position.x - change.previousPosition.x
                         verticalDistance += change.position.y - change.previousPosition.y
@@ -390,16 +395,16 @@ private fun ChatScreen(
                         if (
                             !blockedByChild &&
                             !opened &&
-                            horizontalDistance >= menuSwipeTriggerPx &&
-                            horizontalDistance > kotlin.math.abs(verticalDistance) * 1.25f
+                            horizontalDistance >= requiredDistance &&
+                            horizontalDistance > kotlin.math.abs(verticalDistance) * 1.05f
                         ) {
                             sidebarOpen = true
                             opened = true
                         }
 
                         if (!change.pressed) break
-                        if (horizontalDistance <= -menuSwipeTriggerPx) break
-                        if (kotlin.math.abs(verticalDistance) > menuSwipeTriggerPx * 1.35f) break
+                        if (horizontalDistance <= -requiredDistance) break
+                        if (!startedAtEdge && kotlin.math.abs(verticalDistance) > requiredDistance * 1.8f) break
                     }
                 }
             }
@@ -777,6 +782,17 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
+                if (!imagePromptMode) {
+                    ComposerToolRow(
+                        icon = Icons.Outlined.Language,
+                        title = "Поиск в сети",
+                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
+                        checked = state.webSearchEnabled,
+                        enabled = openRouterProfile,
+                        onCheckedChange = vm::setWebSearchEnabled
+                    )
+                }
+
                 Text(
                     "Инструменты OpenRouter",
                     style = MaterialTheme.typography.titleSmall,
@@ -855,14 +871,7 @@ onBranch = if (message.role == "assistant") {
                         enabled = reasoningAvailable,
                         onCheckedChange = vm::setReasoningEnabled
                     )
-                    ComposerToolRow(
-                        icon = Icons.Outlined.Language,
-                        title = "Поиск в сети",
-                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
-                        checked = state.webSearchEnabled,
-                        enabled = openRouterProfile,
-                        onCheckedChange = vm::setWebSearchEnabled
-                    )
+
                 }
             }
         }
@@ -1159,7 +1168,12 @@ private fun ComposerActionTile(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(23.dp))
+            Icon(
+                icon,
+                contentDescription = null,
+                modifier = Modifier.size(23.dp),
+                tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+            )
             Spacer(Modifier.height(5.dp))
             Text(
                 label,
@@ -1185,7 +1199,12 @@ private fun ComposerToolRow(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(25.dp))
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(25.dp),
+            tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+        )
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)

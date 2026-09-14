@@ -721,7 +721,12 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
 @Composable
 private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
     val tasks = remember { mutableStateListOf("") }
+    val batchFiles = remember { mutableStateListOf<Uri>() }
     var bulkInput by remember { mutableStateOf("") }
+    val batchFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        batchFiles.clear()
+        batchFiles.addAll(uris.take(6))
+    }
     val readyCount = tasks.count { it.isNotBlank() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -739,11 +744,28 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
                 onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
             )
+            FilledTonalButton(
+                onClick = { batchFilePicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown")) },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+            ) {
+                Text(if (batchFiles.isEmpty()) "Добавить текстовые файлы" else "Файлы к пакету: ${batchFiles.size}")
+            }
+            if (batchFiles.isNotEmpty()) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Содержимое будет добавлено к каждой задаче",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    TextButton(onClick = { batchFiles.clear() }) { Text("Убрать") }
+                }
+            }
         }
 
         item {
             Text("Задания", fontWeight = FontWeight.Bold)
-            Text("Каждое поле — отдельный запрос. Никакие разделительные линии вводить не нужно.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Каждое поле — отдельный запрос.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
         item {
@@ -800,7 +822,8 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
             Button(
                 onClick = {
                     val raw = tasks.map(String::trim).filter(String::isNotBlank).joinToString("\n---\n")
-                    controller.submitBatch(raw)
+                    controller.submitBatch(raw, batchFiles.toList())
+                    batchFiles.clear()
                 },
                 enabled = state.media.batchModel.endsWith(":batch", true) && readyCount > 0 && !state.loading,
                 modifier = Modifier.fillMaxWidth()
@@ -849,6 +872,9 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
         videoRefs.clear(); videoRefs.addAll(uris.take(4))
     }
     val sttPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(controller::transcribe) }
+    val speechTextPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { controller.loadTextFileForInput(it) { loaded -> speechText = loaded } }
+    }
     val context = LocalContext.current
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -905,6 +931,11 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                 )
                 OutlinedTextField(voice, { voice = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Voice, если модель поддерживает") }, singleLine = true)
                 OutlinedTextField(speechText, { speechText = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Текст для озвучивания") }, minLines = 3, maxLines = 8)
+                FilledTonalButton(
+                    onClick = { speechTextPicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown")) },
+                    enabled = !state.loading,
+                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
+                ) { Text("Загрузить текстовый файл") }
                 Button(onClick = { controller.updateMedia(state.media.copy(voice = voice.trim())); controller.synthesize(speechText) }, enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Text("Создать аудио") }
                 state.speechFile?.let { file ->
                     Text("Готово и добавлено в чат: ${file.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))

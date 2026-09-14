@@ -270,8 +270,8 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(media = media, status = "Batch-модель снята")
     }
 
-    fun submitBatch(raw: String) {
-        DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}")
+    fun submitBatch(raw: String, fileUris: List<Uri> = emptyList()) {
+        DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}; files=${fileUris.size}")
         val input = raw.trim()
         if (input.isBlank()) {
             mutableState.value = mutableState.value.copy(status = "Введите хотя бы одно задание")
@@ -300,17 +300,20 @@ class OpenRouterHubController(
                 val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
                 val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
                 val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
-                val attachments = buildPersistentAttachments(chat?.chatFiles.orEmpty(), project?.files.orEmpty(), modelInfo)
+                // OpenRouter Batch rejects ordinary file/image content parts. Selected text
+                // files are therefore inserted into the prompt as plain text instead.
+                val inlineFiles = withContext(Dispatchers.IO) { batchTextContext(fileUris.take(6)) }
                 val system = buildSystemPrompt(chat, project)
                 val requests = prompts.mapIndexed { index, prompt ->
+                    val promptWithFiles = if (inlineFiles.isBlank()) prompt else "$prompt\n\n===== ПРИЛОЖЕННЫЕ ФАЙЛЫ =====\n$inlineFiles"
                     OpenRouterBatchClient.BatchRequest(
                         customId = "hub-${index + 1}-${UUID.randomUUID()}",
                         label = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Задание ${index + 1}",
                         body = batchBuilder.build(
                             model = model,
                             history = chat?.messages.orEmpty(),
-                            prompt = prompt,
-                            attachments = attachments,
+                            prompt = promptWithFiles,
+                            attachments = emptyList(),
                             systemPrompt = system,
                             reasoningEnabled = false,
                             reasoningEffort = null,
@@ -333,7 +336,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 batchRepository.upsert(job)
-                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}]\n$input")
+                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}${if (fileUris.isNotEmpty()) " · файлов: ${fileUris.size}" else ""}]\n$input")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -426,6 +429,27 @@ class OpenRouterHubController(
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось распознать аудио")
+            }
+        }
+    }
+
+    fun loadTextFileForInput(uri: Uri, maxChars: Int = 60_000, onReady: (String) -> Unit) {
+        scope.launch {
+            mutableState.value = mutableState.value.copy(loading = true, operation = "Читаю текстовый файл…", status = null)
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    val data = uriBytes(uri)
+                    ensureTextFile(data)
+                    val value = data.bytes.toString(Charsets.UTF_8).trim()
+                    if (value.isBlank()) error("В выбранном файле нет текста")
+                    if (value.length > maxChars) error("Текстовый файл слишком большой: максимум $maxChars символов для этого поля")
+                    value
+                }
+            }.onSuccess { value ->
+                onReady(value)
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, status = "Текст загружен из файла")
+            }.onFailure { error ->
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось прочитать файл")
             }
         }
     }
@@ -614,6 +638,34 @@ class OpenRouterHubController(
         }
         chats.save(next)
         DiagnosticLog.record(context, "CHAT_RESULT", "hub exchange added; chat=${chatId.take(8)}; assistantChars=${assistantText.length}; files=${files.size}; fileTypes=${files.map { it.mimeType }.distinct().joinToString(",")}")
+    }
+
+    private fun ensureTextFile(data: UriData) {
+        val mime = data.mime.lowercase()
+        val lowerName = data.name.lowercase()
+        val supported = mime.startsWith("text/") ||
+            mime == "application/json" || mime == "application/xml" ||
+            lowerName.endsWith(".txt") || lowerName.endsWith(".md") || lowerName.endsWith(".csv") ||
+            lowerName.endsWith(".json") || lowerName.endsWith(".xml") || lowerName.endsWith(".yaml") || lowerName.endsWith(".yml")
+        if (!supported) error("Этот режим принимает текстовые файлы: TXT, MD, CSV, JSON, XML или YAML")
+    }
+
+    private fun batchTextContext(uris: List<Uri>): String {
+        if (uris.isEmpty()) return ""
+        var totalChars = 0
+        return buildString {
+            uris.forEachIndexed { index, uri ->
+                val data = uriBytes(uri)
+                ensureTextFile(data)
+                if (data.bytes.size > 512 * 1024) error("Файл ${data.name} слишком большой для Batch-вложения")
+                val value = data.bytes.toString(Charsets.UTF_8).trim()
+                totalChars += value.length
+                if (totalChars > 120_000) error("Суммарный текст файлов слишком большой для Batch. Уменьшите объём материалов")
+                if (index > 0) append("\n\n")
+                append("===== ${data.name} =====\n")
+                append(value)
+            }
+        }
     }
 
     private data class UriData(val name: String, val mime: String, val bytes: ByteArray)
