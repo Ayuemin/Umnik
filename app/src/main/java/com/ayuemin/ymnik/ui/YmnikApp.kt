@@ -444,7 +444,7 @@ LazyColumn(
                 MessageCard(
                     message = message,
                     tts = tts,
-                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
+                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank() && state.openRouterSpeechVoice.isNotBlank(),
                     openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
                     onOpenRouterSpeech = { openRouterSpeech.toggle(message.id, message.text) },
                     onSaveGenerated = { file ->
@@ -2366,6 +2366,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var reasoningExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
     var openRouterSpeechExpanded by remember { mutableStateOf(false) }
+    var openRouterDocumentSpeechExpanded by remember { mutableStateOf(false) }
     var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
@@ -2647,14 +2648,43 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
 
             item {
                 ExpandableSettingsCard(
-                    title = "Озвучивание OpenRouter",
-                    subtitle = state.openRouterSpeechModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    title = "Озвучивание ответов OpenRouter",
+                    subtitle = when {
+                        state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
+                        state.openRouterSpeechVoice.isBlank() -> "${state.openRouterSpeechModel.substringAfterLast('/')} · голос не выбран"
+                        else -> "${state.openRouterSpeechModel.substringAfterLast('/')} · ${state.openRouterSpeechVoice}"
+                    },
                     icon = Icons.Outlined.VolumeUp,
                     expanded = openRouterSpeechExpanded,
                     onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded }
                 ) {
                     Text(
-                        "Эта модель используется кнопкой OR под ответами. Если модель не выбрана, кнопка остаётся неактивной.",
+                        "Используется только кнопкой OR под ответами.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    FilledTonalButton(
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Настроить модель и голос")
+                    }
+                }
+            }
+
+            item {
+                ExpandableSettingsCard(
+                    title = "Озвучивание текста и документов",
+                    subtitle = "Отдельная модель и голос",
+                    icon = Icons.Outlined.Description,
+                    expanded = openRouterDocumentSpeechExpanded,
+                    onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded }
+                ) {
+                    Text(
+                        "Используется режимом «+ → Озвучить» и не меняет озвучивание ответов.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -2665,15 +2695,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     ) {
                         Icon(Icons.Outlined.VolumeUp, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Выбрать модель озвучивания", fontWeight = FontWeight.Medium)
-                            Text(
-                                state.openRouterSpeechModel.ifBlank { "Не выбрана" },
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+                        Text("Открыть настройки озвучивания")
                     }
                 }
             }

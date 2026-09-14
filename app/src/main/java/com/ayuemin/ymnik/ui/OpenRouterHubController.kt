@@ -208,10 +208,13 @@ class OpenRouterHubController(
                 mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для видео")
             }
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
-                val media = mutableState.value.media.copy(speechModel = model.id)
+                val current = mutableState.value.media
+                val media = current.copy(
+                    speechModel = model.id,
+                    voice = if (current.speechModel == model.id) current.voice else ""
+                )
                 featurePrefs.saveMedia(media)
-                viewModel.setOpenRouterSpeechModel(model.id)
-                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания")
+                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания текста и документов")
             }
             ModelCategory.TRANSCRIPTION -> {
                 val media = mutableState.value.media.copy(transcriptionModel = model.id)
@@ -247,10 +250,9 @@ class OpenRouterHubController(
                 featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель видео снята")
             }
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
-                val media = mutableState.value.media.copy(speechModel = "")
+                val media = mutableState.value.media.copy(speechModel = "", voice = "")
                 featurePrefs.saveMedia(media)
-                viewModel.setOpenRouterSpeechModel("")
-                mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания снята")
+                mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания текста и документов снята")
             }
             ModelCategory.TRANSCRIPTION -> {
                 val media = mutableState.value.media.copy(transcriptionModel = "")
@@ -265,6 +267,21 @@ class OpenRouterHubController(
                 featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Rerank-модель снята")
             }
         }
+    }
+
+
+    fun assignReplySpeechModel(model: ModelInfo) {
+        if (ModelCategory.SPEECH !in model.categories && ModelCategory.AUDIO !in model.categories) {
+            mutableState.value = mutableState.value.copy(status = "Эта модель не поддерживает озвучивание")
+            return
+        }
+        viewModel.setOpenRouterSpeechModel(model.id)
+        mutableState.value = mutableState.value.copy(status = "${model.id} назначена для озвучивания ответов")
+    }
+
+    fun updateReplySpeechVoice(voice: String) {
+        viewModel.setOpenRouterSpeechVoice(voice)
+        mutableState.value = mutableState.value.copy(status = if (voice.isBlank()) "Голос ответов снят" else "Голос ответов сохранён")
     }
 
     fun clearBatchModel() {

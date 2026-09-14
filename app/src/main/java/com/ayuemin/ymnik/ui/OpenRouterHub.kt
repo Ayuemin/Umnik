@@ -90,7 +90,7 @@ import com.ayuemin.ymnik.model.WebSearchMode
 import kotlinx.coroutines.delay
 import java.util.Locale
 
-private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, SHELL }
+private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
 
 @Composable
@@ -176,6 +176,12 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
+            "reply-speech" -> {
+                requestedPage = HubPage.REPLY_SPEECH
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
             "shell" -> {
                 requestedPage = HubPage.SHELL
                 requestedMediaSection = MediaSection.ALL
@@ -221,7 +227,9 @@ private fun OpenRouterHubDialog(
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    if (settingsMode) {
+                                    if (page == HubPage.REPLY_SPEECH) {
+                                        "Озвучивание ответов"
+                                    } else if (settingsMode) {
                                         "OpenRouter: модели и настройки"
                                     } else {
                                         when (page) {
@@ -229,7 +237,7 @@ private fun OpenRouterHubDialog(
                                             HubPage.MEDIA -> when (initialMediaSection) {
                                                 MediaSection.VIDEO -> "Создание видео"
                                                 MediaSection.TRANSCRIPTION -> "Распознавание речи"
-                                                MediaSection.SPEECH -> "Озвучивание текста"
+                                                MediaSection.SPEECH -> "Озвучивание текста и документов"
                                                 MediaSection.ALL -> "Медиа"
                                             }
                                             HubPage.SHELL -> "OpenRouter Shell"
@@ -240,7 +248,7 @@ private fun OpenRouterHubDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    if (settingsMode) "Каталог, маршрутизация и работа с документами" else "Результат возвращается в текущий чат",
+                                    if (page == HubPage.REPLY_SPEECH) "Отдельная модель и голос для кнопки OR" else if (settingsMode) "Каталог, маршрутизация и работа с документами" else "Результат возвращается в текущий чат",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -270,6 +278,7 @@ private fun OpenRouterHubDialog(
                         HubPage.TOOLS -> ToolsPage(state.tools, state.rag, controller)
                         HubPage.JOBS -> JobsPage(state, controller)
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
+                        HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller)
                         HubPage.SHELL -> ShellPage(state, controller)
                     }
                 }
@@ -991,6 +1000,89 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                 Button(onClick = { controller.updateMedia(state.media.copy(voice = voice.trim())); controller.synthesize(speechText) }, enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Text("Создать аудио") }
                 state.speechFile?.let { file ->
                     Text("Готово и добавлено в чат: ${file.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+                }
+            }
+        }
+    }
+}
+
+
+@Composable
+private fun ReplySpeechPage(
+    state: OpenRouterHubState,
+    appState: UiState,
+    controller: OpenRouterHubController
+) {
+    val selected = state.catalog.firstOrNull { it.id == appState.openRouterSpeechModel }
+    val voiceOptions = selected?.parameterValues("voice").orEmpty()
+    var manualVoice by remember(appState.openRouterSpeechModel, appState.openRouterSpeechVoice) {
+        mutableStateOf(appState.openRouterSpeechVoice)
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            Text("Кнопка OR под ответами", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Эти настройки не влияют на режим «+ → Озвучить». Для ответов можно выбрать отдельную, в том числе бесплатную, модель.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        item {
+            CategoryModelPicker(
+                title = "Модель озвучивания ответов",
+                current = appState.openRouterSpeechModel,
+                models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
+                onSelect = controller::assignReplySpeechModel
+            )
+        }
+        if (appState.openRouterSpeechModel.isNotBlank()) {
+            item {
+                Text("Голос", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Голоса зависят от модели. При смене модели Umnik не переносит старый голос на новую.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                if (voiceOptions.isNotEmpty()) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(voiceOptions) { voice ->
+                            FilterChip(
+                                selected = appState.openRouterSpeechVoice == voice,
+                                onClick = { controller.updateReplySpeechVoice(voice) },
+                                label = { Text(voice, maxLines = 1) }
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = manualVoice,
+                    onValueChange = { manualVoice = it },
+                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
+                    label = { Text("ID голоса") },
+                    placeholder = { Text("Например: alloy, eve, en_paul_neutral") },
+                    singleLine = true
+                )
+                FilledTonalButton(
+                    onClick = { controller.updateReplySpeechVoice(manualVoice.trim()) },
+                    enabled = manualVoice.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
+                ) { Text("Сохранить голос") }
+                if (appState.openRouterSpeechVoice.isNotBlank()) {
+                    TextButton(
+                        onClick = {
+                            manualVoice = ""
+                            controller.updateReplySpeechVoice("")
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Снять выбор голоса") }
                 }
             }
         }

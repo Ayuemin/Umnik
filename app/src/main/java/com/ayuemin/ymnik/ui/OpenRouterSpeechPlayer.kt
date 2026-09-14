@@ -100,7 +100,11 @@ class OpenRouterSpeechPlayer(
         }
 
         val baseUrl = viewModel.connectionTextEndpoint(profile.id)
-        val media = featurePrefs.media()
+        val replyVoice = appState.openRouterSpeechVoice.trim()
+        if (replyVoice.isBlank()) {
+            mutableState.value = OpenRouterSpeechPlaybackState(error = "Голос озвучивания ответов не выбран")
+            return
+        }
         val chunks = splitForSpeech(text)
         mutableState.value = OpenRouterSpeechPlaybackState(
             messageId = messageId,
@@ -115,7 +119,7 @@ class OpenRouterSpeechPlayer(
                             apiKey = key,
                             model = model,
                             text = chunks.first(),
-                            voice = media.voice.takeIf { it.isNotBlank() },
+                            voice = replyVoice,
                             baseUrl = baseUrl
                         )
                     }
@@ -137,7 +141,7 @@ class OpenRouterSpeechPlayer(
                                     apiKey = key,
                                     model = model,
                                     text = chunks[index + 1],
-                                    voice = media.voice.takeIf { it.isNotBlank() },
+                                    voice = replyVoice,
                                     baseUrl = baseUrl
                                 )
                             }

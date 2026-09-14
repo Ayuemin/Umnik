@@ -125,7 +125,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             imageModel = initialImageModel,
             imageAspectRatio = initialImageAspectRatio,
             imageResolution = initialImageResolution,
-            openRouterSpeechModel = openRouterFeaturePrefs.media().speechModel,
+            openRouterSpeechModel = prefs.getString("reply_speech_model", null)
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: openRouterFeaturePrefs.media().speechModel,
+            openRouterSpeechVoice = run {
+                val replyModel = prefs.getString("reply_speech_model", null)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: openRouterFeaturePrefs.media().speechModel
+                prefs.getString(replySpeechVoiceKey(replyModel), null)
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: if (replyModel == openRouterFeaturePrefs.media().speechModel) openRouterFeaturePrefs.media().voice else ""
+            },
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
             reasoningEffort = runCatching {
@@ -196,13 +209,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    private fun replySpeechVoiceKey(modelId: String): String = "reply_speech_voice::${modelId.trim()}"
+
     fun setOpenRouterSpeechModel(modelId: String) {
         val clean = modelId.trim()
-        val media = openRouterFeaturePrefs.media().copy(speechModel = clean)
-        openRouterFeaturePrefs.saveMedia(media)
+        if (clean.isBlank()) {
+            prefs.edit().remove("reply_speech_model").apply()
+        } else {
+            prefs.edit().putString("reply_speech_model", clean).apply()
+        }
+        val savedVoice = if (clean.isBlank()) "" else prefs.getString(replySpeechVoiceKey(clean), "").orEmpty().trim()
         _state.value = _state.value.copy(
             openRouterSpeechModel = clean,
-            status = if (clean.isBlank()) "Модель озвучивания OpenRouter не выбрана" else "Модель озвучивания OpenRouter сохранена"
+            openRouterSpeechVoice = savedVoice,
+            status = if (clean.isBlank()) "Модель озвучивания ответов не выбрана" else "Модель озвучивания ответов сохранена"
+        )
+    }
+
+    fun setOpenRouterSpeechVoice(voice: String) {
+        val model = _state.value.openRouterSpeechModel.trim()
+        if (model.isBlank()) return
+        val clean = voice.trim()
+        val key = replySpeechVoiceKey(model)
+        if (clean.isBlank()) prefs.edit().remove(key).apply() else prefs.edit().putString(key, clean).apply()
+        _state.value = _state.value.copy(
+            openRouterSpeechVoice = clean,
+            status = if (clean.isBlank()) "Голос озвучивания ответов снят" else "Голос озвучивания ответов сохранён"
         )
     }
 
