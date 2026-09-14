@@ -23,12 +23,17 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
     private val lock = Any()
 
     @Volatile private var generation: Long = 0L
+    @Volatile private var activeGeneration: Long? = null
     @Volatile private var activeLocalJobId: String? = null
 
     fun stopTracking() {
+        val wasBatchActive: Boolean
         val jobId: String?
         synchronized(lock) {
+            wasBatchActive = activeGeneration != null
+            if (!wasBatchActive) return
             generation += 1L
+            activeGeneration = null
             jobId = activeLocalJobId
             activeLocalJobId = null
         }
@@ -50,6 +55,7 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
         val myGeneration = synchronized(lock) {
             generation += 1L
             activeLocalJobId = null
+            activeGeneration = generation
             generation
         }
 
@@ -91,7 +97,7 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
         // The remote id is durable before any poll starts. The create POST is never replayed.
         jobs.upsert(current)
         synchronized(lock) {
-            if (generation == myGeneration) activeLocalJobId = current.id
+            if (activeGeneration == myGeneration) activeLocalJobId = current.id
         }
         AsyncJobEvents.notifyChanged()
         OpenRouterBackgroundWorker.schedule(context, replace = true)
@@ -126,13 +132,14 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
             return completion(current.remoteId, current.modelId, text)
         } finally {
             synchronized(lock) {
+                if (activeGeneration == myGeneration) activeGeneration = null
                 if (activeLocalJobId == current.id) activeLocalJobId = null
             }
         }
     }
 
     private fun ensureStillTracked(myGeneration: Long, localJobId: String) {
-        if (generation != myGeneration || jobs.list().none { it.id == localJobId }) {
+        if (activeGeneration != myGeneration || jobs.list().none { it.id == localJobId }) {
             jobs.remove(localJobId)
             throw CancellationException(
                 "Отслеживание Batch остановлено. Задание OpenRouter может продолжать выполняться на сервере."
