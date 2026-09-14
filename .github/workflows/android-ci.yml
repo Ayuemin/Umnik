@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -16,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -36,45 +34,5 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Apply pending v1.9.0 migration
-        id: migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          applied=false
-          if [ -f tools/patch_v1_9_0_core.py ]; then
-            python3 tools/patch_v1_9_0_core.py
-            applied=true
-          fi
-          if [ -f tools/patch_v1_9_0_ui.py ]; then
-            python3 tools/patch_v1_9_0_ui.py
-            applied=true
-          fi
-          echo "applied=$applied" >> "$GITHUB_OUTPUT"
-
-      - name: Verify v1.9.0 migration
-        if: steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'versionCode = 90' app/build.gradle.kts
-          grep -q 'versionName = "1.9.0"' app/build.gradle.kts
-          grep -q 'Памятка по использованию Umnik' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'fun openUsageGuide' app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
-          grep -q 'MAX_BYTES = 8L' app/src/main/java/com/ayuemin/ymnik/diagnostics/DiagnosticLog.kt
-          ! grep -q 'Добавить подключение' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          ! grep -q 'Для OpenRouter и NVIDIA' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
-
-      - name: Commit tested v1.9.0 changes
-        if: github.event_name == 'push' && steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: simplify OpenRouter settings and add manual QA guide for v1.9.0"
-          git push origin HEAD:main
