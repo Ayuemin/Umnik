@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - .github/workflows/apply-v1.10.7.yml
+      - tools/finalize_v1_10_7.py
 
 permissions:
   contents: write
