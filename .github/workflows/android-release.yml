@@ -4,8 +4,6 @@ on:
   push:
     tags:
       - "v*"
-    branches:
-      - "main"
   workflow_dispatch:
     inputs:
       tag:
@@ -21,31 +19,22 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout release source
+      - name: Checkout release tag
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
 
-      - name: Validate version and release target
+      - name: Validate version and tag
         shell: bash
         env:
           DISPATCH_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
-          test -n "$APP_VERSION"
-
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$DISPATCH_TAG"
-          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            TAG="$GITHUB_REF_NAME"
           else
-            TAG="v${APP_VERSION}"
-            if [ "$TAG" != "v1.9.0" ]; then
-              echo "One-time main release is only allowed for v1.9.0"
-              exit 1
-            fi
+            TAG="$GITHUB_REF_NAME"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9._-]+)?$ ]]; then
@@ -53,20 +42,21 @@ jobs:
             exit 1
           fi
 
-          VERSION="${TAG#v}"
-          if [ "$VERSION" != "$APP_VERSION" ]; then
-            echo "Release version ($VERSION) does not match app version ($APP_VERSION)."
+          git fetch --tags --force
+          TAG_COMMIT=$(git rev-parse "$TAG^{commit}")
+          HEAD_COMMIT=$(git rev-parse HEAD)
+          if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+            echo "Checked out commit ($HEAD_COMMIT) does not match tag $TAG ($TAG_COMMIT)."
             exit 1
           fi
 
-          if [ "$GITHUB_REF_TYPE" = "tag" ] || [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            git fetch --tags --force
-            TAG_COMMIT=$(git rev-parse "$TAG^{commit}")
-            HEAD_COMMIT=$(git rev-parse HEAD)
-            if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-              echo "Checked out commit ($HEAD_COMMIT) does not match tag $TAG ($TAG_COMMIT)."
-              exit 1
-            fi
+          VERSION="${TAG#v}"
+          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$VERSION"
+          test -n "$APP_VERSION"
+          if [ "$VERSION" != "$APP_VERSION" ]; then
+            echo "Tag version ($VERSION) does not match app version ($APP_VERSION)."
+            exit 1
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
@@ -105,7 +95,10 @@ jobs:
             fi
           done
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
-          keytool -list -keystore "$RUNNER_TEMP/umnik-release.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+          keytool -list \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
 
       - name: Run unit tests
         run: gradle --no-daemon :app:testDebugUnitTest --stacktrace
@@ -127,12 +120,27 @@ jobs:
           set -euo pipefail
           APK="app/build/outputs/apk/release/app-release.apk"
           APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+
           "$APKSIGNER" verify --verbose --print-certs "$APK"
-          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
-          KEY_CERT=$(keytool -list -v -keystore "$RUNNER_TEMP/umnik-release.jks" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" | sed -n 's/^[[:space:]]*SHA256: //p' | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" \
+            | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          KEY_CERT=$(keytool -list -v \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
           test -n "$APK_CERT"
           test -n "$KEY_CERT"
-          test "$APK_CERT" = "$KEY_CERT"
+          if [ "$APK_CERT" != "$KEY_CERT" ]; then
+            echo "APK signing certificate does not match the permanent Umnik release key."
+            exit 1
+          fi
+
           echo "SIGNING_CERT_SHA256=$APK_CERT" >> "$GITHUB_ENV"
 
       - name: Prepare release assets
@@ -141,13 +149,26 @@ jobs:
           set -euo pipefail
           mkdir -p dist
           cp app/build/outputs/apk/release/app-release.apk "dist/Umnik-v${VERSION}.apk"
-          (cd dist && sha256sum "Umnik-v${VERSION}.apk" > "Umnik-v${VERSION}.apk.sha256")
+          (
+            cd dist
+            sha256sum "Umnik-v${VERSION}.apk" > "Umnik-v${VERSION}.apk.sha256"
+          )
           printf '%s\n' "$SIGNING_CERT_SHA256" > dist/Umnik-signing-certificate-sha256.txt
-          awk -v ver="v${VERSION}" '$0 ~ "^## " ver "( |$)" { found=1; next } found && /^## / { exit } found { print }' CHANGELOG.md > dist/changelog-section.md
+
+          awk -v ver="v${VERSION}" '
+            $0 ~ "^## " ver "( |$)" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > dist/changelog-section.md
+
           {
             echo "## Umnik v${VERSION}"
             echo
-            if [ -s dist/changelog-section.md ]; then cat dist/changelog-section.md; else echo "Список изменений для этой версии см. в CHANGELOG.md."; fi
+            if [ -s dist/changelog-section.md ]; then
+              cat dist/changelog-section.md
+            else
+              echo "Список изменений для этой версии см. в CHANGELOG.md."
+            fi
             echo
             echo "### Установка"
             echo
@@ -164,14 +185,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "$VERSION" == *-* ]]; then RELEASE_KIND=(--prerelease); else RELEASE_KIND=(--latest); fi
-          TARGET_ARGS=()
-          if [ "$GITHUB_REF_TYPE" != "tag" ]; then TARGET_ARGS=(--target "$GITHUB_SHA"); fi
+          if [[ "$VERSION" == *-* ]]; then
+            RELEASE_KIND=(--prerelease)
+          else
+            RELEASE_KIND=(--latest)
+          fi
           gh release create "$RELEASE_TAG" \
             "dist/Umnik-v${VERSION}.apk" \
             "dist/Umnik-v${VERSION}.apk.sha256" \
             "dist/Umnik-signing-certificate-sha256.txt" \
-            "${TARGET_ARGS[@]}" \
+            --verify-tag \
             --title "Umnik v${VERSION}" \
             --notes-file dist/release-notes.md \
             "${RELEASE_KIND[@]}"
