@@ -730,17 +730,6 @@ onBranch = if (message.role == "assistant") {
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            FilledTonalButton(
-                onClick = {
-                    actionsOpen = false
-                    com.ayuemin.ymnik.AsyncJobEvents.requestHub("models")
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Outlined.Extension, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("OpenRouter Hub")
-            }
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -785,6 +774,73 @@ onBranch = if (message.role == "assistant") {
                             if (vm.prepareImageGeneration()) imagePromptMode = true
                         }
                     )
+                }
+
+                Text(
+                    "Инструменты OpenRouter",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ComposerActionTile(
+                        icon = Icons.Outlined.Mic,
+                        label = "Речь → текст",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
+                        }
+                    )
+                    ComposerActionTile(
+                        icon = Icons.Outlined.VolumeUp,
+                        label = "Озвучить",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
+                        }
+                    )
+                    ComposerActionTile(
+                        icon = Icons.Outlined.Image,
+                        label = "Видео",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
+                        }
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    ComposerActionTile(
+                        icon = Icons.Outlined.Description,
+                        label = "Пакет задач",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                        }
+                    )
+                    ComposerActionTile(
+                        icon = Icons.Outlined.Storage,
+                        label = "Shell",
+                        enabled = !state.isLoading,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
+                        }
+                    )
+                    Spacer(Modifier.weight(1f))
                 }
 
                 HorizontalDivider()
@@ -2291,6 +2347,23 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             Text(
                                 if (state.quickTextModels.isEmpty()) "Только модель по умолчанию" else "Добавлено: ${state.quickTextModels.size}",
                                 style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Settings, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Каталог и модели OpenRouter", fontWeight = FontWeight.Medium)
+                            Text(
+                                "Видео, речь, Batch, Embeddings, Rerank, маршрутизация и RAG",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }

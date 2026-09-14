@@ -88,6 +88,7 @@ import kotlinx.coroutines.delay
 import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, SHELL }
+private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
 
 @Composable
 fun UmnikV16Root(viewModel: ChatViewModel) {
@@ -95,6 +96,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     val controller = remember(viewModel) { OpenRouterHubController(context.applicationContext, viewModel) }
     var open by remember { mutableStateOf(false) }
     var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
+    var requestedMediaSection by remember { mutableStateOf(MediaSection.ALL) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
     val appState by viewModel.state.collectAsState()
@@ -124,12 +126,56 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
         when (hubRequest) {
             "jobs", "batch" -> {
                 requestedPage = HubPage.JOBS
+                requestedMediaSection = MediaSection.ALL
                 controller.refreshJobs()
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
-            "models" -> {
+            "models", "models-settings" -> {
                 requestedPage = HubPage.MODELS
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "routing" -> {
+                requestedPage = HubPage.ROUTING
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "tools", "rag" -> {
+                requestedPage = HubPage.TOOLS
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "media" -> {
+                requestedPage = HubPage.MEDIA
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "video" -> {
+                requestedPage = HubPage.MEDIA
+                requestedMediaSection = MediaSection.VIDEO
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "stt", "transcription" -> {
+                requestedPage = HubPage.MEDIA
+                requestedMediaSection = MediaSection.TRANSCRIPTION
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "speech", "tts" -> {
+                requestedPage = HubPage.MEDIA
+                requestedMediaSection = MediaSection.SPEECH
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
+            "shell" -> {
+                requestedPage = HubPage.SHELL
+                requestedMediaSection = MediaSection.ALL
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
@@ -139,7 +185,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     UmnikTheme(appState.themeChoice, appState.customThemeColor) {
         YmnikApp(viewModel)
         if (open) {
-            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, onDismiss = { open = false })
+            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, initialMediaSection = requestedMediaSection, onDismiss = { open = false })
         }
     }
 }
@@ -149,10 +195,12 @@ private fun OpenRouterHubDialog(
     controller: OpenRouterHubController,
     viewModel: ChatViewModel,
     initialPage: HubPage,
+    initialMediaSection: MediaSection,
     onDismiss: () -> Unit
 ) {
     val state by controller.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
+    val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -168,12 +216,34 @@ private fun OpenRouterHubDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("OpenRouter Hub", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                                Text("Umnik 1.6.4 · полный каталог и возможности", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    if (settingsMode) {
+                                        "OpenRouter: модели и настройки"
+                                    } else {
+                                        when (page) {
+                                            HubPage.JOBS -> "Пакетные и фоновые задачи"
+                                            HubPage.MEDIA -> when (initialMediaSection) {
+                                                MediaSection.VIDEO -> "Создание видео"
+                                                MediaSection.TRANSCRIPTION -> "Распознавание речи"
+                                                MediaSection.SPEECH -> "Озвучивание текста"
+                                                MediaSection.ALL -> "Медиа"
+                                            }
+                                            HubPage.SHELL -> "OpenRouter Shell"
+                                            else -> "OpenRouter"
+                                        }
+                                    },
+                                    style = MaterialTheme.typography.titleLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    if (settingsMode) "Каталог, маршрутизация, Tools и RAG" else "Результат возвращается в текущий чат",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                             IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                         }
-                        HubPageBar(page = page, onPage = { page = it })
+                        if (settingsMode) HubPageBar(page = page, onPage = { page = it })
                         if (state.loading) {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                             state.operation?.let {
@@ -195,7 +265,7 @@ private fun OpenRouterHubDialog(
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
                         HubPage.TOOLS -> ToolsPage(state.tools, state.rag, controller)
                         HubPage.JOBS -> JobsPage(state, controller)
-                        HubPage.MEDIA -> MediaPage(state, controller)
+                        HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
                         HubPage.SHELL -> ShellPage(state, controller)
                     }
                 }
@@ -213,9 +283,6 @@ private fun HubPageBar(page: HubPage, onPage: (HubPage) -> Unit) {
         item { HubPageChip("Модели", HubPage.MODELS, page, onPage) }
         item { HubPageChip("Маршрутизация", HubPage.ROUTING, page, onPage) }
         item { HubPageChip("Tools + RAG", HubPage.TOOLS, page, onPage) }
-        item { HubPageChip("Задания", HubPage.JOBS, page, onPage) }
-        item { HubPageChip("Медиа", HubPage.MEDIA, page, onPage) }
-        item { HubPageChip("Shell", HubPage.SHELL, page, onPage) }
     }
 }
 
@@ -375,14 +442,15 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
             }
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (ModelCategory.TEXT in model.categories) SmallAssignButton(if (model.isBatch) "Чат / Batch" else "В чат") { controller.useAsTextModel(model) }
-                if (ModelCategory.IMAGE in model.categories) SmallAssignButton("Изображения") { controller.useAsImageModel(model) }
-                if (model.isBatch) SmallAssignButton("Batch") { controller.assignModel(model, ModelCategory.TEXT) }
-                if (ModelCategory.VIDEO in model.categories) SmallAssignButton("Видео") { controller.assignModel(model, ModelCategory.VIDEO) }
-                if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) SmallAssignButton("Озвучка") { controller.assignModel(model, ModelCategory.SPEECH) }
-                if (ModelCategory.TRANSCRIPTION in model.categories) SmallAssignButton("Распознавание") { controller.assignModel(model, ModelCategory.TRANSCRIPTION) }
-                if (ModelCategory.EMBEDDINGS in model.categories) SmallAssignButton("Embedding") { controller.assignModel(model, ModelCategory.EMBEDDINGS) }
-                if (ModelCategory.RERANK in model.categories) SmallAssignButton("Rerank") { controller.assignModel(model, ModelCategory.RERANK) }
+                if (ModelCategory.TEXT in model.categories && !model.isBatch) SmallAssignButton("Использовать в чате") { controller.useAsTextModel(model) }
+                if (model.isBatch) SmallAssignButton("Batch в чате") { controller.useAsTextModel(model) }
+                if (ModelCategory.IMAGE in model.categories) SmallAssignButton("Для изображений") { controller.useAsImageModel(model) }
+                if (model.isBatch) SmallAssignButton("Для пакета задач") { controller.assignModel(model, ModelCategory.TEXT) }
+                if (ModelCategory.VIDEO in model.categories) SmallAssignButton("Для видео") { controller.assignModel(model, ModelCategory.VIDEO) }
+                if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) SmallAssignButton("Для озвучивания") { controller.assignModel(model, ModelCategory.SPEECH) }
+                if (ModelCategory.TRANSCRIPTION in model.categories) SmallAssignButton("Для распознавания") { controller.assignModel(model, ModelCategory.TRANSCRIPTION) }
+                if (ModelCategory.EMBEDDINGS in model.categories) SmallAssignButton("Для поиска по документам") { controller.assignModel(model, ModelCategory.EMBEDDINGS) }
+                if (ModelCategory.RERANK in model.categories) SmallAssignButton("Для точной сортировки") { controller.assignModel(model, ModelCategory.RERANK) }
             }
         }
     }
@@ -560,6 +628,19 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
             item {
                 Text("Пакет из нескольких заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text("Модель: ${state.media.batchModel.ifBlank { "не выбрана" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                CategoryModelPicker(
+                    title = "Модель для пакетных задач",
+                    current = state.media.batchModel,
+                    models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
+                    onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
+                )
+                Text(
+                    "Готовые результаты автоматически добавляются в исходный чат. Здесь также хранится история фоновых задач.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
                 Text("Один Batch-запрос отправляйте прямо из обычного чата кнопкой отправки. Этот экран нужен только для нескольких независимых заданий.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedTextField(
                     value = input,
@@ -607,7 +688,7 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
 }
 
 @Composable
-private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
+private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubController, section: MediaSection) {
     var videoPrompt by remember { mutableStateOf("") }
     val videoRefs = remember { mutableStateListOf<Uri>() }
     var speechText by remember { mutableStateOf("") }
@@ -619,38 +700,63 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
     val context = LocalContext.current
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Text("Генерация видео", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Модель: ${state.media.videoModel.ifBlank { "выберите в каталоге → Видео" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
-            Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: ${videoRefs.size}") }
-                Button(onClick = { controller.submitVideo(videoPrompt, videoRefs.toList()); videoPrompt = ""; videoRefs.clear() }, enabled = state.media.videoModel.isNotBlank() && videoPrompt.isNotBlank() && !state.loading, modifier = Modifier.weight(1f)) { Text("Создать") }
+        if (section == MediaSection.ALL || section == MediaSection.VIDEO) {
+            item {
+                Text("Генерация видео", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                CategoryModelPicker(
+                    title = "Модель видео",
+                    current = state.media.videoModel,
+                    models = state.catalog.filter { ModelCategory.VIDEO in it.categories },
+                    onSelect = { controller.assignModel(it, ModelCategory.VIDEO) }
+                )
+                OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
+                Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: ${videoRefs.size}") }
+                    Button(onClick = { controller.submitVideo(videoPrompt, videoRefs.toList()); videoPrompt = ""; videoRefs.clear() }, enabled = state.media.videoModel.isNotBlank() && videoPrompt.isNotBlank() && !state.loading, modifier = Modifier.weight(1f)) { Text("Создать") }
+                }
+                Text("Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            if (section == MediaSection.ALL) item { HorizontalDivider() }
         }
-        item { HorizontalDivider() }
-        item {
-            Text("Распознавание речи", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Модель: ${state.media.transcriptionModel.ifBlank { "выберите в каталоге → STT" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Выбрать аудиофайл") }
-            if (state.transcription.isNotBlank()) {
-                ElevatedCard(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(state.transcription)
-                        TextButton(onClick = { copyToClipboard(context, state.transcription) }) { Text("Копировать") }
+
+        if (section == MediaSection.ALL || section == MediaSection.TRANSCRIPTION) {
+            item {
+                Text("Распознавание речи", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                CategoryModelPicker(
+                    title = "Модель распознавания",
+                    current = state.media.transcriptionModel,
+                    models = state.catalog.filter { ModelCategory.TRANSCRIPTION in it.categories },
+                    onSelect = { controller.assignModel(it, ModelCategory.TRANSCRIPTION) }
+                )
+                FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
+                if (state.transcription.isNotBlank()) {
+                    ElevatedCard(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(state.transcription)
+                            TextButton(onClick = { copyToClipboard(context, state.transcription) }) { Text("Копировать") }
+                        }
                     }
                 }
+                Text("Расшифровка также добавляется в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            if (section == MediaSection.ALL) item { HorizontalDivider() }
         }
-        item { HorizontalDivider() }
-        item {
-            Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Модель: ${state.media.speechModel.ifBlank { "выберите в каталоге → Speech" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(voice, { voice = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Voice, если модель поддерживает") }, singleLine = true)
-            OutlinedTextField(speechText, { speechText = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Текст для озвучивания") }, minLines = 3, maxLines = 8)
-            Button(onClick = { controller.updateMedia(state.media.copy(voice = voice.trim())); controller.synthesize(speechText) }, enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Text("Создать аудио") }
-            state.speechFile?.let { file ->
-                Text("Готово: ${file.name} · файл сохранён в «Хранилище Umnik»", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+
+        if (section == MediaSection.ALL || section == MediaSection.SPEECH) {
+            item {
+                Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                CategoryModelPicker(
+                    title = "Модель озвучивания",
+                    current = state.media.speechModel,
+                    models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
+                    onSelect = { controller.assignModel(it, ModelCategory.SPEECH) }
+                )
+                OutlinedTextField(voice, { voice = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Voice, если модель поддерживает") }, singleLine = true)
+                OutlinedTextField(speechText, { speechText = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Текст для озвучивания") }, minLines = 3, maxLines = 8)
+                Button(onClick = { controller.updateMedia(state.media.copy(voice = voice.trim())); controller.synthesize(speechText) }, enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Text("Создать аудио") }
+                state.speechFile?.let { file ->
+                    Text("Готово и добавлено в чат: ${file.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+                }
             }
         }
     }
@@ -668,7 +774,7 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("OpenRouter Shell", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Shell использует Responses API. Загруженные файлы передаются во временный контейнер; созданные контейнером файлы Umnik скачивает в своё хранилище.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Shell использует Responses API. Загруженные файлы передаются во временный контейнер; созданные контейнером файлы Umnik скачивает в своё хранилище. Результат и созданные файлы добавляются в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Задача") }, minLines = 4, maxLines = 10)
             FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}") }
             Button(onClick = { controller.runShell(prompt, files.toList()); prompt = ""; files.clear() }, enabled = prompt.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Выполнить через Shell") }
@@ -680,6 +786,44 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                         Text(state.shellResult)
                         TextButton(onClick = { copyToClipboard(context, state.shellResult) }) { Text("Копировать результат") }
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CategoryModelPicker(
+    title: String,
+    current: String,
+    models: List<ModelInfo>,
+    onSelect: (ModelInfo) -> Unit
+) {
+    var open by remember(title, current) { mutableStateOf(false) }
+    Column(Modifier.fillMaxWidth()) {
+        Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Box(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+            FilledTonalButton(
+                onClick = { open = true },
+                enabled = models.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(
+                    current.ifBlank { if (models.isEmpty()) "Нет подходящих моделей" else "Выбрать модель" },
+                    modifier = Modifier.weight(1f),
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
+                models.sortedBy { it.id }.take(160).forEach { model ->
+                    DropdownMenuItem(
+                        text = { Text(model.id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                        onClick = {
+                            open = false
+                            onSelect(model)
+                        }
+                    )
                 }
             }
         }

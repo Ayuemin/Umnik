@@ -186,15 +186,42 @@ class OpenRouterHubController(
 
     fun assignModel(model: ModelInfo, category: ModelCategory) {
         when (category) {
-            ModelCategory.TEXT -> useAsTextModel(model)
+            ModelCategory.TEXT -> {
+                if (model.isBatch) {
+                    val media = mutableState.value.media.copy(batchModel = model.id)
+                    featurePrefs.saveMedia(media)
+                    mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для пакетных задач")
+                } else {
+                    useAsTextModel(model)
+                }
+            }
             ModelCategory.IMAGE -> useAsImageModel(model)
-            ModelCategory.VIDEO -> updateMedia(mutableState.value.media.copy(videoModel = model.id))
-            ModelCategory.SPEECH, ModelCategory.AUDIO -> updateMedia(mutableState.value.media.copy(speechModel = model.id))
-            ModelCategory.TRANSCRIPTION -> updateMedia(mutableState.value.media.copy(transcriptionModel = model.id))
-            ModelCategory.EMBEDDINGS -> updateRag(mutableState.value.rag.copy(embeddingModel = model.id))
-            ModelCategory.RERANK -> updateRag(mutableState.value.rag.copy(rerankModel = model.id))
+            ModelCategory.VIDEO -> {
+                val media = mutableState.value.media.copy(videoModel = model.id)
+                featurePrefs.saveMedia(media)
+                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для видео")
+            }
+            ModelCategory.SPEECH, ModelCategory.AUDIO -> {
+                val media = mutableState.value.media.copy(speechModel = model.id)
+                featurePrefs.saveMedia(media)
+                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания")
+            }
+            ModelCategory.TRANSCRIPTION -> {
+                val media = mutableState.value.media.copy(transcriptionModel = model.id)
+                featurePrefs.saveMedia(media)
+                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для распознавания речи")
+            }
+            ModelCategory.EMBEDDINGS -> {
+                val rag = mutableState.value.rag.copy(embeddingModel = model.id)
+                featurePrefs.saveRag(rag)
+                mutableState.value = mutableState.value.copy(rag = rag, status = "${model.id} назначена для поиска по документам")
+            }
+            ModelCategory.RERANK -> {
+                val rag = mutableState.value.rag.copy(rerankModel = model.id)
+                featurePrefs.saveRag(rag)
+                mutableState.value = mutableState.value.copy(rag = rag, status = "${model.id} назначена для точной сортировки результатов")
+            }
         }
-        if (model.isBatch) updateMedia(mutableState.value.media.copy(batchModel = model.id))
     }
 
     fun submitBatch(raw: String) {
@@ -335,6 +362,7 @@ class OpenRouterHubController(
         val profile = openRouterProfile()
         val model = mutableState.value.media.transcriptionModel.trim()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
+        val chatId = viewModel.state.value.currentChatId
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (model.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите модель распознавания речи"); return }
         scope.launch {
@@ -344,7 +372,9 @@ class OpenRouterHubController(
                 val format = uri.lastPathSegment?.substringAfterLast('.', "mp3") ?: "mp3"
                 audioClient.transcribe(key, model, bytes, format, baseUrl = viewModel.connectionTextEndpoint(profile.id))
             }.onSuccess { result ->
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, transcription = result.text, status = "Расшифровка готова")
+                appendHubExchange(chatId, "[Распознавание речи]", result.text, emptyList())
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, transcription = result.text, status = "Расшифровка готова и добавлена в чат")
+                AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось распознать аудио")
             }
@@ -356,6 +386,7 @@ class OpenRouterHubController(
         val profile = openRouterProfile()
         val media = mutableState.value.media
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
+        val chatId = viewModel.state.value.currentChatId
         if (text.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите текст для озвучивания"); return }
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (media.speechModel.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите speech-модель"); return }
@@ -371,7 +402,9 @@ class OpenRouterHubController(
                 )
                 saveGeneratedAudio(result.bytes, result.mimeType, result.format)
             }.onSuccess { file ->
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Аудио создано и сохранено в Umnik")
+                appendHubExchange(chatId, "[Озвучивание]\n$text", "Аудио готово: ${file.name}", listOf(file))
+                mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Аудио создано и добавлено в чат")
+                AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать аудио")
             }
