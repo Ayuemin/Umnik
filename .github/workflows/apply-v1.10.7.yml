@@ -2,9 +2,10 @@ name: Apply v1.10.7
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
     paths:
-      - ".github/workflows/apply-v1.10.7.yml"
+      - .github/workflows/apply-v1.10.7.yml
 
 permissions:
   contents: write
@@ -12,7 +13,6 @@ permissions:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,130 +36,14 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Apply v1.10.7 migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('tools/patch_v1_10_7.py')
-          s = p.read_text(encoding='utf-8')
-          old = '''    if count != 1:\n        raise RuntimeError(f"{label}: expected exactly one match, got {count}")\n    return text.replace(old, new, 1)'''
-          new = '''    if count != 1:\n        if label == "document synthesize format" and count == 2:\n            return text.replace(old, new, 1)\n        raise RuntimeError(f"{label}: expected exactly one match, got {count}")\n    return text.replace(old, new, 1)'''
-          if old not in s:
-              raise SystemExit('replace_once helper anchor not found')
-          p.write_text(s.replace(old, new, 1), encoding='utf-8')
-          PY
-          python3 tools/patch_v1_10_7.py
+      - name: Prepare migration helper
+        run: python3 tools/finalize_v1_10_7.py pre
 
-      - name: Finalize generated TTS sources
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import re
+      - name: Apply source migration
+        run: python3 tools/patch_v1_10_7.py
 
-          # Kotlin normal strings need a doubled backslash for regex \s.
-          p = Path('app/src/main/java/com/ayuemin/ymnik/network/OpenRouterAudioClient.kt')
-          s = p.read_text(encoding='utf-8')
-          replacements = {
-              r'Regex("only\s+(supports?|accepts?)\s+[^.]{0,40}pcm")': r'Regex("only\\s+(supports?|accepts?)\\s+[^.]{0,40}pcm")',
-              r'Regex("only\s+(supports?|accepts?)\s+[^.]{0,40}mp3")': r'Regex("only\\s+(supports?|accepts?)\\s+[^.]{0,40}mp3")',
-          }
-          for old, new in replacements.items():
-              if old not in s:
-                  raise SystemExit(f'audio regex anchor not found: {old}')
-              s = s.replace(old, new, 1)
-          p.write_text(s, encoding='utf-8')
-
-          # The second prefetch call has deeper indentation and also needs responseFormat.
-          p = Path('app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterSpeechPlayer.kt')
-          s = p.read_text(encoding='utf-8')
-          deep_call = '''                                    voice = replyVoice,\n                                    baseUrl = baseUrl\n'''
-          deep_fixed = '''                                    voice = replyVoice,\n                                    responseFormat = replyFormat,\n                                    baseUrl = baseUrl\n'''
-          if deep_call in s:
-              s = s.replace(deep_call, deep_fixed, 1)
-
-          # Short and medium replies are synthesized as one coherent utterance.
-          # Only long replies are split, preferentially at paragraph/sentence boundaries.
-          pattern = r'''    private fun splitForSpeech\(source: String, maxChars: Int = 280\): List<String> \{.*?\n    \}\n(?=\})'''
-          replacement = '''    private fun splitForSpeech(
-        source: String,
-        singleRequestMaxChars: Int = 1800,
-        chunkMaxChars: Int = 1500
-    ): List<String> {
-        val normalized = source
-            .replace("\\r\\n", "\\n")
-            .replace(Regex("[ \\t]+"), " ")
-            .replace(Regex("""\\n{3,}"""), "\\n\\n")
-            .trim()
-        if (normalized.length <= singleRequestMaxChars) return listOf(normalized)
-
-        fun splitLongParagraph(paragraph: String): List<String> {
-            var rest = paragraph.trim()
-            if (rest.length <= chunkMaxChars) return listOf(rest)
-            val result = mutableListOf<String>()
-            while (rest.length > chunkMaxChars) {
-                val candidate = rest.take(chunkMaxChars)
-                val sentenceBreak = listOf(". ", "! ", "? ", "… ")
-                    .maxOf { candidate.lastIndexOf(it) }
-                    .takeIf { it >= chunkMaxChars / 2 }
-                    ?.plus(1)
-                val wordBreak = candidate.lastIndexOf(' ')
-                    .takeIf { it >= chunkMaxChars / 2 }
-                val splitAt = sentenceBreak ?: wordBreak ?: chunkMaxChars
-                result += rest.take(splitAt).trim()
-                rest = rest.drop(splitAt).trimStart()
-            }
-            if (rest.isNotBlank()) result += rest
-            return result
-        }
-
-        val pieces = normalized
-            .split(Regex("""\\n\\s*\\n+"""))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-            .flatMap(::splitLongParagraph)
-
-        if (pieces.isEmpty()) return listOf(normalized)
-
-        val chunks = mutableListOf<String>()
-        var current = StringBuilder()
-        pieces.forEach { piece ->
-            val separator = if (current.isEmpty()) "" else "\\n\\n"
-            if (current.isNotEmpty() && current.length + separator.length + piece.length > chunkMaxChars) {
-                chunks += current.toString().trim()
-                current = StringBuilder()
-            }
-            if (current.isNotEmpty()) current.append("\\n\\n")
-            current.append(piece)
-        }
-        if (current.isNotEmpty()) chunks += current.toString().trim()
-        return chunks.filter { it.isNotBlank() }
-    }
-'''
-          s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
-          if count != 1:
-              raise SystemExit(f'splitForSpeech replacement count={count}')
-
-          s = s.replace(
-              ' * Long answers are synthesized in short fragments. The first fragment starts\n * playing as soon as it is ready while the following fragment is prepared in\n * parallel. Audio only lives in app cache for the current playback session.',
-              ' * Short and medium answers are synthesized as one coherent utterance for better\n * prosody. Long answers are split at natural boundaries; the next part is prepared\n * while the current one plays. Audio only lives in app cache for this session.'
-          )
-          p.write_text(s, encoding='utf-8')
-
-          # Document the quality-oriented playback change in the release notes.
-          p = Path('CHANGELOG.md')
-          s = p.read_text(encoding='utf-8')
-          marker = re.search(r'## v1\.10\.7[^\n]*\n', s)
-          if not marker:
-              raise SystemExit('v1.10.7 changelog marker not found')
-          note = '- OR-озвучка коротких и средних ответов теперь генерируется целиком для более естественной интонации; длинные ответы делятся крупно по смысловым границам.\n'
-          if note not in s:
-              s = s[:marker.end()] + '\n' + note + s[marker.end():]
-          p.write_text(s, encoding='utf-8')
-          PY
+      - name: Finalize TTS implementation
+        run: python3 tools/finalize_v1_10_7.py post
 
       - name: Verify intended changes
         shell: bash
@@ -196,14 +80,14 @@ jobs:
             app/src/test/java/com/ayuemin/ymnik/network/OpenRouterAudioClientTest.kt
           git commit -m "release: prepare Umnik v1.10.7"
 
-      - name: Remove one-time migration files
+      - name: Remove one-time migration helpers
         shell: bash
         run: |
           set -euo pipefail
-          git rm tools/patch_v1_10_7.py .github/workflows/apply-v1.10.7.yml
+          git rm tools/patch_v1_10_7.py tools/finalize_v1_10_7.py .github/workflows/apply-v1.10.7.yml
           git commit -m "chore: remove v1.10.7 migration helpers"
 
-      - name: Create release tag and push
+      - name: Push prepared source and tag
         shell: bash
         run: |
           set -euo pipefail
