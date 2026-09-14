@@ -50,14 +50,12 @@ jobs:
           '''
           new = '''    if count != 1:
                   if label == "generated file card call":
-                      next_text, fallback_count = re.subn(
-                          r"GeneratedFileCard\(\s*file\s*=\s*file,\s*onSave\s*=\s*onSaveGenerated,\s*onShare\s*=\s*\{\s*shareGeneratedFile\(context,\s*file\)\s*\}\s*\)",
-                          "GeneratedFileCard(file)",
-                          text,
-                          count=1,
-                      )
-                      if fallback_count == 1:
-                          return next_text
+                      lines = text.splitlines(keepends=True)
+                      for index, line in enumerate(lines):
+                          if "GeneratedFileCard(" in line and "onSaveGenerated" in line:
+                              indent = line[:len(line) - len(line.lstrip())]
+                              lines[index] = indent + "GeneratedFileCard(file)\\n"
+                              return "".join(lines)
                   raise SystemExit(f"{label}: expected exactly one match, got {count}")
               return text.replace(old, new, 1)
           '''
