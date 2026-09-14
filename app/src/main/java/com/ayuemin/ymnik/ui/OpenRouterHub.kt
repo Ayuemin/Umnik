@@ -872,7 +872,19 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 }
             }
         }
-        item { HorizontalDivider(); Text("Видео-задания", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
+        item {
+            HorizontalDivider()
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("Видео-задания", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                TextButton(
+                    onClick = controller::clearFinishedVideoHistory,
+                    enabled = state.videos.any { it.status.terminal }
+                ) { Text("Очистить") }
+            }
+        }
         if (state.videos.isEmpty()) item { Text("Пока нет фоновых видео", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(state.videos, key = { it.id }) { job ->
             ElevatedCard(Modifier.fillMaxWidth()) {

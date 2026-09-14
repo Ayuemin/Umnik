@@ -288,6 +288,21 @@ class OpenRouterHubController(
         }
     }
 
+    fun clearFinishedVideoHistory() {
+        runCatching {
+            val remaining = videoRepository.list().filterNot { it.status.terminal }
+            videoRepository.save(remaining)
+            remaining
+        }.onSuccess { remaining ->
+            mutableState.value = mutableState.value.copy(
+                videos = remaining,
+                status = if (remaining.isEmpty()) "История видео очищена" else "Завершённая история видео очищена; активные задачи сохранены"
+            )
+        }.onFailure { error ->
+            mutableState.value = mutableState.value.copy(status = error.message ?: "Не удалось очистить историю видео")
+        }
+    }
+
     fun submitBatch(raw: String, taskFileUris: List<List<Uri>> = emptyList()) {
         val totalFiles = taskFileUris.sumOf { it.size }
         DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}; taskFiles=$totalFiles")

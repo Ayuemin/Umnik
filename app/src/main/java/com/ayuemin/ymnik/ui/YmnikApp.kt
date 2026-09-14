@@ -194,10 +194,22 @@ fun YmnikApp(viewModel: ChatViewModel) {
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     val tts = remember { TtsController(context) }
+    val openRouterSpeech = remember(viewModel) { OpenRouterSpeechPlayer(context.applicationContext, viewModel) }
+    val openRouterSpeechState by openRouterSpeech.state.collectAsState()
     var screen by remember { mutableIntStateOf(0) }
 
-    DisposableEffect(tts) {
-        onDispose { tts.shutdown() }
+    DisposableEffect(tts, openRouterSpeech) {
+        onDispose {
+            tts.shutdown()
+            openRouterSpeech.close()
+        }
+    }
+
+    LaunchedEffect(openRouterSpeechState.error) {
+        openRouterSpeechState.error?.let { error ->
+            Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+            openRouterSpeech.clearError()
+        }
     }
 
     LaunchedEffect(state.status) {
@@ -230,6 +242,8 @@ fun YmnikApp(viewModel: ChatViewModel) {
                         state = state,
                         vm = viewModel,
                         tts = tts,
+                        openRouterSpeech = openRouterSpeech,
+                        openRouterSpeechState = openRouterSpeechState,
                         onOpenSkills = { screen = 1 },
                         onOpenSettings = { screen = 2 }
                     )
@@ -247,6 +261,8 @@ private fun ChatScreen(
     state: UiState,
     vm: ChatViewModel,
     tts: TtsController,
+    openRouterSpeech: OpenRouterSpeechPlayer,
+    openRouterSpeechState: OpenRouterSpeechPlaybackState,
     onOpenSkills: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
@@ -429,7 +445,8 @@ LazyColumn(
                     message = message,
                     tts = tts,
                     openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
-                    onOpenRouterSpeech = { com.ayuemin.ymnik.AsyncJobEvents.requestSpeech(state.currentChatId, message.text) },
+                    openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
+                    onOpenRouterSpeech = { openRouterSpeech.toggle(message.id, message.text) },
                     onSaveGenerated = { file ->
                         fileToSave = file
                         save.launch(file.name)
@@ -784,6 +801,35 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
+
+                if (!imagePromptMode) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = state.reasoningEnabled,
+                            onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) },
+                            enabled = reasoningAvailable,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(18.dp))
+                            },
+                            label = { Text("Размышление", maxLines = 1) }
+                        )
+                        FilterChip(
+                            selected = state.webSearchEnabled,
+                            onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) },
+                            enabled = openRouterProfile,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(18.dp))
+                            },
+                            label = { Text("Поиск в сети", maxLines = 1) }
+                        )
+                    }
+                }
+
                 Text(
                     "Инструменты OpenRouter",
                     style = MaterialTheme.typography.titleSmall,
@@ -850,27 +896,7 @@ onBranch = if (message.role == "assistant") {
                     )
                     Spacer(Modifier.weight(1f))
                 }
-
                 HorizontalDivider()
-
-                if (!imagePromptMode) {
-                    ComposerToolRow(
-                        icon = Icons.Outlined.Psychology,
-                        title = "Размышление",
-                        subtitle = if (reasoningAvailable) "Использовать reasoning выбранной модели" else "Модель не поддерживает",
-                        checked = state.reasoningEnabled,
-                        enabled = reasoningAvailable,
-                        onCheckedChange = vm::setReasoningEnabled
-                    )
-                    ComposerToolRow(
-                        icon = Icons.Outlined.Language,
-                        title = "Поиск в сети",
-                        subtitle = if (openRouterProfile) "OpenRouter web search" else "Недоступно для этого подключения",
-                        checked = state.webSearchEnabled,
-                        enabled = openRouterProfile,
-                        onCheckedChange = vm::setWebSearchEnabled
-                    )
-                }
             }
         }
     }
@@ -975,23 +1001,47 @@ private fun CompactMessageAction(
 }
 
 @Composable
-private fun OpenRouterSpeechAction(enabled: Boolean, onClick: () -> Unit) {
-    val tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
+private fun OpenRouterSpeechAction(
+    enabled: Boolean,
+    phase: OpenRouterSpeechPhase,
+    onClick: () -> Unit
+) {
+    val preparing = phase == OpenRouterSpeechPhase.PREPARING
+    val playing = phase == OpenRouterSpeechPhase.PLAYING
+    val transition = rememberInfiniteTransition(label = "openRouterSpeechPulse")
+    val pulse by transition.animateFloat(
+        initialValue = if (preparing) 0.84f else 1f,
+        targetValue = if (preparing) 1.12f else 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = 620),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "openRouterSpeechScale"
+    )
+    val tint = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
+        preparing || playing -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
     IconButton(
         onClick = onClick,
         enabled = enabled,
-        modifier = Modifier.size(38.dp)
+        modifier = Modifier.size(38.dp).scale(pulse)
     ) {
         Box(Modifier.size(25.dp)) {
             Icon(
-                Icons.Outlined.VolumeUp,
-                contentDescription = "Озвучить через OpenRouter",
-                modifier = Modifier.size(18.dp).align(Alignment.CenterStart),
+                if (playing) Icons.Outlined.StopCircle else Icons.Outlined.VolumeUp,
+                contentDescription = when {
+                    preparing -> "OpenRouter готовит озвучку; нажмите ещё раз для отмены"
+                    playing -> "Остановить озвучку OpenRouter"
+                    else -> "Озвучить через OpenRouter"
+                },
+                modifier = Modifier.size(20.dp).align(Alignment.CenterStart),
                 tint = tint
             )
             Text(
                 "OR",
-                modifier = Modifier.align(Alignment.BottomEnd).scale(0.72f),
+                modifier = Modifier.align(Alignment.BottomEnd),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = tint
@@ -1658,6 +1708,7 @@ private fun MessageCard(
     message: ChatMessage,
     tts: TtsController,
     openRouterSpeechEnabled: Boolean,
+    openRouterSpeechPhase: OpenRouterSpeechPhase,
     onOpenRouterSpeech: () -> Unit,
     onSaveGenerated: (GeneratedFile) -> Unit,
     onExportText: () -> Unit,
@@ -1721,7 +1772,7 @@ private fun MessageCard(
                 }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
-                    GeneratedFileCard(file, onSaveGenerated)
+                    GeneratedFileCard(file)
                 }
                 val usageMeta = listOfNotNull(
                     message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
@@ -1774,7 +1825,10 @@ private fun MessageCard(
                 CompactMessageAction(
                     icon = Icons.Outlined.Share,
                     description = "Поделиться",
-                    onClick = { shareText(context, message.text) }
+                    onClick = {
+                        message.generatedFiles.singleOrNull()?.let { shareGeneratedFile(context, it) }
+                            ?: shareText(context, message.text)
+                    }
                 )
                 if (message.text.isNotBlank()) {
                     CompactMessageAction(
@@ -1785,12 +1839,15 @@ private fun MessageCard(
                     )
                     OpenRouterSpeechAction(
                         enabled = openRouterSpeechEnabled,
+                        phase = openRouterSpeechPhase,
                         onClick = onOpenRouterSpeech
                     )
                     CompactMessageAction(
                         icon = Icons.Outlined.Download,
-                        description = "Сохранить ответ файлом",
-                        onClick = onExportText
+                        description = if (message.generatedFiles.size == 1) "Скачать файл" else "Сохранить ответ файлом",
+                        onClick = {
+                            message.generatedFiles.singleOrNull()?.let(onSaveGenerated) ?: onExportText()
+                        }
                     )
                 }
                 if (onBranch != null) {
@@ -2125,7 +2182,7 @@ private fun splitRichBlocks(text: String): List<MessagePart> {
 }
 
 @Composable
-private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Unit) {
+private fun GeneratedFileCard(file: GeneratedFile) {
     val context = LocalContext.current
     val isImage = file.mimeType.startsWith("image/")
     val isAudio = file.mimeType.startsWith("audio/")
@@ -2146,79 +2203,47 @@ private fun GeneratedFileCard(file: GeneratedFile, onSave: (GeneratedFile) -> Un
                 .clip(RoundedCornerShape(14.dp)),
             contentScale = ContentScale.Fit
         )
-        Spacer(Modifier.height(7.dp))
     } else {
-        Surface(
-            modifier = Modifier.fillMaxWidth().heightIn(min = 112.dp),
-            shape = RoundedCornerShape(14.dp),
-            color = MaterialTheme.colorScheme.surfaceContainerLow
-        ) {
-            Column(
-                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.Center
+        val rowContent: @Composable () -> Unit = {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
                 Icon(
-                    if (isImage) Icons.Outlined.Image else Icons.Outlined.Description,
+                    Icons.Outlined.Description,
                     contentDescription = null,
-                    modifier = Modifier.size(34.dp),
+                    modifier = Modifier.size(20.dp),
                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
-                    if (file.mimeType.lowercase() == "image/svg+xml") "Векторное изображение SVG" else "Предпросмотр недоступен",
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(Modifier.height(3.dp))
-                Text(
-                    "${file.name} · ${file.mimeType.ifBlank { "неизвестный формат" }} · ${humanSize(file.size)}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+                    file.name,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium
                 )
             }
         }
-        Spacer(Modifier.height(7.dp))
+        if (isVideo) {
+            Surface(
+                onClick = { openGeneratedFile(context, file) },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) { rowContent() }
+        } else {
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(10.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLow
+            ) { rowContent() }
+        }
     }
 
     if (isAudio) {
+        Spacer(Modifier.height(6.dp))
         GeneratedAudioPlayer(file)
-        Spacer(Modifier.height(8.dp))
-    } else if (isVideo) {
-        FilledTonalButton(
-            onClick = { openGeneratedFile(context, file) },
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Outlined.Image, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("Открыть видео")
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        FilledTonalButton(
-            onClick = { onSave(file) },
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Outlined.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("Скачать", maxLines = 1)
-        }
-        FilledTonalButton(
-            onClick = { shareGeneratedFile(context, file) },
-            modifier = Modifier.weight(1f),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(Icons.Outlined.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(7.dp))
-            Text("Поделиться", maxLines = 1)
-        }
     }
 }
 

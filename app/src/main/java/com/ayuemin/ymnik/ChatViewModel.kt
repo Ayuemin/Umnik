@@ -3029,6 +3029,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
+        appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
         val profile = _state.value.userProfile
         val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
             UserProfileScope.OFF -> false
