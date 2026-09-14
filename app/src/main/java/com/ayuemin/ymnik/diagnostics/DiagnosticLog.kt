@@ -10,13 +10,17 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 object DiagnosticLog {
     private const val PREFS_NAME = "ymnik"
     private const val KEY_ENABLED = "diagnostic_logging"
-    private const val MAX_BYTES = 1024 * 1024
-    private const val TRIM_TO_BYTES = 640 * 1024
+    private const val MAX_BYTES = 8L * 1024L * 1024L
+    private const val TRIM_TO_BYTES = 6L * 1024L * 1024L
     private const val FILE_NAME = "umnik-diagnostic.log"
+    private val sequence = AtomicLong(0L)
+    @Volatile private var sessionId: String = "process-${UUID.randomUUID().toString().take(8)}"
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -33,6 +37,8 @@ object DiagnosticLog {
         }
         prefs.edit().putBoolean(KEY_ENABLED, enabled).apply()
         if (enabled) {
+            sessionId = UUID.randomUUID().toString().take(8)
+            sequence.set(0L)
             val packageInfo = runCatching {
                 context.packageManager.getPackageInfo(context.packageName, 0)
             }.getOrNull()
@@ -43,7 +49,8 @@ object DiagnosticLog {
                     append("Новая диагностическая сессия; ")
                     append("Umnik ${packageInfo?.versionName ?: "?"}; ")
                     append("Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT}); ")
-                    append("устройство ${Build.MANUFACTURER} ${Build.MODEL}")
+                    append("устройство ${Build.MANUFACTURER} ${Build.MODEL}; ")
+                    append("logLimit=8MB")
                 }
             )
         }
@@ -56,6 +63,7 @@ object DiagnosticLog {
     @Synchronized
     fun clear(context: Context) {
         logFile(context).delete()
+        sequence.set(0L)
     }
 
     fun record(context: Context, area: String, message: String, throwable: Throwable? = null) {
@@ -69,9 +77,15 @@ object DiagnosticLog {
                     append(": ")
                     append(it)
                 }
+                append(" | stack=")
+                append(throwable.stackTraceToString().take(12000))
             }
         }
         append(context, area, details)
+    }
+
+    fun action(context: Context, action: String, details: String = "") {
+        record(context, "ACTION", if (details.isBlank()) action else "$action; $details")
     }
 
     @Synchronized
@@ -80,7 +94,8 @@ object DiagnosticLog {
         file.parentFile?.mkdirs()
         trimIfNeeded(file)
         val timestamp = SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.US).format(Date())
-        val line = "$timestamp | ${area.take(24)} | ${sanitize(rawMessage)}\n"
+        val seq = sequence.incrementAndGet()
+        val line = "$timestamp | session=$sessionId | seq=$seq | ${area.take(24)} | ${sanitize(rawMessage)}\n"
         runCatching { file.appendText(line, Charsets.UTF_8) }
     }
 
@@ -91,23 +106,24 @@ object DiagnosticLog {
         if (!file.isFile || file.length() < MAX_BYTES) return
         runCatching {
             val bytes = file.readBytes()
-            val start = (bytes.size - TRIM_TO_BYTES).coerceAtLeast(0)
+            val keep = TRIM_TO_BYTES.coerceAtMost(bytes.size.toLong()).toInt()
+            val start = (bytes.size - keep).coerceAtLeast(0)
             file.writeBytes(bytes.copyOfRange(start, bytes.size))
-            file.appendText("\n--- старые записи обрезаны автоматически ---\n", Charsets.UTF_8)
+            file.appendText("\n--- старые записи обрезаны автоматически; сохранены последние ~6 МБ ---\n", Charsets.UTF_8)
         }
     }
 
     private fun sanitize(value: String): String {
         var safe = value
         safe = Regex("(?i)(authorization\\s*[:=]\\s*bearer\\s+)[^\\s,}]+")
-            .replace(safe, "\$1<redacted>")
+            .replace(safe, "$1<redacted>")
         safe = Regex("(?i)(api[_-]?key\\s*[:=]\\s*)[^\\s,}]+")
-            .replace(safe, "\$1<redacted>")
+            .replace(safe, "$1<redacted>")
         safe = Regex("\\b(?:sk-[A-Za-z0-9_-]{12,}|nvapi-[A-Za-z0-9_-]{12,})\\b")
             .replace(safe, "<redacted-key>")
         safe = Regex("(?i)([?&](?:key|token|api_key)=)[^&\\s]+")
-            .replace(safe, "\$1<redacted>")
-        return safe.replace('\n', ' ').replace('\r', ' ').take(8000)
+            .replace(safe, "$1<redacted>")
+        return safe.replace('\n', ' ').replace('\r', ' ').take(16000)
     }
 }
 
@@ -120,8 +136,6 @@ class DiagnosticHttpInterceptor(
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()
 
-        // The ordinary OpenRouter chat client stays provider-agnostic. Advanced
-        // OpenRouter-only features are applied at the HTTP boundary instead.
         if (source == "OpenRouter") {
             val enhanced = openRouterEnhancer.enhance(request)
             enhanced.response?.let { return it }
@@ -134,11 +148,7 @@ class DiagnosticHttpInterceptor(
         val safeUrl = "${url.scheme}://${url.host}${url.encodedPath}"
         val bodyBytes = runCatching { request.body?.contentLength() ?: 0L }.getOrDefault(-1L)
         val started = SystemClock.elapsedRealtime()
-        DiagnosticLog.record(
-            context,
-            "HTTP",
-            "$source -> ${request.method} $safeUrl; body=$bodyBytes B"
-        )
+        DiagnosticLog.record(context, "HTTP", "$source -> ${request.method} $safeUrl; body=$bodyBytes B")
 
         return try {
             val response = chain.proceed(request)
