@@ -56,6 +56,18 @@ jobs:
               raise SystemExit("migration runner: spacing patch anchor not found")
           s = s.replace(old, new, 1)
 
+          old_regex = '''    if count != 1:
+                  raise SystemExit(f"{label}: expected exactly one regex match, got {count}")
+              return result'''
+          new_regex = '''    if count != 1:
+                  if label == "remove add provider button" and count == 0:
+                      return text
+                  raise SystemExit(f"{label}: expected exactly one regex match, got {count}")
+              return result'''
+          if old_regex not in s:
+              raise SystemExit("migration runner: regex helper anchor not found")
+          s = s.replace(old_regex, new_regex, 1)
+
           start_marker = "# Add an explicit clear action after the image-model catalog button."
           end_marker = "# OpenRouter-only connection wording and remove add-provider entry."
           start = s.find(start_marker)
