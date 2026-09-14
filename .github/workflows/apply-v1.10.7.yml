@@ -85,7 +85,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          git rm tools/patch_v1_10_7.py tools/finalize_v1_10_7.py .github/workflows/apply-v1.10.7.yml
+          git rm -f tools/patch_v1_10_7.py tools/finalize_v1_10_7.py .github/workflows/apply-v1.10.7.yml
           git commit -m "chore: remove v1.10.7 migration helpers"
 
       - name: Push prepared source and tag
