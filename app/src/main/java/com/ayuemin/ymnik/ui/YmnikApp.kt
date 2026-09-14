@@ -802,34 +802,6 @@ onBranch = if (message.role == "assistant") {
                 }
 
 
-                if (!imagePromptMode) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = state.reasoningEnabled,
-                            onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) },
-                            enabled = reasoningAvailable,
-                            modifier = Modifier.weight(1f),
-                            leadingIcon = {
-                                Icon(Icons.Outlined.Psychology, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            label = { Text("Размышление", maxLines = 1) }
-                        )
-                        FilterChip(
-                            selected = state.webSearchEnabled,
-                            onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) },
-                            enabled = openRouterProfile,
-                            modifier = Modifier.weight(1f),
-                            leadingIcon = {
-                                Icon(Icons.Outlined.Language, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            label = { Text("Поиск в сети", maxLines = 1) }
-                        )
-                    }
-                }
-
                 Text(
                     "Инструменты OpenRouter",
                     style = MaterialTheme.typography.titleSmall,
@@ -897,6 +869,43 @@ onBranch = if (message.role == "assistant") {
                     Spacer(Modifier.weight(1f))
                 }
                 HorizontalDivider()
+
+                Spacer(Modifier.height(2.dp))
+                if (!imagePromptMode) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = state.reasoningEnabled,
+                            onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) },
+                            enabled = reasoningAvailable,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(
+                                    if (state.reasoningEnabled) Icons.Outlined.Check else Icons.Outlined.Psychology,
+                                    contentDescription = if (state.reasoningEnabled) "Включено" else null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            label = { Text("Размышление", maxLines = 1) }
+                        )
+                        FilterChip(
+                            selected = state.webSearchEnabled,
+                            onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) },
+                            enabled = openRouterProfile,
+                            modifier = Modifier.weight(1f),
+                            leadingIcon = {
+                                Icon(
+                                    if (state.webSearchEnabled) Icons.Outlined.Check else Icons.Outlined.Language,
+                                    contentDescription = if (state.webSearchEnabled) "Включено" else null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            },
+                            label = { Text("Поиск в сети", maxLines = 1) }
+                        )
+                    }
+                }
             }
         }
     }
