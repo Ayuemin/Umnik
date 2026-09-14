@@ -7,8 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
-  actions: write
+  contents: read
 
 jobs:
   build:
@@ -17,8 +16,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - name: Set up JDK 17
         uses: actions/setup-java@v4
@@ -37,123 +34,5 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Apply pending v1.8.0 UX migration
-        id: migration
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ -f tools/patch_v1_8_0.py ]; then
-            python3 - <<'PY'
-          from pathlib import Path
-          p = Path("tools/patch_v1_8_0.py")
-          s = p.read_text(encoding="utf-8")
-
-          old = '''text = replace_once(text, "horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", "first compact row spacing")
-          # The sheet has three action rows; compact the next two occurrences as well.
-          text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)", 2)'''
-          new = '''text = text.replace("horizontalArrangement = Arrangement.spacedBy(10.dp)", "horizontalArrangement = Arrangement.spacedBy(8.dp)")'''
-          if old not in s:
-              raise SystemExit("migration runner: spacing patch anchor not found")
-          s = s.replace(old, new, 1)
-
-          old_regex = '''    if count != 1:
-                  raise SystemExit(f"{label}: expected exactly one regex match, got {count}")
-              return result'''
-          new_regex = '''    if count != 1:
-                  if label == "remove add provider button" and count == 0:
-                      return text
-                  raise SystemExit(f"{label}: expected exactly one regex match, got {count}")
-              return result'''
-          if old_regex not in s:
-              raise SystemExit("migration runner: regex helper anchor not found")
-          s = s.replace(old_regex, new_regex, 1)
-
-          start_marker = "# Add an explicit clear action after the image-model catalog button."
-          end_marker = "# OpenRouter-only connection wording and remove add-provider entry."
-          start = s.find(start_marker)
-          end = s.find(end_marker, start)
-          if start < 0 or end < 0:
-              raise SystemExit("migration runner: image settings patch markers not found")
-          image_patch = """# Add an explicit clear action after the image-model catalog button.
-          text = replace_once(
-              text,
-              '''                        Column(Modifier.weight(1f)) {
-                                      Text("Выбрать модель", fontWeight = FontWeight.Medium)
-                                      Text(
-                                          state.imageModel,
-                                          style = MaterialTheme.typography.bodySmall,
-                                          maxLines = 1,
-                                          overflow = TextOverflow.Ellipsis
-                                      )
-                                  }
-                              }
-          ''',
-              '''                        Column(Modifier.weight(1f)) {
-                                      Text("Модель изображений", fontWeight = FontWeight.Medium)
-                                      Text(
-                                          state.imageModel.ifBlank { "Не выбрана" },
-                                          style = MaterialTheme.typography.bodySmall,
-                                          maxLines = 1,
-                                          overflow = TextOverflow.Ellipsis
-                                      )
-                                  }
-                              }
-                              if (state.imageModel.isNotBlank()) {
-                                  TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
-                                      Text("Снять выбор модели изображений")
-                                  }
-                              }
-          ''',
-              "clear image model setting",
-          )
-
-          """
-          s = s[:start] + image_patch + s[end:]
-          p.write_text(s, encoding="utf-8")
-          PY
-            python3 tools/patch_v1_8_0.py
-            echo "applied=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "applied=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Verify v1.8.0 migration
-        if: steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          grep -q 'versionCode = 80' app/build.gradle.kts
-          grep -q 'versionName = "1.8.0"' app/build.gradle.kts
-          grep -q 'Text("Новый чат", maxLines = 1)' app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt
-          grep -q 'label = "В текст"' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'Слушать в чате' app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          grep -q 'Выбранные модели поднимаются' CHANGELOG.md
-          grep -q 'Batch-модель нельзя назначить обычному чату' app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
-          grep -q 'выбранные модели сверху' app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
-
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
-
-      - name: Commit tested v1.8.0 changes
-        if: github.event_name == 'push' && steps.migration.outputs.applied == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "feat: polish OpenRouter-first UX for v1.8.0"
-          git push origin HEAD:main
-          echo "RELEASE_SHA=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
-
-      - name: Create tag and start signed v1.8.0 release
-        if: github.event_name == 'push' && steps.migration.outputs.applied == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
-            -f ref='refs/tags/v1.8.0' \
-            -f sha="$RELEASE_SHA"
-          gh workflow run android-release.yml --repo "$GITHUB_REPOSITORY" --ref main -f tag=v1.8.0
