@@ -40,8 +40,6 @@ def post() -> None:
     speech_path = "app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterSpeechPlayer.kt"
     text = read(speech_path)
 
-    # The prefetch call has a deeper indentation than the first request and also
-    # needs the selected response format.
     deep_old = '''                                    voice = replyVoice,\n                                    baseUrl = baseUrl\n'''
     deep_new = '''                                    voice = replyVoice,\n                                    responseFormat = replyFormat,\n                                    baseUrl = baseUrl\n'''
     if deep_old in text:
@@ -106,7 +104,7 @@ def post() -> None:
         if (current.isNotEmpty()) chunks += current.toString().trim()
         return chunks.filter { it.isNotBlank() }
     }
-'''
+'''.replace('\\"', '"')
     text = text[:start] + replacement + text[class_end:]
     text = text.replace(
         " * Long answers are synthesized in short fragments. The first fragment starts\n * playing as soon as it is ready while the following fragment is prepared in\n * parallel. Audio only lives in app cache for the current playback session.",
