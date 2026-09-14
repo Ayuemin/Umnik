@@ -311,6 +311,13 @@ data class ProjectFile(
     val addedAt: Long = System.currentTimeMillis()
 )
 
+data class ProjectStage(
+    val id: String,
+    val title: String,
+    val instruction: String,
+    val modelId: String? = null
+)
+
 data class Project(
     val id: String,
     val name: String,
@@ -319,6 +326,7 @@ data class Project(
     val isFavorite: Boolean = false,
     val skillIds: Set<String> = emptySet(),
     val files: List<ProjectFile> = emptyList(),
+    val stages: List<ProjectStage>? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

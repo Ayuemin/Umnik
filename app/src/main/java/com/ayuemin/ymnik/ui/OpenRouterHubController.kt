@@ -128,7 +128,7 @@ class OpenRouterHubController(
             videos = videoRepository.list()
         )
         if (batchRepository.active().isNotEmpty() || videoRepository.active().isNotEmpty()) {
-            OpenRouterBackgroundWorker.schedule(context, replace = true)
+            OpenRouterBackgroundWorker.schedule(context, replace = false)
         }
     }
 
@@ -334,7 +334,7 @@ class OpenRouterHubController(
                 )
                 batchRepository.upsert(job)
                 appendHubUserMessage(chat?.id, "[Batch: ${requests.size}]\n$input")
-                OpenRouterBackgroundWorker.schedule(context, replace = true)
+                OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
                 mutableState.value = mutableState.value.copy(
@@ -390,7 +390,7 @@ class OpenRouterHubController(
                 )
                 videoRepository.upsert(job)
                 appendHubUserMessage(chatId, "[Видео · ${model.substringAfterLast('/')} ]\n$prompt")
-                OpenRouterBackgroundWorker.schedule(context, replace = true)
+                OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
                 mutableState.value = mutableState.value.copy(

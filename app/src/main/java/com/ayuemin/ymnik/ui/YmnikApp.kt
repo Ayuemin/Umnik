@@ -1289,7 +1289,7 @@ private fun ComposerToggleIcon(
 @Composable
 private fun ChatsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
-    val chats = state.chats.sortedByDescending { it.updatedAt }
+    val chats = state.chats.filter { it.projectId == null }.sortedByDescending { it.updatedAt }
 
     AlertDialog(
         onDismissRequest = onDismiss,

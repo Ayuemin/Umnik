@@ -95,7 +95,7 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                     DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch delivered; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; items=${current.items.size}")
                 } else retry = true
                 batches.upsert(current)
-                AsyncJobEvents.notifyChanged()
+                if (current.status.terminal) AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 retry = true
                 DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch worker failure", error)
@@ -128,7 +128,7 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                     DiagnosticLog.record(applicationContext, "BACKGROUND", "Video delivered; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; hasFile=${!current.localPath.isNullOrBlank()}")
                 } else retry = true
                 videos.upsert(current)
-                AsyncJobEvents.notifyChanged()
+                if (current.status.terminal) AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 retry = true
                 DiagnosticLog.record(applicationContext, "BACKGROUND", "Video worker failure", error)

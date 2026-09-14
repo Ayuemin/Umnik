@@ -29,9 +29,11 @@ import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
+import com.ayuemin.ymnik.model.ProjectStage
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ProviderUsage
 import com.ayuemin.ymnik.model.ReasoningEffort
@@ -46,6 +48,7 @@ import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.ProviderRegistry
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -73,6 +76,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val recoveredRequest = RequestExecutionManager.recoverInterrupted(context)
     private var activeRequestJob: Job? = null
     private var activeRequestPending: List<PendingAttachment> = emptyList()
+    private var projectStagesJob: Job? = null
     private var requestGeneration: Long = 0L
 
     private val initialProfiles = loadConnectionProfiles()
@@ -1127,16 +1131,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
             ?: defaultOpenRouterProfile()
         val now = System.currentTimeMillis()
-        val message = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = "assistant",
-            text = UmnikUsageGuide.TEXT,
-            providerName = "Umnik"
-        )
+        val messages = UmnikUsageGuide.SECTIONS.map { section ->
+            ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = "assistant",
+                text = section,
+                providerName = "Umnik"
+            )
+        }
         val chat = ChatSession(
             id = UUID.randomUUID().toString(),
             title = "Памятка по Umnik",
-            messages = listOf(message),
+            messages = messages,
             mode = ChatMode.TEXT,
             connectionProfileId = profile.id,
             createdAt = now,
@@ -1154,7 +1160,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(
             chats = next,
             currentChatId = chat.id,
-            messages = listOf(message),
+            messages = messages,
             mode = ChatMode.TEXT,
             activeConnectionProfileId = profile.id,
             textModel = loadTextModelForProfile(profile),
@@ -1303,6 +1309,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (profile.id !in _state.value.disabledConnectionIds && isProfileConfigured(profile)) refreshModelCapabilities()
     }
 
+    fun refreshAsyncResults() {
+        val refreshed = chatsRepository.list()
+        if (refreshed.isEmpty()) return
+        val currentMessages = refreshed.firstOrNull { it.id == _state.value.currentChatId }?.messages
+            ?: _state.value.messages
+        _state.value = _state.value.copy(
+            chats = refreshed,
+            messages = currentMessages,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+        DiagnosticLog.record(context, "ASYNC", "results refreshed; chat=${_state.value.currentChatId.take(8)}; messages=${currentMessages.size}")
+    }
+
     fun deleteChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
@@ -1435,6 +1455,264 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(projects = projects, storageStats = storageRepository.stats())
     }
 
+    fun upsertProjectStage(
+        projectId: String,
+        stageId: String?,
+        title: String,
+        instruction: String,
+        modelId: String?
+    ): String? {
+        if (_state.value.isLoading) return null
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
+        val cleanInstruction = instruction.trim()
+        if (cleanInstruction.isBlank()) {
+            _state.value = _state.value.copy(status = "Введите инструкцию этапа")
+            return null
+        }
+        val id = stageId ?: UUID.randomUUID().toString()
+        val current = project.stages.orEmpty()
+        val stage = ProjectStage(
+            id = id,
+            title = title.trim().ifBlank { "Этап ${current.size + 1}" },
+            instruction = cleanInstruction,
+            modelId = modelId?.trim()?.takeIf { it.isNotBlank() }
+        )
+        val nextStages = if (current.any { it.id == id }) {
+            current.map { if (it.id == id) stage else it }
+        } else current + stage
+        val projects = _state.value.projects.map {
+            if (it.id == projectId) it.copy(stages = nextStages, updatedAt = System.currentTimeMillis()) else it
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects, status = "Этап сохранён")
+        return id
+    }
+
+    fun deleteProjectStage(projectId: String, stageId: String) {
+        if (_state.value.isLoading) return
+        val projects = _state.value.projects.map { project ->
+            if (project.id == projectId) project.copy(
+                stages = project.stages.orEmpty().filterNot { it.id == stageId },
+                updatedAt = System.currentTimeMillis()
+            ) else project
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects)
+    }
+
+    fun moveProjectStage(projectId: String, stageId: String, delta: Int) {
+        if (_state.value.isLoading || delta == 0) return
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
+        val stages = project.stages.orEmpty().toMutableList()
+        val from = stages.indexOfFirst { it.id == stageId }
+        if (from < 0 || stages.isEmpty()) return
+        val to = (from + delta).coerceIn(0, stages.lastIndex)
+        if (to == from) return
+        val item = stages.removeAt(from)
+        stages.add(to, item)
+        val projects = _state.value.projects.map {
+            if (it.id == projectId) it.copy(stages = stages, updatedAt = System.currentTimeMillis()) else it
+        }
+        projectsRepository.save(projects)
+        _state.value = _state.value.copy(projects = projects)
+    }
+
+    fun runProjectStages(projectId: String, initialTask: String): String? {
+        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
+        val stages = project.stages.orEmpty().filter { it.instruction.isNotBlank() }
+        if (stages.isEmpty()) {
+            _state.value = _state.value.copy(status = "Сначала добавьте хотя бы один этап работы")
+            return null
+        }
+        val profile = openRouterProfile()
+        if (!isProfileConfigured(profile)) {
+            _state.value = _state.value.copy(status = "Сначала сохраните API-ключ OpenRouter")
+            return null
+        }
+        val apiKey = secrets.getProfileApiKey(profile.id).orEmpty()
+        if (apiKey.isBlank()) return null
+
+        val chatId = createChat(projectId)
+        val startText = initialTask.trim().ifBlank { "Используй цель, инструкции и материалы проекта." }
+        val now = System.currentTimeMillis()
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = "Запустить этапы проекта.\n\nИсходная задача:\n$startText",
+            timestamp = now
+        )
+        val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        val stageChat = currentChat.copy(
+            title = "Этапы · ${project.name}".take(80),
+            messages = currentChat.messages + user,
+            updatedAt = now
+        )
+        val preparedChats = _state.value.chats.map { if (it.id == chatId) stageChat else it }
+        chatsRepository.save(preparedChats)
+        _state.value = _state.value.copy(
+            chats = preparedChats,
+            currentChatId = chatId,
+            messages = stageChat.messages,
+            pendingAttachments = emptyList(),
+            isLoading = true,
+            requestActive = true,
+            busyLabel = "Этап 1 из ${stages.size}…",
+            status = null
+        )
+        val generation = ++requestGeneration
+        DiagnosticLog.action(context, "project_stages_start", "project=${projectId.take(8)}; chat=${chatId.take(8)}; stages=${stages.size}")
+
+        projectStagesJob = viewModelScope.launch {
+            val results = mutableListOf<Pair<ProjectStage, String>>()
+            try {
+                stages.forEachIndexed { index, stage ->
+                    if (generation != requestGeneration) return@launch
+                    val currentState = _state.value
+                    val requestedModel = stage.modelId?.takeIf { it.isNotBlank() }
+                        ?: currentState.currentChatTextModel
+                        ?: currentState.textModel
+                    val known = currentState.availableTextModels.firstOrNull { it.id == requestedModel }
+                    val modelId = when {
+                        requestedModel == "openrouter/auto" -> requestedModel
+                        known != null && !known.isBatch && ModelCategory.TEXT in known.categories -> requestedModel
+                        else -> currentState.textModel.takeUnless { it.endsWith(":batch", true) } ?: "openrouter/auto"
+                    }
+                    val modelInfo = currentState.availableTextModels.firstOrNull { it.id == modelId }
+                    val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
+                    val requestModelInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = chosenWindow)
+                    val actualReasoning = currentState.reasoningEnabled && modelInfo?.supportsReasoning == true &&
+                        (modelInfo.reasoningEfforts.isEmpty() || currentState.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+                    val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) currentState.reasoningEffort.apiValue else null
+                    val attachments = project.files.mapNotNull { file ->
+                        val mime = file.mimeType.lowercase()
+                        val name = file.name.lowercase()
+                        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
+                            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+                        val allowed = textLike || mime == "application/pdf" || name.endsWith(".pdf") ||
+                            (mime.startsWith("image/") && modelInfo?.accepts("image") == true) ||
+                            (mime.startsWith("audio/") && modelInfo?.accepts("audio") == true) ||
+                            (mime.startsWith("video/") && modelInfo?.accepts("video") == true)
+                        if (!allowed) null else PendingAttachment(
+                            uri = "project://${file.id}",
+                            name = file.name,
+                            mimeType = file.mimeType,
+                            size = file.size,
+                            localPath = file.localPath
+                        )
+                    }
+                    val skillsText = skills.promptFor(currentState.activeSkillIds + project.skillIds)
+                    val systemPrompt = buildSystemPrompt(skillsText, project, stageChat, modelInfo?.supportsTools == true)
+                    val prompt = buildString {
+                        appendLine("Выполни только текущий этап универсального сценария проекта. Не переходи к следующим этапам сам.")
+                        appendLine()
+                        appendLine("===== ИСХОДНАЯ ЗАДАЧА =====")
+                        appendLine(startText)
+                        if (results.isNotEmpty()) {
+                            appendLine()
+                            appendLine("===== РЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ЭТАПОВ =====")
+                            results.forEachIndexed { resultIndex, (previousStage, previousText) ->
+                                appendLine("--- Этап ${resultIndex + 1}: ${previousStage.title} ---")
+                                appendLine(previousText)
+                            }
+                        }
+                        appendLine()
+                        appendLine("===== ТЕКУЩИЙ ЭТАП ${index + 1}: ${stage.title} =====")
+                        appendLine(stage.instruction)
+                        appendLine()
+                        appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
+                    }
+                    _state.value = _state.value.copy(busyLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}")
+                    DiagnosticLog.record(context, "PROJECT_STAGE", "start project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId")
+
+                    val result = try {
+                        api.chat(
+                            apiKey,
+                            modelId,
+                            emptyList(),
+                            prompt,
+                            attachments,
+                            systemPrompt,
+                            currentState.webSearchEnabled,
+                            actualReasoning,
+                            effort,
+                            modelInfo?.supportsTools == true,
+                            effectiveTextBaseUrl(profile),
+                            requestModelInfo
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        val raw = error.message.orEmpty()
+                        val friendly = when {
+                            raw.contains("429") || raw.contains("rate limit", true) -> "Провайдер временно ограничил запросы. Попробуйте другую модель или повторите позже."
+                            error is java.net.SocketException -> "Соединение оборвалось во время этого этапа."
+                            error is java.net.SocketTimeoutException -> "Модель не ответила вовремя."
+                            else -> raw.ifBlank { "Не удалось выполнить этап" }
+                        }
+                        appendProjectStageMessage(chatId, index + 1, stage.title, "Ошибка: $friendly", modelId, null)
+                        DiagnosticLog.record(context, "PROJECT_STAGE", "failed project=${projectId.take(8)}; stage=${index + 1}; model=$modelId", error)
+                        _state.value = _state.value.copy(status = "Этап ${index + 1} остановлен: $friendly")
+                        return@launch
+                    }
+
+                    val stageText = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
+                    results += stage to stageText
+                    appendProjectStageMessage(chatId, index + 1, stage.title, stageText, result.modelId ?: modelId, result)
+                    DiagnosticLog.record(context, "PROJECT_STAGE", "success project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=${result.modelId ?: modelId}; chars=${stageText.length}")
+                }
+                if (generation == requestGeneration) {
+                    _state.value = _state.value.copy(status = "Все этапы проекта выполнены: ${stages.size}")
+                    playReadySound()
+                }
+            } finally {
+                if (generation == requestGeneration) {
+                    _state.value = _state.value.copy(
+                        isLoading = false,
+                        requestActive = false,
+                        busyLabel = null,
+                        storedFiles = storageRepository.list(),
+                        storageStats = storageRepository.stats()
+                    )
+                }
+                projectStagesJob = null
+            }
+        }
+        return chatId
+    }
+
+    private fun appendProjectStageMessage(
+        chatId: String,
+        number: Int,
+        title: String,
+        text: String,
+        modelId: String?,
+        result: OpenRouterClient.Result?
+    ) {
+        val stored = chatsRepository.list()
+        val chat = stored.firstOrNull { it.id == chatId } ?: return
+        val message = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "assistant",
+            text = "## Этап $number: $title\n\n$text",
+            generatedFiles = result?.files.orEmpty(),
+            modelId = modelId,
+            providerName = result?.providerName,
+            costUsd = result?.costUsd,
+            inputTokens = result?.inputTokens,
+            outputTokens = result?.outputTokens
+        )
+        val updatedChat = chat.copy(messages = chat.messages + message, updatedAt = System.currentTimeMillis())
+        val updated = stored.map { if (it.id == chatId) updatedChat else it }
+        chatsRepository.save(updated)
+        _state.value = _state.value.copy(
+            chats = updated,
+            messages = if (_state.value.currentChatId == chatId) updatedChat.messages else _state.value.messages,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
     fun setProjectFavorite(id: String, favorite: Boolean) {
         val projects = _state.value.projects.map { project ->
             if (project.id == id) project.copy(isFavorite = favorite, updatedAt = System.currentTimeMillis()) else project
@@ -1550,7 +1828,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onSuccess { infos ->
                 _state.value = when (mode) {
                     ChatMode.TEXT -> {
-                        if (profile.type == ProviderType.NVIDIA) {
+                        run {
                             val validIds = infos.map { it.id }.toSet()
                             pruneQuickTextModels(profile.id, validIds)
                             clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
@@ -1646,7 +1924,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
             var next = _state.value
             if (textInfos != null) {
-                if (profile.type == ProviderType.NVIDIA) {
+                run {
                     val validIds = textInfos.map { it.id }.toSet()
                     pruneQuickTextModels(profile.id, validIds)
                     clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
@@ -1966,6 +2244,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun stopGeneration() {
+        projectStagesJob?.let { running ->
+            requestGeneration += 1L
+            running.cancel()
+            api.cancelActiveRequest()
+            projectStagesJob = null
+            _state.value = _state.value.copy(
+                isLoading = false,
+                requestActive = false,
+                busyLabel = null,
+                status = "Выполнение этапов остановлено"
+            )
+            return
+        }
         if (!_state.value.requestActive) return
         requestGeneration += 1L
         RequestExecutionManager.fail("Работа остановлена. При необходимости повторите запрос вручную.")
@@ -1990,7 +2281,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Для повтора прикрепите файлы заново и отправьте запрос вручную")
             return
         }
-        _state.value = _state.value.copy(mode = if (previous.imageGeneration) ChatMode.IMAGE else ChatMode.TEXT)
+        val chatId = _state.value.currentChatId
+        val cleanedMessages = _state.value.messages.filterNot { it.id == messageId }
+        val cleanedChats = replaceChatMessages(_state.value.chats, chatId, cleanedMessages, null)
+        chatsRepository.save(cleanedChats)
+        _state.value = _state.value.copy(
+            chats = cleanedChats,
+            messages = cleanedMessages,
+            mode = if (previous.imageGeneration) ChatMode.IMAGE else ChatMode.TEXT,
+            status = null
+        )
+        DiagnosticLog.action(context, "retry_failed_message", "chat=${chatId.take(8)}; replaced=true")
         if (previous.imageGeneration) sendImagePrompt(previous.text) else send(previous.text)
     }
 
@@ -2122,6 +2423,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
 
         val textModel = currentTextModelId()
+        if (mode == ChatMode.TEXT && textModel != "openrouter/auto") {
+            val knownInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
+                ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
+            val absentFromLoadedTextCatalog = _state.value.availableTextModels.isNotEmpty() &&
+                _state.value.availableTextModels.none { it.id == textModel }
+            if (absentFromLoadedTextCatalog || knownInfo?.isBatch == true || (knownInfo != null && ModelCategory.TEXT !in knownInfo.categories)) {
+                val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                _state.value = _state.value.copy(
+                    chats = failedChats,
+                    messages = failedChats.firstOrNull { it.id == chatId }?.messages.orEmpty(),
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    status = "Эта модель предназначена не для обычного текстового чата. Выберите текстовую модель в каталоге OpenRouter."
+                )
+                refreshModels(ChatMode.TEXT)
+                return
+            }
+        }
         val imageModel = _state.value.imageModel
         val imageInfo = currentImageModelInfo()
         val imageAspectRatio = _state.value.imageAspectRatio?.takeIf {
@@ -2265,10 +2585,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     "failed id=$requestId; provider=${profile.name}; model=${if (mode == ChatMode.TEXT) textModel else imageModel}",
                     it
                 )
-                val friendlyError = if (it is java.net.SocketTimeoutException) {
-                    "Сервис не ответил вовремя (тайм-аут). При необходимости включите «Диагностика и логи» и повторите запрос."
-                } else {
-                    it.message ?: "Ошибка запроса"
+                val rawError = it.message.orEmpty()
+                val friendlyError = when {
+                    it is java.net.SocketTimeoutException ->
+                        "Сервис не ответил вовремя. Повторите запрос один раз или выберите другую модель."
+                    it is java.net.SocketException ->
+                        "Соединение оборвалось во время ответа. Нажмите повтор — Umnik заменит неудачный запуск без создания копии сообщения."
+                    rawError.contains("429") || rawError.contains("rate limit", ignoreCase = true) ->
+                        "Провайдер этой модели временно ограничил запросы. Повторите позже или выберите другую модель в OpenRouter."
+                    rawError.contains("video generation model", ignoreCase = true) ||
+                        rawError.contains("cannot be used with the chat/completions endpoint", ignoreCase = true) ->
+                        "Выбранная модель предназначена для видео, а не для обычного чата. Назначьте её для видео или выберите текстовую модель."
+                    else -> rawError.ifBlank { "Ошибка запроса" }
                 }
                 RequestExecutionManager.fail(friendlyError)
                 val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
@@ -2805,7 +3133,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .map { it.trim() }
             .filter { it.isNotBlank() }
             .distinct()
-            .take(10)
     }.getOrDefault(emptyList())
 
     private fun pruneQuickTextModels(profileId: String, availableIds: Set<String>) {
@@ -3034,11 +3361,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private suspend fun textModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
-        return if (profile.type == ProviderType.OPENROUTER) {
+        val models = if (profile.type == ProviderType.OPENROUTER) {
             api.models(key, effectiveTextBaseUrl(profile))
         } else {
             compatibleApi.models(key, effectiveTextBaseUrl(profile))
         }
+        return models.filter { ModelCategory.TEXT in it.categories && !it.isBatch }
     }
 
     private suspend fun imageModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {

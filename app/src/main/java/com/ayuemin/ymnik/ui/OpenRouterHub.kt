@@ -113,15 +113,8 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
 
     LaunchedEffect(asyncSequence) {
         if (asyncSequence <= 0L) return@LaunchedEffect
-        repeat(120) {
-            val state = viewModel.state.value
-            if (!state.isLoading && state.pendingAttachments.isEmpty()) {
-                viewModel.switchChat(state.currentChatId)
-                controller.refreshJobs()
-                return@LaunchedEffect
-            }
-            delay(1_000L)
-        }
+        viewModel.refreshAsyncResults()
+        controller.refreshJobs()
     }
 
     LaunchedEffect(hubRequest) {
@@ -239,7 +232,7 @@ private fun OpenRouterHubDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    if (settingsMode) "Каталог, маршрутизация, Tools и RAG" else "Результат возвращается в текущий чат",
+                                    if (settingsMode) "Каталог, маршрутизация и работа с документами" else "Результат возвращается в текущий чат",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -285,7 +278,7 @@ private fun HubPageBar(page: HubPage, onPage: (HubPage) -> Unit) {
     ) {
         item { HubPageChip("Модели", HubPage.MODELS, page, onPage) }
         item { HubPageChip("Маршрутизация", HubPage.ROUTING, page, onPage) }
-        item { HubPageChip("Tools + RAG", HubPage.TOOLS, page, onPage) }
+        item { HubPageChip("Инструменты и документы", HubPage.TOOLS, page, onPage) }
     }
 }
 
@@ -649,117 +642,197 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
 
 @Composable
 private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: OpenRouterHubController) {
-    var advisor by remember(tools.advisorModel) { mutableStateOf(tools.advisorModel.orEmpty()) }
-    var subagent by remember(tools.subagentModel) { mutableStateOf(tools.subagentModel.orEmpty()) }
-    var embedding by remember(rag.embeddingModel) { mutableStateOf(rag.embeddingModel) }
-    var rerank by remember(rag.rerankModel) { mutableStateOf(rag.rerankModel) }
-
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item { Text("Server tools", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold) }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text("Web Search", fontWeight = FontWeight.SemiBold)
+            Text("Инструменты обычного чата", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Эти возможности OpenRouter модель может использовать во время обычного разговора. Включайте только то, что действительно нужно задаче.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+        }
+        item {
+            Text("Поиск в интернете", fontWeight = FontWeight.SemiBold)
+            Text("Авто — модель решает сама, «Всегда» — поиск разрешён для каждого запроса.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchMode.entries) { mode ->
-                    FilterChip(selected = tools.webSearch == mode, onClick = { controller.updateTools(tools.copy(webSearch = mode)) }, label = { Text(webModeLabel(mode)) })
+                    FilterChip(
+                        selected = tools.webSearch == mode,
+                        onClick = { controller.updateTools(tools.copy(webSearch = mode)) },
+                        label = { Text(webModeLabel(mode)) }
+                    )
                 }
             }
         }
         item {
-            Text("Поисковый движок", fontWeight = FontWeight.SemiBold)
+            Text("Сервис интернет-поиска", fontWeight = FontWeight.SemiBold)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchEngine.entries) { engine ->
-                    FilterChip(selected = tools.webSearchEngine == engine, onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) }, label = { Text(engine.name.lowercase().replaceFirstChar { it.uppercase() }) })
+                    FilterChip(
+                        selected = tools.webSearchEngine == engine,
+                        onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) },
+                        label = { Text(engine.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                    )
                 }
             }
         }
-        item { ToggleRow("Web Fetch", tools.webFetch) { controller.updateTools(tools.copy(webFetch = it)) } }
-        item { ToggleRow("DateTime", tools.datetime) { controller.updateTools(tools.copy(datetime = it)) } }
-        item { ToggleRow("Image Generation tool", tools.imageGeneration) { controller.updateTools(tools.copy(imageGeneration = it)) } }
-        item { ToggleRow("Fusion", tools.fusion) { controller.updateTools(tools.copy(fusion = it)) } }
-        item { ToggleRow("Shell в обычном чате", tools.shell) { controller.updateTools(tools.copy(shell = it)) } }
+        item { ToggleRow("Открывать найденные веб-страницы", tools.webFetch) { controller.updateTools(tools.copy(webFetch = it)) } }
+        item { ToggleRow("Использовать текущие дату и время", tools.datetime) { controller.updateTools(tools.copy(datetime = it)) } }
+        item { ToggleRow("Разрешить модели создавать изображения как инструмент", tools.imageGeneration) { controller.updateTools(tools.copy(imageGeneration = it)) } }
+        item { ToggleRow("Fusion — объединять работу нескольких инструментов", tools.fusion) { controller.updateTools(tools.copy(fusion = it)) } }
+        item { ToggleRow("Разрешить Shell прямо в обычном чате", tools.shell) { controller.updateTools(tools.copy(shell = it)) } }
+
         item {
-            OutlinedTextField(advisor, { advisor = it }, Modifier.fillMaxWidth(), label = { Text("Advisor model ID") }, singleLine = true)
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(subagent, { subagent = it }, Modifier.fillMaxWidth(), label = { Text("Subagent model ID") }, singleLine = true)
-            Spacer(Modifier.height(6.dp))
-            FilledTonalButton(onClick = { controller.updateTools(tools.copy(advisorModel = advisor.trim().ifBlank { null }, subagentModel = subagent.trim().ifBlank { null })) }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить Advisor / Subagent") }
+            HorizontalDivider()
+            Text("Поиск по своим документам (RAG)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
+            Text(
+                "RAG сначала находит подходящие фрагменты ваших текстовых файлов, затем передаёт их основной модели. Модели Embeddings и Rerank выбираются во вкладке «Модели» общего каталога.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
         }
-        item { HorizontalDivider(); Text("RAG проектов и файлов чата", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
-        item { ToggleRow("Включить RAG", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
+        item { ToggleRow("Включить поиск по документам", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
         item {
-            OutlinedTextField(embedding, { embedding = it }, Modifier.fillMaxWidth(), label = { Text("Embedding model") }, singleLine = true)
-            Spacer(Modifier.height(6.dp))
-            OutlinedTextField(rerank, { rerank = it }, Modifier.fillMaxWidth(), label = { Text("Rerank model, необязательно") }, singleLine = true)
+            Text("Модель смыслового поиска", fontWeight = FontWeight.SemiBold)
+            Text(rag.embeddingModel.ifBlank { "Не выбрана — назначьте Embeddings-модель во вкладке «Модели»" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
-            Text("Фрагментов в ответ: ${rag.topK}")
-            Slider(value = rag.topK.toFloat(), onValueChange = { controller.updateRag(rag.copy(topK = it.toInt().coerceIn(1, 20))) }, valueRange = 1f..20f, steps = 18)
-            Button(onClick = { controller.updateRag(rag.copy(embeddingModel = embedding.trim(), rerankModel = rerank.trim())) }, modifier = Modifier.fillMaxWidth()) { Text("Сохранить RAG") }
-            Text("RAG выключен по умолчанию. Сейчас он индексирует текстовые вложения перед запросом; PDF и другие форматы продолжают передаваться штатным способом OpenRouter.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            Text("Модель уточнения результатов", fontWeight = FontWeight.SemiBold)
+            Text(rag.rerankModel.ifBlank { "Не выбрана — Rerank необязателен" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            Text("Сколько подходящих фрагментов передавать модели: ${rag.topK}", fontWeight = FontWeight.SemiBold)
+            Slider(
+                value = rag.topK.toFloat(),
+                onValueChange = { controller.updateRag(rag.copy(topK = it.toInt().coerceIn(1, 20))) },
+                valueRange = 1f..20f,
+                steps = 18
+            )
+            Text(
+                "Для небольшого PDF сначала попробуйте обычное прикрепление файла. RAG особенно полезен для набора больших текстовых материалов.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
 
 @Composable
 private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
-    var input by remember { mutableStateOf("") }
-    Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            item {
-                Text("Пакет из нескольких заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("Модель: ${state.media.batchModel.ifBlank { "не выбрана" }}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(6.dp))
-                CategoryModelPicker(
-                    title = "Модель для пакетных задач",
-                    current = state.media.batchModel,
-                    models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
-                    onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
-                )
-                Text(
-                    "Готовые результаты автоматически добавляются в исходный чат. Здесь также хранится история фоновых задач.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 6.dp)
-                )
-                Text("Один Batch-запрос отправляйте прямо из обычного чата кнопкой отправки. Этот экран нужен только для нескольких независимых заданий.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedTextField(
-                    value = input,
-                    onValueChange = { input = it },
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    label = { Text("Задания") },
-                    placeholder = { Text("Разделяйте независимые задания строкой ---") },
-                    minLines = 4,
-                    maxLines = 10
-                )
-                Spacer(Modifier.height(7.dp))
-                Button(onClick = { controller.submitBatch(input); input = "" }, enabled = state.media.batchModel.endsWith(":batch", true) && input.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth()) { Text("Отправить Batch") }
-            }
-            item {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Batch-задания", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                    TextButton(onClick = controller::refreshJobs) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Обновить") }
-                }
-            }
-            if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(state.batches, key = { it.id }) { job ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(job.title, fontWeight = FontWeight.SemiBold)
-                        Text("${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}", style = MaterialTheme.typography.bodySmall)
-                        Text(job.modelId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        job.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+    val tasks = remember { mutableStateListOf("") }
+    var bulkInput by remember { mutableStateOf("") }
+    val readyCount = tasks.count { it.isNotBlank() }
+
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item {
+            Text("Пакет из нескольких независимых заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(
+                "Batch удобен, когда задания не зависят друг от друга. Результаты вернутся в тот чат, из которого вы запустили пакет.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(8.dp))
+            CategoryModelPicker(
+                title = "Модель для пакетных задач",
+                current = state.media.batchModel,
+                models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
+                onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
+            )
+        }
+
+        item {
+            Text("Задания", fontWeight = FontWeight.Bold)
+            Text("Каждое поле — отдельный запрос. Никакие разделительные линии вводить не нужно.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                tasks.forEachIndexed { index, value ->
+                    ElevatedCard(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(10.dp)) {
+                            OutlinedTextField(
+                                value = value,
+                                onValueChange = { tasks[index] = it },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Задача ${index + 1}") },
+                                placeholder = { Text(if (index == 0) "Например: сделай краткое резюме текста" else "Введите независимое задание") },
+                                minLines = 2,
+                                maxLines = 7
+                            )
+                            if (tasks.size > 1) {
+                                TextButton(onClick = { tasks.removeAt(index) }, modifier = Modifier.align(Alignment.End)) { Text("Удалить задачу") }
+                            }
+                        }
                     }
                 }
+                FilledTonalButton(onClick = { tasks.add("") }, modifier = Modifier.fillMaxWidth()) { Text("+ Добавить задачу") }
             }
-            item { HorizontalDivider(); Text("Видео-задания", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
-            if (state.videos.isEmpty()) item { Text("Пока нет фоновых видео", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-            items(state.videos, key = { it.id }) { job ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(job.modelId, fontWeight = FontWeight.SemiBold)
-                        Text(videoLabel(job.status), style = MaterialTheme.typography.bodySmall)
-                        Text(job.prompt, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        job.costUsd?.let { Text("Стоимость: ${formatUsdSmall(it)}", style = MaterialTheme.typography.bodySmall) }
+        }
+
+        item {
+            Text("Быстро добавить списком", fontWeight = FontWeight.SemiBold)
+            Text("Если у вас уже есть список коротких задач, вставьте по одной задаче на строку.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = bulkInput,
+                onValueChange = { bulkInput = it },
+                modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                label = { Text("Список задач") },
+                placeholder = { Text("Задача 1\nЗадача 2\nЗадача 3") },
+                minLines = 3,
+                maxLines = 8
+            )
+            FilledTonalButton(
+                onClick = {
+                    val imported = bulkInput.lineSequence().map(String::trim).filter(String::isNotBlank).toList()
+                    if (imported.isNotEmpty()) {
+                        if (tasks.size == 1 && tasks.first().isBlank()) tasks.clear()
+                        tasks.addAll(imported)
+                        bulkInput = ""
                     }
+                },
+                enabled = bulkInput.isNotBlank(),
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            ) { Text("Разбить по строкам") }
+        }
+
+        item {
+            Button(
+                onClick = {
+                    val raw = tasks.map(String::trim).filter(String::isNotBlank).joinToString("\n---\n")
+                    controller.submitBatch(raw)
+                },
+                enabled = state.media.batchModel.endsWith(":batch", true) && readyCount > 0 && !state.loading,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Запустить пакет · $readyCount") }
+        }
+
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text("История Batch", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                TextButton(onClick = controller::refreshJobs) { Icon(Icons.Outlined.Refresh, null); Spacer(Modifier.width(4.dp)); Text("Обновить") }
+            }
+        }
+        if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        items(state.batches, key = { it.id }) { job ->
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(job.title, fontWeight = FontWeight.SemiBold)
+                    Text("${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}", style = MaterialTheme.typography.bodySmall)
+                    Text(job.modelId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    job.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        }
+        item { HorizontalDivider(); Text("Видео-задания", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 4.dp)) }
+        if (state.videos.isEmpty()) item { Text("Пока нет фоновых видео", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        items(state.videos, key = { it.id }) { job ->
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp)) {
+                    Text(job.modelId, fontWeight = FontWeight.SemiBold)
+                    Text(videoLabel(job.status), style = MaterialTheme.typography.bodySmall)
+                    Text(job.prompt, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    job.costUsd?.let { Text("Стоимость: ${formatUsdSmall(it)}", style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }

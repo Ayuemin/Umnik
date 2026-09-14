@@ -22,6 +22,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AddComment
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Menu
@@ -82,6 +83,8 @@ fun NavigationSidebar(
     var query by remember { mutableStateOf("") }
     var menuOpen by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
+    var renameTarget by remember { mutableStateOf<ChatSession?>(null) }
+    var renameValue by remember { mutableStateOf("") }
     var clearConfirm by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -96,6 +99,7 @@ fun NavigationSidebar(
     )
     val normalized = query.trim()
     val chats = state.chats
+        .filter { it.projectId == null }
         .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
         .filter { chat ->
             normalized.isBlank() ||
@@ -198,7 +202,11 @@ fun NavigationSidebar(
                                     vm.switchChat(chat.id)
                                     onDismiss()
                                 },
-                                onDelete = { deleteTarget = chat }
+                                onDelete = { deleteTarget = chat },
+                                onRename = {
+                                    renameTarget = chat
+                                    renameValue = chat.title
+                                }
                             )
                         }
                     }
@@ -289,6 +297,37 @@ fun NavigationSidebar(
         )
     }
 
+    renameTarget?.let { chat ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Переименовать чат") },
+            text = {
+                OutlinedTextField(
+                    value = renameValue,
+                    onValueChange = { renameValue = it.take(100) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("Название") }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        vm.updateChatProfile(
+                            chat.id,
+                            renameValue,
+                            chat.assignedRole.orEmpty(),
+                            chat.masterPrompt.orEmpty()
+                        )
+                        renameTarget = null
+                    },
+                    enabled = renameValue.isNotBlank()
+                ) { Text("Сохранить") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Отмена") } }
+        )
+    }
+
     if (clearConfirm) {
         AlertDialog(
             onDismissRequest = { clearConfirm = false },
@@ -363,7 +402,8 @@ private fun SidebarChatRow(
     state: UiState,
     vm: ChatViewModel,
     onOpen: () -> Unit,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onRename: () -> Unit
 ) {
     val projectName = chat.projectId?.let { id -> state.projects.firstOrNull { it.id == id }?.name }
     Surface(
@@ -407,6 +447,13 @@ private fun SidebarChatRow(
                     contentDescription = if (chat.isFavorite) "Открепить чат" else "Закрепить чат",
                     modifier = Modifier.size(19.dp)
                 )
+            }
+            IconButton(
+                onClick = onRename,
+                enabled = !state.isLoading,
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(Icons.Outlined.Edit, contentDescription = "Переименовать чат", modifier = Modifier.size(19.dp))
             }
             IconButton(
                 onClick = onDelete,

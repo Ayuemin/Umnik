@@ -4,6 +4,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -16,8 +17,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.ArrowDownward
+import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.AttachFile
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.DeleteForever
@@ -26,9 +30,16 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -52,6 +63,7 @@ import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.ProjectStage
 import com.ayuemin.ymnik.model.UiState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -62,7 +74,8 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var editorId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
     var clearAllConfirm by remember { mutableStateOf(false) }
-    val chats = state.chats.sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
+    val chats = state.chats.filter { it.projectId == null }
+        .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
     val favorites = chats.filter { it.isFavorite }
     val others = chats.filterNot { it.isFavorite }
 
@@ -339,7 +352,7 @@ private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOp
             Column(Modifier.fillMaxWidth()) {
                 Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "$count чатов · ${project.files.size} файлов · ${project.skillIds.size} навыков",
+                    "$count чатов · ${project.files.size} файлов · ${project.stages.orEmpty().size} этапов",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -367,6 +380,11 @@ private fun ProjectDetailDialog(
     var editOpen by remember { mutableStateOf(false) }
     var deleteConfirm by remember { mutableStateOf(false) }
     var deleteChatTarget by remember { mutableStateOf<ChatSession?>(null) }
+    var stagesExpanded by remember(project.id) { mutableStateOf(true) }
+    var stageEditorOpen by remember { mutableStateOf(false) }
+    var editingStage by remember { mutableStateOf<ProjectStage?>(null) }
+    var runStagesOpen by remember { mutableStateOf(false) }
+    var runInput by remember { mutableStateOf("") }
     val projectChats = state.chats.filter { it.projectId == project.id }
         .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
 
@@ -437,6 +455,109 @@ private fun ProjectDetailDialog(
                         }
                     }
                     HorizontalDivider()
+                }
+            }
+
+            item {
+                TextButton(
+                    onClick = { stagesExpanded = !stagesExpanded },
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Этапы работы", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                        Text(
+                            "${project.stages.orEmpty().size} этапов · выполняются строго по порядку",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Icon(
+                        if (stagesExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = if (stagesExpanded) "Свернуть" else "Развернуть"
+                    )
+                }
+            }
+            if (stagesExpanded) {
+                item {
+                    Text(
+                        "Последовательный сценарий для любых задач. Каждый этап — отдельный запрос. Следующий получает исходную задачу, материалы проекта и результаты предыдущих этапов. Мастер-инструкция действует на каждом шаге.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (project.stages.orEmpty().isEmpty()) {
+                    item { Text("Этапов пока нет", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                } else {
+                    itemsIndexed(project.stages.orEmpty(), key = { _, stage -> stage.id }) { index, stage ->
+                        ElevatedCard(Modifier.fillMaxWidth()) {
+                            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("${index + 1}. ${stage.title}", fontWeight = FontWeight.SemiBold)
+                                        Text(
+                                            stage.modelId?.substringAfterLast('/') ?: "Модель чата",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    IconButton(onClick = { vm.moveProjectStage(project.id, stage.id, -1) }, enabled = index > 0 && !state.isLoading) {
+                                        Icon(Icons.Outlined.ArrowUpward, contentDescription = "Поднять этап")
+                                    }
+                                    IconButton(onClick = { vm.moveProjectStage(project.id, stage.id, 1) }, enabled = index < project.stages.orEmpty().lastIndex && !state.isLoading) {
+                                        Icon(Icons.Outlined.ArrowDownward, contentDescription = "Опустить этап")
+                                    }
+                                }
+                                Text(
+                                    stage.instruction,
+                                    maxLines = 4,
+                                    overflow = TextOverflow.Ellipsis,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = {
+                                        editingStage = stage
+                                        stageEditorOpen = true
+                                    }, enabled = !state.isLoading) {
+                                        Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(17.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Изменить")
+                                    }
+                                    TextButton(onClick = { vm.deleteProjectStage(project.id, stage.id) }, enabled = !state.isLoading) {
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(17.dp))
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("Удалить")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                item {
+                    FilledTonalButton(
+                        onClick = {
+                            editingStage = null
+                            stageEditorOpen = true
+                        },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Добавить этап")
+                    }
+                }
+                item {
+                    Button(
+                        onClick = { runStagesOpen = true },
+                        enabled = project.stages.orEmpty().isNotEmpty() && !state.isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.PlayArrow, contentDescription = null)
+                        Spacer(Modifier.width(6.dp))
+                        Text("Запустить этапы")
+                    }
                 }
             }
 
@@ -515,6 +636,58 @@ private fun ProjectDetailDialog(
                 }
             }
         }
+    }
+
+    if (stageEditorOpen) {
+        ProjectStageEditorDialog(
+            project = project,
+            stage = editingStage,
+            state = state,
+            onDismiss = {
+                stageEditorOpen = false
+                editingStage = null
+            },
+            onSave = { title, instruction, modelId ->
+                vm.upsertProjectStage(project.id, editingStage?.id, title, instruction, modelId)
+                stageEditorOpen = false
+                editingStage = null
+            }
+        )
+    }
+
+    if (runStagesOpen) {
+        AlertDialog(
+            onDismissRequest = { runStagesOpen = false },
+            title = { Text("Запустить этапы работы") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        "Umnik создаст чат внутри проекта и выполнит ${project.stages.orEmpty().size} этапов строго по порядку. Постоянные файлы проекта будут доступны на каждом этапе.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    OutlinedTextField(
+                        value = runInput,
+                        onValueChange = { runInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Исходная задача или цель") },
+                        placeholder = { Text("Можно оставить пустым, если всё необходимое уже есть в инструкциях и файлах проекта") },
+                        minLines = 3,
+                        maxLines = 8
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val chatId = vm.runProjectStages(project.id, runInput)
+                    if (chatId != null) {
+                        runStagesOpen = false
+                        onOpenChat(chatId)
+                    }
+                }) { Text("Запустить") }
+            },
+            dismissButton = { TextButton(onClick = { runStagesOpen = false }) { Text("Отмена") } }
+        )
     }
 
     deleteChatTarget?.let { chat ->
@@ -610,6 +783,92 @@ private fun ProjectEditorDialog(
         ) {
             Text("Сохранить")
         }
+    }
+}
+
+@Composable
+private fun ProjectStageEditorDialog(
+    project: Project,
+    stage: ProjectStage?,
+    state: UiState,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String?) -> Unit
+) {
+    var title by remember(stage?.id) { mutableStateOf(stage?.title.orEmpty()) }
+    var instruction by remember(stage?.id) { mutableStateOf(stage?.instruction.orEmpty()) }
+    var modelId by remember(stage?.id) { mutableStateOf(stage?.modelId) }
+    var modelMenuOpen by remember { mutableStateOf(false) }
+    val quickIds = state.quickTextModels.map { ref -> ref.substringAfter('\u001F') }
+    val choices = (listOfNotNull(state.currentChatTextModel, state.textModel) + quickIds)
+        .filter { it.isNotBlank() && !it.endsWith(":batch", true) }
+        .distinct()
+
+    FullScreenPanel(title = if (stage == null) "Новый этап" else "Изменить этап", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                Text(
+                    "Этапы универсальны и не привязаны к типу работы. Опишите только действие, которое модель должна выполнить на этом шаге.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it.take(100) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Название этапа") },
+                    placeholder = { Text("Например: Проверить исходные данные") },
+                    singleLine = true
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = instruction,
+                    onValueChange = { instruction = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Инструкция этапа") },
+                    placeholder = { Text("Что именно нужно сделать на этом шаге") },
+                    minLines = 6,
+                    maxLines = 18
+                )
+            }
+            item {
+                Text("Модель", fontWeight = FontWeight.SemiBold)
+                Box {
+                    FilledTonalButton(onClick = { modelMenuOpen = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text(modelId?.substringAfterLast('/') ?: "Как в текущем чате", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    DropdownMenu(expanded = modelMenuOpen, onDismissRequest = { modelMenuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Как в текущем чате") },
+                            onClick = { modelId = null; modelMenuOpen = false }
+                        )
+                        choices.forEach { id ->
+                            DropdownMenuItem(
+                                text = { Text(id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                                onClick = { modelId = id; modelMenuOpen = false }
+                            )
+                        }
+                    }
+                }
+                Text(
+                    if (choices.isEmpty()) "Дополнительные модели появятся здесь после добавления их в быстрые." else "Для разных этапов можно использовать разные быстрые текстовые модели.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 5.dp)
+                )
+            }
+        }
+        FilledTonalButton(
+            onClick = { onSave(title, instruction, modelId) },
+            enabled = instruction.isNotBlank(),
+            modifier = Modifier.fillMaxWidth().padding(16.dp)
+        ) { Text("Сохранить этап") }
     }
 }
 
