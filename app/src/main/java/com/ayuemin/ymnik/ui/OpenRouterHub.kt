@@ -928,7 +928,8 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
     var videoPrompt by remember { mutableStateOf("") }
     val videoRefs = remember { mutableStateListOf<Uri>() }
     var speechText by remember { mutableStateOf("") }
-    var voice by remember(state.media.voice) { mutableStateOf(state.media.voice) }
+    var voice by remember(state.media.speechModel, state.media.voice) { mutableStateOf(state.media.voice) }
+    var speechResponseFormat by remember(state.media.speechModel, state.media.responseFormat) { mutableStateOf(state.media.responseFormat.orEmpty()) }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         videoRefs.clear(); videoRefs.addAll(uris.take(4))
     }
@@ -984,20 +985,79 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
         if (section == MediaSection.ALL || section == MediaSection.SPEECH) {
             item {
                 Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val selectedSpeechModel = state.catalog.firstOrNull { it.id == state.media.speechModel }
+                val documentVoiceOptions = selectedSpeechModel?.parameterValues("voice").orEmpty()
                 CategoryModelPicker(
                     title = "Модель озвучивания",
                     current = state.media.speechModel,
                     models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
                     onSelect = { controller.assignModel(it, ModelCategory.SPEECH) }
                 )
-                OutlinedTextField(voice, { voice = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Voice, если модель поддерживает") }, singleLine = true)
+                if (state.media.speechModel.isNotBlank()) {
+                    Text("Дополнительные параметры (необязательно)", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Некоторым моделям нужен голос или конкретный формат, другим достаточно самой модели. «Авто» не передаёт лишний формат и учитывает известные ограничения Gemini/Voxtral.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        item {
+                            FilterChip(
+                                selected = voice.isBlank(),
+                                onClick = { voice = "" },
+                                label = { Text("Без голоса") }
+                            )
+                        }
+                        items(documentVoiceOptions) { option ->
+                            FilterChip(
+                                selected = voice == option,
+                                onClick = { voice = option },
+                                label = { Text(option, maxLines = 1) }
+                            )
+                        }
+                    }
+                    OutlinedTextField(
+                        voice,
+                        { voice = it },
+                        Modifier.fillMaxWidth().padding(top = 6.dp),
+                        label = { Text("Voice / ID голоса (необязательно)") },
+                        singleLine = true
+                    )
+                    Text("Формат ответа", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(listOf("" to "Авто", "mp3" to "MP3", "pcm" to "PCM")) { (value, label) ->
+                            FilterChip(
+                                selected = speechResponseFormat == value,
+                                onClick = { speechResponseFormat = value },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+                    FilledTonalButton(
+                        onClick = { controller.updateMedia(state.media.copy(voice = voice.trim(), responseFormat = speechResponseFormat.ifBlank { null })) },
+                        modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
+                    ) { Text("Сохранить параметры") }
+                }
                 OutlinedTextField(speechText, { speechText = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Текст для озвучивания") }, minLines = 3, maxLines = 8)
                 FilledTonalButton(
                     onClick = { speechTextPicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown")) },
                     enabled = !state.loading,
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
                 ) { Text("Загрузить текстовый файл") }
-                Button(onClick = { controller.updateMedia(state.media.copy(voice = voice.trim())); controller.synthesize(speechText) }, enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 7.dp)) { Text("Создать аудио") }
+                Button(
+                    onClick = {
+                        controller.updateMedia(state.media.copy(voice = voice.trim(), responseFormat = speechResponseFormat.ifBlank { null }))
+                        controller.synthesize(speechText)
+                    },
+                    enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading,
+                    modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
+                ) { Text("Создать аудио") }
                 state.speechFile?.let { file ->
                     Text("Готово и добавлено в чат: ${file.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
                 }
@@ -1027,7 +1087,7 @@ private fun ReplySpeechPage(
         item {
             Text("Кнопка OR под ответами", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
             Text(
-                "Эти настройки не влияют на режим «+ → Озвучить». Для ответов можно выбрать отдельную, в том числе бесплатную, модель.",
+                "Эти настройки не влияют на режим «+ → Озвучить». Достаточно выбрать модель; голос и формат задаются только если они нужны выбранному провайдеру.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -1042,24 +1102,35 @@ private fun ReplySpeechPage(
         }
         if (appState.openRouterSpeechModel.isNotBlank()) {
             item {
-                Text("Голос", fontWeight = FontWeight.SemiBold)
+                Text("Голос (необязательно)", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Голоса зависят от модели. При смене модели Umnik не переносит старый голос на новую.",
+                    "Если у модели есть голос по умолчанию, оставьте «Не задавать». Если OpenRouter требует voice, выберите вариант из списка или введите ID вручную.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (voiceOptions.isNotEmpty()) {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(voiceOptions) { voice ->
-                            FilterChip(
-                                selected = appState.openRouterSpeechVoice == voice,
-                                onClick = { controller.updateReplySpeechVoice(voice) },
-                                label = { Text(voice, maxLines = 1) }
-                            )
-                        }
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    item {
+                        FilterChip(
+                            selected = appState.openRouterSpeechVoice.isBlank(),
+                            onClick = {
+                                manualVoice = ""
+                                controller.updateReplySpeechVoice("")
+                            },
+                            label = { Text("Не задавать") }
+                        )
+                    }
+                    items(voiceOptions) { voice ->
+                        FilterChip(
+                            selected = appState.openRouterSpeechVoice == voice,
+                            onClick = {
+                                manualVoice = voice
+                                controller.updateReplySpeechVoice(voice)
+                            },
+                            label = { Text(voice, maxLines = 1) }
+                        )
                     }
                 }
                 OutlinedTextField(
@@ -1067,23 +1138,39 @@ private fun ReplySpeechPage(
                     onValueChange = { manualVoice = it },
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
                     label = { Text("ID голоса") },
-                    placeholder = { Text("Например: alloy, eve, en_paul_neutral") },
+                    placeholder = { Text("Оставьте пустым, если голос не нужен") },
                     singleLine = true
                 )
                 FilledTonalButton(
                     onClick = { controller.updateReplySpeechVoice(manualVoice.trim()) },
-                    enabled = manualVoice.isNotBlank(),
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
-                ) { Text("Сохранить голос") }
-                if (appState.openRouterSpeechVoice.isNotBlank()) {
-                    TextButton(
-                        onClick = {
-                            manualVoice = ""
-                            controller.updateReplySpeechVoice("")
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Снять выбор голоса") }
+                ) { Text(if (manualVoice.isBlank()) "Сохранить без голоса" else "Сохранить голос") }
+            }
+            item {
+                Text("Формат ответа", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Авто: для Gemini TTS используется PCM, для Voxtral TTS — MP3, а неизвестным моделям Umnik не навязывает формат. Если провайдер вернёт однозначную ошибку формата, Auto один раз повторит запрос с требуемым MP3/PCM.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    items(listOf("" to "Авто", "mp3" to "MP3", "pcm" to "PCM")) { (value, label) ->
+                        FilterChip(
+                            selected = appState.openRouterSpeechResponseFormat == value,
+                            onClick = { controller.updateReplySpeechResponseFormat(value) },
+                            label = { Text(label) }
+                        )
+                    }
                 }
+                Text(
+                    "PCM Umnik автоматически оборачивает в WAV для воспроизведения на Android.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 5.dp)
+                )
             }
         }
     }

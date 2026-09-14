@@ -125,19 +125,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             imageModel = initialImageModel,
             imageAspectRatio = initialImageAspectRatio,
             imageResolution = initialImageResolution,
-            openRouterSpeechModel = prefs.getString("reply_speech_model", null)
-                ?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: openRouterFeaturePrefs.media().speechModel,
+            openRouterSpeechModel = prefs.getString("reply_speech_model", "").orEmpty().trim(),
             openRouterSpeechVoice = run {
-                val replyModel = prefs.getString("reply_speech_model", null)
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: openRouterFeaturePrefs.media().speechModel
-                prefs.getString(replySpeechVoiceKey(replyModel), null)
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: if (replyModel == openRouterFeaturePrefs.media().speechModel) openRouterFeaturePrefs.media().voice else ""
+                val replyModel = prefs.getString("reply_speech_model", "").orEmpty().trim()
+                if (replyModel.isBlank()) "" else prefs.getString(replySpeechVoiceKey(replyModel), "").orEmpty().trim()
+            },
+            openRouterSpeechResponseFormat = run {
+                val replyModel = prefs.getString("reply_speech_model", "").orEmpty().trim()
+                if (replyModel.isBlank()) "" else prefs.getString(replySpeechFormatKey(replyModel), "").orEmpty().trim()
             },
             webSearchEnabled = prefs.getBoolean("web_search", false),
             reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
@@ -210,6 +205,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun replySpeechVoiceKey(modelId: String): String = "reply_speech_voice::${modelId.trim()}"
+    private fun replySpeechFormatKey(modelId: String): String = "reply_speech_format::${modelId.trim()}"
+
+    private fun normalizeSpeechResponseFormat(value: String): String = when (value.trim().lowercase()) {
+        "mp3" -> "mp3"
+        "pcm" -> "pcm"
+        else -> ""
+    }
 
     fun setOpenRouterSpeechModel(modelId: String) {
         val clean = modelId.trim()
@@ -219,9 +221,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             prefs.edit().putString("reply_speech_model", clean).apply()
         }
         val savedVoice = if (clean.isBlank()) "" else prefs.getString(replySpeechVoiceKey(clean), "").orEmpty().trim()
+        val savedFormat = if (clean.isBlank()) "" else prefs.getString(replySpeechFormatKey(clean), "").orEmpty().trim()
         _state.value = _state.value.copy(
             openRouterSpeechModel = clean,
             openRouterSpeechVoice = savedVoice,
+            openRouterSpeechResponseFormat = normalizeSpeechResponseFormat(savedFormat),
             status = if (clean.isBlank()) "Модель озвучивания ответов не выбрана" else "Модель озвучивания ответов сохранена"
         )
     }
@@ -234,7 +238,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (clean.isBlank()) prefs.edit().remove(key).apply() else prefs.edit().putString(key, clean).apply()
         _state.value = _state.value.copy(
             openRouterSpeechVoice = clean,
-            status = if (clean.isBlank()) "Голос озвучивания ответов снят" else "Голос озвучивания ответов сохранён"
+            status = if (clean.isBlank()) "Голос для ответов не задан" else "Голос озвучивания ответов сохранён"
+        )
+    }
+
+    fun setOpenRouterSpeechResponseFormat(value: String) {
+        val model = _state.value.openRouterSpeechModel.trim()
+        if (model.isBlank()) return
+        val clean = normalizeSpeechResponseFormat(value)
+        val key = replySpeechFormatKey(model)
+        if (clean.isBlank()) prefs.edit().remove(key).apply() else prefs.edit().putString(key, clean).apply()
+        _state.value = _state.value.copy(
+            openRouterSpeechResponseFormat = clean,
+            status = if (clean.isBlank()) "Формат ответов: Авто" else "Формат ответов: ${clean.uppercase()}"
         )
     }
 

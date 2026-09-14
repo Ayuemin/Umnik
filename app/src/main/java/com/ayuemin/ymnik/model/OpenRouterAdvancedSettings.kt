@@ -12,5 +12,6 @@ data class OpenRouterMediaSettings(
     val videoModel: String = "",
     val speechModel: String = "",
     val transcriptionModel: String = "",
-    val voice: String = ""
+    val voice: String = "",
+    val responseFormat: String? = null
 )

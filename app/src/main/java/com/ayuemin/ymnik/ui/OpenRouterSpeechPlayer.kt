@@ -3,7 +3,6 @@ package com.ayuemin.ymnik.ui
 import android.content.Context
 import android.media.MediaPlayer
 import com.ayuemin.ymnik.ChatViewModel
-import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.network.OpenRouterAudioClient
@@ -44,9 +43,9 @@ data class OpenRouterSpeechPlaybackState(
 /**
  * One-tap neural speech for an assistant message.
  *
- * Long answers are synthesized in short fragments. The first fragment starts
- * playing as soon as it is ready while the following fragment is prepared in
- * parallel. Audio only lives in app cache for the current playback session.
+ * Short and medium answers are synthesized as one coherent utterance for better
+ * prosody. Long answers are split at natural boundaries; the next part is prepared
+ * while the current one plays. Audio only lives in app cache for this session.
  */
 class OpenRouterSpeechPlayer(
     context: Context,
@@ -55,7 +54,6 @@ class OpenRouterSpeechPlayer(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val secrets = SecretStore(appContext)
-    private val featurePrefs = OpenRouterFeaturePrefs(appContext)
     private val audioClient = OpenRouterAudioClient(appContext)
     private val cacheDir = File(appContext.cacheDir, "openrouter_speech_playback").apply {
         mkdirs()
@@ -100,11 +98,8 @@ class OpenRouterSpeechPlayer(
         }
 
         val baseUrl = viewModel.connectionTextEndpoint(profile.id)
-        val replyVoice = appState.openRouterSpeechVoice.trim()
-        if (replyVoice.isBlank()) {
-            mutableState.value = OpenRouterSpeechPlaybackState(error = "Голос озвучивания ответов не выбран")
-            return
-        }
+        val replyVoice = appState.openRouterSpeechVoice.trim().takeIf { it.isNotBlank() }
+        val replyFormat = appState.openRouterSpeechResponseFormat.trim().takeIf { it.isNotBlank() }
         val chunks = splitForSpeech(text)
         mutableState.value = OpenRouterSpeechPlaybackState(
             messageId = messageId,
@@ -120,6 +115,7 @@ class OpenRouterSpeechPlayer(
                             model = model,
                             text = chunks.first(),
                             voice = replyVoice,
+                            responseFormat = replyFormat,
                             baseUrl = baseUrl
                         )
                     }
@@ -142,6 +138,7 @@ class OpenRouterSpeechPlayer(
                                     model = model,
                                     text = chunks[index + 1],
                                     voice = replyVoice,
+                                    responseFormat = replyFormat,
                                     baseUrl = baseUrl
                                 )
                             }
@@ -184,6 +181,7 @@ class OpenRouterSpeechPlayer(
         model: String,
         text: String,
         voice: String?,
+        responseFormat: String?,
         baseUrl: String
     ): File {
         var lastNetworkError: IOException? = null
@@ -194,15 +192,23 @@ class OpenRouterSpeechPlayer(
                     model = model,
                     input = text,
                     voice = voice,
-                    responseFormat = "mp3",
+                    responseFormat = responseFormat,
                     baseUrl = baseUrl
                 )
-                val extension = result.format.lowercase()
+                val pcm = result.format.equals("pcm", ignoreCase = true) || result.mimeType.equals("audio/pcm", ignoreCase = true)
+                val extension = if (pcm) "wav" else result.format.lowercase()
                     .replace(Regex("[^a-z0-9]"), "")
                     .ifBlank { "mp3" }
+                val playableBytes = if (pcm) {
+                    OpenRouterAudioClient.pcmToWav(
+                        pcm = result.bytes,
+                        sampleRateHz = result.sampleRateHz ?: 24_000,
+                        channels = result.channels ?: 1
+                    )
+                } else result.bytes
                 val file = withContext(Dispatchers.IO) {
                     File(cacheDir, "speech_${UUID.randomUUID()}.$extension").apply {
-                        writeBytes(result.bytes)
+                        writeBytes(playableBytes)
                     }
                 }
                 tempFiles += file
@@ -320,48 +326,59 @@ class OpenRouterSpeechPlayer(
         scope.cancel()
     }
 
-    private fun splitForSpeech(source: String, maxChars: Int = 280): List<String> {
+    private fun splitForSpeech(
+        source: String,
+        singleRequestMaxChars: Int = 1800,
+        chunkMaxChars: Int = 1500
+    ): List<String> {
         val normalized = source
             .replace("\r\n", "\n")
             .replace(Regex("[ \t]+"), " ")
+            .replace(Regex("""\n{3,}"""), "\n\n")
             .trim()
-        if (normalized.length <= maxChars) return listOf(normalized)
+        if (normalized.length <= singleRequestMaxChars) return listOf(normalized)
 
-        val sentences = normalized
-            .split(Regex("(?<=[.!?…])\\s+|\\n+"))
-            .map { it.trim() }
-            .filter { it.isNotBlank() }
-
-        val pieces = mutableListOf<String>()
-        sentences.forEach { sentence ->
-            if (sentence.length <= maxChars) {
-                pieces += sentence
-            } else {
-                var rest = sentence
-                while (rest.length > maxChars) {
-                    val candidate = rest.take(maxChars)
-                    val splitAt = candidate.lastIndexOf(' ').takeIf { it >= maxChars / 2 } ?: maxChars
-                    pieces += rest.take(splitAt).trim()
-                    rest = rest.drop(splitAt).trimStart()
-                }
-                if (rest.isNotBlank()) pieces += rest
+        fun splitLongParagraph(paragraph: String): List<String> {
+            var rest = paragraph.trim()
+            if (rest.length <= chunkMaxChars) return listOf(rest)
+            val result = mutableListOf<String>()
+            while (rest.length > chunkMaxChars) {
+                val candidate = rest.take(chunkMaxChars)
+                val sentenceBreak = listOf(". ", "! ", "? ", "… ")
+                    .maxOf { candidate.lastIndexOf(it) }
+                    .takeIf { it >= chunkMaxChars / 2 }
+                    ?.plus(1)
+                val wordBreak = candidate.lastIndexOf(' ')
+                    .takeIf { it >= chunkMaxChars / 2 }
+                val splitAt = sentenceBreak ?: wordBreak ?: chunkMaxChars
+                result += rest.take(splitAt).trim()
+                rest = rest.drop(splitAt).trimStart()
             }
+            if (rest.isNotBlank()) result += rest
+            return result
         }
 
-        if (pieces.isEmpty()) return listOf(normalized.take(maxChars))
+        val pieces = normalized
+            .split(Regex("""\n\s*\n+"""))
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .flatMap(::splitLongParagraph)
+
+        if (pieces.isEmpty()) return listOf(normalized)
 
         val chunks = mutableListOf<String>()
         var current = StringBuilder()
         pieces.forEach { piece ->
-            val extra = if (current.isEmpty()) piece.length else piece.length + 1
-            if (current.isNotEmpty() && current.length + extra > maxChars) {
+            val separator = if (current.isEmpty()) "" else "\n\n"
+            if (current.isNotEmpty() && current.length + separator.length + piece.length > chunkMaxChars) {
                 chunks += current.toString().trim()
                 current = StringBuilder()
             }
-            if (current.isNotEmpty()) current.append(' ')
+            if (current.isNotEmpty()) current.append("\n\n")
             current.append(piece)
         }
         if (current.isNotEmpty()) chunks += current.toString().trim()
         return chunks.filter { it.isNotBlank() }
     }
+
 }

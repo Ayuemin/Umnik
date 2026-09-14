@@ -18,6 +18,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import java.io.IOException
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
@@ -46,6 +48,8 @@ class OpenRouterAudioClient(private val context: Context) {
         val bytes: ByteArray,
         val mimeType: String,
         val format: String,
+        val sampleRateHz: Int? = null,
+        val channels: Int? = null,
         val generationId: String? = null
     )
 
@@ -104,59 +108,90 @@ class OpenRouterAudioClient(private val context: Context) {
         model: String,
         input: String,
         voice: String? = null,
-        responseFormat: String = "mp3",
+        responseFormat: String? = null,
         speed: Double? = null,
         baseUrl: String = DEFAULT_BASE_URL
     ): SpeechResult {
         require(input.isNotBlank()) { "Нет текста для озвучивания" }
-        val format = responseFormat.lowercase().let { if (it == "pcm") "pcm" else "mp3" }
-        val payload = JsonObject().apply {
-            addProperty("model", model)
-            addProperty("input", input)
-            voice?.trim()?.takeIf { it.isNotBlank() }?.let { addProperty("voice", it) }
-            addProperty("response_format", format)
-            speed?.takeIf { it > 0.0 }?.let { addProperty("speed", it) }
-        }
-        val request = Request.Builder()
-            .url(endpoint(baseUrl, "audio/speech"))
-            .header("Authorization", "Bearer $apiKey")
-            .header("Content-Type", "application/json")
-            .header("X-Title", "Umnik Android")
-            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
-            .build()
+        val requestedFormat = normalizeSpeechResponseFormat(responseFormat)
+        val automaticFormat = requestedFormat == null
+        val firstFormat = resolveSpeechResponseFormat(model, requestedFormat)
 
         return suspendCancellableCoroutine { continuation ->
-            val call = http.newCall(request)
-            continuation.invokeOnCancellation { call.cancel() }
-            call.enqueue(object : Callback {
-                override fun onFailure(call: Call, e: IOException) {
-                    if (continuation.isActive) continuation.resumeWithException(e)
-                }
+            var activeCall: Call? = null
+            continuation.invokeOnCancellation { activeCall?.cancel() }
 
-                override fun onResponse(call: Call, response: Response) {
-                    response.use { current ->
-                        runCatching {
+            fun enqueue(format: String?, retryAllowed: Boolean) {
+                val payload = JsonObject().apply {
+                    addProperty("model", model)
+                    addProperty("input", input)
+                    voice?.trim()?.takeIf { it.isNotBlank() }?.let { addProperty("voice", it) }
+                    format?.let { addProperty("response_format", it) }
+                    speed?.takeIf { it > 0.0 }?.let { addProperty("speed", it) }
+                }
+                val request = Request.Builder()
+                    .url(endpoint(baseUrl, "audio/speech"))
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Content-Type", "application/json")
+                    .header("X-Title", "Umnik Android")
+                    .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val call = http.newCall(request)
+                activeCall = call
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, e: IOException) {
+                        if (continuation.isActive) continuation.resumeWithException(e)
+                    }
+
+                    override fun onResponse(call: Call, response: Response) {
+                        response.use { current ->
                             if (!current.isSuccessful) {
                                 val body = current.body?.string().orEmpty()
-                                error(apiError(current.code, body))
+                                val suggested = if (automaticFormat && retryAllowed) suggestedSpeechFormat(body) else null
+                                if (suggested != null && suggested != format && continuation.isActive) {
+                                    enqueue(suggested, retryAllowed = false)
+                                    return
+                                }
+                                if (continuation.isActive) continuation.resumeWithException(IllegalStateException(apiError(current.code, body)))
+                                return
                             }
-                            val bytes = current.body?.bytes() ?: ByteArray(0)
-                            if (bytes.isEmpty()) error("OpenRouter вернул пустой аудиофайл")
-                            SpeechResult(
-                                bytes = bytes,
-                                mimeType = current.header("Content-Type")?.substringBefore(';')?.trim()
-                                    ?: if (format == "mp3") "audio/mpeg" else "audio/pcm",
-                                format = format,
-                                generationId = current.header("X-Generation-Id")
-                            )
-                        }.onSuccess { result ->
-                            if (continuation.isActive) continuation.resume(result)
-                        }.onFailure { error ->
-                            if (continuation.isActive) continuation.resumeWithException(error)
+                            runCatching {
+                                val bytes = current.body?.bytes() ?: ByteArray(0)
+                                if (bytes.isEmpty()) error("OpenRouter вернул пустой аудиофайл")
+                                val contentType = current.header("Content-Type").orEmpty()
+                                val mime = contentType.substringBefore(';').trim().lowercase()
+                                val actualFormat = when (mime) {
+                                    "audio/mpeg", "audio/mp3" -> "mp3"
+                                    "audio/pcm", "audio/l16" -> "pcm"
+                                    "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+                                    else -> format ?: firstFormat ?: "pcm"
+                                }
+                                SpeechResult(
+                                    bytes = bytes,
+                                    mimeType = mime.ifBlank {
+                                        when (actualFormat) {
+                                            "mp3" -> "audio/mpeg"
+                                            "wav" -> "audio/wav"
+                                            else -> "audio/pcm"
+                                        }
+                                    },
+                                    format = actualFormat,
+                                    sampleRateHz = contentTypeParameter(contentType, "rate")?.toIntOrNull(),
+                                    channels = contentTypeParameter(contentType, "channels")?.toIntOrNull(),
+                                    generationId = current.header("X-Generation-Id")
+                                )
+                            }.onSuccess { result ->
+                                if (continuation.isActive) continuation.resume(result)
+                            }.onFailure { error ->
+                                if (continuation.isActive) continuation.resumeWithException(error)
+                            }
                         }
                     }
-                }
-            })
+                })
+            }
+
+            enqueue(firstFormat, retryAllowed = true)
         }
     }
 
@@ -172,6 +207,74 @@ class OpenRouterAudioClient(private val context: Context) {
                 else -> lower.takeIf { it in setOf("wav", "mp3", "flac", "m4a", "ogg", "webm", "aac") } ?: "mp3"
             }
         }
+
+        fun normalizeSpeechResponseFormat(value: String?): String? = when (value?.trim()?.lowercase()) {
+            "mp3" -> "mp3"
+            "pcm" -> "pcm"
+            else -> null
+        }
+
+        /** Auto is intentionally conservative: known single-format families get a safe value,
+         * while unknown/current providers receive no response_format and may use their default. */
+        fun resolveSpeechResponseFormat(model: String, requested: String?): String? {
+            normalizeSpeechResponseFormat(requested)?.let { return it }
+            val id = model.trim().lowercase()
+            return when {
+                "gemini" in id && ("tts" in id || "speech" in id) -> "pcm"
+                "voxtral" in id && "tts" in id -> "mp3"
+                else -> null
+            }
+        }
+
+        fun pcmToWav(
+            pcm: ByteArray,
+            sampleRateHz: Int = 24_000,
+            channels: Int = 1,
+            bitsPerSample: Int = 16
+        ): ByteArray {
+            val safeRate = sampleRateHz.takeIf { it in 8_000..192_000 } ?: 24_000
+            val safeChannels = channels.takeIf { it in 1..8 } ?: 1
+            val safeBits = bitsPerSample.takeIf { it in setOf(8, 16, 24, 32) } ?: 16
+            val blockAlign = safeChannels * safeBits / 8
+            val byteRate = safeRate * blockAlign
+            val header = ByteBuffer.allocate(44).order(ByteOrder.LITTLE_ENDIAN)
+            header.put("RIFF".toByteArray(Charsets.US_ASCII))
+            header.putInt(36 + pcm.size)
+            header.put("WAVE".toByteArray(Charsets.US_ASCII))
+            header.put("fmt ".toByteArray(Charsets.US_ASCII))
+            header.putInt(16)
+            header.putShort(1.toShort())
+            header.putShort(safeChannels.toShort())
+            header.putInt(safeRate)
+            header.putInt(byteRate)
+            header.putShort(blockAlign.toShort())
+            header.putShort(safeBits.toShort())
+            header.put("data".toByteArray(Charsets.US_ASCII))
+            header.putInt(pcm.size)
+            return header.array() + pcm
+        }
+
+        private fun suggestedSpeechFormat(body: String): String? {
+            val lower = body.lowercase()
+            if ("response_format" !in lower && "format" !in lower) return null
+            return when {
+                Regex("""only\s+(supports?|accepts?)\s+[^.]{0,40}pcm""").containsMatchIn(lower) ||
+                    Regex("pcm[^.]{0,20}only").containsMatchIn(lower) -> "pcm"
+                Regex("""only\s+(supports?|accepts?)\s+[^.]{0,40}mp3""").containsMatchIn(lower) ||
+                    Regex("mp3[^.]{0,20}only").containsMatchIn(lower) -> "mp3"
+                else -> null
+            }
+        }
+
+        private fun contentTypeParameter(contentType: String, name: String): String? = contentType
+            .split(';')
+            .drop(1)
+            .map { it.trim() }
+            .firstOrNull { it.substringBefore('=').trim().equals(name, ignoreCase = true) }
+            ?.substringAfter('=', "")
+            ?.trim()
+            ?.trim('"')
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun endpoint(baseUrl: String, path: String): String =

@@ -211,7 +211,8 @@ class OpenRouterHubController(
                 val current = mutableState.value.media
                 val media = current.copy(
                     speechModel = model.id,
-                    voice = if (current.speechModel == model.id) current.voice else ""
+                    voice = if (current.speechModel == model.id) current.voice else "",
+                    responseFormat = if (current.speechModel == model.id) current.responseFormat else null
                 )
                 featurePrefs.saveMedia(media)
                 mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания текста и документов")
@@ -250,7 +251,7 @@ class OpenRouterHubController(
                 featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель видео снята")
             }
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
-                val media = mutableState.value.media.copy(speechModel = "", voice = "")
+                val media = mutableState.value.media.copy(speechModel = "", voice = "", responseFormat = null)
                 featurePrefs.saveMedia(media)
                 mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания текста и документов снята")
             }
@@ -281,7 +282,12 @@ class OpenRouterHubController(
 
     fun updateReplySpeechVoice(voice: String) {
         viewModel.setOpenRouterSpeechVoice(voice)
-        mutableState.value = mutableState.value.copy(status = if (voice.isBlank()) "Голос ответов снят" else "Голос ответов сохранён")
+        mutableState.value = mutableState.value.copy(status = if (voice.isBlank()) "Голос ответов не задан" else "Голос ответов сохранён")
+    }
+
+    fun updateReplySpeechResponseFormat(format: String) {
+        viewModel.setOpenRouterSpeechResponseFormat(format)
+        mutableState.value = mutableState.value.copy(status = if (format.isBlank()) "Формат ответов: Авто" else "Формат ответов: ${format.uppercase()}")
     }
 
     fun clearBatchModel() {
@@ -525,9 +531,10 @@ class OpenRouterHubController(
                     model = media.speechModel,
                     input = text,
                     voice = media.voice.takeIf { it.isNotBlank() },
+                    responseFormat = media.responseFormat?.takeIf { it.isNotBlank() },
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
-                saveGeneratedAudio(result.bytes, result.mimeType, result.format)
+                saveGeneratedAudio(result)
             }.onSuccess { file ->
                 appendHubExchange(chatId, "[Озвучивание]\n$text", "Аудио готово: ${file.name}", listOf(file))
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Аудио создано и добавлено в чат")
@@ -546,15 +553,15 @@ class OpenRouterHubController(
             return
         }
         val profile = openRouterProfile()
-        val media = featurePrefs.media()
+        val appState = viewModel.state.value
+        val model = appState.openRouterSpeechModel.trim()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
         if (profile == null || key.isBlank()) {
             mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
             return
         }
-        if (media.speechModel.isBlank()) {
-            viewModel.setOpenRouterSpeechModel("")
-            mutableState.value = mutableState.value.copy(status = "Сначала выберите модель озвучивания OpenRouter")
+        if (model.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "Сначала выберите модель озвучивания ответов")
             return
         }
         scope.launch {
@@ -562,16 +569,17 @@ class OpenRouterHubController(
             runCatching {
                 val result = audioClient.synthesize(
                     apiKey = key,
-                    model = media.speechModel,
+                    model = model,
                     input = text,
-                    voice = media.voice.takeIf { it.isNotBlank() },
+                    voice = appState.openRouterSpeechVoice.takeIf { it.isNotBlank() },
+                    responseFormat = appState.openRouterSpeechResponseFormat.takeIf { it.isNotBlank() },
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
-                saveGeneratedAudio(result.bytes, result.mimeType, result.format)
+                saveGeneratedAudio(result)
             }.onSuccess { file ->
                 appendHubAssistantResult(
                     chatId = chatId,
-                    assistantText = "Озвучка OpenRouter · ${media.speechModel.substringAfterLast('/')}",
+                    assistantText = "Озвучка OpenRouter · ${model.substringAfterLast('/')}",
                     files = listOf(file)
                 )
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Озвучка OpenRouter добавлена в чат")
@@ -804,8 +812,19 @@ class OpenRouterHubController(
         return OpenRouterVideoClient.Reference(type, "data:${data.mime};base64,$b64")
     }
 
-    private fun saveGeneratedAudio(bytes: ByteArray, mime: String, format: String): GeneratedFile =
-        saveGeneratedBinary("umnik_speech_${System.currentTimeMillis()}.$format", mime, bytes)
+    private fun saveGeneratedAudio(result: OpenRouterAudioClient.SpeechResult): GeneratedFile {
+        val pcm = result.format.equals("pcm", ignoreCase = true) || result.mimeType.equals("audio/pcm", ignoreCase = true)
+        val bytes = if (pcm) {
+            OpenRouterAudioClient.pcmToWav(
+                pcm = result.bytes,
+                sampleRateHz = result.sampleRateHz ?: 24_000,
+                channels = result.channels ?: 1
+            )
+        } else result.bytes
+        val format = if (pcm) "wav" else result.format
+        val mime = if (pcm) "audio/wav" else result.mimeType
+        return saveGeneratedBinary("umnik_speech_${System.currentTimeMillis()}.$format", mime, bytes)
+    }
 
     private fun saveGeneratedBinary(nameRaw: String, mime: String, bytes: ByteArray): GeneratedFile {
         val safe = nameRaw.substringAfterLast('/').substringAfterLast('\\')

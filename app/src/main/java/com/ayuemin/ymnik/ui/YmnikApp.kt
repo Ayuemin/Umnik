@@ -444,7 +444,7 @@ LazyColumn(
                 MessageCard(
                     message = message,
                     tts = tts,
-                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank() && state.openRouterSpeechVoice.isNotBlank(),
+                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
                     openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
                     onOpenRouterSpeech = { openRouterSpeech.toggle(message.id, message.text) },
                     onSaveGenerated = { file ->
@@ -2651,8 +2651,11 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     title = "Озвучивание ответов OpenRouter",
                     subtitle = when {
                         state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
-                        state.openRouterSpeechVoice.isBlank() -> "${state.openRouterSpeechModel.substringAfterLast('/')} · голос не выбран"
-                        else -> "${state.openRouterSpeechModel.substringAfterLast('/')} · ${state.openRouterSpeechVoice}"
+                        else -> buildList {
+                            add(state.openRouterSpeechModel.substringAfterLast('/'))
+                            if (state.openRouterSpeechVoice.isNotBlank()) add(state.openRouterSpeechVoice)
+                            add(state.openRouterSpeechResponseFormat.ifBlank { "Авто" }.uppercase())
+                        }.joinToString(" · ")
                     },
                     icon = Icons.Outlined.VolumeUp,
                     expanded = openRouterSpeechExpanded,
@@ -2670,7 +2673,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     ) {
                         Icon(Icons.Outlined.VolumeUp, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Настроить модель и голос")
+                        Text("Настроить модель и параметры")
                     }
                 }
             }
@@ -2678,7 +2681,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             item {
                 ExpandableSettingsCard(
                     title = "Озвучивание текста и документов",
-                    subtitle = "Отдельная модель и голос",
+                    subtitle = "Отдельная модель и параметры",
                     icon = Icons.Outlined.Description,
                     expanded = openRouterDocumentSpeechExpanded,
                     onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded }
