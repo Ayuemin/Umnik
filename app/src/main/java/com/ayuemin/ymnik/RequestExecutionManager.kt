@@ -2,6 +2,7 @@ package com.ayuemin.ymnik
 
 import android.content.Context
 import android.os.PowerManager
+import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
@@ -32,6 +33,17 @@ internal object RequestExecutionManager {
         val prefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
         val chatId = prefs.getString("chat_id", null) ?: return null
         val messageId = prefs.getString("message_id", null)
+        val savedBatch = if (messageId == null) null else runCatching {
+            BatchJobRepository(context).list().firstOrNull {
+                it.chatId == chatId && it.userMessageId == messageId
+            }
+        }.getOrNull()
+        if (savedBatch != null) {
+            prefs.edit().clear().commit()
+            OpenRouterBackgroundWorker.schedule(context, replace = true)
+            return "Batch-запрос продолжает выполняться на OpenRouter. Umnik заберёт результат автоматически."
+        }
+
         val completed = if (messageId == null) false else runCatching {
             val messages = ChatRepository(context).list().firstOrNull { it.id == chatId }?.messages.orEmpty()
             val index = messages.indexOfFirst { it.id == messageId }

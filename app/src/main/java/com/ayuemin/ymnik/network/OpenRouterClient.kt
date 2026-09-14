@@ -37,6 +37,7 @@ class OpenRouterClient(private val context: Context) {
         .writeTimeout(240, TimeUnit.SECONDS)
         .callTimeout(600, TimeUnit.SECONDS)
         .build()
+    private val chatBatchRunner = OpenRouterChatBatchRunner(context)
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
@@ -58,6 +59,7 @@ class OpenRouterClient(private val context: Context) {
     )
 
     fun cancelActiveRequest() {
+        chatBatchRunner.stopTracking()
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
     }
@@ -345,13 +347,13 @@ class OpenRouterClient(private val context: Context) {
                 val root = gson.fromJson(body, JsonObject::class.java)
                 val data = root.getAsJsonArray("data") ?: error("OpenRouter не вернул изображение")
                 val files = data.mapIndexedNotNull { index, element ->
-                if (!element.isJsonObject) return@mapIndexedNotNull null
-                val item = element.asJsonObject
-                val encoded = item.get("b64_json")?.asString?.takeIf { it.isNotBlank() }
-                    ?: return@mapIndexedNotNull null
-                val mime = item.get("media_type")?.asString?.takeIf { it.isNotBlank() } ?: "image/png"
-                saveGeneratedImage(encoded, mime, index)
-            }
+                    if (!element.isJsonObject) return@mapIndexedNotNull null
+                    val item = element.asJsonObject
+                    val encoded = item.get("b64_json")?.asString?.takeIf { it.isNotBlank() }
+                        ?: return@mapIndexedNotNull null
+                    val mime = item.get("media_type")?.asString?.takeIf { it.isNotBlank() } ?: "image/png"
+                    saveGeneratedImage(encoded, mime, index)
+                }
                 if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
                 Result("Изображение создано.", files)
             }
@@ -360,7 +362,11 @@ class OpenRouterClient(private val context: Context) {
         }
     }
 
-    private fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): OpenRouterResponseParser.Completion {
+    private suspend fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): OpenRouterResponseParser.Completion {
+        val model = payload.get("model")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+        if (model.endsWith(":batch", ignoreCase = true)) {
+            return chatBatchRunner.complete(apiKey, baseUrl, payload)
+        }
         val request = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
