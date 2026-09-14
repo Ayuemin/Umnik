@@ -8,12 +8,19 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 class OpenRouterAudioClient(private val context: Context) {
     private val gson = Gson()
@@ -100,7 +107,7 @@ class OpenRouterAudioClient(private val context: Context) {
         responseFormat: String = "mp3",
         speed: Double? = null,
         baseUrl: String = DEFAULT_BASE_URL
-    ): SpeechResult = withContext(Dispatchers.IO) {
+    ): SpeechResult {
         require(input.isNotBlank()) { "Нет текста для озвучивания" }
         val format = responseFormat.lowercase().let { if (it == "pcm") "pcm" else "mp3" }
         val payload = JsonObject().apply {
@@ -118,20 +125,38 @@ class OpenRouterAudioClient(private val context: Context) {
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
 
-        http.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                val body = response.body?.string().orEmpty()
-                error(apiError(response.code, body))
-            }
-            val bytes = response.body?.bytes() ?: ByteArray(0)
-            if (bytes.isEmpty()) error("OpenRouter вернул пустой аудиофайл")
-            SpeechResult(
-                bytes = bytes,
-                mimeType = response.header("Content-Type")?.substringBefore(';')?.trim()
-                    ?: if (format == "mp3") "audio/mpeg" else "audio/pcm",
-                format = format,
-                generationId = response.header("X-Generation-Id")
-            )
+        return suspendCancellableCoroutine { continuation ->
+            val call = http.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(e)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    response.use { current ->
+                        runCatching {
+                            if (!current.isSuccessful) {
+                                val body = current.body?.string().orEmpty()
+                                error(apiError(current.code, body))
+                            }
+                            val bytes = current.body?.bytes() ?: ByteArray(0)
+                            if (bytes.isEmpty()) error("OpenRouter вернул пустой аудиофайл")
+                            SpeechResult(
+                                bytes = bytes,
+                                mimeType = current.header("Content-Type")?.substringBefore(';')?.trim()
+                                    ?: if (format == "mp3") "audio/mpeg" else "audio/pcm",
+                                format = format,
+                                generationId = current.header("X-Generation-Id")
+                            )
+                        }.onSuccess { result ->
+                            if (continuation.isActive) continuation.resume(result)
+                        }.onFailure { error ->
+                            if (continuation.isActive) continuation.resumeWithException(error)
+                        }
+                    }
+                }
+            })
         }
     }
 
