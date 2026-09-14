@@ -13,6 +13,7 @@ import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.VideoJobRepository
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.BatchJob
 import com.ayuemin.ymnik.model.BatchJobStatus
 import com.ayuemin.ymnik.model.ChatMessage
@@ -36,6 +37,7 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
         val batchJobs = batches.list().filter { !it.status.terminal || it.remoteId !in batchDelivered }
         val videoJobs = videos.list().filter { !it.status.terminal || it.localPath.isNullOrBlank() || it.remoteId !in videoDelivered }
         if (batchJobs.isEmpty() && videoJobs.isEmpty()) return Result.success()
+        DiagnosticLog.record(applicationContext, "BACKGROUND", "job worker start; batches=${batchJobs.size}; videos=${videoJobs.size}")
 
         val secrets = SecretStore(applicationContext)
         val chats = ChatRepository(applicationContext)
@@ -90,10 +92,14 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                         )
                     }
                     markDelivered("batches", current.remoteId)
+                    DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch delivered; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; items=${current.items.size}")
                 } else retry = true
                 batches.upsert(current)
                 AsyncJobEvents.notifyChanged()
-            }.onFailure { retry = true }
+            }.onFailure { error ->
+                retry = true
+                DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch worker failure", error)
+            }
         }
 
         videoJobs.forEach { stored ->
@@ -119,10 +125,14 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                 if (current.status.terminal) {
                     current.chatId?.let { chatId -> deliverVideo(chats, chatId, current) }
                     markDelivered("videos", current.remoteId)
+                    DiagnosticLog.record(applicationContext, "BACKGROUND", "Video delivered; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; hasFile=${!current.localPath.isNullOrBlank()}")
                 } else retry = true
                 videos.upsert(current)
                 AsyncJobEvents.notifyChanged()
-            }.onFailure { retry = true }
+            }.onFailure { error ->
+                retry = true
+                DiagnosticLog.record(applicationContext, "BACKGROUND", "Video worker failure", error)
+            }
         }
 
         return if (retry) Result.retry() else Result.success()

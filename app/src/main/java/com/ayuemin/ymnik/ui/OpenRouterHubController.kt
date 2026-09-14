@@ -12,6 +12,7 @@ import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.VideoJobRepository
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.BatchJob
 import com.ayuemin.ymnik.model.BatchJobItem
 import com.ayuemin.ymnik.model.ChatMessage
@@ -270,6 +271,7 @@ class OpenRouterHubController(
     }
 
     fun submitBatch(raw: String) {
+        DiagnosticLog.action(context, "batch_submit", "inputChars=${raw.length}")
         val input = raw.trim()
         if (input.isBlank()) {
             mutableState.value = mutableState.value.copy(status = "Введите хотя бы одно задание")
@@ -349,6 +351,7 @@ class OpenRouterHubController(
     }
 
     fun submitVideo(promptRaw: String, references: List<Uri> = emptyList()) {
+        DiagnosticLog.action(context, "video_submit", "promptChars=${promptRaw.length}; refs=${references.size}")
         val prompt = promptRaw.trim()
         val profile = openRouterProfile()
         val model = mutableState.value.media.videoModel.trim()
@@ -404,6 +407,7 @@ class OpenRouterHubController(
     }
 
     fun transcribe(uri: Uri) {
+        DiagnosticLog.action(context, "transcription_submit")
         val profile = openRouterProfile()
         val model = mutableState.value.media.transcriptionModel.trim()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
@@ -427,6 +431,7 @@ class OpenRouterHubController(
     }
 
     fun synthesize(textRaw: String) {
+        DiagnosticLog.action(context, "speech_submit", "textChars=${textRaw.length}")
         val text = textRaw.trim()
         val profile = openRouterProfile()
         val media = mutableState.value.media
@@ -457,6 +462,7 @@ class OpenRouterHubController(
     }
 
     fun runShell(promptRaw: String, attachments: List<Uri> = emptyList()) {
+        DiagnosticLog.action(context, "shell_submit", "promptChars=${promptRaw.length}; attachments=${attachments.size}")
         val prompt = promptRaw.trim()
         val profile = openRouterProfile()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
@@ -591,6 +597,7 @@ class OpenRouterHubController(
             ) else chat
         }
         chats.save(next)
+        DiagnosticLog.record(context, "CHAT_RESULT", "hub user message added; chat=${chatId.take(8)}; chars=${text.length}")
         AsyncJobEvents.notifyChanged()
     }
 
@@ -606,6 +613,7 @@ class OpenRouterHubController(
             ) else chat
         }
         chats.save(next)
+        DiagnosticLog.record(context, "CHAT_RESULT", "hub exchange added; chat=${chatId.take(8)}; assistantChars=${assistantText.length}; files=${files.size}; fileTypes=${files.map { it.mimeType }.distinct().joinToString(",")}")
     }
 
     private data class UriData(val name: String, val mime: String, val bytes: ByteArray)

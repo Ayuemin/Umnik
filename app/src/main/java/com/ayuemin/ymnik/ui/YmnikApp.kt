@@ -2715,7 +2715,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
             }
 
             item {
-                val enabledCount = state.connectionProfiles.count { it.id !in state.disabledConnectionIds }
+                val openRouterSettingsProfile = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
+                    ?: state.connectionProfiles.first()
                 ExpandableSettingsCard(
                     title = "OpenRouter",
                     subtitle = "API-ключ и соединение",
@@ -2724,98 +2725,43 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     onToggle = { connectionsExpanded = !connectionsExpanded }
                 ) {
                     Text(
-                        "Для OpenRouter и NVIDIA Umnik знает стандартные адреса сам. Для других сервисов можно настроить отдельный Image API в дополнительных параметрах.",
+                        "Umnik работает через OpenRouter. Здесь настраивается единственное подключение приложения; выбор моделей находится в разделе «Модели».",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.height(9.dp))
-                    state.connectionProfiles.forEach { profile ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    editingProfileId = profile.id
-                                    connectionAdvancedExpanded = false
-                                    connectionKey = ""
-                                    connectionImageKey = ""
-                                },
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 4.dp, vertical = 7.dp)
-                            ) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(
-                                        profile.name,
-                                        fontWeight = if (editingProfileId == profile.id) FontWeight.Bold else FontWeight.Medium
-                                    )
-                                    Text(
-                                        providerTypeLabel(profile.type),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1
-                                    )
-                                }
-                            }
-                            Switch(
-                                checked = profile.id !in state.disabledConnectionIds,
-                                onCheckedChange = { vm.setConnectionEnabled(profile.id, it) }
-                            )
-                        }
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.18f))
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = {
-                            val id = vm.addCompatibleProfile()
-                            editingProfileId = id
-                            connectionAdvancedExpanded = true
-                            connectionKey = ""
-                            connectionImageKey = ""
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Add, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Добавить подключение")
-                    }
-                    Spacer(Modifier.height(12.dp))
-                    Text(
-                        editingProfile.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
-                        Spacer(Modifier.height(7.dp))
-                        OutlinedTextField(
-                            value = connectionName,
-                            onValueChange = { connectionName = it.take(60) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Название") },
-                            singleLine = true
-                        )
-                    }
-                    Spacer(Modifier.height(7.dp))
+                    Spacer(Modifier.height(10.dp))
                     OutlinedTextField(
                         value = connectionKey,
                         onValueChange = { connectionKey = it },
                         modifier = Modifier.fillMaxWidth(),
-                        label = { Text("API-ключ") },
+                        label = { Text("API-ключ OpenRouter") },
                         placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
                         visualTransformation = PasswordVisualTransformation(),
                         singleLine = true
                     )
-                    Spacer(Modifier.height(7.dp))
+                    Spacer(Modifier.height(8.dp))
                     FilledTonalButton(
-                        onClick = { vm.checkConnection(editingProfile.id) },
-                        enabled = !state.isLoading,
+                        onClick = {
+                            vm.saveApiKey(connectionKey.takeIf { it.isNotBlank() })
+                            connectionKey = ""
+                        },
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Icon(Icons.Outlined.Check, contentDescription = null)
                         Spacer(Modifier.width(7.dp))
+                        Text("Сохранить API-ключ")
+                    }
+                    Spacer(Modifier.height(7.dp))
+                    FilledTonalButton(
+                        onClick = { vm.checkConnection(openRouterSettingsProfile.id) },
+                        enabled = !state.isLoading,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(7.dp))
                         Text("Проверить подключение")
                     }
-                    Spacer(Modifier.height(4.dp))
+                    Spacer(Modifier.height(5.dp))
                     TextButton(
                         onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
                         modifier = Modifier.fillMaxWidth()
@@ -2825,175 +2771,117 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                             contentDescription = null
                         )
                         Spacer(Modifier.width(6.dp))
-                        Text("Дополнительные настройки")
+                        Text("Технические настройки OpenRouter")
                     }
                     if (connectionAdvancedExpanded) {
-                        if (editingProfile.type != ProviderType.OPENAI_COMPATIBLE) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Автоматические адреса")
-                                    Text(
-                                        "Получать актуальные стандартные адреса из реестра Umnik",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = connectionUseProviderDefaults,
-                                    onCheckedChange = { connectionUseProviderDefaults = it }
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Автоматический адрес API")
+                                Text(
+                                    "Рекомендуется. Umnik использует актуальный стандартный адрес OpenRouter.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Spacer(Modifier.height(7.dp))
+                            Switch(
+                                checked = connectionUseProviderDefaults,
+                                onCheckedChange = { connectionUseProviderDefaults = it }
+                            )
                         }
-                        OutlinedTextField(
-                            value = connectionUrl,
-                            onValueChange = { connectionUrl = it.trim().take(300) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Адрес API текста") },
-                            placeholder = { Text("https://example.com/v1") },
-                            singleLine = true,
-                            enabled = editingProfile.type == ProviderType.OPENAI_COMPATIBLE || !connectionUseProviderDefaults
-                        )
-                        Text(
-                            if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE)
-                                "Для текста используются стандартные /models и /chat/completions."
-                            else if (connectionUseProviderDefaults)
-                                "Адрес обновляется из реестра провайдеров; встроенная копия остаётся запасным вариантом."
-                            else
-                                "Ручной адрес имеет приоритет над встроенным реестром.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 5.dp)
-                        )
+                        if (!connectionUseProviderDefaults) {
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = connectionUrl,
+                                onValueChange = { connectionUrl = it.trim().take(300) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Адрес API OpenRouter") },
+                                placeholder = { Text("https://openrouter.ai/api/v1") },
+                                singleLine = true
+                            )
+                        }
                         Spacer(Modifier.height(8.dp))
                         OutlinedTextField(
                             value = connectionContextWindow,
                             onValueChange = { value -> connectionContextWindow = value.filter(Char::isDigit).take(7) },
                             modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Окно контекста, токенов") },
-                            placeholder = { Text("Авто по модели; если неизвестно — 128000") },
+                            label = { Text("Ручной предел контекста, токенов") },
+                            placeholder = { Text("Необязательно · обычно определяется по модели") },
                             singleLine = true
                         )
                         Text(
-                            "Необязательно. Для своего API укажите реальный предел модели; сохранённые сообщения не удаляются.",
+                            "Оставьте поле пустым, если не требуется вручную ограничивать контекст.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 5.dp)
+                        )
+                        Spacer(Modifier.height(9.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                vm.saveConnectionProfile(
+                                    profileId = openRouterSettingsProfile.id,
+                                    name = "OpenRouter",
+                                    baseUrl = connectionUrl,
+                                    apiKey = connectionKey.takeIf { it.isNotBlank() },
+                                    imageEnabled = true,
+                                    imageBaseUrl = null,
+                                    imageProtocol = ImageApiProtocol.AUTO,
+                                    useSameImageApiKey = true,
+                                    imageApiKey = null,
+                                    useProviderDefaults = connectionUseProviderDefaults,
+                                    contextLimitTokens = connectionContextWindow.toIntOrNull()
+                                )
+                                connectionKey = ""
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("Сохранить технические настройки") }
+                    }
+                    Text(
+                        "API-ключ хранится локально и шифруется через Android Keystore.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+            }
+
+            item {
+                ElevatedCard(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                ) {
+                    Column(Modifier.fillMaxWidth().padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Outlined.Description, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Памятка по использованию Umnik", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "Короткие сценарии по возможностям приложения",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Text(
+                            "Откроется в новом чате. Памятка встроена в Umnik и не расходует API при открытии.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("Генерация изображений")
-                                Text(
-                                    "Подключить Image API этого сервиса",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(checked = connectionImageEnabled, onCheckedChange = { connectionImageEnabled = it })
-                        }
-                        if (connectionImageEnabled) {
-                            Spacer(Modifier.height(8.dp))
-                            if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
-                                Text("Протокол изображений", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium)
-                                Spacer(Modifier.height(5.dp))
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    items(ImageApiProtocol.entries) { protocol ->
-                                        FilterChip(
-                                            selected = connectionImageProtocol == protocol,
-                                            onClick = { connectionImageProtocol = protocol },
-                                            label = { Text(imageProtocolLabel(protocol)) }
-                                        )
-                                    }
-                                }
-                            } else {
-                                Text(
-                                    if (editingProfile.type == ProviderType.NVIDIA)
-                                        "Протокол изображений определяется автоматически: NVIDIA NIM."
-                                    else
-                                        "Протокол изображений определяется автоматически: OpenRouter Image API.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(Modifier.height(7.dp))
-                            OutlinedTextField(
-                                value = connectionImageUrl,
-                                onValueChange = { connectionImageUrl = it.trim().take(320) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Адрес API изображений") },
-                                placeholder = { Text("https://example.com/v1") },
-                                singleLine = true,
-                                enabled = editingProfile.type == ProviderType.OPENAI_COMPATIBLE || !connectionUseProviderDefaults
-                            )
-                            Text(
-                                "Для известных провайдеров Umnik подставляет этот адрес сам. Для своего сервера можно указать отдельный адрес.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 5.dp)
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Использовать тот же API-ключ", modifier = Modifier.weight(1f))
-                                Switch(checked = connectionSameImageKey, onCheckedChange = { connectionSameImageKey = it })
-                            }
-                            if (!connectionSameImageKey) {
-                                Spacer(Modifier.height(7.dp))
-                                OutlinedTextField(
-                                    value = connectionImageKey,
-                                    onValueChange = { connectionImageKey = it },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("API-ключ изображений") },
-                                    placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
-                                    visualTransformation = PasswordVisualTransformation(),
-                                    singleLine = true
-                                )
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(9.dp))
-                    FilledTonalButton(
-                        onClick = {
-                            vm.saveConnectionProfile(
-                                profileId = editingProfile.id,
-                                name = connectionName,
-                                baseUrl = connectionUrl,
-                                apiKey = connectionKey.takeIf { it.isNotBlank() },
-                                imageEnabled = connectionImageEnabled,
-                                imageBaseUrl = connectionImageUrl.takeIf { it.isNotBlank() },
-                                imageProtocol = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) connectionImageProtocol else ImageApiProtocol.AUTO,
-                                useSameImageApiKey = connectionSameImageKey,
-                                imageApiKey = connectionImageKey.takeIf { it.isNotBlank() },
-                                useProviderDefaults = if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) false else connectionUseProviderDefaults,
-                                contextLimitTokens = connectionContextWindow.toIntOrNull()
-                            )
-                            connectionKey = ""
-                            connectionImageKey = ""
-                        },
-                        enabled = connectionUrl.isNotBlank() || (editingProfile.type != ProviderType.OPENAI_COMPATIBLE && connectionUseProviderDefaults),
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Сохранить подключение") }
-                    if (editingProfile.type == ProviderType.OPENAI_COMPATIBLE) {
-                        Spacer(Modifier.height(4.dp))
-                        TextButton(
+                        FilledTonalButton(
                             onClick = {
-                                vm.deleteConnectionProfile(editingProfile.id)
-                                editingProfileId = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }?.id ?: "openrouter"
-                                connectionKey = ""
-                                connectionImageKey = ""
+                                vm.openUsageGuide()
+                                onBack()
                             },
                             modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Удалить подключение")
+                            Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Открыть памятку в новом чате")
                         }
                     }
-                    Text(
-                        "Ключи хранятся локально и шифруются через Android Keystore.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
                 }
             }
 
@@ -3032,7 +2920,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     }
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "Когда запись выключена, она практически не влияет на работу приложения. В лог не пишутся тексты сообщений, содержимое файлов и API-ключи: сохраняются технические события, модель, адрес сервиса без параметров, HTTP-код, время запроса и текст ошибки.",
+                        "Для ручной проверки журнал фиксирует сетевые стадии, действия, выбранную модель, типы вложений, фоновые задания и возврат результатов в чат. Тексты сообщений, содержимое файлов и API-ключи не записываются. Журнал хранит до ~8 МБ последних событий.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

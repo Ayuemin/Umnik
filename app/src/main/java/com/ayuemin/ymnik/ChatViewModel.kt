@@ -19,6 +19,7 @@ import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.help.UmnikUsageGuide
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
@@ -874,6 +875,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
+        DiagnosticLog.action(context, "web_search_toggle", "enabled=$enabled; model=${currentTextModelId()}")
         if (enabled && (activeConnectionProfile().type != ProviderType.OPENROUTER || "openrouter" in _state.value.disabledConnectionIds)) {
             _state.value = _state.value.copy(status = "Поиск в сети сейчас поддерживается подключением OpenRouter")
             return
@@ -883,6 +885,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setReasoningEnabled(enabled: Boolean) {
+        DiagnosticLog.action(context, "reasoning_toggle", "enabled=$enabled; model=${currentTextModelId()}; effort=${_state.value.reasoningEffort.name}")
         if (enabled) {
             val info = currentTextModelInfo()
             val effort = preferredReasoningEffort(currentTextModelId(), info)
@@ -1114,6 +1117,54 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             storageStats = storageRepository.stats(),
             status = null
         )
+        DiagnosticLog.action(context, "new_chat", "chat=${chat.id.take(8)}; project=${projectId ?: "none"}")
+        return chat.id
+    }
+
+    fun openUsageGuide(): String {
+        cleanupTempAttachments(_state.value.pendingAttachments)
+        if (_state.value.isLoading) return _state.value.currentChatId
+        val profile = _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
+            ?: defaultOpenRouterProfile()
+        val now = System.currentTimeMillis()
+        val message = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "assistant",
+            text = UmnikUsageGuide.TEXT,
+            providerName = "Umnik"
+        )
+        val chat = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = "Памятка по Umnik",
+            messages = listOf(message),
+            mode = ChatMode.TEXT,
+            connectionProfileId = profile.id,
+            createdAt = now,
+            updatedAt = now
+        )
+        val retained = _state.value.chats.filterNot { old -> old.projectId == null && isBareEmptyChat(old) }
+        val next = listOf(chat) + retained
+        chatsRepository.save(next)
+        prefs.edit()
+            .putString("current_chat_id", chat.id)
+            .putString("active_connection_profile", profile.id)
+            .putString("chat_mode", ChatMode.TEXT.name)
+            .putBoolean("reasoning_enabled", false)
+            .apply()
+        _state.value = _state.value.copy(
+            chats = next,
+            currentChatId = chat.id,
+            messages = listOf(message),
+            mode = ChatMode.TEXT,
+            activeConnectionProfileId = profile.id,
+            textModel = loadTextModelForProfile(profile),
+            currentChatTextModel = null,
+            reasoningEnabled = false,
+            pendingAttachments = emptyList(),
+            status = null
+        )
+        DiagnosticLog.action(context, "usage_guide_opened", "chat=${chat.id.take(8)}; local=true")
+        if (isProfileConfigured(profile)) refreshModelCapabilities()
         return chat.id
     }
 
@@ -1248,6 +1299,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
+        DiagnosticLog.action(context, "switch_chat", "chat=${id.take(8)}; messages=${chat.messages.size}; model=$modelId")
         if (profile.id !in _state.value.disabledConnectionIds && isProfileConfigured(profile)) refreshModelCapabilities()
     }
 
@@ -1782,8 +1834,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun addAttachment(uri: Uri, forImageGeneration: Boolean = false) {
+        DiagnosticLog.action(context, "attachment_pick", "imageGeneration=$forImageGeneration")
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
+                DiagnosticLog.record(context, "ATTACHMENT", "loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
                 if (attachment.size > 25L * 1024 * 1024) {
                     _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
                 } else {
@@ -1801,8 +1855,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun addCameraAttachment(uri: Uri, localPath: String, forImageGeneration: Boolean = false) {
+        DiagnosticLog.action(context, "camera_result", "imageGeneration=$forImageGeneration")
         runCatching { api.attachmentFromUri(uri).copy(localPath = localPath) }
             .onSuccess { attachment ->
+                DiagnosticLog.record(context, "ATTACHMENT", "camera loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
                 if (attachment.size > 25L * 1024 * 1024) {
                     File(localPath).delete()
                     _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
@@ -1823,6 +1879,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun addVoiceRecording(localPath: String): Boolean {
+        DiagnosticLog.action(context, "voice_recording_result")
         if (_state.value.isLoading || _state.value.requestActive) {
             File(localPath).delete()
             return false
@@ -1852,6 +1909,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return false
         }
         _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
+        DiagnosticLog.record(context, "ATTACHMENT", "voice accepted; mime=audio/wav; bytes=${file.length()}")
         return true
     }
 
