@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -33,6 +34,8 @@ fun PinnedBackHeader(
     onBack: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    BackHandler(onBack = onBack)
+
     Row(
         modifier = modifier
             .fillMaxWidth()
