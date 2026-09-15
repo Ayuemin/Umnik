@@ -393,7 +393,7 @@ private fun ProjectDetailDialog(
     var renameValue by remember { mutableStateOf("") }
     var chatSettingsId by remember { mutableStateOf<String?>(null) }
     val projectChats = state.chats.filter { it.projectId == project.id }
-        .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
+        .sortedWith(compareByDescending<ChatSession> { vm.isOrchestratorChat(it.id) }.thenByDescending { it.isFavorite }.thenByDescending { it.updatedAt })
 
     FullScreenPanel(title = project.name, onBack = onDismiss) {
         LazyColumn(
@@ -485,7 +485,7 @@ private fun ProjectDetailDialog(
     }
 
     state.chats.firstOrNull { it.id == chatSettingsId }?.let { chat ->
-        ProjectChatSettingsDialog(
+        ProjectChatAutomationDialog(
             chat = chat,
             project = project,
             state = state,
@@ -518,13 +518,14 @@ private fun ProjectChatRow(
     onSettings: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val orchestrator = vm.isOrchestratorChat(chat.id)
     var menuOpen by remember(chat.id) { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         TextButton(onClick = onOpen, modifier = Modifier.weight(1f)) {
             Column(Modifier.fillMaxWidth()) {
-                Text(chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = FontWeight.Medium)
+                Text(if (orchestrator) "◆ ${chat.title}" else chat.title, maxLines = 1, overflow = TextOverflow.Ellipsis, fontWeight = if (orchestrator) FontWeight.Bold else FontWeight.Medium)
                 Text(
-                    buildString {
+                    if (orchestrator) "Управление процессом · ${vm.orchestratorSteps(chat.id).size} шагов" else buildString {
                         append("${chat.messages.size} сообщ. · ${projectDate(chat.updatedAt)}")
                         if (chat.stages.orEmpty().isNotEmpty()) append(" · ${chat.stages.orEmpty().size} этапов")
                     },
@@ -534,17 +535,12 @@ private fun ProjectChatRow(
             }
         }
         Box {
-            IconButton(onClick = { menuOpen = true }) {
-                Icon(Icons.Outlined.MoreVert, contentDescription = "Действия с чатом")
-            }
+            IconButton(onClick = { menuOpen = true }) { Icon(Icons.Outlined.MoreVert, contentDescription = "Действия с чатом") }
             DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                DropdownMenuItem(
+                if (!orchestrator) DropdownMenuItem(
                     text = { Text(if (chat.isFavorite) "Убрать из избранного" else "В избранное") },
                     leadingIcon = { Icon(if (chat.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder, contentDescription = null) },
-                    onClick = {
-                        menuOpen = false
-                        vm.setChatFavorite(chat.id, !chat.isFavorite)
-                    }
+                    onClick = { menuOpen = false; vm.setChatFavorite(chat.id, !chat.isFavorite) }
                 )
                 DropdownMenuItem(
                     text = { Text("Переименовать") },
@@ -556,7 +552,7 @@ private fun ProjectChatRow(
                     leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
                     onClick = { menuOpen = false; onSettings() }
                 )
-                DropdownMenuItem(
+                if (!orchestrator) DropdownMenuItem(
                     text = { Text("Удалить") },
                     leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
                     enabled = !state.isLoading,
@@ -958,7 +954,7 @@ private fun ProjectEditorDialog(
 }
 
 @Composable
-private fun StageEditorDialog(
+fun StageEditorDialog(
     project: Project,
     stage: ProjectStage?,
     state: UiState,
@@ -1116,7 +1112,7 @@ private fun StageEditorDialog(
 }
 
 @Composable
-private fun StageCard(
+fun StageCard(
     stage: ProjectStage,
     index: Int,
     total: Int,
@@ -1174,7 +1170,7 @@ private fun StageCard(
 }
 
 @Composable
-private fun SettingsExpander(
+fun SettingsExpander(
     title: String,
     subtitle: String,
     expanded: Boolean,

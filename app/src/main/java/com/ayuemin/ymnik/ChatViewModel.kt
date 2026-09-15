@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
+import com.ayuemin.ymnik.data.ProjectAutomationRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
@@ -31,10 +32,13 @@ import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelCategory
+import com.ayuemin.ymnik.model.OrchestratorStep
+import com.ayuemin.ymnik.model.OrchestratorStepType
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
 import com.ayuemin.ymnik.model.ProjectStage
+import com.ayuemin.ymnik.model.ProjectChatRuntimeProfile
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ProviderUsage
 import com.ayuemin.ymnik.model.ReasoningEffort
@@ -68,6 +72,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val chatsRepository = ChatRepository(context)
     private val chatFilesRepository = ChatFileRepository(context)
     private val projectsRepository = ProjectRepository(context)
+    private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
@@ -85,12 +90,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private val initialProfiles = loadConnectionProfiles()
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
-    private val initialChats = loadInitialChats()
+    private val initialProjects = projectsRepository.list()
+    private val initialChats = ensureProjectOrchestrators(initialProjects, loadInitialChats())
     private val initialChatId = prefs.getString("current_chat_id", null)
         ?.takeIf { id -> initialChats.any { it.id == id } }
         ?: initialChats.first().id
     private val initialChat = initialChats.first { it.id == initialChatId }
-    private val initialProjects = projectsRepository.list()
     private val initialSkillIds = run {
         val key = chatSkillsKey(initialChat.id)
         if (prefs.contains(key)) {
@@ -158,9 +163,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val replyModel = prefs.getString("reply_speech_model", "").orEmpty().trim()
                 if (replyModel.isBlank()) "" else prefs.getString(replySpeechFormatKey(replyModel), "").orEmpty().trim()
             },
-            webSearchEnabled = prefs.getBoolean("web_search", false),
-            reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
-            reasoningEffort = runCatching {
+            webSearchEnabled = projectAutomation.profile(initialChat.id)?.webSearchEnabled ?: prefs.getBoolean("web_search", false),
+            reasoningEnabled = projectAutomation.profile(initialChat.id)?.reasoningEnabled ?: prefs.getBoolean("reasoning_enabled", false),
+            reasoningEffort = projectAutomation.profile(initialChat.id)?.reasoningEffort ?: runCatching {
                 ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
             }.getOrDefault(ReasoningEffort.MEDIUM),
             reasoningEffortsByModel = loadReasoningEffortsByModel(),
@@ -198,6 +203,42 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
 
+    private fun ensureProjectOrchestrators(projects: List<Project>, chats: List<ChatSession>): List<ChatSession> {
+        if (projects.isEmpty()) return chats
+        var next = chats
+        var changed = false
+        val activeProfileId = prefs.getString("active_connection_profile", "openrouter") ?: "openrouter"
+        projects.forEach { project ->
+            val registered = projectAutomation.orchestratorChatId(project.id)
+            val existing = registered?.let { id -> next.firstOrNull { it.id == id && it.projectId == project.id } }
+            if (existing == null) {
+                val orchestrator = ChatSession(
+                    id = UUID.randomUUID().toString(),
+                    title = "Оркестратор",
+                    projectId = project.id,
+                    mode = ChatMode.TEXT,
+                    connectionProfileId = activeProfileId,
+                    textModelOverride = prefs.getString(profilePrefKey("text_model", activeProfileId), null)
+                )
+                next = listOf(orchestrator) + next
+                projectAutomation.registerOrchestrator(project.id, orchestrator.id)
+                projectAutomation.saveProfile(
+                    orchestrator.id,
+                    ProjectChatRuntimeProfile(
+                        modelId = orchestrator.textModelOverride,
+                        reasoningEffort = ReasoningEffort.MEDIUM,
+                        tools = openRouterFeaturePrefs.tools(),
+                        skillIds = project.skillIds
+                    )
+                )
+                prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), project.skillIds).apply()
+                changed = true
+            }
+        }
+        if (changed) chatsRepository.save(next)
+        return next
+    }
+
     private fun defaultSkillIdsForChat(chat: ChatSession): Set<String> =
         chat.projectId
             ?.let { projectId -> _state.value.projects.firstOrNull { it.id == projectId }?.skillIds }
@@ -210,6 +251,95 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         } else {
             defaultSkillIdsForChat(chat)
         }
+    }
+
+    fun chatSkillIds(chatId: String): Set<String> =
+        _state.value.chats.firstOrNull { it.id == chatId }?.let(::skillIdsForChat).orEmpty()
+
+    fun globalOpenRouterTools() = openRouterFeaturePrefs.tools()
+    fun isOrchestratorChat(chatId: String): Boolean = projectAutomation.isOrchestrator(chatId)
+    fun orchestratorSteps(chatId: String): List<OrchestratorStep> = projectAutomation.steps(chatId)
+    fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
+
+    private fun defaultRuntimeProfile(chat: ChatSession): ProjectChatRuntimeProfile = ProjectChatRuntimeProfile(
+        modelId = chat.textModelOverride ?: _state.value.textModel,
+        webSearchEnabled = prefs.getBoolean("web_search", false),
+        reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
+        reasoningEffort = runCatching {
+            ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
+        }.getOrDefault(ReasoningEffort.MEDIUM),
+        tools = openRouterFeaturePrefs.tools(),
+        skillIds = skillIdsForChat(chat)
+    )
+
+    private fun runtimeProfile(chat: ChatSession): ProjectChatRuntimeProfile =
+        projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat).also { projectAutomation.saveProfile(chat.id, it) }
+
+    private fun updateCurrentProjectRuntime(transform: (ProjectChatRuntimeProfile) -> ProjectChatRuntimeProfile) {
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId && it.projectId != null } ?: return
+        val next = transform(runtimeProfile(chat))
+        projectAutomation.saveProfile(chat.id, next)
+    }
+
+    fun saveProjectChatRuntimeSettings(chatId: String, profile: ProjectChatRuntimeProfile) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId && it.projectId != null } ?: return
+        val clean = profile.copy(modelId = profile.modelId?.trim()?.takeIf { it.isNotBlank() } ?: _state.value.textModel)
+        projectAutomation.saveProfile(chatId, clean)
+        prefs.edit().putStringSet(chatSkillsKey(chatId), clean.skillIds).apply()
+        val chats = _state.value.chats.map {
+            if (it.id == chatId) it.copy(textModelOverride = clean.modelId, updatedAt = System.currentTimeMillis()) else it
+        }
+        chatsRepository.save(chats)
+        val current = chatId == _state.value.currentChatId
+        _state.value = _state.value.copy(
+            chats = chats,
+            currentChatTextModel = if (current) clean.modelId else _state.value.currentChatTextModel,
+            webSearchEnabled = if (current) clean.webSearchEnabled else _state.value.webSearchEnabled,
+            reasoningEnabled = if (current) clean.reasoningEnabled else _state.value.reasoningEnabled,
+            reasoningEffort = if (current) clean.reasoningEffort else _state.value.reasoningEffort,
+            activeSkillIds = if (current) clean.skillIds else _state.value.activeSkillIds,
+            status = "Параметры работы чата сохранены"
+        )
+        if (current) refreshModelCapabilities()
+    }
+
+    fun addChatContextFile(chatId: String, uri: Uri) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        runCatching { api.attachmentFromUri(uri) }
+            .onSuccess { attachment ->
+                if (attachment.size > 25L * 1024L * 1024L) {
+                    _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
+                    return@onSuccess
+                }
+                if (chat.chatFiles.orEmpty().any { it.name.equals(attachment.name, true) && (attachment.size <= 0L || it.size == attachment.size) }) {
+                    _state.value = _state.value.copy(status = "Файл «${attachment.name}» уже есть в этом чате")
+                    return@onSuccess
+                }
+                runCatching { chatFilesRepository.importFile(chatId, attachment) }
+                    .onSuccess { file ->
+                        val chats = _state.value.chats.map { item ->
+                            if (item.id == chatId) item.copy(chatFiles = item.chatFiles.orEmpty() + file, updatedAt = System.currentTimeMillis()) else item
+                        }
+                        chatsRepository.save(chats)
+                        _state.value = _state.value.copy(chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
+                    }
+                    .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл") }
+            }
+            .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось прочитать файл") }
+    }
+
+    fun removeChatContextFile(chatId: String, fileId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        val file = chat.chatFiles.orEmpty().firstOrNull { it.id == fileId } ?: return
+        chatFilesRepository.delete(file)
+        val chats = _state.value.chats.map { item ->
+            if (item.id == chatId) item.copy(chatFiles = item.chatFiles.orEmpty().filterNot { it.id == fileId }, updatedAt = System.currentTimeMillis()) else item
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
     }
 
     init {
@@ -983,7 +1113,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Поиск в сети сейчас поддерживается подключением OpenRouter")
             return
         }
-        prefs.edit().putBoolean("web_search", enabled).apply()
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        if (chat?.projectId != null) updateCurrentProjectRuntime { it.copy(webSearchEnabled = enabled) }
+        else prefs.edit().putBoolean("web_search", enabled).apply()
         _state.value = _state.value.copy(webSearchEnabled = enabled)
     }
 
@@ -1003,7 +1135,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             prefs.edit().putString("reasoning_effort", effort.name).apply()
             _state.value = _state.value.copy(reasoningEffort = effort)
         }
-        prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        if (chat?.projectId != null) updateCurrentProjectRuntime { it.copy(reasoningEnabled = enabled, reasoningEffort = _state.value.reasoningEffort) }
+        else prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
         _state.value = _state.value.copy(reasoningEnabled = enabled)
     }
 
@@ -1038,6 +1172,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         } else {
             _state.value = _state.value.copy(reasoningEffortsByModel = nextMap)
+        }
+        if (clean == currentTextModelId()) {
+            val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+            if (chat?.projectId != null) updateCurrentProjectRuntime { it.copy(reasoningEffort = effort) }
         }
     }
 
@@ -1179,7 +1317,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return _state.value.currentChatId
 
         val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-        if (current != null && current.projectId == projectId && isBareEmptyChat(current)) {
+        if (current != null && current.projectId == projectId && !isOrchestratorChat(current.id) && isBareEmptyChat(current)) {
             _state.value = _state.value.copy(
                 pendingAttachments = emptyList(),
                 status = null
@@ -1207,6 +1345,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ?.let { id -> _state.value.projects.firstOrNull { it.id == id }?.skillIds }
             .orEmpty()
         chatsRepository.save(next)
+        if (projectId != null) {
+            val fixed = ProjectChatRuntimeProfile(
+                modelId = chat.textModelOverride ?: _state.value.textModel,
+                webSearchEnabled = _state.value.webSearchEnabled,
+                reasoningEnabled = _state.value.reasoningEnabled,
+                reasoningEffort = _state.value.reasoningEffort,
+                tools = openRouterFeaturePrefs.tools(),
+                skillIds = newSkillIds
+            )
+            projectAutomation.saveProfile(chat.id, fixed)
+            prefs.edit().putStringSet(chatSkillsKey(chat.id), newSkillIds).apply()
+        }
         prefs.edit()
             .putString("current_chat_id", chat.id)
             .putString("reasoning_effort", effort.name)
@@ -1359,17 +1509,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val refreshedChats = chatsRepository.list()
-        val original = refreshedChats.firstOrNull { it.id == id }
-            ?: _state.value.chats.firstOrNull { it.id == id }
-            ?: return
-        val requestedProfileId = original.connectionProfileId
-            ?: prefs.getString("active_connection_profile", "openrouter")
-            ?: "openrouter"
-        val profile = _state.value.connectionProfiles.firstOrNull {
-            it.id == requestedProfileId && it.id !in _state.value.disabledConnectionIds
-        } ?: _state.value.connectionProfiles.firstOrNull {
-            it.id !in _state.value.disabledConnectionIds && isProfileConfigured(it)
-        } ?: _state.value.connectionProfiles.firstOrNull { it.id !in _state.value.disabledConnectionIds }
+        val original = refreshedChats.firstOrNull { it.id == id } ?: _state.value.chats.firstOrNull { it.id == id } ?: return
+        val requestedProfileId = original.connectionProfileId ?: prefs.getString("active_connection_profile", "openrouter") ?: "openrouter"
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == requestedProfileId && it.id !in _state.value.disabledConnectionIds }
+            ?: _state.value.connectionProfiles.firstOrNull { it.id !in _state.value.disabledConnectionIds && isProfileConfigured(it) }
+            ?: _state.value.connectionProfiles.firstOrNull { it.id !in _state.value.disabledConnectionIds }
             ?: openRouterProfile()
         val migrated = profile.id != requestedProfileId || original.connectionProfileId == null || original.mode == ChatMode.IMAGE
         val chat = if (migrated) original.copy(
@@ -1381,36 +1525,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val baseChats = if (refreshedChats.isNotEmpty()) refreshedChats else _state.value.chats
         val chats = if (migrated) baseChats.map { if (it.id == id) chat else it } else baseChats
         if (migrated) chatsRepository.save(chats)
-        val nextMode = ChatMode.TEXT
         val defaultModel = loadTextModelForProfile(profile)
-        val modelId = chat.textModelOverride ?: defaultModel
-        val info = if (profile.id == _state.value.activeConnectionProfileId) {
-            _state.value.availableTextModels.firstOrNull { it.id == modelId }
-        } else null
-        val effort = preferredReasoningEffort(modelId, info)
-        val chatSkillIds = skillIdsForChat(chat)
+        val fixed = if (chat.projectId != null) runtimeProfile(chat) else null
+        val modelId = fixed?.modelId ?: chat.textModelOverride ?: defaultModel
+        val effort = fixed?.reasoningEffort ?: preferredReasoningEffort(modelId, null)
+        val chatSkillIds = fixed?.skillIds ?: skillIdsForChat(chat)
         prefs.edit()
             .putString("current_chat_id", id)
             .putString("active_connection_profile", profile.id)
-            .putString("chat_mode", nextMode.name)
+            .putString("chat_mode", ChatMode.TEXT.name)
             .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", false)
             .apply()
         _state.value = _state.value.copy(
             chats = chats,
             currentChatId = id,
             messages = chat.messages,
             activeSkillIds = chatSkillIds,
-            mode = nextMode,
+            mode = ChatMode.TEXT,
             activeConnectionProfileId = profile.id,
             textModel = defaultModel,
-            currentChatTextModel = chat.textModelOverride,
+            currentChatTextModel = fixed?.modelId ?: chat.textModelOverride,
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
             imageModel = loadImageModelForProfile(_state.value.imageConnectionProfileId),
             availableTextModels = emptyList(),
             reasoningEffort = effort,
-            reasoningEnabled = false,
-            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
+            reasoningEnabled = fixed?.reasoningEnabled ?: prefs.getBoolean("reasoning_enabled", false),
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) fixed?.webSearchEnabled ?: prefs.getBoolean("web_search", false) else false,
             apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
@@ -1436,11 +1576,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val deletingChat = _state.value.chats.firstOrNull { it.id == id } ?: return
+        if (isOrchestratorChat(id)) {
+            _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
+            return
+        }
 
         deletingChat.stages.orEmpty()
             .flatMap { it.files.orEmpty() }
             .forEach { projectsRepository.deleteFile(it) }
         prefs.edit().remove(chatSkillsKey(id)).apply()
+        projectAutomation.deleteChat(id)
         chatFilesRepository.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
@@ -1469,11 +1614,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
 
-        _state.value.chats.forEach { chat ->
+        val protectedOrchestrators = _state.value.chats.filter { isOrchestratorChat(it.id) }
+        _state.value.chats.filterNot { isOrchestratorChat(it.id) }.forEach { chat ->
             chat.stages.orEmpty()
                 .flatMap { it.files.orEmpty() }
                 .forEach { projectsRepository.deleteFile(it) }
             chatFilesRepository.deleteChat(chat.id)
+            projectAutomation.deleteChat(chat.id)
             prefs.edit().remove(chatSkillsKey(chat.id)).apply()
         }
 
@@ -1488,7 +1635,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
 
-        chatsRepository.save(listOf(chat))
+        val resetChats = listOf(chat) + protectedOrchestrators
+        chatsRepository.save(resetChats)
         prefs.edit()
             .putString("current_chat_id", chat.id)
             .putString("chat_mode", ChatMode.TEXT.name)
@@ -1497,7 +1645,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .apply()
 
         _state.value = _state.value.copy(
-            chats = listOf(chat),
+            chats = resetChats,
             currentChatId = chat.id,
             messages = emptyList(),
             activeSkillIds = emptySet(),
@@ -1548,13 +1696,28 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             masterPrompt = masterPrompt.trim(),
             isFavorite = favorite
         )
-        val projects = listOf(project) + _state.value.projects
-        projectsRepository.save(projects)
-        _state.value = _state.value.copy(
-            projects = projects,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
+        val orchestrator = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = "Оркестратор",
+            projectId = project.id,
+            mode = ChatMode.TEXT,
+            connectionProfileId = _state.value.activeConnectionProfileId,
+            textModelOverride = _state.value.currentChatTextModel ?: _state.value.textModel
         )
+        val projects = listOf(project) + _state.value.projects
+        val chats = listOf(orchestrator) + _state.value.chats
+        projectsRepository.save(projects)
+        chatsRepository.save(chats)
+        projectAutomation.registerOrchestrator(project.id, orchestrator.id)
+        val runtime = ProjectChatRuntimeProfile(
+            modelId = orchestrator.textModelOverride,
+            reasoningEffort = _state.value.reasoningEffort,
+            tools = openRouterFeaturePrefs.tools(),
+            skillIds = project.skillIds
+        )
+        projectAutomation.saveProfile(orchestrator.id, runtime)
+        prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), runtime.skillIds).apply()
+        _state.value = _state.value.copy(projects = projects, chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
         return project.id
     }
 
@@ -1764,6 +1927,313 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun cleanupStageDraftFiles(originalFileIds: Set<String>, draftFiles: List<ProjectFile>) {
         draftFiles.filterNot { it.id in originalFileIds }.forEach { projectsRepository.deleteFile(it) }
         _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun upsertOrchestratorStep(
+        chatId: String,
+        stepId: String?,
+        title: String,
+        type: OrchestratorStepType,
+        targetChatId: String?,
+        prompt: String,
+        passPreviousResult: Boolean
+    ): String? {
+        if (_state.value.isLoading || _state.value.requestActive || !isOrchestratorChat(chatId)) return null
+        val current = projectAutomation.steps(chatId)
+        val id = stepId ?: UUID.randomUUID().toString()
+        val step = OrchestratorStep(
+            id = id,
+            title = title.trim().ifBlank { "Шаг ${current.size + 1}" },
+            type = type,
+            targetChatId = targetChatId,
+            prompt = prompt.trim(),
+            passPreviousResult = passPreviousResult
+        )
+        val next = if (current.any { it.id == id }) current.map { if (it.id == id) step else it } else current + step
+        projectAutomation.saveSteps(chatId, next)
+        touchChat(chatId)
+        return id
+    }
+
+    fun deleteOrchestratorStep(chatId: String, stepId: String) {
+        if (_state.value.isLoading || _state.value.requestActive || !isOrchestratorChat(chatId)) return
+        projectAutomation.saveSteps(chatId, projectAutomation.steps(chatId).filterNot { it.id == stepId })
+        touchChat(chatId)
+    }
+
+    fun moveOrchestratorStep(chatId: String, stepId: String, delta: Int) {
+        if (_state.value.isLoading || _state.value.requestActive || delta == 0 || !isOrchestratorChat(chatId)) return
+        val steps = projectAutomation.steps(chatId).toMutableList()
+        val from = steps.indexOfFirst { it.id == stepId }
+        if (from < 0) return
+        val to = (from + delta).coerceIn(0, steps.lastIndex)
+        if (to == from) return
+        val item = steps.removeAt(from)
+        steps.add(to, item)
+        projectAutomation.saveSteps(chatId, steps)
+        touchChat(chatId)
+    }
+
+    private fun touchChat(chatId: String) {
+        val chats = _state.value.chats.map { if (it.id == chatId) it.copy(updatedAt = System.currentTimeMillis()) else it }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(chats = chats)
+    }
+
+    fun runOrchestrator(projectId: String): String? {
+        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
+        val orchestratorId = projectAutomation.orchestratorChatId(projectId) ?: return null
+        val orchestrator = _state.value.chats.firstOrNull { it.id == orchestratorId } ?: return null
+        val steps = projectAutomation.steps(orchestratorId)
+        if (steps.isEmpty()) {
+            _state.value = _state.value.copy(status = "У оркестратора пока нет шагов")
+            return null
+        }
+        val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Выполнить сценарий оркестратора (${steps.size} шагов).")
+        val prepared = chatsRepository.list().map { chat ->
+            if (chat.id == orchestratorId) chat.copy(messages = chat.messages + launch, updatedAt = System.currentTimeMillis()) else chat
+        }
+        chatsRepository.save(prepared)
+        _state.value = _state.value.copy(
+            chats = prepared,
+            messages = prepared.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
+            isLoading = true,
+            requestActive = true,
+            busyLabel = "Оркестратор · шаг 1 из ${steps.size}",
+            status = null
+        )
+        activeRequestJob = launchRequest(orchestratorId, launch.id, "Оркестратор · ${project.name}") {
+            var previous = ""
+            var failed: Throwable? = null
+            try {
+                steps.forEachIndexed { index, step ->
+                    _state.value = _state.value.copy(busyLabel = "Оркестратор · шаг ${index + 1} из ${steps.size}: ${step.title}")
+                    val result = when (step.type) {
+                        OrchestratorStepType.EXECUTE_CHAT -> {
+                            val target = chatsRepository.list().firstOrNull {
+                                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
+                            } ?: error("Для шага «${step.title}» не выбран чат")
+                            executeOrchestratorChatTask(project, target, step.prompt, previous, step.passPreviousResult)
+                        }
+                        OrchestratorStepType.RUN_CHAT_STAGES -> {
+                            val target = chatsRepository.list().firstOrNull {
+                                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
+                            } ?: error("Для шага «${step.title}» не выбран чат")
+                            if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет этапов")
+                            executeOrchestratorStageSequence(project, target, target.stages.orEmpty(), step.prompt, previous, step.passPreviousResult)
+                        }
+                        OrchestratorStepType.RUN_PROJECT_STAGES -> {
+                            if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
+                            executeOrchestratorStageSequence(project, orchestrator, project.stages.orEmpty(), step.prompt, previous, step.passPreviousResult)
+                        }
+                    }
+                    previous = result
+                    appendOrchestratorLog(orchestratorId, index + 1, step.title, result)
+                }
+            } catch (error: Throwable) {
+                failed = error
+                appendOrchestratorLog(orchestratorId, -1, "Сценарий остановлен", error.message ?: "Ошибка выполнения")
+            } finally {
+                context.getSharedPreferences("request_execution", Context.MODE_PRIVATE).edit().remove("target_chat_id").apply()
+                appendOrchestratorLog(
+                    orchestratorId,
+                    0,
+                    "Оркестратор",
+                    if (failed == null) "Сценарий завершён. Выполнено шагов: ${steps.size}." else "Сценарий остановлен: ${failed?.message ?: "ошибка"}"
+                )
+                _state.value = _state.value.copy(
+                    isLoading = false,
+                    requestActive = false,
+                    busyLabel = null,
+                    status = if (failed == null) "Сценарий оркестратора выполнен" else "Оркестратор остановлен"
+                )
+            }
+        }
+        return orchestratorId
+    }
+
+    private fun orchestratorPrompt(prompt: String, previous: String, passPrevious: Boolean): String = buildString {
+        append(prompt.trim().ifBlank { "Выполни свою заданную роль и инструкции, используя текущий контекст этого чата." })
+        if (passPrevious && previous.isNotBlank()) {
+            appendLine(); appendLine(); appendLine("===== РЕЗУЛЬТАТ ПРЕДЫДУЩЕГО ШАГА ОРКЕСТРАТОРА ====="); append(previous)
+        }
+    }
+
+    private suspend fun executeOrchestratorChatTask(
+        project: Project,
+        requested: ChatSession,
+        prompt: String,
+        previous: String,
+        passPrevious: Boolean
+    ): String {
+        val all = chatsRepository.list()
+        val chat = all.firstOrNull { it.id == requested.id } ?: requested
+        val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
+        if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        if (key.isBlank()) error("Нет API-ключа для чата «${chat.title}»")
+        val modelId = runtime.modelId ?: chat.textModelOverride ?: loadTextModelForProfile(profile)
+        val infos = runCatching { textModelsForProfile(profile) }.getOrDefault(emptyList())
+        val modelInfo = infos.firstOrNull { it.id == modelId }
+        val task = orchestratorPrompt(prompt, previous, passPrevious)
+        val history = chat.messages
+        val user = ChatMessage(UUID.randomUUID().toString(), "user", task)
+        var updated = all.map { if (it.id == chat.id) it.copy(messages = it.messages + user, updatedAt = System.currentTimeMillis()) else it }
+        chatsRepository.save(updated)
+        publishChats(updated)
+        val attachments = orchestratorAttachments(project, chat, modelInfo)
+        val skillText = skills.promptFor(runtime.skillIds)
+        val actualReasoning = runtime.reasoningEnabled && modelInfo?.supportsReasoning == true &&
+            (modelInfo.reasoningEfforts.isEmpty() || runtime.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+        val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
+        val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(
+            contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
+        )
+        val execPrefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
+        execPrefs.edit().putString("target_chat_id", chat.id).commit()
+        val result = try {
+            if (profile.type == ProviderType.OPENROUTER) {
+                api.chat(
+                    key, modelId, history, task, attachments,
+                    buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true),
+                    runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
+                    effectiveTextBaseUrl(profile), requestInfo
+                )
+            } else {
+                compatibleApi.chat(
+                    key, effectiveTextBaseUrl(profile), modelId, history, task, attachments,
+                    buildSystemPrompt(skillText, project, chat, false), requestInfo
+                )
+            }
+        } finally {
+            execPrefs.edit().remove("target_chat_id").commit()
+        }
+        val text = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
+        val assistant = ChatMessage(
+            UUID.randomUUID().toString(), "assistant", text,
+            generatedFiles = result.files,
+            modelId = result.modelId ?: modelId,
+            providerName = result.providerName,
+            costUsd = result.costUsd,
+            inputTokens = result.inputTokens,
+            outputTokens = result.outputTokens
+        )
+        val latest = chatsRepository.list()
+        updated = latest.map { if (it.id == chat.id) it.copy(messages = it.messages + assistant, updatedAt = System.currentTimeMillis()) else it }
+        chatsRepository.save(updated)
+        publishChats(updated)
+        return text
+    }
+
+    private suspend fun executeOrchestratorStageSequence(
+        project: Project,
+        requested: ChatSession,
+        stages: List<ProjectStage>,
+        prompt: String,
+        previous: String,
+        passPrevious: Boolean
+    ): String {
+        val initial = orchestratorPrompt(prompt, previous, passPrevious)
+        var all = chatsRepository.list()
+        val first = all.firstOrNull { it.id == requested.id } ?: requested
+        val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Оркестратор запускает этапы.\n\n$initial")
+        all = all.map { if (it.id == first.id) it.copy(messages = it.messages + launch, updatedAt = System.currentTimeMillis()) else it }
+        chatsRepository.save(all)
+        publishChats(all)
+        val baseHistory = all.first { it.id == first.id }.messages
+        val results = mutableListOf<Pair<ProjectStage, String>>()
+        stages.forEachIndexed { index, stage ->
+            val currentChats = chatsRepository.list()
+            val chat = currentChats.firstOrNull { it.id == first.id } ?: first
+            val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+            val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
+            if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
+            val key = secrets.getProfileApiKey(profile.id).orEmpty()
+            val modelId = stage.modelId?.takeIf { it.isNotBlank() } ?: runtime.modelId ?: chat.textModelOverride ?: loadTextModelForProfile(profile)
+            val infos = runCatching { textModelsForProfile(profile) }.getOrDefault(emptyList())
+            val modelInfo = infos.firstOrNull { it.id == modelId }
+            val sourceChats = stage.sourceChatIds.orEmpty().mapNotNull { id -> currentChats.firstOrNull { it.id == id && it.projectId == project.id } }
+            val stagePrompt = buildString {
+                appendLine("Выполни только текущий этап. Не переходи к следующим этапам сам.")
+                appendLine(); appendLine("===== ИСХОДНАЯ ЗАДАЧА ====="); appendLine(initial)
+                if (sourceChats.isNotEmpty()) {
+                    appendLine(); appendLine("===== ВЫБРАННЫЕ ЧАТЫ ПРОЕКТА =====")
+                    sourceChats.forEach { source ->
+                        appendLine("### ${source.title}")
+                        source.messages.forEach { message -> appendLine("${message.role}: ${message.text}") }
+                    }
+                }
+                if (results.isNotEmpty()) {
+                    appendLine(); appendLine("===== РЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ЭТАПОВ =====")
+                    results.forEachIndexed { i, pair -> appendLine("--- Этап ${i + 1}: ${pair.first.title} ---\n${pair.second}") }
+                }
+                appendLine(); appendLine("===== ТЕКУЩИЙ ЭТАП ${index + 1}: ${stage.title} ====="); appendLine(stage.instruction)
+            }
+            val attachments = (
+                orchestratorAttachments(project, chat, modelInfo) +
+                    stage.files.orEmpty().map { PendingAttachment("stage://${it.id}", it.name, it.mimeType, it.size, it.localPath) } +
+                    sourceChats.flatMap { it.chatFiles.orEmpty() }.map(::chatFileAsAttachment)
+            ).distinctBy { it.localPath ?: it.uri }
+            val skillText = skills.promptFor(runtime.skillIds)
+            val actualReasoning = runtime.reasoningEnabled && modelInfo?.supportsReasoning == true &&
+                (modelInfo.reasoningEfforts.isEmpty() || runtime.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+            val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
+            val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull())
+            val execPrefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
+            execPrefs.edit().putString("target_chat_id", chat.id).commit()
+            val response = try {
+                if (profile.type == ProviderType.OPENROUTER) api.chat(
+                    key, modelId, baseHistory, stagePrompt, attachments,
+                    buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true),
+                    runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
+                    effectiveTextBaseUrl(profile), requestInfo
+                ) else compatibleApi.chat(
+                    key, effectiveTextBaseUrl(profile), modelId, baseHistory, stagePrompt, attachments,
+                    buildSystemPrompt(skillText, project, chat, false), requestInfo
+                )
+            } finally { execPrefs.edit().remove("target_chat_id").commit() }
+            val text = ProjectOutputPolicy.apply(response.text, project.masterPrompt).ifBlank { "Готово." }
+            results += stage to text
+            appendProjectStageMessage(chat.id, index + 1, stage.title, text, response.modelId ?: modelId, response)
+        }
+        return results.lastOrNull()?.second ?: "Этапы выполнены."
+    }
+
+    private fun orchestratorAttachments(project: Project, chat: ChatSession, info: ModelInfo?): List<PendingAttachment> {
+        fun allowed(a: PendingAttachment): Boolean {
+            val mime = a.mimeType.lowercase(); val name = a.name.lowercase()
+            val text = mime.startsWith("text/") || listOf(".md", ".json", ".csv", ".yaml", ".yml", ".xml").any(name::endsWith)
+            return text || mime == "application/pdf" || name.endsWith(".pdf") ||
+                (mime.startsWith("image/") && info?.accepts("image") == true) ||
+                (mime.startsWith("audio/") && info?.accepts("audio") == true) ||
+                (mime.startsWith("video/") && info?.accepts("video") == true)
+        }
+        val projectFiles = project.files.map { PendingAttachment("project://${it.id}", it.name, it.mimeType, it.size, it.localPath) }
+        return (chat.chatFiles.orEmpty().map(::chatFileAsAttachment) + projectFiles).filter(::allowed).distinctBy { it.localPath ?: it.uri }
+    }
+
+    private fun appendOrchestratorLog(chatId: String, number: Int, title: String, text: String) {
+        val latest = chatsRepository.list()
+        val message = ChatMessage(
+            UUID.randomUUID().toString(),
+            "assistant",
+            if (number > 0) "## Шаг $number: $title\n\n$text" else "## $title\n\n$text",
+            providerName = "Оркестратор"
+        )
+        val updated = latest.map { if (it.id == chatId) it.copy(messages = it.messages + message, updatedAt = System.currentTimeMillis()) else it }
+        chatsRepository.save(updated)
+        publishChats(updated)
+    }
+
+    private fun publishChats(chats: List<ChatSession>) {
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats()
         )
@@ -2120,19 +2590,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         projectsRepository.deleteProjectFiles(projectId)
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
-
-        val chats = _state.value.chats.map { chat ->
-            if (chat.projectId == projectId) chat.copy(projectId = null, stages = null) else chat
+        val orchestratorId = projectAutomation.orchestratorChatId(projectId)
+        if (orchestratorId != null) {
+            chatFilesRepository.deleteChat(orchestratorId)
+            prefs.edit().remove(chatSkillsKey(orchestratorId)).apply()
+        }
+        projectAutomation.deleteProject(projectId)
+        val chats = _state.value.chats.mapNotNull { chat ->
+            when {
+                chat.id == orchestratorId -> null
+                chat.projectId == projectId -> {
+                    projectAutomation.deleteChat(chat.id)
+                    chat.copy(projectId = null, stages = null)
+                }
+                else -> chat
+            }
         }
         chatsRepository.save(chats)
-        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.firstOrNull()
         _state.value = _state.value.copy(
             projects = projects,
             chats = chats,
-            messages = current?.messages ?: _state.value.messages,
+            currentChatId = current?.id ?: _state.value.currentChatId,
+            messages = current?.messages ?: emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Проект удалён. Его чаты сохранены как обычные."
+            status = "Проект удалён. Оркестратор удалён вместе с ним; остальные чаты сохранены как обычные."
         )
     }
 
@@ -2268,12 +2751,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
                 val effectiveId = next.currentChatTextModel?.takeIf { id -> textInfos.any { it.id == id } } ?: selectedModel
                 val current = textInfos.firstOrNull { it.id == effectiveId }
-                val effort = preferredReasoningEffort(effectiveId, current)
-                val keepReasoning = reasoningStillValid(current, effort)
-                prefs.edit()
-                    .putString("reasoning_effort", effort.name)
-                    .putBoolean("reasoning_enabled", keepReasoning)
-                    .apply()
+                val activeChat = next.chats.firstOrNull { it.id == next.currentChatId }
+                val fixed = activeChat?.takeIf { it.projectId != null }?.let { projectAutomation.profile(it.id) }
+                val effort = fixed?.reasoningEffort ?: preferredReasoningEffort(effectiveId, current)
+                val keepReasoning = fixed?.reasoningEnabled ?: reasoningStillValid(current, effort)
+                if (fixed == null) {
+                    prefs.edit().putString("reasoning_effort", effort.name).putBoolean("reasoning_enabled", keepReasoning).apply()
+                }
                 next = next.copy(
                     textModel = selectedModel,
                     currentChatTextModel = next.currentChatTextModel?.takeIf { id -> textInfos.any { it.id == id } },
@@ -2560,6 +3044,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
         val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }.toSet()
         prefs.edit().putStringSet(chatSkillsKey(chat.id), next).apply()
+        if (chat.projectId != null) updateCurrentProjectRuntime { it.copy(skillIds = next) }
         _state.value = _state.value.copy(activeSkillIds = next)
     }
 
