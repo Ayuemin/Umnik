@@ -81,6 +81,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private var projectStagesJob: Job? = null
     private var requestGeneration: Long = 0L
 
+    private fun chatSkillsKey(chatId: String): String = "chat_active_skills::$chatId"
+
     private val initialProfiles = loadConnectionProfiles()
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialChats = loadInitialChats()
@@ -88,6 +90,28 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ?.takeIf { id -> initialChats.any { it.id == id } }
         ?: initialChats.first().id
     private val initialChat = initialChats.first { it.id == initialChatId }
+    private val initialProjects = projectsRepository.list()
+    private val initialSkillIds = run {
+        val key = chatSkillsKey(initialChat.id)
+        if (prefs.contains(key)) {
+            prefs.getStringSet(key, emptySet())?.toSet().orEmpty()
+        } else {
+            val projectDefaults = initialChat.projectId
+                ?.let { projectId -> initialProjects.firstOrNull { it.id == projectId }?.skillIds }
+                .orEmpty()
+            val legacy = prefs.getStringSet("active_skills", emptySet())?.toSet().orEmpty()
+            if (legacy.isNotEmpty()) {
+                (projectDefaults + legacy).also { selected ->
+                    prefs.edit()
+                        .putStringSet(key, selected)
+                        .remove("active_skills")
+                        .apply()
+                }
+            } else {
+                projectDefaults
+            }
+        }
+    }
     private val initialProfileId = (initialChat.connectionProfileId
         ?: prefs.getString("active_connection_profile", "openrouter"))
         ?.takeIf { id -> initialProfiles.any { it.id == id } && id !in initialDisabledConnectionIds }
@@ -110,10 +134,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         UiState(
             messages = initialChat.messages,
             chats = initialChats,
-            projects = projectsRepository.list(),
+            projects = initialProjects,
             currentChatId = initialChatId,
             skills = skills.list(),
-            activeSkillIds = prefs.getStringSet("active_skills", emptySet())?.toSet() ?: emptySet(),
+            activeSkillIds = initialSkillIds,
             mode = ChatMode.TEXT,
             connectionProfiles = initialProfiles,
             activeConnectionProfileId = initialProfileId,
@@ -173,6 +197,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    private fun defaultSkillIdsForChat(chat: ChatSession): Set<String> =
+        chat.projectId
+            ?.let { projectId -> _state.value.projects.firstOrNull { it.id == projectId }?.skillIds }
+            .orEmpty()
+
+    private fun skillIdsForChat(chat: ChatSession): Set<String> {
+        val key = chatSkillsKey(chat.id)
+        return if (prefs.contains(key)) {
+            prefs.getStringSet(key, emptySet())?.toSet().orEmpty()
+        } else {
+            defaultSkillIdsForChat(chat)
+        }
+    }
 
     init {
         DiagnosticLog.record(
@@ -1165,6 +1203,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
+        val newSkillIds = projectId
+            ?.let { id -> _state.value.projects.firstOrNull { it.id == id }?.skillIds }
+            .orEmpty()
         chatsRepository.save(next)
         prefs.edit()
             .putString("current_chat_id", chat.id)
@@ -1175,6 +1216,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = next,
             currentChatId = chat.id,
             messages = emptyList(),
+            activeSkillIds = newSkillIds,
             currentChatTextModel = null,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning,
@@ -1222,6 +1264,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = next,
             currentChatId = chat.id,
             messages = messages,
+            activeSkillIds = emptySet(),
             mode = ChatMode.TEXT,
             activeConnectionProfileId = profile.id,
             textModel = loadTextModelForProfile(profile),
@@ -1284,10 +1327,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
+        val branchSkillIds = _state.value.activeSkillIds
 
         chatsRepository.save(chats)
         prefs.edit()
             .putString("current_chat_id", branch.id)
+            .putStringSet(chatSkillsKey(branch.id), branchSkillIds)
             .putString("chat_mode", ChatMode.TEXT.name)
             .putString("reasoning_effort", effort.name)
             .putBoolean("reasoning_enabled", keepReasoning)
@@ -1297,6 +1342,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = chats,
             currentChatId = branch.id,
             messages = branchedMessages,
+            activeSkillIds = branchSkillIds,
             mode = ChatMode.TEXT,
             currentChatTextModel = branch.textModelOverride,
             reasoningEffort = effort,
@@ -1342,6 +1388,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value.availableTextModels.firstOrNull { it.id == modelId }
         } else null
         val effort = preferredReasoningEffort(modelId, info)
+        val chatSkillIds = skillIdsForChat(chat)
         prefs.edit()
             .putString("current_chat_id", id)
             .putString("active_connection_profile", profile.id)
@@ -1353,6 +1400,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = chats,
             currentChatId = id,
             messages = chat.messages,
+            activeSkillIds = chatSkillIds,
             mode = nextMode,
             activeConnectionProfileId = profile.id,
             textModel = defaultModel,
@@ -1389,6 +1437,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
         if (_state.value.chats.none { it.id == id }) return
 
+        prefs.edit().remove(chatSkillsKey(id)).apply()
         chatFilesRepository.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
@@ -1419,6 +1468,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         _state.value.chats.forEach { chat ->
             chatFilesRepository.deleteChat(chat.id)
+            prefs.edit().remove(chatSkillsKey(chat.id)).apply()
         }
 
         val chat = ChatSession(
@@ -1444,6 +1494,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = listOf(chat),
             currentChatId = chat.id,
             messages = emptyList(),
+            activeSkillIds = emptySet(),
             mode = ChatMode.TEXT,
             currentChatTextModel = null,
             reasoningEffort = effort,
@@ -1594,8 +1645,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val apiKey = secrets.getProfileApiKey(profile.id).orEmpty()
         if (apiKey.isBlank()) return null
 
-        val chatId = createChat(projectId)
-        val startText = initialTask.trim().ifBlank { "Используй цель, инструкции и материалы проекта." }
+        val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val chatId = if (activeChat?.projectId == projectId) activeChat.id else createChat(projectId)
+        val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        val baseHistory = currentChat.messages
+        val chatAttachments = currentChat.chatFiles.orEmpty().map(::chatFileAsAttachment)
+        val startText = initialTask.trim().ifBlank {
+            "Используй текущий диалог, его вложения, инструкции и материалы проекта."
+        }
         val now = System.currentTimeMillis()
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -1603,9 +1660,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             text = "Запустить этапы проекта.\n\nИсходная задача:\n$startText",
             timestamp = now
         )
-        val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
         val stageChat = currentChat.copy(
-            title = "Этапы · ${project.name}".take(80),
+            title = if (currentChat.title == "Новый чат") "Этапы · ${project.name}".take(80) else currentChat.title,
             messages = currentChat.messages + user,
             updatedAt = now
         )
@@ -1622,7 +1678,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             status = null
         )
         val generation = ++requestGeneration
-        DiagnosticLog.action(context, "project_stages_start", "project=${projectId.take(8)}; chat=${chatId.take(8)}; stages=${stages.size}")
+        DiagnosticLog.action(context, "project_stages_start", "project=${projectId.take(8)}; chat=${chatId.take(8)}; stages=${stages.size}; continued=${activeChat?.id == chatId}")
 
         projectStagesJob = viewModelScope.launch {
             val results = mutableListOf<Pair<ProjectStage, String>>()
@@ -1645,16 +1701,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     val actualReasoning = currentState.reasoningEnabled && modelInfo?.supportsReasoning == true &&
                         (modelInfo.reasoningEfforts.isEmpty() || currentState.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
                     val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) currentState.reasoningEffort.apiValue else null
-                    val attachments = project.files.mapNotNull { file ->
-                        val mime = file.mimeType.lowercase()
-                        val name = file.name.lowercase()
-                        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
-                            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
-                        val allowed = textLike || mime == "application/pdf" || name.endsWith(".pdf") ||
-                            (mime.startsWith("image/") && modelInfo?.accepts("image") == true) ||
-                            (mime.startsWith("audio/") && modelInfo?.accepts("audio") == true) ||
-                            (mime.startsWith("video/") && modelInfo?.accepts("video") == true)
-                        if (!allowed) null else PendingAttachment(
+
+                    val projectAttachments = project.files.map { file ->
+                        PendingAttachment(
                             uri = "project://${file.id}",
                             name = file.name,
                             mimeType = file.mimeType,
@@ -1662,7 +1711,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             localPath = file.localPath
                         )
                     }
-                    val skillsText = skills.promptFor(currentState.activeSkillIds + project.skillIds)
+                    fun allowedForStage(attachment: PendingAttachment): Boolean {
+                        val mime = attachment.mimeType.lowercase()
+                        val name = attachment.name.lowercase()
+                        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
+                            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+                        return textLike || mime == "application/pdf" || name.endsWith(".pdf") ||
+                            (mime.startsWith("image/") && modelInfo?.accepts("image") == true) ||
+                            (mime.startsWith("audio/") && modelInfo?.accepts("audio") == true) ||
+                            (mime.startsWith("video/") && modelInfo?.accepts("video") == true)
+                    }
+                    val attachments = (projectAttachments + chatAttachments)
+                        .filter(::allowedForStage)
+                        .distinctBy { it.localPath ?: it.uri }
+                    val skillsText = skills.promptFor(currentState.activeSkillIds)
                     val systemPrompt = buildSystemPrompt(skillsText, project, stageChat, modelInfo?.supportsTools == true)
                     val prompt = buildString {
                         appendLine("Выполни только текущий этап универсального сценария проекта. Не переходи к следующим этапам сам.")
@@ -1684,13 +1746,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
                     }
                     _state.value = _state.value.copy(busyLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}")
-                    DiagnosticLog.record(context, "PROJECT_STAGE", "start project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId")
+                    DiagnosticLog.record(context, "PROJECT_STAGE", "start project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId; history=${baseHistory.size}; chatFiles=${chatAttachments.size}")
 
                     val result = try {
                         api.chat(
                             apiKey,
                             modelId,
-                            emptyList(),
+                            baseHistory,
                             prompt,
                             attachments,
                             systemPrompt,
@@ -1783,14 +1845,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun toggleProjectSkill(projectId: String, skillId: String) {
+        var updatedSkillIds: Set<String>? = null
         val projects = _state.value.projects.map { project ->
             if (project.id != projectId) project else {
-                val next = project.skillIds.toMutableSet().apply { if (!add(skillId)) remove(skillId) }
+                val next = project.skillIds.toMutableSet().apply { if (!add(skillId)) remove(skillId) }.toSet()
+                updatedSkillIds = next
                 project.copy(skillIds = next, updatedAt = System.currentTimeMillis())
             }
         }
         projectsRepository.save(projects)
-        _state.value = _state.value.copy(projects = projects)
+        val currentChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val followsProjectDefaults = currentChat?.projectId == projectId && !prefs.contains(chatSkillsKey(currentChat.id))
+        _state.value = _state.value.copy(
+            projects = projects,
+            activeSkillIds = if (followsProjectDefaults) updatedSkillIds.orEmpty() else _state.value.activeSkillIds
+        )
     }
 
     fun addProjectFile(projectId: String, uri: Uri) {
@@ -2287,8 +2356,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun toggleSkill(id: String) {
-        val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }
-        prefs.edit().putStringSet("active_skills", next).apply()
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
+        val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }.toSet()
+        prefs.edit().putStringSet(chatSkillsKey(chat.id), next).apply()
         _state.value = _state.value.copy(activeSkillIds = next)
     }
 
@@ -2526,7 +2596,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillIds = _state.value.activeSkillIds + (currentProject?.skillIds ?: emptySet())
+                        val skillIds = _state.value.activeSkillIds
                         val skillText = skills.promptFor(skillIds)
                         val projectFiles = currentProject?.files.orEmpty().map { file ->
                             PendingAttachment(

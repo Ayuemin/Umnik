@@ -459,29 +459,35 @@ private fun ProjectDetailDialog(
             }
 
             item {
-                TextButton(
+                ElevatedCard(
                     onClick = { stagesExpanded = !stagesExpanded },
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(vertical = 8.dp)
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Этапы работы", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                        Text(
-                            "${project.stages.orEmpty().size} этапов · выполняются строго по порядку",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Этапы работы", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                            Text(
+                                "${project.stages.orEmpty().size} этапов · выполняются строго по порядку",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2
+                            )
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            if (stagesExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = if (stagesExpanded) "Свернуть" else "Развернуть"
                         )
                     }
-                    Icon(
-                        if (stagesExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = if (stagesExpanded) "Свернуть" else "Развернуть"
-                    )
                 }
             }
             if (stagesExpanded) {
                 item {
                     Text(
-                        "Последовательный сценарий для любых задач. Каждый этап — отдельный запрос. Следующий получает исходную задачу, материалы проекта и результаты предыдущих этапов. Мастер-инструкция действует на каждом шаге.",
+                        "Последовательный сценарий для любых задач. При запуске из чата каждый этап получает переписку и вложения этого чата, материалы проекта и результаты предыдущих этапов. Мастер-инструкция действует на каждом шаге.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -549,15 +555,11 @@ private fun ProjectDetailDialog(
                     }
                 }
                 item {
-                    Button(
-                        onClick = { runStagesOpen = true },
-                        enabled = project.stages.orEmpty().isNotEmpty() && !state.isLoading,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.PlayArrow, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Запустить этапы")
-                    }
+                    Text(
+                        "Запуск этапов перенесён в нужный чат проекта: нажмите + → «Навыки и проекты». Так этапы видят именно переписку и вложения этого чата.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 

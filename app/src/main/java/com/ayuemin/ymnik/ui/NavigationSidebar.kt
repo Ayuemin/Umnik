@@ -84,7 +84,6 @@ fun NavigationSidebar(
     BackHandler(onBack = onDismiss)
     var searchOpen by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
-    var menuOpen by remember { mutableStateOf(false) }
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
     var renameTarget by remember { mutableStateOf<ChatSession?>(null) }
     var renameValue by remember { mutableStateOf("") }
@@ -256,52 +255,17 @@ fun NavigationSidebar(
                         Spacer(Modifier.width(7.dp))
                         Text("Новый чат", maxLines = 1)
                     }
-                    Box(Modifier.weight(1f)) {
-                        TextButton(
-                            onClick = { menuOpen = true },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.Menu, contentDescription = null, modifier = Modifier.size(21.dp))
-                            Spacer(Modifier.width(7.dp))
-                            Text("Меню", maxLines = 1)
-                        }
-                        DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                            DropdownMenuItem(
-                                text = { Text("Проекты") },
-                                leadingIcon = { Icon(Icons.Outlined.FolderOpen, contentDescription = null) },
-                                onClick = {
-                                    menuOpen = false
-                                    onOpenProjects()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Навыки") },
-                                leadingIcon = { Icon(Icons.Outlined.Extension, contentDescription = null) },
-                                onClick = {
-                                    menuOpen = false
-                                    onOpenSkills()
-                                }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Настройки") },
-                                leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
-                                onClick = {
-                                    menuOpen = false
-                                    onOpenSettings()
-                                }
-                            )
-                            if (state.messages.isNotEmpty()) {
-                                HorizontalDivider()
-                                DropdownMenuItem(
-                                    text = { Text("Очистить текущий чат") },
-                                    leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
-                                    onClick = {
-                                        menuOpen = false
-                                        clearConfirm = true
-                                    }
-                                )
-                            }
-                        }
+                    TextButton(
+                        onClick = {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                            onOpenSettings()
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
+                        Spacer(Modifier.width(7.dp))
+                        Text("Настройки", maxLines = 1)
                     }
                 }
             }

@@ -272,6 +272,8 @@ private fun ChatScreen(
     var projectsOpen by remember { mutableStateOf(false) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
+    var openRouterToolsExpanded by remember { mutableStateOf(false) }
+    var skillsProjectsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
@@ -305,10 +307,9 @@ private fun ChatScreen(
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentChatFiles = currentChat?.chatFiles.orEmpty()
-    val currentProjectSkillIds = currentChat?.projectId
-        ?.let { projectId -> state.projects.firstOrNull { it.id == projectId }?.skillIds }
-        .orEmpty()
-    val activeSkillCount = (state.activeSkillIds + currentProjectSkillIds).size
+    val currentProject = currentChat?.projectId
+        ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
+    val activeSkillCount = state.activeSkillIds.size
 
     fun startVoiceRecording() {
         if (!microphoneAvailable || state.isLoading || state.requestActive || imagePromptMode) return
@@ -754,7 +755,7 @@ onBranch = if (message.role == "assistant") {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Добавить", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("Добавить", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -762,7 +763,7 @@ onBranch = if (message.role == "assistant") {
                 ) {
                     ComposerActionTile(
                         icon = Icons.Outlined.AttachFile,
-                        label = "Файл",
+                        label = "Вставить",
                         enabled = !state.isLoading,
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -773,7 +774,7 @@ onBranch = if (message.role == "assistant") {
                     )
                     ComposerActionTile(
                         icon = Icons.Outlined.CameraAlt,
-                        label = "Камера",
+                        label = "Быстрое фото",
                         enabled = !state.isLoading && cameraAvailable,
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -791,7 +792,7 @@ onBranch = if (message.role == "assistant") {
                     )
                     ComposerActionTile(
                         icon = Icons.Outlined.Image,
-                        label = "Создать",
+                        label = "Создать изображение",
                         enabled = !state.isLoading && imageConnectionAvailable && state.imageModel.isNotBlank(),
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -801,109 +802,162 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-
-                Text(
-                    "Инструменты OpenRouter",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ComposerActionTile(
-                        icon = Icons.Outlined.Mic,
-                        label = "В текст",
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
-                        }
-                    )
-                    ComposerActionTile(
-                        icon = Icons.Outlined.VolumeUp,
-                        label = "Озвучить",
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
-                        }
-                    )
-                    ComposerActionTile(
-                        icon = Icons.Outlined.Image,
-                        label = "Видео",
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
-                        }
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ComposerActionTile(
-                        icon = Icons.Outlined.Description,
-                        label = "Пакет задач",
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
-                        }
-                    )
-                    ComposerActionTile(
-                        icon = Icons.Outlined.Storage,
-                        label = "Shell",
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f),
-                        onClick = {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
-                        }
-                    )
-                    Spacer(Modifier.weight(1f))
-                }
-                HorizontalDivider()
-
-                Spacer(Modifier.height(2.dp))
                 if (!imagePromptMode) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        FilterChip(
-                            selected = state.reasoningEnabled,
-                            onClick = { vm.setReasoningEnabled(!state.reasoningEnabled) },
+                        ComposerToggleTile(
+                            icon = Icons.Outlined.Psychology,
+                            label = "Размышление",
+                            checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
-                            leadingIcon = {
-                                Icon(
-                                    if (state.reasoningEnabled) Icons.Outlined.Check else Icons.Outlined.Psychology,
-                                    contentDescription = if (state.reasoningEnabled) "Включено" else null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            label = { Text("Размышление", maxLines = 1) }
+                            onCheckedChange = vm::setReasoningEnabled
                         )
-                        FilterChip(
-                            selected = state.webSearchEnabled,
-                            onClick = { vm.setWebSearchEnabled(!state.webSearchEnabled) },
+                        ComposerToggleTile(
+                            icon = Icons.Outlined.Language,
+                            label = "Веб-поиск",
+                            checked = state.webSearchEnabled,
                             enabled = openRouterProfile,
                             modifier = Modifier.weight(1f),
-                            leadingIcon = {
-                                Icon(
-                                    if (state.webSearchEnabled) Icons.Outlined.Check else Icons.Outlined.Language,
-                                    contentDescription = if (state.webSearchEnabled) "Включено" else null,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            },
-                            label = { Text("Поиск в сети", maxLines = 1) }
+                            onCheckedChange = vm::setWebSearchEnabled
                         )
+                    }
+                }
+
+                ComposerSectionHeader(
+                    icon = Icons.Outlined.Storage,
+                    label = "Инструменты OpenRouter",
+                    expanded = openRouterToolsExpanded,
+                    onClick = { openRouterToolsExpanded = !openRouterToolsExpanded }
+                )
+                if (openRouterToolsExpanded) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
+                        }
+                        CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
+                        }
+                        CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                        }
+                        CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
+                        }
+                        Spacer(Modifier.weight(1f))
+                    }
+                }
+
+                ComposerSectionHeader(
+                    icon = Icons.Outlined.FolderOpen,
+                    label = "Навыки и проекты",
+                    expanded = skillsProjectsExpanded,
+                    onClick = { skillsProjectsExpanded = !skillsProjectsExpanded }
+                )
+                if (skillsProjectsExpanded) {
+                    if (currentProject != null) {
+                        Text("Проект: ${currentProject.name}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                        if (currentProject.stages.orEmpty().isNotEmpty()) {
+                            FilledTonalButton(
+                                onClick = {
+                                    val chatId = vm.runProjectStages(currentProject.id, text)
+                                    if (chatId != null) {
+                                        text = ""
+                                        actionsOpen = false
+                                    }
+                                },
+                                enabled = !state.isLoading && !state.requestActive,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(7.dp))
+                                Text("Запустить этапы (${currentProject.stages.orEmpty().size})")
+                            }
+                        } else {
+                            Text("В проекте пока нет этапов работы.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedProjectId = currentProject.id
+                                projectsOpen = true
+                                actionsOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Настройки проекта")
+                        }
+                    } else {
+                        Text(
+                            "Этот чат не входит в проект. Навыки можно использовать и без проекта.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        TextButton(
+                            onClick = {
+                                selectedProjectId = null
+                                projectsOpen = true
+                                actionsOpen = false
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Открыть проекты")
+                        }
+                    }
+
+                    Text("Навыки текущего чата", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    if (state.skills.isEmpty()) {
+                        Text("Навыков пока нет.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(state.skills, key = { it.id }) { skill ->
+                                val selected = skill.id in state.activeSkillIds
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { vm.toggleSkill(skill.id) },
+                                    label = { Text(skill.name, maxLines = 1) },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
+                                            contentDescription = if (selected) "Навык включён" else null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    TextButton(
+                        onClick = {
+                            actionsOpen = false
+                            onOpenSkills()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Управление навыками")
                     }
                 }
             }
@@ -920,6 +974,72 @@ onBranch = if (message.role == "assistant") {
             },
             initialProjectId = selectedProjectId
         )
+    }
+}
+
+
+@Composable
+private fun ComposerToggleTile(
+    icon: ImageVector,
+    label: String,
+    checked: Boolean,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
+            Spacer(Modifier.width(7.dp))
+            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+        }
+    }
+}
+
+@Composable
+private fun ComposerSectionHeader(
+    icon: ImageVector,
+    label: String,
+    expanded: Boolean,
+    onClick: () -> Unit
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(9.dp))
+        Text(label, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
+        Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = if (expanded) "Свернуть" else "Развернуть", modifier = Modifier.size(20.dp))
+    }
+}
+
+@Composable
+private fun CompactComposerTool(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    FilledTonalButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier,
+        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
+        Spacer(Modifier.width(5.dp))
+        Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }
 }
 
