@@ -20,6 +20,20 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fix updater replacement handling
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('scripts/apply_v1_11_0.py')
+          text = path.read_text()
+          old = "out, count = re.subn(pattern, repl, text, count=1, flags=re.S)"
+          new = "out, count = re.subn(pattern, lambda _match: repl, text, count=1, flags=re.S)"
+          if old not in text:
+              raise SystemExit('sub_once implementation not found')
+          path.write_text(text.replace(old, new, 1))
+          PY
+
       - name: Apply v1.11.0 source update
         run: python3 scripts/apply_v1_11_0.py
 
