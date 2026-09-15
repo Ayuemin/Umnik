@@ -65,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
+import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ProjectFile
 import com.ayuemin.ymnik.model.ProjectStage
@@ -127,7 +128,7 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     }
 
     state.chats.firstOrNull { it.id == editorId }?.let { chat ->
-        ChatProfileDialog(chat, vm) { editorId = null }
+        ChatProfileDialog(chat, state, vm) { editorId = null }
     }
 
     deleteTarget?.let { chat ->
@@ -223,7 +224,7 @@ private fun ChatHubRow(
 }
 
 @Composable
-private fun ChatProfileDialog(chat: ChatSession, vm: ChatViewModel, onDismiss: () -> Unit) {
+private fun ChatProfileDialog(chat: ChatSession, state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var title by remember(chat.id) { mutableStateOf(chat.title) }
     var role by remember(chat.id) { mutableStateOf(chat.assignedRole.orEmpty()) }
     var prompt by remember(chat.id) { mutableStateOf(chat.masterPrompt.orEmpty()) }
@@ -257,6 +258,15 @@ private fun ChatProfileDialog(chat: ChatSession, vm: ChatViewModel, onDismiss: (
                     Text("Избранное", Modifier.weight(1f))
                     Switch(favorite, { favorite = it })
                 }
+            }
+            item {
+                KnowledgeBaseSection(
+                    kind = KnowledgeOwnerKind.CHAT,
+                    ownerId = chat.id,
+                    state = state,
+                    vm = vm,
+                    title = "База знаний чата"
+                )
             }
         }
         FilledTonalButton(
@@ -734,6 +744,16 @@ private fun ProjectSettingsDialog(
                         Text("Добавить постоянные файлы")
                     }
                 }
+            }
+
+            item {
+                KnowledgeBaseSection(
+                    kind = KnowledgeOwnerKind.PROJECT,
+                    ownerId = project.id,
+                    state = state,
+                    vm = vm,
+                    title = "База знаний проекта"
+                )
             }
 
             item {

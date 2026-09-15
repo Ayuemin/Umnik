@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
+import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.OrchestratorStep
 import com.ayuemin.ymnik.model.OrchestratorStepType
 import com.ayuemin.ymnik.model.Project
@@ -269,6 +270,16 @@ fun ProjectChatAutomationDialog(
                         Text("Добавить вложение")
                     }
                 }
+            }
+
+            item {
+                KnowledgeBaseSection(
+                    kind = KnowledgeOwnerKind.CHAT,
+                    ownerId = chat.id,
+                    state = state,
+                    vm = vm,
+                    title = "База знаний чата"
+                )
             }
 
             item {
