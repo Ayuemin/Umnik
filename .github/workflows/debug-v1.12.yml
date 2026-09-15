@@ -5,6 +5,7 @@ on:
     branches: [ "feature/chat-profiles-orchestrator-v1.12.0" ]
     paths-ignore:
       - ".github/debug-v1.12.log"
+      - ".github/brace-report.txt"
 
 permissions:
   contents: write
@@ -27,6 +28,46 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
+      - name: Analyze Kotlin brace structure
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt')
+          s=p.read_text()
+          stack=[]; line=1; i=0; state='code'
+          snapshots=[]
+          while i < len(s):
+              c=s[i]; n=s[i+1] if i+1<len(s) else ''
+              if c=='\n':
+                  if line % 100 == 0: snapshots.append((line,len(stack), stack[-5:]))
+                  line+=1
+              if state=='code':
+                  if s.startswith('"""',i): state='triple'; i+=3; continue
+                  if c=='"': state='string'
+                  elif c=="'": state='char'
+                  elif c=='/' and n=='/': state='linecomment'; i+=2; continue
+                  elif c=='/' and n=='*': state='blockcomment'; i+=2; continue
+                  elif c=='{': stack.append(line)
+                  elif c=='}':
+                      if stack: stack.pop()
+                      else: snapshots.append(('EXTRA_CLOSE',line,[]))
+              elif state=='string':
+                  if c=='\\': i+=2; continue
+                  if c=='"': state='code'
+              elif state=='char':
+                  if c=='\\': i+=2; continue
+                  if c=="'": state='code'
+              elif state=='triple':
+                  if s.startswith('"""',i): state='code'; i+=3; continue
+              elif state=='linecomment':
+                  if c=='\n': state='code'
+              elif state=='blockcomment':
+                  if c=='*' and n=='/': state='code'; i+=2; continue
+              i+=1
+          out=['final depth='+str(len(stack)), 'unmatched opens='+repr(stack[-30:]), 'state='+state, '', 'snapshots:']
+          out += [repr(x) for x in snapshots]
+          Path('.github/brace-report.txt').write_text('\n'.join(out)+'\n')
+          PY
       - name: Capture compile log
         id: compile
         shell: bash
@@ -36,12 +77,12 @@ jobs:
           code=$?
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
           exit 0
-      - name: Commit log
+      - name: Commit diagnostics
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/debug-v1.12.log
-          git commit -m "[debug-log] Capture v1.12 compile output" || true
+          git add .github/debug-v1.12.log .github/brace-report.txt
+          git commit -m "[debug-log] Analyze v1.12 compile" || true
           git push origin HEAD:feature/chat-profiles-orchestrator-v1.12.0
       - name: Fail if compile failed
         if: steps.compile.outputs.exit_code != '0'
