@@ -269,9 +269,9 @@ private fun ChatProfileDialog(chat: ChatSession, vm: ChatViewModel, onDismiss: (
 }
 
 @Composable
-fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit, initialProjectId: String? = null) {
+fun ProjectsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit, initialProjectId: String? = null, startCreate: Boolean = false) {
     var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }
-    var createOpen by remember { mutableStateOf(false) }
+    var createOpen by remember(startCreate) { mutableStateOf(startCreate) }
     val projects = state.projects.sortedWith(compareByDescending<Project> { it.isFavorite }.thenByDescending { it.updatedAt })
     val favorites = projects.filter { it.isFavorite }
     val others = projects.filterNot { it.isFavorite }
@@ -377,23 +377,10 @@ private fun ProjectDetailDialog(
     onOpenChat: (String) -> Unit,
     onCreateChat: () -> Unit
 ) {
-    var editOpen by remember { mutableStateOf(false) }
-    var deleteConfirm by remember { mutableStateOf(false) }
+    var settingsOpen by remember(project.id) { mutableStateOf(false) }
     var deleteChatTarget by remember { mutableStateOf<ChatSession?>(null) }
-    var stagesExpanded by remember(project.id) { mutableStateOf(true) }
-    var stageEditorOpen by remember { mutableStateOf(false) }
-    var editingStage by remember { mutableStateOf<ProjectStage?>(null) }
-    var runStagesOpen by remember { mutableStateOf(false) }
-    var runInput by remember { mutableStateOf("") }
     val projectChats = state.chats.filter { it.projectId == project.id }
         .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
-
-    val addFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        uris.forEach { vm.addProjectFile(project.id, it) }
-    }
-    val importPrompt = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-        uri?.let { vm.importProjectPromptFile(project.id, it) }
-    }
 
     FullScreenPanel(title = project.name, onBack = onDismiss) {
         LazyColumn(
@@ -401,36 +388,29 @@ private fun ProjectDetailDialog(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (project.role.isNotBlank()) {
-                item { Text("Роль: ${project.role}", style = MaterialTheme.typography.bodyMedium) }
-            }
-            if (project.masterPrompt.isNotBlank()) {
-                item {
-                    Text(
-                        project.masterPrompt,
-                        maxLines = 5,
-                        overflow = TextOverflow.Ellipsis,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
             item {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     FilledTonalButton(onClick = onCreateChat, modifier = Modifier.weight(1f)) {
                         Icon(Icons.Outlined.Add, contentDescription = null)
-                        Spacer(Modifier.width(5.dp))
+                        Spacer(Modifier.width(6.dp))
                         Text("Новый чат")
                     }
-                    IconButton(onClick = { editOpen = true }) {
-                        Icon(Icons.Outlined.Edit, contentDescription = "Настройки проекта")
+                    FilledTonalButton(onClick = { settingsOpen = true }, modifier = Modifier.weight(1f)) {
+                        Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Настройки")
                     }
                 }
             }
 
             item { SectionTitle("Чаты проекта") }
             if (projectChats.isEmpty()) {
-                item { Text("Пока нет диалогов", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item {
+                    Text(
+                        "Пока нет чатов. Создайте первый чат проекта кнопкой выше.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             } else {
                 items(projectChats, key = { it.id }) { chat ->
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -455,6 +435,106 @@ private fun ProjectDetailDialog(
                         }
                     }
                     HorizontalDivider()
+                }
+            }
+        }
+    }
+
+    deleteChatTarget?.let { chat ->
+        AlertDialog(
+            onDismissRequest = { deleteChatTarget = null },
+            title = { Text("Удалить чат из проекта?") },
+            text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    vm.deleteChat(chat.id)
+                    deleteChatTarget = null
+                }) { Text("Удалить") }
+            },
+            dismissButton = { TextButton(onClick = { deleteChatTarget = null }) { Text("Отмена") } }
+        )
+    }
+
+    if (settingsOpen) {
+        ProjectSettingsDialog(
+            project = project,
+            state = state,
+            vm = vm,
+            onDismiss = { settingsOpen = false },
+            onProjectDeleted = {
+                settingsOpen = false
+                onDismiss()
+            }
+        )
+    }
+}
+
+@Composable
+private fun ProjectSettingsDialog(
+    project: Project,
+    state: UiState,
+    vm: ChatViewModel,
+    onDismiss: () -> Unit,
+    onProjectDeleted: () -> Unit
+) {
+    var name by remember(project.id, project.name) { mutableStateOf(project.name) }
+    var role by remember(project.id, project.role) { mutableStateOf(project.role) }
+    var prompt by remember(project.id, project.masterPrompt) { mutableStateOf(project.masterPrompt) }
+    var favorite by remember(project.id, project.isFavorite) { mutableStateOf(project.isFavorite) }
+    var stagesExpanded by remember(project.id) { mutableStateOf(true) }
+    var stageEditorOpen by remember { mutableStateOf(false) }
+    var editingStage by remember { mutableStateOf<ProjectStage?>(null) }
+    var deleteConfirm by remember { mutableStateOf(false) }
+
+    val addFiles = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        uris.forEach { vm.addProjectFile(project.id, it) }
+    }
+    val importPrompt = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        uri?.let { vm.importProjectPromptFile(project.id, it) }
+    }
+
+    FullScreenPanel(title = "Настройки проекта", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("Название") }, singleLine = true)
+            }
+            item {
+                OutlinedTextField(
+                    role,
+                    { role = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Роль") },
+                    placeholder = { Text("Например: главный редактор IT-канала") }
+                )
+            }
+            item {
+                OutlinedTextField(
+                    prompt,
+                    { prompt = it },
+                    Modifier.fillMaxWidth(),
+                    label = { Text("Мастер-промпт") },
+                    placeholder = { Text("Эта инструкция автоматически добавляется ко всем чатам проекта") },
+                    minLines = 7,
+                    maxLines = 16
+                )
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Избранное", Modifier.weight(1f))
+                    Switch(favorite, { favorite = it })
+                }
+            }
+            item {
+                FilledTonalButton(
+                    onClick = { vm.updateProject(project.id, name, role, prompt, favorite) },
+                    enabled = name.isNotBlank(),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Сохранить основные настройки")
                 }
             }
 
@@ -487,7 +567,7 @@ private fun ProjectDetailDialog(
             if (stagesExpanded) {
                 item {
                     Text(
-                        "Последовательный сценарий для любых задач. При запуске из чата каждый этап получает переписку и вложения этого чата, материалы проекта и результаты предыдущих этапов. Мастер-инструкция действует на каждом шаге.",
+                        "Настройте последовательность здесь. Запуск выполняется из нужного чата: + → Проект.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -504,7 +584,7 @@ private fun ProjectDetailDialog(
                                         Text(
                                             stage.modelId?.substringAfterLast('/') ?: "Модель чата",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.primary
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                     IconButton(onClick = { vm.moveProjectStage(project.id, stage.id, -1) }, enabled = index > 0 && !state.isLoading) {
@@ -554,25 +634,18 @@ private fun ProjectDetailDialog(
                         Text("Добавить этап")
                     }
                 }
-                item {
-                    Text(
-                        "Запуск этапов перенесён в нужный чат проекта: нажмите + → «Навыки и проекты». Так этапы видят именно переписку и вложения этого чата.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
             }
 
             item { SectionTitle("Навыки проекта") }
             item {
                 Text(
-                    "Отмеченный навык автоматически добавляет свои инструкции и текстовые материалы к каждому запросу в чатах этого проекта.",
+                    "Это стартовый набор навыков для новых чатов проекта. В каждом конкретном чате набор можно изменить через + → Навыки или + → Проект.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             if (state.skills.isEmpty()) {
-                item { Text("Импортируйте навыки через меню «Навыки»", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                item { Text("Добавьте навыки в Настройки → Навыки", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
                 item {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -585,7 +658,7 @@ private fun ProjectDetailDialog(
                                 leadingIcon = {
                                     Icon(
                                         if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
-                                        contentDescription = if (selected) "Навык активен" else null,
+                                        contentDescription = if (selected) "Навык выбран" else null,
                                         modifier = Modifier.size(17.dp)
                                     )
                                 }
@@ -657,63 +730,6 @@ private fun ProjectDetailDialog(
         )
     }
 
-    if (runStagesOpen) {
-        AlertDialog(
-            onDismissRequest = { runStagesOpen = false },
-            title = { Text("Запустить этапы работы") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        "Umnik создаст чат внутри проекта и выполнит ${project.stages.orEmpty().size} этапов строго по порядку. Постоянные файлы проекта будут доступны на каждом этапе.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    OutlinedTextField(
-                        value = runInput,
-                        onValueChange = { runInput = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("Исходная задача или цель") },
-                        placeholder = { Text("Можно оставить пустым, если всё необходимое уже есть в инструкциях и файлах проекта") },
-                        minLines = 3,
-                        maxLines = 8
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    val chatId = vm.runProjectStages(project.id, runInput)
-                    if (chatId != null) {
-                        runStagesOpen = false
-                        onOpenChat(chatId)
-                    }
-                }) { Text("Запустить") }
-            },
-            dismissButton = { TextButton(onClick = { runStagesOpen = false }) { Text("Отмена") } }
-        )
-    }
-
-    deleteChatTarget?.let { chat ->
-        AlertDialog(
-      onDismissRequest = { deleteChatTarget = null },
-      title = { Text("Удалить чат из проекта?") },
-      text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
-      confirmButton = {
-          TextButton(onClick = {
-        vm.deleteChat(chat.id)
-        deleteChatTarget = null
-          }) { Text("Удалить") }
-      },
-      dismissButton = { TextButton(onClick = { deleteChatTarget = null }) { Text("Отмена") } }
-        )
-    }
-
-    if (editOpen) {
-        ProjectEditorDialog(project, { editOpen = false }) { name, role, prompt, favorite ->
-            vm.updateProject(project.id, name, role, prompt, favorite)
-            editOpen = false
-        }
-    }
-
     if (deleteConfirm) {
         AlertDialog(
             onDismissRequest = { deleteConfirm = false },
@@ -723,7 +739,7 @@ private fun ProjectDetailDialog(
                 TextButton(onClick = {
                     vm.deleteProject(project.id)
                     deleteConfirm = false
-                    onDismiss()
+                    onProjectDeleted()
                 }) { Text("Удалить") }
             },
             dismissButton = { TextButton(onClick = { deleteConfirm = false }) { Text("Отмена") } }

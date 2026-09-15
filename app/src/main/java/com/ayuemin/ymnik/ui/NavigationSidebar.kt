@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AddComment
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -76,6 +77,7 @@ fun NavigationSidebar(
     onDismiss: () -> Unit,
     onNewChat: () -> Unit,
     onOpenProjects: () -> Unit,
+    onCreateProject: () -> Unit,
     onOpenProject: (String) -> Unit,
     onOpenSkills: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -162,6 +164,16 @@ fun NavigationSidebar(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
                 ) {
+                    item {
+                        FilledTonalButton(
+                            onClick = onCreateProject,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("Создать проект")
+                        }
+                    }
                     item { SidebarSectionTitle("Проекты") }
                     if (projects.isEmpty()) {
                         item {

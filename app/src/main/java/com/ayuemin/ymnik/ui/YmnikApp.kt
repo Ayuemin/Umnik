@@ -271,9 +271,11 @@ private fun ChatScreen(
     var sidebarOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
+    var createProjectDirect by remember { mutableStateOf(false) }
     var actionsOpen by remember { mutableStateOf(false) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
-    var skillsProjectsExpanded by remember { mutableStateOf(false) }
+    var skillsExpanded by remember { mutableStateOf(false) }
+    var projectToolsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
@@ -726,10 +728,18 @@ onBranch = if (message.role == "assistant") {
       },
       onOpenProjects = {
           selectedProjectId = null
+          createProjectDirect = false
+          projectsOpen = true
+          sidebarOpen = false
+      },
+      onCreateProject = {
+          selectedProjectId = null
+          createProjectDirect = true
           projectsOpen = true
           sidebarOpen = false
       },
       onOpenProject = { projectId ->
+          createProjectDirect = false
           selectedProjectId = projectId
           projectsOpen = true
           sidebarOpen = false
@@ -867,68 +877,19 @@ onBranch = if (message.role == "assistant") {
                 }
 
                 ComposerSectionHeader(
-                    icon = Icons.Outlined.FolderOpen,
-                    label = "Навыки и проекты",
-                    expanded = skillsProjectsExpanded,
-                    onClick = { skillsProjectsExpanded = !skillsProjectsExpanded }
+                    icon = Icons.Outlined.Extension,
+                    label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
+                    expanded = skillsExpanded,
+                    onClick = { skillsExpanded = !skillsExpanded }
                 )
-                if (skillsProjectsExpanded) {
-                    if (currentProject != null) {
-                        Text("Проект: ${currentProject.name}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                        if (currentProject.stages.orEmpty().isNotEmpty()) {
-                            FilledTonalButton(
-                                onClick = {
-                                    val chatId = vm.runProjectStages(currentProject.id, text)
-                                    if (chatId != null) {
-                                        text = ""
-                                        actionsOpen = false
-                                    }
-                                },
-                                enabled = !state.isLoading && !state.requestActive,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(7.dp))
-                                Text("Запустить этапы (${currentProject.stages.orEmpty().size})")
-                            }
-                        } else {
-                            Text("В проекте пока нет этапов работы.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        TextButton(
-                            onClick = {
-                                selectedProjectId = currentProject.id
-                                projectsOpen = true
-                                actionsOpen = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Настройки проекта")
-                        }
-                    } else {
-                        Text(
-                            "Этот чат не входит в проект. Навыки можно использовать и без проекта.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        TextButton(
-                            onClick = {
-                                selectedProjectId = null
-                                projectsOpen = true
-                                actionsOpen = false
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Открыть проекты")
-                        }
-                    }
-
-                    Text("Навыки текущего чата", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                if (skillsExpanded) {
+                    Text(
+                        "Навыки действуют только в текущем чате. Их можно включать и выключать независимо от проекта.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     if (state.skills.isEmpty()) {
-                        Text("Навыков пока нет.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("Навыков пока нет. Добавьте их в Настройки → Навыки.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             items(state.skills, key = { it.id }) { skill ->
@@ -948,16 +909,61 @@ onBranch = if (message.role == "assistant") {
                             }
                         }
                     }
-                    TextButton(
-                        onClick = {
-                            actionsOpen = false
-                            onOpenSkills()
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Управление навыками")
+                }
+
+                ComposerSectionHeader(
+                    icon = Icons.Outlined.FolderOpen,
+                    label = currentProject?.let { "Проект · ${it.name}" } ?: "Проект",
+                    expanded = projectToolsExpanded,
+                    enabled = currentProject != null,
+                    onClick = { projectToolsExpanded = !projectToolsExpanded }
+                )
+                if (projectToolsExpanded && currentProject != null) {
+                    if (currentProject.stages.orEmpty().isNotEmpty()) {
+                        FilledTonalButton(
+                            onClick = {
+                                val chatId = vm.runProjectStages(currentProject.id, text)
+                                if (chatId != null) {
+                                    text = ""
+                                    actionsOpen = false
+                                }
+                            },
+                            enabled = !state.isLoading && !state.requestActive,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("Запустить этапы (${currentProject.stages.orEmpty().size})")
+                        }
+                    } else {
+                        Text("В проекте пока нет этапов работы. Добавьте их в настройках проекта.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    Text(
+                        if (activeSkillCount > 0) "Навыки текущего чата · $activeSkillCount" else "Навыки текущего чата",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (state.skills.isEmpty()) {
+                        Text("Навыков пока нет. Добавьте их в Настройки → Навыки.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(state.skills, key = { it.id }) { skill ->
+                                val selected = skill.id in state.activeSkillIds
+                                FilterChip(
+                                    selected = selected,
+                                    onClick = { vm.toggleSkill(skill.id) },
+                                    label = { Text(skill.name, maxLines = 1) },
+                                    leadingIcon = {
+                                        Icon(
+                                            if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
+                                            contentDescription = if (selected) "Навык включён" else null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -971,8 +977,10 @@ onBranch = if (message.role == "assistant") {
             onDismiss = {
       projectsOpen = false
       selectedProjectId = null
+      createProjectDirect = false
             },
-            initialProjectId = selectedProjectId
+            initialProjectId = selectedProjectId,
+            startCreate = createProjectDirect
         )
     }
 }
@@ -1009,10 +1017,12 @@ private fun ComposerSectionHeader(
     icon: ImageVector,
     label: String,
     expanded: Boolean,
+    enabled: Boolean = true,
     onClick: () -> Unit
 ) {
     FilledTonalButton(
         onClick = onClick,
+        enabled = enabled,
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
     ) {
@@ -2470,6 +2480,60 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
 }
 
 @Composable
+private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
+    val filePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let(vm::importSkillFile)
+    }
+    val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let(vm::importSkillTree)
+    }
+
+    Text(
+        "Здесь хранится общая библиотека навыков. Включение навыка выполняется отдельно в каждом чате через + → Навыки.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Spacer(Modifier.height(9.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilledTonalButton(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) {
+            Icon(Icons.Outlined.Description, contentDescription = null)
+            Spacer(Modifier.width(7.dp))
+            Text("Файл")
+        }
+        FilledTonalButton(onClick = { treePicker.launch(null) }) {
+            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+            Spacer(Modifier.width(7.dp))
+            Text("Папка")
+        }
+    }
+    Spacer(Modifier.height(9.dp))
+    if (state.skills.isEmpty()) {
+        Text("Пока навыков нет. Импортируйте SKILL.md или папку навыка.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        state.skills.forEach { skill ->
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(start = 13.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(skill.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Text("Файлов: ${skill.files.size}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    IconButton(onClick = { vm.deleteSkill(skill.id) }) {
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить навык")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val appVersion = remember(context) {
@@ -2484,6 +2548,7 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
     var imageModelsExpanded by remember { mutableStateOf(false) }
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
+    var skillsLibraryExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
     var openRouterSpeechExpanded by remember { mutableStateOf(false) }
     var openRouterDocumentSpeechExpanded by remember { mutableStateOf(false) }
@@ -2686,6 +2751,18 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                     expanded = reasoningExpanded,
                     onToggle = { reasoningExpanded = !reasoningExpanded }
                 )
+            }
+
+            item {
+                ExpandableSettingsCard(
+                    title = "Навыки",
+                    subtitle = if (state.skills.isEmpty()) "Библиотека пуста" else "${state.skills.size} навыков",
+                    icon = Icons.Outlined.Extension,
+                    expanded = skillsLibraryExpanded,
+                    onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded }
+                ) {
+                    SkillLibrarySettings(state, vm)
+                }
             }
 
             item {
