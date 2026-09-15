@@ -25,7 +25,8 @@ data class OrchestratorControlAction(
     val temporaryWebSearchEnabled: Boolean? = null,
     val temporaryReasoningEnabled: Boolean? = null,
     val temporaryReasoningEffort: String? = null,
-    val temporarySkillIds: List<String>? = null
+    val temporarySkillIds: List<String>? = null,
+    val persistSettings: Boolean = false
 )
 
 object OrchestratorControlCodec {
@@ -34,7 +35,8 @@ object OrchestratorControlCodec {
         "RUN_CHAT_STAGES",
         "RUN_PROJECT_STAGES",
         "SHOW_LAST_RESULT",
-        "TRANSFER_FILES"
+        "TRANSFER_FILES",
+        "UPDATE_CHAT_SETTINGS"
     )
 
     fun parse(raw: String): OrchestratorControlPlan {
@@ -61,7 +63,8 @@ object OrchestratorControlCodec {
                 temporaryReasoningEffort = obj.string("temporaryReasoningEffort")?.trim()?.lowercase()?.takeIf {
                     it in setOf("minimal", "low", "medium", "high", "xhigh")
                 },
-                temporarySkillIds = obj.stringList("temporarySkillIds")?.distinct()
+                temporarySkillIds = obj.stringList("temporarySkillIds")?.distinct(),
+                persistSettings = obj.bool("persistSettings") ?: false
             )
         }
         return OrchestratorControlPlan(
