@@ -1,4 +1,4 @@
-// Umnik v1.13.0
+// Umnik v1.14.0
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -24,8 +24,8 @@ android {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
         targetSdk = 36
-        versionCode = 113
-        versionName = "1.13.0"
+        versionCode = 114
+        versionName = "1.14.0"
     }
 
     buildFeatures {
@@ -88,6 +88,7 @@ dependencies {
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.13.1")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
