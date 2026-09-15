@@ -1,0 +1,44 @@
+name: Fix Umnik v1.12 compile
+
+on:
+  push:
+    branches: [ "main" ]
+
+permissions:
+  contents: write
+
+jobs:
+  fix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/chat-profiles-orchestrator-v1.12.0
+          fetch-depth: 0
+      - name: Fix source
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt')
+          s = p.read_text()
+          bad = '''    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {\n    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {'''
+          if bad not in s:
+              raise SystemExit('duplicate updateProject target not found')
+          s = s.replace(bad, '''    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {''', 1)
+          p.write_text(s)
+
+          p = Path('app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt')
+          s = p.read_text()
+          old = '''                            Switch(skill.id in skillIds) { enabled ->\n                                skillIds = if (enabled) skillIds + skill.id else skillIds - skill.id\n                            }'''
+          new = '''                            Switch(\n                                checked = skill.id in skillIds,\n                                onCheckedChange = { enabled ->\n                                    skillIds = if (enabled) skillIds + skill.id else skillIds - skill.id\n                                }\n                            )'''
+          if old not in s:
+              raise SystemExit('skill switch target not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+      - name: Commit fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app
+          git commit -m "Fix v1.12 project automation compilation"
+          git push origin HEAD:feature/chat-profiles-orchestrator-v1.12.0
