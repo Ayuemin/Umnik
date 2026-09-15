@@ -2620,7 +2620,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun refreshModels(mode: ChatMode) {
-    fun refreshModels(mode: ChatMode) {
         val profile = if (mode == ChatMode.IMAGE) imageConnectionProfile() else activeConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
             _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
