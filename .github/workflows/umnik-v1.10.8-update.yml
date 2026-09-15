@@ -23,6 +23,19 @@ jobs:
           ref: main
           fetch-depth: 0
 
+      - name: Hotfix updater for guide state
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/update_v1_10_8.py')
+          s = p.read_text()
+          old = '''def patch_usage_guide(chunk: str) -> str:\n    return replace_once(\n        chunk,\n        '            messages = messages,\\n            mode = ChatMode.TEXT,',\n        '            messages = messages,\\n            activeSkillIds = emptySet(),\\n            mode = ChatMode.TEXT,',\n        "usage guide skills"\n    )'''
+          new = '''def patch_usage_guide(chunk: str) -> str:\n    old = '            messages = messages,\\n            mode = ChatMode.TEXT,'\n    new = '            messages = messages,\\n            activeSkillIds = emptySet(),\\n            mode = ChatMode.TEXT,'\n    pos = chunk.rfind(old)\n    if pos < 0:\n        raise SystemExit("usage guide skills: state block not found")\n    return chunk[:pos] + chunk[pos:].replace(old, new, 1)'''
+          if old not in s:
+              raise SystemExit('updater hotfix target not found')
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Apply v1.10.8 changes
         run: python3 .github/scripts/update_v1_10_8.py
 
