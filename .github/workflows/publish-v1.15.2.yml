@@ -1,0 +1,30 @@
+name: Publish v1.15.2
+
+on:
+  push:
+    branches: [ "main" ]
+    paths: [ ".github/workflows/publish-v1.15.2.yml" ]
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create v1.15.2 tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f ref='refs/tags/v1.15.2' \
+            -f sha='c42aad1131454019379a1f689452dae283d99174'
+
+      - name: Dispatch Android Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/workflows/android-release.yml/dispatches" \
+            -f ref='main' \
+            -f 'inputs[tag]=v1.15.2'
