@@ -10,15 +10,14 @@ Daemon will be stopped at the end of the build
 > Task :app:mapDebugSourceSetPaths
 > Task :app:generateDebugResources
 > Task :app:packageDebugResources
-> Task :app:mergeDebugResources
 > Task :app:createDebugCompatibleScreenManifests
 > Task :app:extractDeepLinksDebug
+> Task :app:mergeDebugResources
 > Task :app:parseDebugLocalResources
 > Task :app:processDebugMainManifest
 > Task :app:processDebugManifest
-> Task :app:processDebugManifestForPackage
-> Task :app:javaPreCompileDebug
 > Task :app:preDebugUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileDebug
 > Task :app:javaPreCompileDebugUnitTest
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
 > Task :app:mergeDebugShaders
@@ -27,21 +26,21 @@ Daemon will be stopped at the end of the build
 > Task :app:mergeDebugAssets
 > Task :app:compressDebugAssets
 > Task :app:desugarDebugFileDependencies
-> Task :app:mergeDebugJniLibFolders
+> Task :app:processDebugManifestForPackage
 > Task :app:checkDebugDuplicateClasses
+> Task :app:mergeDebugJniLibFolders
+> Task :app:mergeLibDexDebug
 > Task :app:mergeDebugNativeLibs
 > Task :app:processDebugResources
-> Task :app:mergeLibDexDebug
+> Task :app:validateSigningDebug
+> Task :app:writeDebugAppMetadata
+> Task :app:writeDebugSigningConfigVersions
 
 > Task :app:stripDebugDebugSymbols
 Unable to strip the following libraries, packaging them as they are: libandroidx.graphics.path.so. Run with --info option to learn more.
 
-> Task :app:validateSigningDebug
-> Task :app:writeDebugAppMetadata
-> Task :app:writeDebugSigningConfigVersions
 > Task :app:mergeExtDexDebug
-
-> Task :app:compileDebugKotlin FAILED
+> Task :app:compileDebugKotlin
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:91:35 Unresolved reference 'loadConnectionProfiles'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:92:48 Unresolved reference 'loadDisabledConnectionIds'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:94:76 Unresolved reference 'loadInitialChats'.
@@ -196,7 +195,6 @@ e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/Chat
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:912:32 Unresolved reference 'imageConnectionProfile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:913:75 Unresolved reference 'imageGenerationEnabled'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:913:116 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:924:84 Unresolved reference 'refreshModels'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:929:16 Unresolved reference 'loadTextModelForProfile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:932:69 Unresolved reference 'loadImageModelForProfile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:936:11 Cannot infer type for this parameter. Specify it explicitly.
@@ -302,154 +300,123 @@ e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/Chat
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1614:9 Unresolved reference 'cleanupTempAttachments'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1635:22 Unresolved reference 'preferredReasoningEffort'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1636:29 Unresolved reference 'reasoningStillValid'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1958:9 Unresolved reference 'touchChat'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1965:9 Unresolved reference 'touchChat'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1978:9 Unresolved reference 'touchChat'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:1981:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2010:28 Unresolved reference 'launchRequest'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2021:29 Unresolved reference 'executeOrchestratorChatTask'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2028:29 Unresolved reference 'executeOrchestratorStageSequence'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2032:29 Unresolved reference 'executeOrchestratorStageSequence'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2036:21 Unresolved reference 'appendOrchestratorLog'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2040:17 Unresolved reference 'appendOrchestratorLog'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2043:17 Unresolved reference 'appendOrchestratorLog'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2060:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2067:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2077:108 Unresolved reference 'openRouterProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2078:14 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:68 Unresolved reference 'loadTextModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:21 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:35 Unresolved reference 'textModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:67 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:67 Not enough information to infer type argument for 'R'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:67 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:80 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:80 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2083:45 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2089:9 Unresolved reference 'publishChats'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2090:27 Unresolved reference 'orchestratorAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2092:70 Unresolved reference 'supportsReasoning'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2093:24 Unresolved reference 'reasoningEfforts'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2093:100 Unresolved reference 'reasoningEfforts'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2094:56 Unresolved reference 'supportsReasoningEffort'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2096:54 Unresolved reference 'contextLength'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2104:21 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2104:76 Unresolved reference 'supportsTools'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2105:83 Unresolved reference 'supportsTools'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2106:21 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2110:26 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2111:21 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2130:9 Unresolved reference 'publishChats'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2134:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2148:9 Unresolved reference 'publishChats'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2155:112 Unresolved reference 'openRouterProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2156:18 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:117 Unresolved reference 'loadTextModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:25 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:39 Unresolved reference 'textModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:71 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:71 Not enough information to infer type argument for 'R'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:71 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:84 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:84 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2160:49 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2179:17 Unresolved reference 'orchestratorAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2181:68 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2181:68 Not enough information to infer type argument for 'R'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2181:74 Unresolved reference 'chatFileAsAttachment'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2182:15 Unresolved reference 'distinctBy'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2182:28 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2182:44 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2184:74 Unresolved reference 'supportsReasoning'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2185:28 Unresolved reference 'reasoningEfforts'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2185:104 Unresolved reference 'reasoningEfforts'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2186:60 Unresolved reference 'supportsReasoningEffort'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2187:111 Unresolved reference 'contextLength'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2193:21 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2193:76 Unresolved reference 'supportsTools'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2194:83 Unresolved reference 'supportsTools'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2195:21 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2197:26 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2198:21 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2203:13 Unresolved reference 'appendProjectStageMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2208:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2218:42 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2218:48 Unresolved reference 'chatFileAsAttachment'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2221:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2231:9 Unresolved reference 'publishChats'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2234:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2245:16 Unresolved reference 'runStageSequence'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2252:16 Unresolved reference 'runStageSequence'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2255:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2267:23 Unresolved reference 'openRouterProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2268:14 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2279:63 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2279:69 Unresolved reference 'chatFileAsAttachment'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2363:52 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2363:58 Unresolved reference 'chatFileAsAttachment'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2391:40 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2435:29 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2448:25 Unresolved reference 'appendProjectStageMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2456:21 Unresolved reference 'appendProjectStageMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2461:21 Unresolved reference 'playReadySound'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2479:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2625:51 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2625:81 Unresolved reference 'activeConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2626:21 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2627:79 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2631:18 Unresolved reference 'imageGenerationEnabled'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2631:54 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2632:59 Unresolved reference 'imageConnectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2635:21 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2636:55 Unresolved reference 'connectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2642:13 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2642:13 Not enough information to infer type argument for 'R'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:17 Not enough information to infer type argument for 'K'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:44 Unresolved reference 'textModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:79 Unresolved reference 'imageModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2644:15 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2644:15 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2644:27 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2647:25 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2648:56 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2649:29 Unresolved reference 'pruneQuickTextModels'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2649:58 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2650:29 Unresolved reference 'clearCurrentChatModelOverrideIfInvalid'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2650:76 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2652:45 Unresolved reference 'loadTextModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2653:37 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2653:85 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2654:66 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2656:56 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2656:93 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2659:105 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2660:59 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2661:38 Unresolved reference 'preferredReasoningEffort'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2662:45 Unresolved reference 'reasoningStillValid'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2669:114 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2678:45 Unresolved reference 'chooseImageModel'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2679:56 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2682:64 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2684:48 Unresolved reference 'validatedImageParameter'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2684:96 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2685:47 Unresolved reference 'validatedImageParameter'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2685:93 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2691:15 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2691:15 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2704:66 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2711:45 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2726:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2727:23 Unresolved reference 'activeConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2728:28 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2730:86 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2731:17 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2731:31 Unresolved reference 'textModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2735:17 Unresolved reference 'imageGenerationEnabled'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2736:17 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2738:17 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2738:31 Unresolved reference 'imageModelsForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2739:20 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2744:46 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2009:28 Unresolved reference 'launchRequest'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2020:29 Suspend function 'suspend fun executeOrchestratorChatTask(project: Project, requested: ChatSession, prompt: String, previous: String, passPrevious: Boolean): String' can only be called from a coroutine or another suspend function.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2027:29 Suspend function 'suspend fun executeOrchestratorStageSequence(project: Project, requested: ChatSession, stages: List<ProjectStage>, prompt: String, previous: String, passPrevious: Boolean): String' can only be called from a coroutine or another suspend function.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2031:29 Suspend function 'suspend fun executeOrchestratorStageSequence(project: Project, requested: ChatSession, stages: List<ProjectStage>, prompt: String, previous: String, passPrevious: Boolean): String' can only be called from a coroutine or another suspend function.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2076:108 Unresolved reference 'openRouterProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2077:14 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2080:68 Unresolved reference 'loadTextModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:21 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:35 Unresolved reference 'textModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:67 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:67 Not enough information to infer type argument for 'R'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:67 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:80 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2081:80 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2082:45 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2091:70 Unresolved reference 'supportsReasoning'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2092:24 Unresolved reference 'reasoningEfforts'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2092:100 Unresolved reference 'reasoningEfforts'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2093:56 Unresolved reference 'supportsReasoningEffort'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2095:54 Unresolved reference 'contextLength'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2103:21 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2103:76 Unresolved reference 'supportsTools'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2104:83 Unresolved reference 'supportsTools'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2105:21 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2109:26 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2110:21 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2154:112 Unresolved reference 'openRouterProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2155:18 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2157:117 Unresolved reference 'loadTextModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:25 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:39 Unresolved reference 'textModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:71 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:71 Not enough information to infer type argument for 'R'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:71 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:84 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2158:84 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2159:49 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2180:74 Unresolved reference 'chatFileAsAttachment'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2183:74 Unresolved reference 'supportsReasoning'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2184:28 Unresolved reference 'reasoningEfforts'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2184:104 Unresolved reference 'reasoningEfforts'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2185:60 Unresolved reference 'supportsReasoningEffort'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2186:111 Unresolved reference 'contextLength'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2192:21 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2192:76 Unresolved reference 'supportsTools'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2193:83 Unresolved reference 'supportsTools'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2194:21 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2196:26 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2197:21 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2217:42 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2217:48 Unresolved reference 'chatFileAsAttachment'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2266:23 Unresolved reference 'openRouterProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2267:14 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2278:63 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2278:69 Unresolved reference 'chatFileAsAttachment'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2362:52 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2362:58 Unresolved reference 'chatFileAsAttachment'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2390:40 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2434:29 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2460:21 Unresolved reference 'playReadySound'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2624:51 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2624:81 Unresolved reference 'activeConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2625:21 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2626:79 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2630:18 Unresolved reference 'imageGenerationEnabled'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2630:54 Unresolved reference 'isImageProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2631:59 Unresolved reference 'imageConnectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2634:21 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2635:55 Unresolved reference 'connectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2641:13 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2641:13 Not enough information to infer type argument for 'R'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2642:17 Not enough information to infer type argument for 'K'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2642:44 Unresolved reference 'textModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2642:79 Unresolved reference 'imageModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:15 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:15 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2643:27 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2646:25 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2647:56 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2648:29 Unresolved reference 'pruneQuickTextModels'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2648:58 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2649:29 Unresolved reference 'clearCurrentChatModelOverrideIfInvalid'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2649:76 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2651:45 Unresolved reference 'loadTextModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2652:37 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2652:85 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2653:66 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2655:56 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2655:93 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2658:105 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2659:59 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2660:38 Unresolved reference 'preferredReasoningEffort'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2661:45 Unresolved reference 'reasoningStillValid'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2668:114 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2677:45 Unresolved reference 'chooseImageModel'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2678:56 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2681:64 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2683:48 Unresolved reference 'validatedImageParameter'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2683:96 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2684:47 Unresolved reference 'validatedImageParameter'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2684:93 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2690:15 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2690:15 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2703:66 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2710:45 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2725:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2726:23 Unresolved reference 'activeConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2727:28 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2729:86 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2730:17 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2730:31 Unresolved reference 'textModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2734:17 Unresolved reference 'imageGenerationEnabled'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2735:17 Unresolved reference 'isImageProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2737:17 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2737:31 Unresolved reference 'imageModelsForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2738:20 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2743:46 Overload resolution ambiguity between candidates:
 fun <R, T> Result<T>.map(transform: (@ParameterName(...) T) -> R): Result<R>
     [R|Contract description]
      <
@@ -472,11 +439,11 @@ fun <R> UByteArray.map(transform: (UByte) -> R): List<R>
 fun <R> UShortArray.map(transform: (UShort) -> R): List<R>
 fun <T, R> Sequence<T>.map(transform: (T) -> R): Sequence<R>
 fun <R> CharSequence.map(transform: (Char) -> R): List<R>
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2744:52 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2745:21 Unresolved reference 'pruneQuickTextModels'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2746:21 Unresolved reference 'clearCurrentChatModelOverrideIfInvalid'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2749:37 Unresolved reference 'loadTextModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2750:74 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2743:52 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2744:21 Unresolved reference 'pruneQuickTextModels'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2745:21 Unresolved reference 'clearCurrentChatModelOverrideIfInvalid'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2748:37 Unresolved reference 'loadTextModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2749:74 Overload resolution ambiguity between candidates:
 fun <T> Array<out T>.none(predicate: (T) -> Boolean): Boolean
 fun ByteArray.none(predicate: (Byte) -> Boolean): Boolean
 fun ShortArray.none(predicate: (Short) -> Boolean): Boolean
@@ -494,8 +461,8 @@ fun UByteArray.none(predicate: (UByte) -> Boolean): Boolean
 fun UShortArray.none(predicate: (UShort) -> Boolean): Boolean
 fun <T> Sequence<T>.none(predicate: (T) -> Boolean): Boolean
 fun CharSequence.none(predicate: (Char) -> Boolean): Boolean
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2750:81 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2751:47 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2749:81 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2750:47 Overload resolution ambiguity between candidates:
 fun <T> Array<out T>.firstOrNull(): T?
 fun ByteArray.firstOrNull(): Byte?
 fun ShortArray.firstOrNull(): Short?
@@ -518,9 +485,9 @@ fun UIntProgression.firstOrNull(): UInt?
 fun ULongProgression.firstOrNull(): ULong?
 fun <T> Sequence<T>.firstOrNull(): T?
 fun CharSequence.firstOrNull(): Char?
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2751:62 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2752:76 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2754:87 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2750:62 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2751:76 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2753:87 Overload resolution ambiguity between candidates:
 fun <T> Array<out T>.any(predicate: (T) -> Boolean): Boolean
 fun ByteArray.any(predicate: (Byte) -> Boolean): Boolean
 fun ShortArray.any(predicate: (Short) -> Boolean): Boolean
@@ -538,8 +505,8 @@ fun UByteArray.any(predicate: (UByte) -> Boolean): Boolean
 fun UShortArray.any(predicate: (UShort) -> Boolean): Boolean
 fun <T> Sequence<T>.any(predicate: (T) -> Boolean): Boolean
 fun CharSequence.any(predicate: (Char) -> Boolean): Boolean
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2754:93 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2755:41 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2753:93 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2754:41 Overload resolution ambiguity between candidates:
 fun <T> Array<out T>.firstOrNull(predicate: (T) -> Boolean): T?
 fun ByteArray.firstOrNull(predicate: (Byte) -> Boolean): Byte?
 fun ShortArray.firstOrNull(predicate: (Short) -> Boolean): Short?
@@ -556,10 +523,10 @@ fun UByteArray.firstOrNull(predicate: (UByte) -> Boolean): UByte?
 fun UShortArray.firstOrNull(predicate: (UShort) -> Boolean): UShort?
 fun <T> Sequence<T>.firstOrNull(predicate: (T) -> Boolean): T?
 fun CharSequence.firstOrNull(predicate: (Char) -> Boolean): Char?
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2755:55 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2758:56 Unresolved reference 'preferredReasoningEffort'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2759:64 Unresolved reference 'reasoningStillValid'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2765:96 Overload resolution ambiguity between candidates:
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2754:55 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2757:56 Unresolved reference 'preferredReasoningEffort'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2758:64 Unresolved reference 'reasoningStillValid'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2764:96 Overload resolution ambiguity between candidates:
 fun <T> Array<out T>.any(predicate: (T) -> Boolean): Boolean
 fun ByteArray.any(predicate: (Byte) -> Boolean): Boolean
 fun ShortArray.any(predicate: (Short) -> Boolean): Boolean
@@ -577,226 +544,195 @@ fun UByteArray.any(predicate: (UByte) -> Boolean): Boolean
 fun UShortArray.any(predicate: (UShort) -> Boolean): Boolean
 fun <T> Sequence<T>.any(predicate: (T) -> Boolean): Boolean
 fun CharSequence.any(predicate: (Char) -> Boolean): Boolean
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2765:102 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2774:48 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2775:38 Unresolved reference 'chooseImageModel'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2776:66 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2781:36 Unresolved reference 'validatedImageParameter'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2782:35 Unresolved reference 'validatedImageParameter'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2783:35 Unresolved reference 'loadAllQuickTextModels'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2789:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2791:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2794:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2798:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2812:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2820:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2823:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2827:23 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2829:35 Unresolved reference 'resolvedImageProtocol'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2839:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2854:24 Unresolved reference 'activeConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2858:51 Unresolved reference 'activeConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2863:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2872:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2880:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3013:9 Unresolved reference 'cleanupTempAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3105:28 Unresolved reference 'replaceChatMessages'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3114:39 Unresolved reference 'sendImagePrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3114:75 Unresolved reference 'send'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3117:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3147:23 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3152:14 Unresolved reference 'imageGenerationEnabled'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3152:50 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3153:55 Unresolved reference 'imageConnectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3165:64 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3165:94 Unresolved reference 'activeConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3166:21 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3167:79 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3171:18 Unresolved reference 'imageGenerationEnabled'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3171:54 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3172:59 Unresolved reference 'imageConnectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3175:21 Unresolved reference 'isProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3176:55 Unresolved reference 'connectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3179:60 Unresolved reference 'imageApiKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3179:119 Unresolved reference 'id'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3229:43 Unresolved reference 'makeChatTitle'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3230:25 Unresolved reference 'replaceChatMessages'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3267:21 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3270:21 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3280:54 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3283:70 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3299:92 Unresolved reference 'contextLimitTokens'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3306:37 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3313:33 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3318:33 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3324:33 Unresolved reference 'effectiveTextBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3329:33 Unresolved reference 'buildSystemPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3344:45 Unresolved reference 'buildImageProjectPrompt'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3346:25 Unresolved reference 'generateImageForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3371:64 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3395:17 Unresolved reference 'playReadySound'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3396:29 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3404:63 Unresolved reference 'name'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3431:29 Unresolved reference 'type'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3438:13 Unresolved reference 'cleanupTempAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3448:23 Unresolved reference 'imageConnectionProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3453:14 Unresolved reference 'imageGenerationEnabled'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3453:50 Unresolved reference 'isImageProfileConfigured'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3454:55 Unresolved reference 'imageConnectionSetupMessage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3482:43 Unresolved reference 'makeChatTitle'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3483:25 Unresolved reference 'replaceChatMessages'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3497:19 Unresolved reference 'imageApiKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3510:29 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3511:17 Unresolved reference 'generateImageForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:15 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:15 Not enough information to infer type argument for 'R'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:15 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:29 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3521:32 Unresolved reference 'text'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3521:60 Unresolved reference 'files'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3527:23 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3527:23 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3527:35 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3529:26 Argument type mismatch: actual type is 'String', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3530:28 Argument type mismatch: actual type is 'String', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3531:28 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3531:35 Unresolved reference 'text'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3531:40 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3532:45 Unresolved reference 'files'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3533:39 Argument type mismatch: actual type is 'Boolean', but 'Boolean' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3546:17 Unresolved reference 'playReadySound'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3551:15 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3551:15 Not enough information to infer type argument for 'T'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3564:13 Unresolved reference 'cleanupTempAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3573:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3583:20 Unresolved reference 'generateOpenRouterImageWithResolutionFallback'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3589:27 Unresolved reference 'effectiveImageBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3594:16 'when' expression must be exhaustive. Add an 'else' branch.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3594:22 Unresolved reference 'resolvedImageProtocol'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3597:27 Unresolved reference 'effectiveImageBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3604:27 Unresolved reference 'effectiveImageBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3611:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3648:25 Unresolved reference 'imageParameterPrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3658:5 Modifier 'override' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3682:9 Unresolved reference 'cleanupTempAttachments'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3722:9 Unresolved reference 'removeFileReferences'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3749:9 Unresolved reference 'removeFileReferences'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3783:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3795:9 Unresolved reference 'playReadySound'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3798:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3836:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3903:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3912:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3928:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3943:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3949:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3951:53 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3958:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3964:17 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3970:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3992:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3995:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4004:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4015:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4018:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4020:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4031:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4042:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4051:20 Argument type mismatch: actual type is 'String', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4052:20 Argument type mismatch: actual type is 'ProviderType', but 'ProviderType' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4053:23 Unresolved reference 'normalizeBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4053:23 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4053:66 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4054:28 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4055:29 Argument type mismatch: actual type is 'ImageApiProtocol', but 'ImageApiProtocol?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4056:34 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4057:35 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4058:17 Unresolved reference 'normalizeBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4058:60 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4067:21 Unresolved reference 'normalizeBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4071:20 Argument type mismatch: actual type is 'String', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4072:20 Argument type mismatch: actual type is 'ProviderType', but 'ProviderType' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4073:23 Unresolved reference 'normalizeBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4073:23 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4073:62 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4074:28 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4075:29 Argument type mismatch: actual type is 'ImageApiProtocol', but 'ImageApiProtocol?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4076:34 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4077:35 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4078:17 Unresolved reference 'normalizeBaseUrl'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4078:56 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4085:77 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4094:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4098:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4101:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4105:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4109:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4111:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4117:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4124:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4135:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4140:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4142:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4148:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4154:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4159:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4167:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4173:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4182:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4192:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4201:29 Unresolved reference 'loadImageModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4207:29 Unresolved reference 'loadImageModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4213:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4214:19 Unresolved reference 'profilePrefKey'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4215:24 Unresolved reference 'loadImageModelForProfile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4224:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4227:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4234:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4235:53 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4255:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4258:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4263:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4274:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4282:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4296:22 Unresolved reference 'loadLegacyMessages'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2764:102 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2773:48 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2774:38 Unresolved reference 'chooseImageModel'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2775:66 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2780:36 Unresolved reference 'validatedImageParameter'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2781:35 Unresolved reference 'validatedImageParameter'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2782:35 Unresolved reference 'loadAllQuickTextModels'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2788:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2790:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2793:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2797:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2811:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2819:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2822:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2826:23 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2828:35 Unresolved reference 'resolvedImageProtocol'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2838:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2853:24 Unresolved reference 'activeConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2857:51 Unresolved reference 'activeConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2862:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2871:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:2879:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3012:9 Unresolved reference 'cleanupTempAttachments'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3104:28 Unresolved reference 'replaceChatMessages'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3113:39 Unresolved reference 'sendImagePrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3113:75 Unresolved reference 'send'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3116:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3146:23 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3151:14 Unresolved reference 'imageGenerationEnabled'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3151:50 Unresolved reference 'isImageProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3152:55 Unresolved reference 'imageConnectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3164:64 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3164:94 Unresolved reference 'activeConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3165:21 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3166:79 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3170:18 Unresolved reference 'imageGenerationEnabled'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3170:54 Unresolved reference 'isImageProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3171:59 Unresolved reference 'imageConnectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3174:21 Unresolved reference 'isProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3175:55 Unresolved reference 'connectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3178:60 Unresolved reference 'imageApiKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3178:119 Unresolved reference 'id'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3228:43 Unresolved reference 'makeChatTitle'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3229:25 Unresolved reference 'replaceChatMessages'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3266:21 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3269:21 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3279:54 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3282:70 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3298:92 Unresolved reference 'contextLimitTokens'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3305:37 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3312:33 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3317:33 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3323:33 Unresolved reference 'effectiveTextBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3328:33 Unresolved reference 'buildSystemPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3343:45 Unresolved reference 'buildImageProjectPrompt'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3345:25 Unresolved reference 'generateImageForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3370:64 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3394:17 Unresolved reference 'playReadySound'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3395:29 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3403:63 Unresolved reference 'name'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3430:29 Unresolved reference 'type'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3437:13 Unresolved reference 'cleanupTempAttachments'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3447:23 Unresolved reference 'imageConnectionProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3452:14 Unresolved reference 'imageGenerationEnabled'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3452:50 Unresolved reference 'isImageProfileConfigured'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3453:55 Unresolved reference 'imageConnectionSetupMessage'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3481:43 Unresolved reference 'makeChatTitle'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3482:25 Unresolved reference 'replaceChatMessages'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3496:19 Unresolved reference 'imageApiKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3509:29 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3510:17 Unresolved reference 'generateImageForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3519:15 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3519:15 Not enough information to infer type argument for 'R'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3519:15 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3519:29 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:32 Unresolved reference 'text'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3520:60 Unresolved reference 'files'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3526:23 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3526:23 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3526:35 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3528:26 Argument type mismatch: actual type is 'String', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3529:28 Argument type mismatch: actual type is 'String', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3530:28 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3530:35 Unresolved reference 'text'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3530:40 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3531:45 Unresolved reference 'files'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3532:39 Argument type mismatch: actual type is 'Boolean', but 'Boolean' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3545:17 Unresolved reference 'playReadySound'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3550:15 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3550:15 Not enough information to infer type argument for 'T'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3563:13 Unresolved reference 'cleanupTempAttachments'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3572:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3582:20 Unresolved reference 'generateOpenRouterImageWithResolutionFallback'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3588:27 Unresolved reference 'effectiveImageBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3593:16 'when' expression must be exhaustive. Add an 'else' branch.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3593:22 Unresolved reference 'resolvedImageProtocol'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3596:27 Unresolved reference 'effectiveImageBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3603:27 Unresolved reference 'effectiveImageBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3610:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3647:25 Unresolved reference 'imageParameterPrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3657:5 Modifier 'override' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3681:9 Unresolved reference 'cleanupTempAttachments'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3721:9 Unresolved reference 'removeFileReferences'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3748:9 Unresolved reference 'removeFileReferences'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3782:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3794:9 Unresolved reference 'playReadySound'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3797:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3835:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3902:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3911:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3927:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3942:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3948:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3950:53 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3957:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3963:17 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3969:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3991:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:3994:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4003:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4014:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4017:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4019:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4030:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4041:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4050:20 Argument type mismatch: actual type is 'String', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4051:20 Argument type mismatch: actual type is 'ProviderType', but 'ProviderType' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4052:23 Unresolved reference 'normalizeBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4052:23 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4052:66 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4053:28 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4054:29 Argument type mismatch: actual type is 'ImageApiProtocol', but 'ImageApiProtocol?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4055:34 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4056:35 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4057:17 Unresolved reference 'normalizeBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4057:60 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4066:21 Unresolved reference 'normalizeBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4070:20 Argument type mismatch: actual type is 'String', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4071:20 Argument type mismatch: actual type is 'ProviderType', but 'ProviderType' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4072:23 Unresolved reference 'normalizeBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4072:23 Argument type mismatch: actual type is 'uninferred C (of fun <C : CharSequence, R, R> C.ifBlank)', but 'String' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4072:62 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4073:28 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4074:29 Argument type mismatch: actual type is 'ImageApiProtocol', but 'ImageApiProtocol?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4075:34 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4076:35 Argument type mismatch: actual type is 'Boolean', but 'Boolean?' was expected.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4077:17 Unresolved reference 'normalizeBaseUrl'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4077:56 Cannot infer type for this parameter. Specify it explicitly.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4084:77 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4093:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4097:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4100:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4104:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4108:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4110:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4116:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4123:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4134:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4139:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4141:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4147:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4153:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4158:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4166:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4172:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4181:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4191:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4200:29 Unresolved reference 'loadImageModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4206:29 Unresolved reference 'loadImageModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4212:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4213:19 Unresolved reference 'profilePrefKey'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4214:24 Unresolved reference 'loadImageModelForProfile'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4223:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4226:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4233:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4234:53 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4254:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4257:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4262:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4273:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4281:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4295:22 Unresolved reference 'loadLegacyMessages'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4299:38 Unresolved reference 'it'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4299:59 Unresolved reference 'text'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4300:38 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4300:59 Unresolved reference 'text'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4301:38 Unresolved reference 'it'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4301:59 Unresolved reference 'attachmentNames'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4310:5 Modifier 'private' is not applicable to 'local function'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4321:2 Syntax error: Expecting '}'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4300:59 Unresolved reference 'attachmentNames'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4309:5 Modifier 'private' is not applicable to 'local function'.
+e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt:4320:2 Syntax error: Missing '}.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/MainActivity.kt:11:72 Unresolved reference 'Factory'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/NavigationSidebar.kt:388:28 Unresolved reference 'setProjectFavorite'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:290:36 No value passed for parameter 'onCheckedChange'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:290:58 Argument type mismatch: actual type is 'Function1<ERROR CLASS: Unknown return lambda parameter type, ERROR CLASS: Unknown return lambda parameter type>', but 'MutableInteractionSource?' was expected.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:290:60 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:341:40 Unresolved reference 'moveOrchestratorStep'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:345:40 Unresolved reference 'moveOrchestratorStep'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:350:40 Unresolved reference 'deleteOrchestratorStep'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:370:48 Unresolved reference 'runOrchestrator'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:398:38 Unresolved reference 'moveChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:399:38 Unresolved reference 'moveChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:401:38 Unresolved reference 'deleteChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:431:20 Unresolved reference 'upsertChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectChatAutomationDialog.kt:446:20 Unresolved reference 'upsertOrchestratorStep'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:371:35 Unresolved reference 'setProjectFavorite'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:587:27 Unresolved reference 'addProjectFile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:657:45 Unresolved reference 'moveProjectStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:658:47 Unresolved reference 'moveProjectStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:660:45 Unresolved reference 'deleteProjectStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:707:56 Unresolved reference 'toggleProjectSkill'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:727:62 Unresolved reference 'deleteProjectFile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:761:20 Unresolved reference 'upsertProjectStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:775:24 Unresolved reference 'deleteProject'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:860:45 Unresolved reference 'moveChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:861:47 Unresolved reference 'moveChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:863:45 Unresolved reference 'deleteChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:895:20 Unresolved reference 'upsertChatStage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:984:16 Unresolved reference 'importStageDraftFile'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:984:55 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:984:61 Cannot infer type for this parameter. Specify it explicitly.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:989:12 Unresolved reference 'cleanupStageDraftFiles'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/ProjectDialogs.kt:1047:61 Unresolved reference 'deleteStageDraftFile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:220:23 Unresolved reference 'dismissStatus'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:347:23 Cannot infer type for this parameter. Specify it explicitly.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:347:32 Unresolved reference 'addVoiceRecording'.
@@ -818,10 +754,7 @@ e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/Y
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:762:14 Unresolved reference 'clearChat'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:816:36 Unresolved reference 'prepareImageGeneration'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:903:44 Unresolved reference 'toggleSkill'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:920:49 Unresolved reference 'runOrchestrator'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:926:49 Unresolved reference 'PlayArrow'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:934:49 Unresolved reference 'runProjectStages'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:952:49 Unresolved reference 'runCurrentChatStages'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:992:48 Unresolved reference 'toggleSkill'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:1323:8 Unresolved reference 'refreshProviderUsage'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:1422:33 Unresolved reference 'refreshProviderUsage'.
@@ -835,15 +768,15 @@ e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/Y
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:2674:45 Unresolved reference 'saveGeneratedFile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:2902:43 Unresolved reference 'previewAnswerSound'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:2980:32 Unresolved reference 'refreshStorage'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3405:16 Unresolved reference 'refreshModels'.
-e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3573:47 Unresolved reference 'refreshModels'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3782:45 Unresolved reference 'saveGeneratedFile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3782:66 Unresolved reference 'storedFileAsGenerated'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3820:38 Unresolved reference 'refreshStorage'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3885:32 Unresolved reference 'deleteStoredFile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3969:99 Unresolved reference 'deleteStoredFile'.
 e: file:///home/runner/work/Umnik/Umnik/app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt:3985:24 Unresolved reference 'clearWorkingFiles'.
-gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/compile-1789474720145.json
+
+> Task :app:compileDebugKotlin FAILED
+gradle/actions: Writing build results to /home/runner/work/_temp/.gradle-actions/build-results/compile-1789474941340.json
 
 FAILURE: Build failed with an exception.
 
@@ -1049,5 +982,5 @@ Caused by: org.jetbrains.kotlin.gradle.tasks.CompilationErrorException: Compilat
 	... 2 more
 
 
-BUILD FAILED in 42s
+BUILD FAILED in 54s
 31 actionable tasks: 31 executed
