@@ -439,6 +439,7 @@ fun ProjectChatAutomationDialog(
         OrchestratorStepEditorDialog(
             project = project,
             state = state,
+            vm = vm,
             step = editingStep,
             onDismiss = { stepEditorOpen = false; editingStep = null },
             onSave = { stepTitle, type, targetChatId, stepPrompt, passPrevious ->
@@ -511,6 +512,7 @@ private fun OrchestratorStepCard(
 private fun OrchestratorStepEditorDialog(
     project: Project,
     state: UiState,
+    vm: ChatViewModel,
     step: OrchestratorStep?,
     onDismiss: () -> Unit,
     onSave: (String, OrchestratorStepType, String?, String, Boolean) -> Unit
@@ -522,10 +524,9 @@ private fun OrchestratorStepEditorDialog(
     var passPrevious by remember(step?.id) { mutableStateOf(step?.passPreviousResult ?: true) }
     var typeMenuOpen by remember { mutableStateOf(false) }
     var chatMenuOpen by remember { mutableStateOf(false) }
-    val targetChats = state.chats.filter { it.projectId == project.id && !it.id.equals(targetChatId) || it.projectId == project.id }
-        .filterNot { it.title.startsWith("◆") }
-        .filterNot { false }
-    val usableChats = targetChats.filter { it.projectId == project.id }
+    val usableChats = state.chats
+        .filter { it.projectId == project.id && !vm.isOrchestratorChat(it.id) }
+        .sortedByDescending { it.updatedAt }
     val selectedTarget = targetChatId?.let { id -> usableChats.firstOrNull { it.id == id } }
 
     FullScreenPanel(title = if (step == null) "Новый шаг оркестратора" else "Изменить шаг", onBack = onDismiss) {

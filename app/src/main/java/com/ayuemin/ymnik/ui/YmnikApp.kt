@@ -913,6 +913,21 @@ onBranch = if (message.role == "assistant") {
                     onClick = { projectToolsExpanded = !projectToolsExpanded }
                 )
                 if (projectToolsExpanded && currentProject != null) {
+                    val orchestratorSteps = if (currentChat != null && vm.isOrchestratorChat(currentChat.id)) vm.orchestratorSteps(currentChat.id) else emptyList()
+                    if (orchestratorSteps.isNotEmpty()) {
+                        Button(
+                            onClick = {
+                                val chatId = vm.runOrchestrator(currentProject.id)
+                                if (chatId != null) { text = ""; actionsOpen = false }
+                            },
+                            enabled = !state.isLoading && !state.requestActive,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("Выполнить сценарий (${orchestratorSteps.size})")
+                        }
+                    }
                     if (currentProject.stages.orEmpty().isNotEmpty()) {
                         FilledTonalButton(
                             onClick = {
