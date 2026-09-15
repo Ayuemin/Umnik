@@ -1722,7 +1722,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {
-    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {
         val now = System.currentTimeMillis()
         val projects = _state.value.projects.map { project ->
             if (project.id == id) project.copy(

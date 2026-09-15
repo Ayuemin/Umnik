@@ -287,9 +287,12 @@ fun ProjectChatAutomationDialog(
                             Icon(Icons.Outlined.Extension, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text(skill.name, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Switch(skill.id in skillIds) { enabled ->
-                                skillIds = if (enabled) skillIds + skill.id else skillIds - skill.id
-                            }
+                            Switch(
+                                checked = skill.id in skillIds,
+                                onCheckedChange = { enabled ->
+                                    skillIds = if (enabled) skillIds + skill.id else skillIds - skill.id
+                                }
+                            )
                         }
                     }
                 }
