@@ -27,12 +27,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +55,7 @@ fun KnowledgeBaseSection(
     vm: ChatViewModel,
     title: String = "База знаний"
 ) {
+    val context = LocalContext.current
     val current = vm.knowledgeSettings(kind, ownerId)
     val documents = vm.knowledgeDocuments(kind, ownerId)
     var expanded by remember(ownerId) { mutableStateOf(false) }
@@ -59,15 +64,30 @@ fun KnowledgeBaseSection(
     var topK by remember(ownerId, current.topK) { mutableStateOf(current.topK) }
     var modelMenu by remember(ownerId) { mutableStateOf(false) }
 
+    // Use exactly the same complete OpenRouter catalog as the OpenRouter Hub.
+    // The normal ChatViewModel catalog intentionally contains text models only,
+    // so it cannot be used to populate the Embeddings picker.
+    val openRouterCatalog = remember(context, vm) { OpenRouterHubController(context, vm) }
+    val catalogState by openRouterCatalog.state.collectAsState()
+    DisposableEffect(openRouterCatalog) {
+        onDispose { openRouterCatalog.close() }
+    }
+    LaunchedEffect(expanded) {
+        if (expanded && catalogState.catalog.isEmpty() && !catalogState.loading) {
+            openRouterCatalog.refreshCatalog()
+        }
+    }
+
+    val embeddingCatalog = catalogState.catalog
+        .filter { ModelCategory.EMBEDDINGS in it.categories }
+
     val modelChoices = (
         listOf(
             modelId,
             KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL,
             "baai/bge-m3",
             "openai/text-embedding-3-small"
-        ) + state.modelCatalog
-            .filter { ModelCategory.EMBEDDINGS in it.categories }
-            .map { it.id }
+        ) + embeddingCatalog.map { it.id }
     ).filter(String::isNotBlank).distinct()
 
     val addDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
@@ -115,6 +135,23 @@ fun KnowledgeBaseSection(
                     )
                 }
             }
+        }
+        when {
+            catalogState.loading && embeddingCatalog.isEmpty() -> Text(
+                "Загружаю полный список Embeddings из OpenRouter…",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            embeddingCatalog.isNotEmpty() -> Text(
+                "Доступно Embeddings в OpenRouter: ${embeddingCatalog.size}",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            !catalogState.status.isNullOrBlank() -> Text(
+                catalogState.status.orEmpty(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error
+            )
         }
         Text(
             "Модель применяется к новым и переиндексируемым источникам. Уже готовые индексы продолжают работать со своей embedding-моделью.",
