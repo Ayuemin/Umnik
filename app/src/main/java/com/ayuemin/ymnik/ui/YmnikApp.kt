@@ -715,6 +715,7 @@ onBranch = if (message.role == "assistant") {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
                             imagePromptMode -> Text("Опишите изображение")
+                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
                         }
                     },
                     shape = RoundedCornerShape(28.dp),
