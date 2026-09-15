@@ -18,6 +18,19 @@ jobs:
           ref: feature/knowledge-base-rag-v1.14.0
           fetch-depth: 0
 
+      - name: Repair updater targeting
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('.github/scripts/update_v1_14_0.py')
+          text = path.read_text(encoding='utf-8')
+          old = "project_ui = replace_once(project_ui, profile_anchor, profile_replacement, 'ordinary chat knowledge section')"
+          new = """profile_start = project_ui.index('private fun ChatProfileDialog(')\nprofile_end = project_ui.index('\\n}\\n\\n@Composable\\nfun ProjectsDialog', profile_start)\nprofile_segment = project_ui[profile_start:profile_end]\nprofile_segment = replace_once(profile_segment, profile_anchor, profile_replacement, 'ordinary chat knowledge section')\nproject_ui = project_ui[:profile_start] + profile_segment + project_ui[profile_end:]"""
+          if old not in text:
+              raise SystemExit('Updater repair anchor not found')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
+          PY
+
       - name: Apply source update
         run: python3 .github/scripts/update_v1_14_0.py
 
