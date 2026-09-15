@@ -22,6 +22,7 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -162,6 +163,7 @@ import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
+import com.ayuemin.ymnik.model.Skill
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
@@ -276,6 +278,7 @@ private fun ChatScreen(
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
     var projectToolsExpanded by remember { mutableStateOf(false) }
+    var projectSkillsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
@@ -312,6 +315,10 @@ private fun ChatScreen(
     val currentProject = currentChat?.projectId
         ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
     val activeSkillCount = state.activeSkillIds.size
+    val projectAvailableSkills = currentProject?.let { project ->
+        state.skills.filter { it.id in project.skillIds }
+    }.orEmpty()
+    val activeProjectSkillCount = projectAvailableSkills.count { it.id in state.activeSkillIds }
 
     fun startVoiceRecording() {
         if (!microphoneAvailable || state.isLoading || state.requestActive || imagePromptMode) return
@@ -722,8 +729,7 @@ onBranch = if (message.role == "assistant") {
       vm = vm,
       onDismiss = { sidebarOpen = false },
       onNewChat = {
-          val projectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
-          vm.createChat(projectId)
+          vm.createChat()
           sidebarOpen = false
       },
       onOpenProjects = {
@@ -884,30 +890,18 @@ onBranch = if (message.role == "assistant") {
                 )
                 if (skillsExpanded) {
                     Text(
-                        "Навыки действуют только в текущем чате. Их можно включать и выключать независимо от проекта.",
+                        "Выберите навыки для текущего чата. Включённые навыки добавляются к следующим запросам этого чата.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     if (state.skills.isEmpty()) {
                         Text("Навыков пока нет. Добавьте их в Настройки → Навыки.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(state.skills, key = { it.id }) { skill ->
-                                val selected = skill.id in state.activeSkillIds
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { vm.toggleSkill(skill.id) },
-                                    label = { Text(skill.name, maxLines = 1) },
-                                    leadingIcon = {
-                                        Icon(
-                                            if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
-                                            contentDescription = if (selected) "Навык включён" else null,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
-                        }
+                        ComposerSkillList(
+                            skills = state.skills,
+                            selectedIds = state.activeSkillIds,
+                            onToggle = vm::toggleSkill
+                        )
                     }
                 }
 
@@ -933,36 +927,55 @@ onBranch = if (message.role == "assistant") {
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(Modifier.width(7.dp))
-                            Text("Запустить этапы (${currentProject.stages.orEmpty().size})")
+                            Text("Запустить этапы проекта (${currentProject.stages.orEmpty().size})")
                         }
-                    } else {
-                        Text("В проекте пока нет этапов работы. Добавьте их в настройках проекта.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
 
-                    Text(
-                        if (activeSkillCount > 0) "Навыки текущего чата · $activeSkillCount" else "Навыки текущего чата",
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    if (state.skills.isEmpty()) {
-                        Text("Навыков пока нет. Добавьте их в Настройки → Навыки.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (currentChat?.stages.orEmpty().isNotEmpty()) {
+                        FilledTonalButton(
+                            onClick = {
+                                val chatId = vm.runCurrentChatStages(text)
+                                if (chatId != null) {
+                                    text = ""
+                                    actionsOpen = false
+                                }
+                            },
+                            enabled = !state.isLoading && !state.requestActive,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("Запустить этапы чата (${currentChat?.stages.orEmpty().size})")
+                        }
+                    }
+
+                    if (currentProject.stages.orEmpty().isEmpty() && currentChat?.stages.orEmpty().isEmpty()) {
+                        Text(
+                            "Этапы пока не настроены. Их можно добавить в настройках проекта или этого чата.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    if (projectAvailableSkills.isEmpty()) {
+                        Text(
+                            "В настройках проекта навыки не выбраны.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     } else {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            items(state.skills, key = { it.id }) { skill ->
-                                val selected = skill.id in state.activeSkillIds
-                                FilterChip(
-                                    selected = selected,
-                                    onClick = { vm.toggleSkill(skill.id) },
-                                    label = { Text(skill.name, maxLines = 1) },
-                                    leadingIcon = {
-                                        Icon(
-                                            if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
-                                            contentDescription = if (selected) "Навык включён" else null,
-                                            modifier = Modifier.size(17.dp)
-                                        )
-                                    }
-                                )
-                            }
+                        ComposerSectionHeader(
+                            icon = Icons.Outlined.Extension,
+                            label = if (activeProjectSkillCount > 0) "Подключить навыки · $activeProjectSkillCount" else "Подключить навыки",
+                            expanded = projectSkillsExpanded,
+                            onClick = { projectSkillsExpanded = !projectSkillsExpanded }
+                        )
+                        if (projectSkillsExpanded) {
+                            ComposerSkillList(
+                                skills = projectAvailableSkills,
+                                selectedIds = state.activeSkillIds,
+                                onToggle = vm::toggleSkill
+                            )
                         }
                     }
                 }
@@ -1050,6 +1063,45 @@ private fun CompactComposerTool(
         Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
         Spacer(Modifier.width(5.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
+    }
+}
+
+@Composable
+private fun ComposerSkillList(
+    skills: List<Skill>,
+    selectedIds: Set<String>,
+    onToggle: (String) -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 260.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        skills.forEach { skill ->
+            val selected = skill.id in selectedIds
+            FilterChip(
+                selected = selected,
+                onClick = { onToggle(skill.id) },
+                modifier = Modifier.fillMaxWidth(),
+                label = {
+                    Text(
+                        skill.name,
+                        modifier = Modifier.fillMaxWidth(),
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        if (selected) Icons.Outlined.Check else Icons.Outlined.Extension,
+                        contentDescription = if (selected) "Навык включён" else null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            )
+        }
     }
 }
 

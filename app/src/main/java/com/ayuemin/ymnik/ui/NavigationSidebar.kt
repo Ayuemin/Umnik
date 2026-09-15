@@ -190,6 +190,23 @@ fun NavigationSidebar(
                         }
                     }
 
+                    item {
+                        HorizontalDivider(Modifier.padding(vertical = 8.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                focusManager.clearFocus(force = true)
+                                keyboardController?.hide()
+                                onNewChat()
+                            },
+                            enabled = !state.isLoading,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
+                        ) {
+                            Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(7.dp))
+                            Text("Новый чат")
+                        }
+                    }
+
                     if (favoriteChats.isNotEmpty()) {
                         item {
                             HorizontalDivider(Modifier.padding(vertical = 8.dp))
@@ -250,35 +267,17 @@ fun NavigationSidebar(
                 }
 
                 HorizontalDivider()
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                TextButton(
+                    onClick = {
+                        focusManager.clearFocus(force = true)
+                        keyboardController?.hide()
+                        onOpenSettings()
+                    },
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
                 ) {
-                    TextButton(
-                        onClick = {
-                            focusManager.clearFocus(force = true)
-                            keyboardController?.hide()
-                            onNewChat()
-                        },
-                        enabled = !state.isLoading,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(21.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text("Новый чат", maxLines = 1)
-                    }
-                    TextButton(
-                        onClick = {
-                            focusManager.clearFocus(force = true)
-                            keyboardController?.hide()
-                            onOpenSettings()
-                        },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
-                        Spacer(Modifier.width(7.dp))
-                        Text("Настройки", maxLines = 1)
-                    }
+                    Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
+                    Spacer(Modifier.width(7.dp))
+                    Text("Настройки", maxLines = 1)
                 }
             }
         }

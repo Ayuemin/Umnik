@@ -315,7 +315,10 @@ data class ProjectStage(
     val id: String,
     val title: String,
     val instruction: String,
-    val modelId: String? = null
+    val modelId: String? = null,
+    // Nullable collections keep old Gson data fully backward-compatible.
+    val files: List<ProjectFile>? = null,
+    val sourceChatIds: Set<String>? = null
 )
 
 data class Project(
@@ -360,6 +363,8 @@ data class ChatSession(
     val isFavorite: Boolean = false,
     val assignedRole: String? = null,
     val masterPrompt: String? = null,
+    // Project chats may define their own stage sequence in addition to project stages.
+    val stages: List<ProjectStage>? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

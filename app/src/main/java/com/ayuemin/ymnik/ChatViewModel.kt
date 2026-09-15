@@ -1435,8 +1435,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun deleteChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
-        if (_state.value.chats.none { it.id == id }) return
+        val deletingChat = _state.value.chats.firstOrNull { it.id == id } ?: return
 
+        deletingChat.stages.orEmpty()
+            .flatMap { it.files.orEmpty() }
+            .forEach { projectsRepository.deleteFile(it) }
         prefs.edit().remove(chatSkillsKey(id)).apply()
         chatFilesRepository.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
@@ -1467,6 +1470,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
 
         _state.value.chats.forEach { chat ->
+            chat.stages.orEmpty()
+                .flatMap { it.files.orEmpty() }
+                .forEach { projectsRepository.deleteFile(it) }
             chatFilesRepository.deleteChat(chat.id)
             prefs.edit().remove(chatSkillsKey(chat.id)).apply()
         }
@@ -1572,7 +1578,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         stageId: String?,
         title: String,
         instruction: String,
-        modelId: String?
+        modelId: String?,
+        files: List<ProjectFile> = emptyList(),
+        sourceChatIds: Set<String> = emptySet()
     ): String? {
         if (_state.value.isLoading) return null
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
@@ -1583,11 +1591,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         val id = stageId ?: UUID.randomUUID().toString()
         val current = project.stages.orEmpty()
+        current.firstOrNull { it.id == id }?.files.orEmpty()
+            .filterNot { old -> files.any { it.id == old.id } }
+            .forEach { projectsRepository.deleteFile(it) }
         val stage = ProjectStage(
             id = id,
             title = title.trim().ifBlank { "Этап ${current.size + 1}" },
             instruction = cleanInstruction,
-            modelId = modelId?.trim()?.takeIf { it.isNotBlank() }
+            modelId = modelId?.trim()?.takeIf { it.isNotBlank() },
+            files = files.ifEmpty { null },
+            sourceChatIds = sourceChatIds.ifEmpty { null }
         )
         val nextStages = if (current.any { it.id == id }) {
             current.map { if (it.id == id) stage else it }
@@ -1596,20 +1609,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (it.id == projectId) it.copy(stages = nextStages, updatedAt = System.currentTimeMillis()) else it
         }
         projectsRepository.save(projects)
-        _state.value = _state.value.copy(projects = projects, status = "Этап сохранён")
+        _state.value = _state.value.copy(
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Этап сохранён"
+        )
         return id
     }
 
     fun deleteProjectStage(projectId: String, stageId: String) {
         if (_state.value.isLoading) return
-        val projects = _state.value.projects.map { project ->
-            if (project.id == projectId) project.copy(
-                stages = project.stages.orEmpty().filterNot { it.id == stageId },
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
+        project.stages.orEmpty().firstOrNull { it.id == stageId }?.files.orEmpty()
+            .forEach { projectsRepository.deleteFile(it) }
+        val projects = _state.value.projects.map { item ->
+            if (item.id == projectId) item.copy(
+                stages = item.stages.orEmpty().filterNot { it.id == stageId },
                 updatedAt = System.currentTimeMillis()
-            ) else project
+            ) else item
         }
         projectsRepository.save(projects)
-        _state.value = _state.value.copy(projects = projects)
+        _state.value = _state.value.copy(
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
     }
 
     fun moveProjectStage(projectId: String, stageId: String, delta: Int) {
@@ -1629,10 +1654,141 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(projects = projects)
     }
 
+    fun upsertChatStage(
+        chatId: String,
+        stageId: String?,
+        title: String,
+        instruction: String,
+        modelId: String?,
+        files: List<ProjectFile> = emptyList(),
+        sourceChatIds: Set<String> = emptySet()
+    ): String? {
+        if (_state.value.isLoading) return null
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        if (chat.projectId == null) {
+            _state.value = _state.value.copy(status = "Индивидуальные этапы доступны для чатов проекта")
+            return null
+        }
+        val cleanInstruction = instruction.trim()
+        if (cleanInstruction.isBlank()) {
+            _state.value = _state.value.copy(status = "Введите инструкцию этапа")
+            return null
+        }
+        val id = stageId ?: UUID.randomUUID().toString()
+        val current = chat.stages.orEmpty()
+        current.firstOrNull { it.id == id }?.files.orEmpty()
+            .filterNot { old -> files.any { it.id == old.id } }
+            .forEach { projectsRepository.deleteFile(it) }
+        val stage = ProjectStage(
+            id = id,
+            title = title.trim().ifBlank { "Этап ${current.size + 1}" },
+            instruction = cleanInstruction,
+            modelId = modelId?.trim()?.takeIf { it.isNotBlank() },
+            files = files.ifEmpty { null },
+            sourceChatIds = sourceChatIds.ifEmpty { null }
+        )
+        val nextStages = if (current.any { it.id == id }) {
+            current.map { if (it.id == id) stage else it }
+        } else current + stage
+        val chats = _state.value.chats.map {
+            if (it.id == chatId) it.copy(stages = nextStages, updatedAt = System.currentTimeMillis()) else it
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Этап чата сохранён"
+        )
+        return id
+    }
+
+    fun deleteChatStage(chatId: String, stageId: String) {
+        if (_state.value.isLoading) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        chat.stages.orEmpty().firstOrNull { it.id == stageId }?.files.orEmpty()
+            .forEach { projectsRepository.deleteFile(it) }
+        val chats = _state.value.chats.map { item ->
+            if (item.id == chatId) item.copy(
+                stages = item.stages.orEmpty().filterNot { it.id == stageId },
+                updatedAt = System.currentTimeMillis()
+            ) else item
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = chats,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun moveChatStage(chatId: String, stageId: String, delta: Int) {
+        if (_state.value.isLoading || delta == 0) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        val stages = chat.stages.orEmpty().toMutableList()
+        val from = stages.indexOfFirst { it.id == stageId }
+        if (from < 0 || stages.isEmpty()) return
+        val to = (from + delta).coerceIn(0, stages.lastIndex)
+        if (to == from) return
+        val item = stages.removeAt(from)
+        stages.add(to, item)
+        val chats = _state.value.chats.map {
+            if (it.id == chatId) it.copy(stages = stages, updatedAt = System.currentTimeMillis()) else it
+        }
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(chats = chats)
+    }
+
+    fun importStageDraftFile(projectId: String, uri: Uri): ProjectFile? =
+        runCatching { projectsRepository.importFile(projectId, uri) }
+            .onSuccess {
+                _state.value = _state.value.copy(
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
+                )
+            }
+            .onFailure {
+                _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить файл этапа")
+            }
+            .getOrNull()
+
+    fun deleteStageDraftFile(file: ProjectFile) {
+        projectsRepository.deleteFile(file)
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun cleanupStageDraftFiles(originalFileIds: Set<String>, draftFiles: List<ProjectFile>) {
+        draftFiles.filterNot { it.id in originalFileIds }.forEach { projectsRepository.deleteFile(it) }
+        _state.value = _state.value.copy(
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
     fun runProjectStages(projectId: String, initialTask: String): String? {
-        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
-        val stages = project.stages.orEmpty().filter { it.instruction.isNotBlank() }
+        return runStageSequence(project, project.stages.orEmpty(), initialTask, "проекта")
+    }
+
+    fun runCurrentChatStages(initialTask: String): String? {
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return null
+        val projectId = chat.projectId ?: return null
+        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
+        return runStageSequence(project, chat.stages.orEmpty(), initialTask, "чата")
+    }
+
+    private fun runStageSequence(
+        project: Project,
+        configuredStages: List<ProjectStage>,
+        initialTask: String,
+        sequenceName: String
+    ): String? {
+        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
+        val stages = configuredStages.filter { it.instruction.isNotBlank() }
         if (stages.isEmpty()) {
             _state.value = _state.value.copy(status = "Сначала добавьте хотя бы один этап работы")
             return null
@@ -1646,7 +1802,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (apiKey.isBlank()) return null
 
         val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-        val chatId = if (activeChat?.projectId == projectId) activeChat.id else createChat(projectId)
+        val chatId = if (activeChat?.projectId == project.id) activeChat.id else createChat(project.id)
         val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
         val baseHistory = currentChat.messages
         val chatAttachments = currentChat.chatFiles.orEmpty().map(::chatFileAsAttachment)
@@ -1657,7 +1813,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "user",
-            text = "Запустить этапы проекта.\n\nИсходная задача:\n$startText",
+            text = "Запустить этапы $sequenceName.\n\nИсходная задача:\n$startText",
             timestamp = now
         )
         val stageChat = currentChat.copy(
@@ -1678,7 +1834,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             status = null
         )
         val generation = ++requestGeneration
-        DiagnosticLog.action(context, "project_stages_start", "project=${projectId.take(8)}; chat=${chatId.take(8)}; stages=${stages.size}; continued=${activeChat?.id == chatId}")
+        DiagnosticLog.action(
+            context,
+            "stage_sequence_start",
+            "project=${project.id.take(8)}; chat=${chatId.take(8)}; sequence=$sequenceName; stages=${stages.size}"
+        )
 
         projectStagesJob = viewModelScope.launch {
             val results = mutableListOf<Pair<ProjectStage, String>>()
@@ -1702,15 +1862,47 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         (modelInfo.reasoningEfforts.isEmpty() || currentState.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
                     val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) currentState.reasoningEffort.apiValue else null
 
-                    val projectAttachments = project.files.map { file ->
-                        PendingAttachment(
-                            uri = "project://${file.id}",
-                            name = file.name,
-                            mimeType = file.mimeType,
-                            size = file.size,
-                            localPath = file.localPath
-                        )
+                    fun projectFileAttachment(prefix: String, file: ProjectFile) = PendingAttachment(
+                        uri = "$prefix://${file.id}",
+                        name = file.name,
+                        mimeType = file.mimeType,
+                        size = file.size,
+                        localPath = file.localPath
+                    )
+
+                    val latestChats = chatsRepository.list().ifEmpty { currentState.chats }
+                    val sourceChats = stage.sourceChatIds.orEmpty()
+                        .mapNotNull { sourceId -> latestChats.firstOrNull { it.id == sourceId } }
+                        .filter { it.projectId == project.id && it.id != chatId }
+                    val sourceChatText = buildString {
+                        sourceChats.forEach { source ->
+                            appendLine("--- Чат проекта: ${source.title} ---")
+                            source.messages.forEach { message ->
+                                val role = if (message.role == "assistant") "Модель" else "Пользователь"
+                                if (message.text.isNotBlank()) appendLine("$role: ${message.text}")
+                                if (message.generatedFiles.isNotEmpty()) {
+                                    appendLine("Файлы результата: ${message.generatedFiles.joinToString { it.name }}")
+                                }
+                            }
+                            appendLine()
+                        }
+                    }.trim()
+
+                    val sourceAttachments = sourceChats.flatMap { source ->
+                        source.chatFiles.orEmpty().map(::chatFileAsAttachment) +
+                            source.messages.flatMap { message -> message.generatedFiles }.map { file ->
+                                PendingAttachment(
+                                    uri = "generated://${file.id}",
+                                    name = file.name,
+                                    mimeType = file.mimeType,
+                                    size = file.size,
+                                    localPath = file.localPath
+                                )
+                            }
                     }
+                    val projectAttachments = project.files.map { projectFileAttachment("project", it) }
+                    val stageAttachments = stage.files.orEmpty().map { projectFileAttachment("stage", it) }
+
                     fun allowedForStage(attachment: PendingAttachment): Boolean {
                         val mime = attachment.mimeType.lowercase()
                         val name = attachment.name.lowercase()
@@ -1721,16 +1913,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             (mime.startsWith("audio/") && modelInfo?.accepts("audio") == true) ||
                             (mime.startsWith("video/") && modelInfo?.accepts("video") == true)
                     }
-                    val attachments = (projectAttachments + chatAttachments)
+                    val attachments = (projectAttachments + chatAttachments + stageAttachments + sourceAttachments)
                         .filter(::allowedForStage)
                         .distinctBy { it.localPath ?: it.uri }
                     val skillsText = skills.promptFor(currentState.activeSkillIds)
                     val systemPrompt = buildSystemPrompt(skillsText, project, stageChat, modelInfo?.supportsTools == true)
                     val prompt = buildString {
-                        appendLine("Выполни только текущий этап универсального сценария проекта. Не переходи к следующим этапам сам.")
+                        appendLine("Выполни только текущий этап сценария. Не переходи к следующим этапам сам.")
                         appendLine()
                         appendLine("===== ИСХОДНАЯ ЗАДАЧА =====")
                         appendLine(startText)
+                        if (sourceChatText.isNotBlank()) {
+                            appendLine()
+                            appendLine("===== ВЫБРАННЫЕ ЧАТЫ ПРОЕКТА =====")
+                            appendLine(sourceChatText)
+                        }
                         if (results.isNotEmpty()) {
                             appendLine()
                             appendLine("===== РЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ЭТАПОВ =====")
@@ -1746,7 +1943,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
                     }
                     _state.value = _state.value.copy(busyLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}")
-                    DiagnosticLog.record(context, "PROJECT_STAGE", "start project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId; history=${baseHistory.size}; chatFiles=${chatAttachments.size}")
+                    DiagnosticLog.record(
+                        context,
+                        "PROJECT_STAGE",
+                        "start project=${project.id.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId; history=${baseHistory.size}; sources=${sourceChats.size}; stageFiles=${stage.files.orEmpty().size}"
+                    )
 
                     val result = try {
                         api.chat(
@@ -1774,7 +1975,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             else -> raw.ifBlank { "Не удалось выполнить этап" }
                         }
                         appendProjectStageMessage(chatId, index + 1, stage.title, "Ошибка: $friendly", modelId, null)
-                        DiagnosticLog.record(context, "PROJECT_STAGE", "failed project=${projectId.take(8)}; stage=${index + 1}; model=$modelId", error)
+                        DiagnosticLog.record(context, "PROJECT_STAGE", "failed project=${project.id.take(8)}; stage=${index + 1}; model=$modelId", error)
                         _state.value = _state.value.copy(status = "Этап ${index + 1} остановлен: $friendly")
                         return@launch
                     }
@@ -1782,10 +1983,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     val stageText = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
                     results += stage to stageText
                     appendProjectStageMessage(chatId, index + 1, stage.title, stageText, result.modelId ?: modelId, result)
-                    DiagnosticLog.record(context, "PROJECT_STAGE", "success project=${projectId.take(8)}; stage=${index + 1}/${stages.size}; model=${result.modelId ?: modelId}; chars=${stageText.length}")
+                    DiagnosticLog.record(context, "PROJECT_STAGE", "success project=${project.id.take(8)}; stage=${index + 1}/${stages.size}; model=${result.modelId ?: modelId}; chars=${stageText.length}")
                 }
                 if (generation == requestGeneration) {
-                    _state.value = _state.value.copy(status = "Все этапы проекта выполнены: ${stages.size}")
+                    _state.value = _state.value.copy(status = "Все этапы $sequenceName выполнены: ${stages.size}")
                     playReadySound()
                 }
             } finally {
@@ -1921,7 +2122,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         projectsRepository.save(projects)
 
         val chats = _state.value.chats.map { chat ->
-            if (chat.projectId == projectId) chat.copy(projectId = null) else chat
+            if (chat.projectId == projectId) chat.copy(projectId = null, stages = null) else chat
         }
         chatsRepository.save(chats)
         val current = chats.firstOrNull { it.id == _state.value.currentChatId }
