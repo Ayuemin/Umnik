@@ -17,15 +17,75 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: feature/chat-profiles-orchestrator-v1.12.0
-      - name: Repair generated v1.12 source
+      - name: Repair and harden v1.12 source
         run: |
           python - <<'PY'
           from pathlib import Path
+
           p=Path('app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt')
           s=p.read_text()
           duplicate='    fun refreshModels(mode: ChatMode) {\n    fun refreshModels(mode: ChatMode) {\n'
           if duplicate in s:
               s=s.replace(duplicate, '    fun refreshModels(mode: ChatMode) {\n', 1)
+
+          old='''    private fun runtimeProfile(chat: ChatSession): ProjectChatRuntimeProfile =
+        projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat).also { projectAutomation.saveProfile(chat.id, it) }
+'''
+          new='''    private fun runtimeProfile(chat: ChatSession): ProjectChatRuntimeProfile {
+        val stored = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+        val allowedSkills = chat.projectId
+            ?.let { projectId -> _state.value.projects.firstOrNull { it.id == projectId }?.skillIds }
+            .orEmpty()
+        val clean = stored.copy(skillIds = stored.skillIds.intersect(allowedSkills))
+        if (projectAutomation.profile(chat.id) != clean) {
+            projectAutomation.saveProfile(chat.id, clean)
+            prefs.edit().putStringSet(chatSkillsKey(chat.id), clean.skillIds).apply()
+        }
+        return clean
+    }
+'''
+          if old in s:
+              s=s.replace(old,new,1)
+
+          old='''        val clean = profile.copy(modelId = profile.modelId?.trim()?.takeIf { it.isNotBlank() } ?: _state.value.textModel)
+'''
+          new='''        val allowedSkills = chat.projectId
+            ?.let { projectId -> _state.value.projects.firstOrNull { it.id == projectId }?.skillIds }
+            .orEmpty()
+        val clean = profile.copy(
+            modelId = profile.modelId?.trim()?.takeIf { it.isNotBlank() } ?: _state.value.textModel,
+            skillIds = profile.skillIds.intersect(allowedSkills)
+        )
+'''
+          if old in s:
+              s=s.replace(old,new,1)
+
+          old='''                title = title.trim().ifBlank { "Новый чат" },
+'''
+          new='''                title = if (isOrchestratorChat(id)) {
+                    title.trim().removePrefix("◆").trim().ifBlank { "Оркестратор" }
+                } else title.trim().ifBlank { "Новый чат" },
+'''
+          if old in s:
+              s=s.replace(old,new,1)
+
+          start=s.find('    fun selectQuickTextModel(modelRef: String) {')
+          end=s.find('    fun useDefaultTextModelForChat()', start)
+          if start >= 0 and end > start:
+              block=s[start:end]
+              marker='''        chatsRepository.save(chats)
+        prefs.edit()
+'''
+              replacement='''        chatsRepository.save(chats)
+        val selectedChat = chats.firstOrNull { it.id == _state.value.currentChatId }
+        if (selectedChat?.projectId != null) {
+            updateCurrentProjectRuntime { it.copy(modelId = clean) }
+        }
+        prefs.edit()
+'''
+              if marker in block and replacement not in block:
+                  block=block.replace(marker,replacement,1)
+                  s=s[:start]+block+s[end:]
           p.write_text(s)
 
           ui=Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
@@ -35,6 +95,20 @@ jobs:
               if marker in u:
                   u=u.replace(marker, marker+'import androidx.compose.material.icons.outlined.PlayArrow\n',1)
           ui.write_text(u)
+
+          e=Path('app/src/main/java/com/ayuemin/ymnik/network/OpenRouterRequestEnhancer.kt')
+          x=e.read_text()
+          old='''        val serverTools = requestChatId?.let { ProjectAutomationRepository(context).profile(it)?.tools } ?: prefs.tools()
+'''
+          new='''        val projectChatProfile = requestChatId?.let { ProjectAutomationRepository(context).profile(it) }
+        // Project-chat web search is controlled by the dedicated fixed Search setting.
+        // Keep the server-tool web-search switch off here so an old/global tool preset
+        // cannot silently override a chat where Search was explicitly disabled.
+        val serverTools = projectChatProfile?.tools?.copy(webSearch = WebSearchMode.OFF) ?: prefs.tools()
+'''
+          if old in x:
+              x=x.replace(old,new,1)
+          e.write_text(x)
           PY
       - uses: actions/setup-java@v5
         with:
@@ -99,8 +173,8 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt .github/debug-v1.12.log .github/brace-report.txt
-          git commit -m "Fix v1.12 generated Kotlin structure" || true
+          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt app/src/main/java/com/ayuemin/ymnik/network/OpenRouterRequestEnhancer.kt app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt .github/debug-v1.12.log .github/brace-report.txt
+          git commit -m "Harden v1.12 project chat runtime profiles" || true
           git push origin HEAD:feature/chat-profiles-orchestrator-v1.12.0
       - name: Fail if compile failed
         if: steps.compile.outputs.exit_code != '0'
