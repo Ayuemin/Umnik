@@ -44,6 +44,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,6 +64,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
+import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.UiState
 import java.text.SimpleDateFormat
@@ -90,6 +92,7 @@ fun NavigationSidebar(
     var renameTarget by remember { mutableStateOf<ChatSession?>(null) }
     var renameValue by remember { mutableStateOf("") }
     var clearConfirm by remember { mutableStateOf(false) }
+    var settingsTarget by remember { mutableStateOf<ChatSession?>(null) }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
 
@@ -222,6 +225,7 @@ fun NavigationSidebar(
                                     onDismiss()
                                 },
                                 onDelete = { deleteTarget = chat },
+                                onSettings = { settingsTarget = chat },
                                 onRename = {
                                     renameTarget = chat
                                     renameValue = chat.title
@@ -257,6 +261,7 @@ fun NavigationSidebar(
                                     onDismiss()
                                 },
                                 onDelete = { deleteTarget = chat },
+                                onSettings = { settingsTarget = chat },
                                 onRename = {
                                     renameTarget = chat
                                     renameValue = chat.title
@@ -326,6 +331,15 @@ fun NavigationSidebar(
                 ) { Text("Сохранить") }
             },
             dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Отмена") } }
+        )
+    }
+
+    settingsTarget?.let { chat ->
+        RegularChatSettingsDialog(
+            chat = chat,
+            state = state,
+            vm = vm,
+            onDismiss = { settingsTarget = null }
         )
     }
 
@@ -405,6 +419,7 @@ private fun SidebarChatRow(
     vm: ChatViewModel,
     onOpen: () -> Unit,
     onDelete: () -> Unit,
+    onSettings: () -> Unit,
     onRename: () -> Unit
 ) {
     var actionsOpen by remember(chat.id) { mutableStateOf(false) }
@@ -470,6 +485,15 @@ private fun SidebarChatRow(
                         }
                     )
                     DropdownMenuItem(
+                        text = { Text("Настройки чата") },
+                        leadingIcon = { Icon(Icons.Outlined.Settings, contentDescription = null) },
+                        enabled = !state.isLoading,
+                        onClick = {
+                            actionsOpen = false
+                            onSettings()
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text("Удалить") },
                         leadingIcon = { Icon(Icons.Outlined.DeleteOutline, contentDescription = null) },
                         enabled = !state.isLoading,
@@ -479,6 +503,91 @@ private fun SidebarChatRow(
                         }
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RegularChatSettingsDialog(
+    chat: ChatSession,
+    state: UiState,
+    vm: ChatViewModel,
+    onDismiss: () -> Unit
+) {
+    var title by remember(chat.id, chat.title) { mutableStateOf(chat.title) }
+    var role by remember(chat.id, chat.assignedRole) { mutableStateOf(chat.assignedRole.orEmpty()) }
+    var prompt by remember(chat.id, chat.masterPrompt) { mutableStateOf(chat.masterPrompt.orEmpty()) }
+    var favorite by remember(chat.id, chat.isFavorite) { mutableStateOf(chat.isFavorite) }
+
+    FullScreenPanel(title = "Настройки чата", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it.take(100) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Название") },
+                    singleLine = true
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = role,
+                    onValueChange = { role = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Роль чата") },
+                    placeholder = { Text("Например: главный редактор") }
+                )
+            }
+            item {
+                OutlinedTextField(
+                    value = prompt,
+                    onValueChange = { prompt = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Инструкция чата") },
+                    placeholder = { Text("Постоянная инструкция только для этого чата") },
+                    minLines = 5,
+                    maxLines = 14
+                )
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Избранное", Modifier.weight(1f))
+                    Switch(checked = favorite, onCheckedChange = { favorite = it })
+                }
+            }
+            item {
+                FilledTonalButton(
+                    onClick = {
+                        vm.updateChatProfile(chat.id, title, role, prompt)
+                        vm.setChatFavorite(chat.id, favorite)
+                    },
+                    enabled = title.isNotBlank() && !state.isLoading,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Сохранить основные настройки")
+                }
+            }
+            item {
+                Text(
+                    "Модель, размышление, веб-поиск, навыки и разовые вложения остаются в меню + текущего чата. Здесь хранятся постоянные настройки самого чата.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            item {
+                KnowledgeBaseSection(
+                    kind = KnowledgeOwnerKind.CHAT,
+                    ownerId = chat.id,
+                    state = state,
+                    vm = vm,
+                    title = "База знаний чата"
+                )
             }
         }
     }
