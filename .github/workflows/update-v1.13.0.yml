@@ -18,6 +18,48 @@ jobs:
           ref: feature/orchestrator-chat-control-v1.13.0
           fetch-depth: 0
 
+      - name: Repair updater targeting
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/update_v1_13_0.py')
+          s = p.read_text(encoding='utf-8')
+          old = """vm = replace_once(
+              vm,
+              '        val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              '        val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              'chat task runtime override'
+          )
+          """
+          new = """vm = replace_once(
+              vm,
+              '        val all = chatsRepository.list()\\n        val chat = all.firstOrNull { it.id == requested.id } ?: requested\\n        val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              '        val all = chatsRepository.list()\\n        val chat = all.firstOrNull { it.id == requested.id } ?: requested\\n        val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              'chat task runtime override'
+          )
+          """
+          if old not in s:
+              raise SystemExit('chat runtime updater block not found')
+          s = s.replace(old, new, 1)
+          old2 = """# This is the second occurrence after the chat-task replacement.
+          old_runtime = '            val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n'
+          if vm.count(old_runtime) < 1:
+              raise RuntimeError('stage runtime override: no remaining match')
+          vm = vm.replace(old_runtime, '            val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n', 1)
+          """
+          new2 = """vm = replace_once(
+              vm,
+              '            val currentChats = chatsRepository.list()\\n            val chat = currentChats.firstOrNull { it.id == first.id } ?: first\\n            val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              '            val currentChats = chatsRepository.list()\\n            val chat = currentChats.firstOrNull { it.id == first.id } ?: first\\n            val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)\\n',
+              'stage runtime override'
+          )
+          """
+          if old2 not in s:
+              raise SystemExit('stage runtime updater block not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Apply source update
         run: python3 .github/scripts/update_v1_13_0.py
 
