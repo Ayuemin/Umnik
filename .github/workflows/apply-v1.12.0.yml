@@ -17,6 +17,24 @@ jobs:
           ref: feature/chat-profiles-orchestrator-v1.12.0
           fetch-depth: 0
 
+      - name: Patch one-shot updater
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/update_v1_12_0.py')
+          s = p.read_text()
+          old = '''s = one(s, ''' + "'''        chatsRepository.save(listOf(chat))\n'''" + ''', ''' + "'''        val resetChats = listOf(chat) + protectedOrchestrators\n        chatsRepository.save(resetChats)\n'''" + ''', "clear save orchestrators")'''
+          new = '''s = s.replace(''' + "'''        chatsRepository.save(listOf(chat))\n'''" + ''', ''' + "'''        val resetChats = listOf(chat) + protectedOrchestrators\n        chatsRepository.save(resetChats)\n'''" + ''', 1)'''
+          if old not in s:
+              raise SystemExit('clear save hotfix target not found')
+          s = s.replace(old, new, 1)
+          old2 = '''s = one(s, ''' + "'''            chats = listOf(chat),\n            currentChatId = chat.id,\n'''" + ''', ''' + "'''            chats = resetChats,\n            currentChatId = chat.id,\n'''" + ''', "clear state orchestrators")'''
+          new2 = '''s = s.replace(''' + "'''            chats = listOf(chat),\n            currentChatId = chat.id,\n'''" + ''', ''' + "'''            chats = resetChats,\n            currentChatId = chat.id,\n'''" + ''', 1)'''
+          if old2 in s:
+              s = s.replace(old2, new2, 1)
+          p.write_text(s)
+          PY
+
       - name: Apply update
         run: python .github/scripts/update_v1_12_0.py
 
