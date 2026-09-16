@@ -21,6 +21,7 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.ayuemin.ymnik.network.OpenRouterResponseParser
+import com.ayuemin.ymnik.network.isOpenRouterResponseCacheRecoverable
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -48,6 +49,12 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         if (generationId.isNullOrBlank()) {
             if (System.currentTimeMillis() - record.createdAt < NO_GENERATION_GRACE_MS) return Result.retry()
             failPending(record, "Запрос был прерван системой до получения идентификатора генерации. Повторите его вручную.")
+            store.remove(requestId)
+            return Result.success()
+        }
+
+        if (!isOpenRouterResponseCacheRecoverable(record.cacheStatus)) {
+            failPending(record, "OpenRouter не подтвердил безопасный response cache. Запрос не отправлен повторно, чтобы исключить двойную оплату.")
             store.remove(requestId)
             return Result.success()
         }

@@ -386,7 +386,12 @@ class OpenRouterClient(
         }
         val payloadJson = gson.toJson(payload)
         val recoveryRecord = recoveryRecord(baseUrl, model, payloadJson)
-        recoveryRecord?.let(recoveryStore::put)
+        recoveryRecord?.let { record ->
+            recoveryStore.put(record)
+            // Persist the fallback before network I/O. If Android kills the process before
+            // response headers arrive, WorkManager can still close the pending state safely.
+            OpenRouterRecoveryWorker.schedule(context, record.requestId, initialDelaySeconds = 120L)
+        }
         val request = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
@@ -413,8 +418,14 @@ class OpenRouterClient(
                     generationId = response.header("X-Generation-Id")
                     cacheStatus = response.header("X-OpenRouter-Cache-Status")
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
-                        recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId)
+                        if (isOpenRouterResponseCacheRecoverable(cacheStatus)) {
+                            recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
+                            OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId)
+                        } else {
+                            // Never persist an automatic paid replay unless OpenRouter explicitly
+                            // confirms this exact request participates in response caching.
+                            clearRecovery(recoveryRecord)
+                        }
                     }
                     phaseCallback(
                         if (cacheStatus.equals("HIT", ignoreCase = true))
