@@ -42,6 +42,18 @@ jobs:
       - name: Apply review fixes
         run: python3 tools/fix_v1170_review.py
 
+      - name: Resolve enhancer local-name collision
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ayuemin/ymnik/network/OpenRouterRequestEnhancer.kt')
+          text = p.read_text(encoding='utf-8')
+          text = text.replace('val snapshot = activeSnapshot()\n        val execution = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)\n        val chatId = effectiveChatId()\n        val messageId = snapshot?.messageId?.takeIf { chatId == snapshot.chatId }',
+                              'val requestSnapshot = activeSnapshot()\n        val execution = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)\n        val chatId = effectiveChatId()\n        val messageId = requestSnapshot?.messageId?.takeIf { chatId == requestSnapshot.chatId }', 1)
+          p.write_text(text, encoding='utf-8')
+          PY
+
       - name: Verify safety wiring
         shell: bash
         run: |
