@@ -2792,6 +2792,8 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                 }
             }
 
+            item { ChatMemoryGlobalSettingsSection(state, vm) }
+
             item {
                 val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
                 ExpandableSettingsCard(

@@ -13,6 +13,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.ChatFileRepository
+import com.ayuemin.ymnik.data.ChatMemoryManager
+import com.ayuemin.ymnik.data.ChatMemoryRepository
 import com.ayuemin.ymnik.data.KnowledgeBaseRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
@@ -27,6 +29,9 @@ import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
+import com.ayuemin.ymnik.model.ChatContextMode
+import com.ayuemin.ymnik.model.ChatMemoryGlobalSettings
+import com.ayuemin.ymnik.model.ChatMemoryStats
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
@@ -79,8 +84,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val skills = SkillRepository(context)
     private val chatsRepository = ChatRepository(context)
     private val chatFilesRepository = ChatFileRepository(context)
+    private val chatMemory = ChatMemoryRepository(context)
     private val knowledgeBase = KnowledgeBaseRepository(context)
     private val embeddingApi = OpenRouterEmbeddingClient(context)
+    private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
     private val projectsRepository = ProjectRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
@@ -267,6 +274,72 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value.chats.firstOrNull { it.id == chatId }?.let(::skillIdsForChat).orEmpty()
 
     fun globalOpenRouterTools() = openRouterFeaturePrefs.tools()
+
+    fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
+
+    fun saveChatMemorySettings(settings: ChatMemoryGlobalSettings) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        chatMemory.saveSettings(settings)
+        _state.value = _state.value.copy(status = "Настройки памяти и контекста сохранены")
+    }
+
+    fun chatContextMode(chatId: String): ChatContextMode = chatMemory.mode(chatId)
+
+    fun setChatContextMode(chatId: String, mode: ChatContextMode) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        if (_state.value.chats.none { it.id == chatId }) return
+        chatMemory.saveMode(chatId, mode)
+        val label = when (mode) {
+            ChatContextMode.AUTO -> "Автоматический"
+            ChatContextMode.FULL -> "Всегда полный"
+            ChatContextMode.ECONOMY -> "Экономный"
+        }
+        _state.value = _state.value.copy(status = "Контекст чата: $label")
+    }
+
+    fun chatMemoryStats(chatId: String): ChatMemoryStats = chatMemory.stats(chatId)
+
+    fun totalChatMemoryBytes(): Long = chatMemory.totalBytes()
+
+    fun clearChatMemory(chatId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        chatMemory.clearMemory(chatId)
+        _state.value = _state.value.copy(status = "Служебная память чата очищена. Переписка сохранена.")
+    }
+
+    fun clearAllChatMemory() {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        chatMemory.clearAllMemory()
+        _state.value = _state.value.copy(status = "Служебная память всех чатов очищена. Переписка сохранена.")
+    }
+
+    fun rebuildChatMemory(chatId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        if (chatMemory.mode(chatId) == ChatContextMode.FULL) {
+            _state.value = _state.value.copy(status = "В режиме «Всегда полный» долговременная память не используется")
+            return
+        }
+        viewModelScope.launch {
+            _state.value = _state.value.copy(isLoading = true, busyLabel = "Перестраиваю память чата…", status = null)
+            try {
+                val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
+                chatMemoryManager.rebuild(chat, apiKey, baseUrl)
+                val stats = chatMemory.stats(chatId)
+                _state.value = _state.value.copy(
+                    status = if (stats.chunks == 0)
+                        "История пока слишком короткая для долговременной памяти"
+                    else
+                        "Память перестроена: ${stats.checkpoints} checkpoint, ${stats.chunks} фрагментов"
+                )
+            } catch (error: Throwable) {
+                DiagnosticLog.record(context, "CHAT_MEMORY", "manual rebuild failed chat=${chatId.take(8)}", error)
+                _state.value = _state.value.copy(status = error.message ?: "Не удалось перестроить память чата")
+            } finally {
+                _state.value = _state.value.copy(isLoading = false, busyLabel = null)
+            }
+        }
+    }
     fun isOrchestratorChat(chatId: String): Boolean = projectAutomation.isOrchestrator(chatId)
     fun orchestratorSteps(chatId: String): List<OrchestratorStep> = projectAutomation.steps(chatId)
     fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
@@ -1782,6 +1855,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         projectAutomation.deleteChat(id)
         chatFilesRepository.deleteChat(id)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, id)
+        chatMemory.deleteChat(id)
         var remaining = _state.value.chats.filterNot { it.id == id }
         if (remaining.isEmpty()) {
             remaining = listOf(
@@ -1816,6 +1890,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 .forEach { projectsRepository.deleteFile(it) }
             chatFilesRepository.deleteChat(chat.id)
             knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chat.id)
+            chatMemory.deleteChat(chat.id)
             projectAutomation.deleteChat(chat.id)
             prefs.edit().remove(chatSkillsKey(chat.id)).apply()
         }
@@ -3291,6 +3366,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
         projectsRepository.deleteProjectFiles(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
+        _state.value.chats.filter { it.projectId == projectId }.forEach { chatMemory.deleteChat(it.id) }
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
         val orchestratorId = projectAutomation.orchestratorChatId(projectId)
@@ -4011,14 +4087,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val allAttachments = (pending + persistentChatFiles.filter { attachmentAllowed(it).first } + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
+                        val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
+                        val preparedContext = chatMemoryManager.prepare(
+                            chat = currentChat,
+                            fullHistory = before,
+                            query = clean,
+                            apiKey = memoryCredentials?.first,
+                            baseUrl = memoryCredentials?.second
+                        )
                         if (profile.type == ProviderType.OPENROUTER) {
                             api.chat(
                                 key,
                                 textModel,
-                                before,
+                                preparedContext.history,
                                 clean,
                                 allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true) + knowledgeContext,
+                                buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true) +
+                                    preparedContext.systemContext + knowledgeContext,
                                 webSearchEnabled,
                                 actualReasoning,
                                 effort,
@@ -4031,10 +4116,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 key,
                                 effectiveTextBaseUrl(profile),
                                 textModel,
-                                before,
+                                preparedContext.history,
                                 clean,
                                 allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, false) + knowledgeContext,
+                                buildSystemPrompt(skillText, currentProject, currentChat, false) +
+                                    preparedContext.systemContext + knowledgeContext,
                                 requestModelInfo
                             )
                         }
@@ -4391,6 +4477,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return
         val chatId = _state.value.currentChatId
         chatFilesRepository.deleteChat(chatId)
+        chatMemory.clearMemory(chatId)
         val now = System.currentTimeMillis()
         val chats = _state.value.chats.map { chat ->
             if (chat.id == chatId) chat.copy(
@@ -4543,6 +4630,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
+        appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
+        appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
         appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
         val profile = _state.value.userProfile
         val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
