@@ -10,6 +10,12 @@ def replace_once(path, old, new):
     if n != 1:
         raise SystemExit(f'{path}: expected one match, found {n}: {old[:140]!r}')
     write(path, text.replace(old, new, 1))
+def replace_first_of_two(path, old, new):
+    text = read(path)
+    n = text.count(old)
+    if n != 2:
+        raise SystemExit(f'{path}: expected two matches, found {n}: {old[:140]!r}')
+    write(path, text.replace(old, new, 1))
 
 # Keep a recoverable server generation alive when the foreground coroutine gives up.
 path = 'app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt'
@@ -90,12 +96,13 @@ replace_once(path,
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
 ''')
 
-# The ordinary chat error handler must not mark a message failed when recovery owns it.
+# The ordinary text-chat error handler is the first of two structurally identical handlers;
+# the second one belongs to image generation and intentionally keeps its old behavior.
 path = 'app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt'
 replace_once(path,
 'import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient\nimport com.ayuemin.ymnik.network.ProviderRegistry',
 'import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient\nimport com.ayuemin.ymnik.network.OpenRouterRecoveryStore\nimport com.ayuemin.ymnik.network.ProviderRegistry')
-replace_once(path,
+replace_first_of_two(path,
 '''                RequestExecutionManager.snapshotForChat(chatId)?.requestId?.let { activeRequestId ->
                     RequestExecutionManager.fail(activeRequestId, friendlyError)
                 }
