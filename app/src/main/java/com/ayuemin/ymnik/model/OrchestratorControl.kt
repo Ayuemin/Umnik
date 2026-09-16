@@ -30,6 +30,8 @@ data class OrchestratorControlAction(
 )
 
 object OrchestratorControlCodec {
+    const val MAX_ACTIONS = 16
+
     private val allowedTypes = setOf(
         "EXECUTE_CHAT",
         "RUN_CHAT_STAGES",
@@ -70,7 +72,7 @@ object OrchestratorControlCodec {
         return OrchestratorControlPlan(
             reply = root.string("reply").orEmpty().trim(),
             execute = root.bool("execute") ?: true,
-            actions = actions.take(8)
+            actions = actions.take(MAX_ACTIONS)
         )
     }
 
