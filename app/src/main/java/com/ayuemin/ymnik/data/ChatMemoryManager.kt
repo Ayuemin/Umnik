@@ -44,7 +44,8 @@ class ChatMemoryManager(
             return PreparedContext(fullHistory, description = "full")
         }
 
-        val settings = repository.settings()
+        val settings = withKnownEmbeddingLimit(repository.settings())
+        val chunkPlan = ChatMemoryChunking.plan(settings)
         val completed = ConversationContext.completedTextTurns(fullHistory)
         val totalTokens = estimateHistoryTokens(completed)
         val threshold = if (mode == ChatContextMode.ECONOMY) settings.economyThresholdTokens else settings.autoThresholdTokens
@@ -73,14 +74,28 @@ class ChatMemoryManager(
             val directHistory = completed.filter { message ->
                 message.id !in indexedIds || message.id in recentIds
             }
+            val embeddingQuery = ChatMemoryChunking.clipQuery(query, chunkPlan)
+            if (embeddingQuery.length < query.trim().length) {
+                DiagnosticLog.record(
+                    context,
+                    "CHAT_MEMORY",
+                    "embedding query clipped chat=${chat.id.take(8)}; chars=${query.length}->${embeddingQuery.length}; targetTokens=${chunkPlan.targetTokens}"
+                )
+            }
             val queryVector = embeddings.embed(
                 apiKey = apiKey,
                 modelId = settings.embeddingModelId,
-                inputs = listOf(query.take(12_000)),
+                inputs = listOf(embeddingQuery),
                 inputType = "search_query",
                 baseUrl = baseUrl
             ).first()
-            val hits = repository.retrieve(chat.id, queryVector, settings.topK, settings.minimumScore)
+            val hits = repository.retrieve(
+                chatId = chat.id,
+                query = queryVector,
+                topK = settings.topK,
+                minimumScore = settings.minimumScore,
+                neighborRadius = settings.neighborChunks
+            )
             val stateCard = snapshot?.stateCard.orEmpty().trim()
             if (stateCard.isBlank() && hits.isEmpty()) {
                 DiagnosticLog.record(context, "CHAT_MEMORY", "chat=${chat.id.take(8)}; hybrid empty; fallback=full")
@@ -98,7 +113,7 @@ class ChatMemoryManager(
                 }
                 if (hits.isNotEmpty()) {
                     appendLine()
-                    appendLine("--- Релевантные старые фрагменты исходной переписки ---")
+                    appendLine("--- Релевантные старые фрагменты и их соседний контекст ---")
                     hits.forEachIndexed { index, hit ->
                         appendLine("[Фрагмент ${index + 1}; score=${String.format(Locale.US, "%.3f", hit.score)}]")
                         appendLine(hit.text)
@@ -109,7 +124,7 @@ class ChatMemoryManager(
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; original=${completed.size}; recent=${recent.size}; direct=${directHistory.size}; hits=${hits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; memoryChars=${memoryText.length}"
+                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; original=${completed.size}; recent=${recent.size}; direct=${directHistory.size}; hits=${hits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; chunk=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; memoryChars=${memoryText.length}"
             )
             PreparedContext(directHistory, "\n$memoryText\n", "hybrid")
         }.onFailure { error ->
@@ -124,7 +139,7 @@ class ChatMemoryManager(
         mode: ChatContextMode = repository.mode(chat.id)
     ) {
         repository.clearMemory(chat.id)
-        val settings = repository.settings()
+        val settings = withKnownEmbeddingLimit(repository.settings())
         val recent = evenRecentCount(
             if (mode == ChatContextMode.ECONOMY) settings.economyRecentMessages else settings.autoRecentMessages
         )
@@ -145,7 +160,16 @@ class ChatMemoryManager(
         if (archive.isEmpty()) return
 
         var snapshot = repository.snapshot(chat.id)
-        if (snapshot != null && (snapshot.embeddingModelId != settings.embeddingModelId || snapshot.summaryModelId != settings.summaryModelId)) {
+        if (
+            snapshot != null && (
+                snapshot.embeddingModelId != settings.embeddingModelId ||
+                    snapshot.summaryModelId != settings.summaryModelId ||
+                    snapshot.chunkTokens != settings.chunkTokens ||
+                    snapshot.chunkOverlapTokens != settings.chunkOverlapTokens ||
+                    snapshot.embeddingContextTokens != settings.embeddingContextTokens
+                )
+        ) {
+            DiagnosticLog.record(context, "CHAT_MEMORY", "memory settings changed; rebuilding chat=${chat.id.take(8)}")
             repository.clearMemory(chat.id)
             snapshot = null
         }
@@ -193,6 +217,7 @@ class ChatMemoryManager(
         }
         if (group.isNotEmpty()) groups += group
 
+        val chunkPlan = ChatMemoryChunking.plan(settings)
         groups.forEachIndexed { groupIndex, messages ->
             val checkpointId = UUID.randomUUID().toString()
             val source = formatMessages(messages)
@@ -205,7 +230,7 @@ class ChatMemoryManager(
                 source.take(4_000) to previousState
             }
 
-            val chunks = chunksForCheckpoint(checkpointId, messages, settings)
+            val chunks = chunksForCheckpoint(checkpointId, messages, chunkPlan)
             val vectors = mutableListOf<FloatArray>()
             chunks.chunked(24).forEach { batch ->
                 vectors += embeddings.embed(
@@ -228,7 +253,7 @@ class ChatMemoryManager(
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunks=${chunks.size}; embedding=${settings.embeddingModelId}; summary=${settings.summaryModelId}"
+                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunks=${chunks.size}; chunkTarget=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; embedding=${settings.embeddingModelId}; summary=${settings.summaryModelId}"
             )
         }
     }
@@ -280,13 +305,13 @@ class ChatMemoryManager(
     private fun chunksForCheckpoint(
         checkpointId: String,
         messages: List<ChatMessage>,
-        settings: ChatMemoryGlobalSettings
+        plan: ChatMemoryChunking.Plan
     ): List<ChatMemoryChunk> {
         val result = mutableListOf<ChatMemoryChunk>()
         messages.chunked(2).forEach { turn ->
             if (turn.size < 2) return@forEach
             val text = formatMessages(turn)
-            splitText(text, settings.chunkTokens).forEach { part ->
+            ChatMemoryChunking.split(text, plan).forEach { part ->
                 result += ChatMemoryChunk(
                     id = UUID.randomUUID().toString(),
                     checkpointId = checkpointId,
@@ -298,32 +323,6 @@ class ChatMemoryManager(
                 )
             }
         }
-        return result
-    }
-
-    private fun splitText(text: String, maxTokens: Int): List<String> {
-        val maxChars = (maxTokens.coerceAtLeast(400) * 2).coerceAtLeast(1_200)
-        if (text.length <= maxChars) return listOf(text)
-        val result = mutableListOf<String>()
-        var current = StringBuilder()
-        fun flush() {
-            val value = current.toString().trim()
-            if (value.isNotBlank()) result += value
-            current = StringBuilder()
-        }
-        text.split(Regex("\\n{2,}")).forEach { paragraph ->
-            if (paragraph.length > maxChars) {
-                flush()
-                paragraph.chunked(maxChars).forEach { part -> if (part.isNotBlank()) result += part.trim() }
-            } else if (current.length + paragraph.length + 2 > maxChars) {
-                flush()
-                current.append(paragraph)
-            } else {
-                if (current.isNotEmpty()) current.append("\n\n")
-                current.append(paragraph)
-            }
-        }
-        flush()
         return result
     }
 
@@ -341,5 +340,19 @@ class ChatMemoryManager(
     private fun evenRecentCount(value: Int): Int {
         val clean = value.coerceAtLeast(2)
         return if (clean % 2 == 0) clean else clean + 1
+    }
+
+    /**
+     * v1.16.0 could already have this model selected before the catalog-derived
+     * context limit was persisted. Keep the upgrade safe even before Settings is reopened.
+     */
+    private fun withKnownEmbeddingLimit(settings: ChatMemoryGlobalSettings): ChatMemoryGlobalSettings {
+        if (settings.embeddingContextTokens != null) return settings
+        val known = when (settings.embeddingModelId.lowercase(Locale.US)) {
+            "liquid/lfm-2.5-embedding-350m",
+            "liquid/lfm-2.5-embedding-350m:free" -> 512
+            else -> null
+        }
+        return if (known == null) settings else settings.copy(embeddingContextTokens = known)
     }
 }
