@@ -90,7 +90,7 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
                 vm.createChat()
                 onDismiss()
             },
-            enabled = !state.isLoading,
+            enabled = !state.isLoading || state.requestActive,
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Icon(Icons.Outlined.Add, contentDescription = null)

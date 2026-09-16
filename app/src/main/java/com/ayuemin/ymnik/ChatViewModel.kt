@@ -78,7 +78,11 @@ import java.io.File
 import java.util.UUID
 
 class ChatViewModel(private val context: Context) : ViewModel() {
-    private companion object { const val QUICK_MODEL_SEPARATOR = "\u001F" }
+    private companion object {
+        const val QUICK_MODEL_SEPARATOR = "\u001F"
+        const val MAX_ATTACHMENT_MB = 50
+        const val MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024L * 1024L
+    }
     private val prefs = context.getSharedPreferences("ymnik", Context.MODE_PRIVATE)
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
@@ -345,6 +349,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     fun isOrchestratorChat(chatId: String): Boolean = projectAutomation.isOrchestrator(chatId)
+    fun activeRequestChatId(): String? = RequestExecutionManager.snapshots.value.activeChatId
     fun orchestratorSteps(chatId: String): List<OrchestratorStep> = projectAutomation.steps(chatId)
     fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
 
@@ -396,8 +401,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
-                if (attachment.size > 25L * 1024L * 1024L) {
-                    _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
+                if (attachment.size > MAX_ATTACHMENT_BYTES) {
+                    _state.value = _state.value.copy(status = "Прямое вложение ограничено $MAX_ATTACHMENT_MB МБ. Большие документы лучше добавлять в «Базу знаний».")
                     return@onSuccess
                 }
                 if (chat.chatFiles.orEmpty().any { it.name.equals(attachment.name, true) && (attachment.size <= 0L || it.size == attachment.size) }) {
@@ -1585,7 +1590,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun createChat(projectId: String? = null): String {
         cleanupTempAttachments(_state.value.pendingAttachments)
-        if (_state.value.isLoading) return _state.value.currentChatId
+        if (_state.value.isLoading && !_state.value.requestActive) return _state.value.currentChatId
 
         val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
         if (current != null && current.projectId == projectId && !isOrchestratorChat(current.id) && isBareEmptyChat(current)) {
@@ -1778,7 +1783,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun switchChat(id: String) {
         cleanupTempAttachments(_state.value.pendingAttachments)
-        if (_state.value.isLoading) return
+        if (_state.value.isLoading && !_state.value.requestActive) return
         val refreshedChats = chatsRepository.list()
         val original = refreshedChats.firstOrNull { it.id == id } ?: _state.value.chats.firstOrNull { it.id == id } ?: return
         val requestedProfileId = original.connectionProfileId ?: prefs.getString("active_connection_profile", "openrouter") ?: "openrouter"
@@ -3715,8 +3720,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         runCatching { api.attachmentFromUri(uri) }
             .onSuccess { attachment ->
                 DiagnosticLog.record(context, "ATTACHMENT", "loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
-                if (attachment.size > 25L * 1024 * 1024) {
-                    _state.value = _state.value.copy(status = "Ограничение Umnik сейчас 25 МБ на один файл")
+                if (attachment.size > MAX_ATTACHMENT_BYTES) {
+                    _state.value = _state.value.copy(status = "Прямое вложение ограничено $MAX_ATTACHMENT_MB МБ. Большие документы лучше добавлять в «Базу знаний».")
                 } else {
                     val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
@@ -3736,7 +3741,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         runCatching { api.attachmentFromUri(uri).copy(localPath = localPath) }
             .onSuccess { attachment ->
                 DiagnosticLog.record(context, "ATTACHMENT", "camera loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
-                if (attachment.size > 25L * 1024 * 1024) {
+                if (attachment.size > MAX_ATTACHMENT_BYTES) {
                     File(localPath).delete()
                     _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
                 } else {
@@ -3767,7 +3772,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Голосовое сообщение не записалось")
             return false
         }
-        if (file.length() > 25L * 1024L * 1024L) {
+        if (file.length() > MAX_ATTACHMENT_BYTES) {
             file.delete()
             _state.value = _state.value.copy(status = "Голосовое сообщение превышает ограничение 25 МБ")
             return false

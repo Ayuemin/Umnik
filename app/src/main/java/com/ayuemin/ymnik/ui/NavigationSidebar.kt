@@ -201,7 +201,7 @@ fun NavigationSidebar(
                                 keyboardController?.hide()
                                 onNewChat()
                             },
-                            enabled = !state.isLoading,
+                            enabled = !state.isLoading || state.requestActive,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
                         ) {
                             Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(20.dp))
