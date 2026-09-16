@@ -35,6 +35,32 @@ class ChatRepository(context: Context) {
         }
     }
 
+    /** Atomically update one chat using the latest on-disk state. */
+    fun updateChat(chatId: String, transform: (ChatSession) -> ChatSession): List<ChatSession> = synchronized(fileLock) {
+        val chats = list()
+        val updated = chats.map { chat -> if (chat.id == chatId) transform(chat) else chat }
+        save(updated)
+        updated
+    }
+
+    /** Atomically append a message so another chat finishing at the same time cannot be overwritten. */
+    fun appendMessage(chatId: String, message: ChatMessage, title: String? = null): List<ChatSession> =
+        updateChat(chatId) { chat ->
+            chat.copy(
+                title = title ?: chat.title,
+                messages = chat.messages + message,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+
+    fun appendMessages(chatId: String, messages: List<ChatMessage>): List<ChatSession> =
+        if (messages.isEmpty()) list() else updateChat(chatId) { chat ->
+            chat.copy(
+                messages = chat.messages + messages,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+
     @Synchronized
     fun updateMessage(chatId: String, messageId: String, transform: (ChatMessage) -> ChatMessage) {
         synchronized(fileLock) {
