@@ -1,0 +1,71 @@
+package com.ayuemin.ymnik.model
+
+enum class ChatContextMode {
+    AUTO,
+    FULL,
+    ECONOMY
+}
+
+data class ChatMemoryGlobalSettings(
+    val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
+    val summaryModelId: String = DEFAULT_SUMMARY_MODEL,
+    val autoThresholdTokens: Int = 30_000,
+    val economyThresholdTokens: Int = 10_000,
+    val autoRecentMessages: Int = 10,
+    val economyRecentMessages: Int = 6,
+    val topK: Int = 5,
+    val checkpointTokens: Int = 8_000,
+    val chunkTokens: Int = 1_200,
+    val minimumScore: Double = 0.20,
+    val stateCardMaxChars: Int = 6_000
+) {
+    companion object {
+        const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
+        const val DEFAULT_SUMMARY_MODEL = "openrouter/auto"
+    }
+}
+
+data class ChatMemoryCheckpoint(
+    val id: String,
+    val messageIds: List<String>,
+    val summary: String,
+    val createdAt: Long = System.currentTimeMillis()
+)
+
+data class ChatMemoryChunk(
+    val id: String,
+    val checkpointId: String,
+    val ordinal: Int,
+    val text: String,
+    val messageIds: List<String>,
+    val startTimestamp: Long,
+    val endTimestamp: Long,
+    val vectorDimension: Int = 0
+)
+
+data class ChatMemorySnapshot(
+    val chatId: String,
+    val embeddingModelId: String,
+    val summaryModelId: String,
+    val stateCard: String = "",
+    val checkpoints: List<ChatMemoryCheckpoint> = emptyList(),
+    val chunks: List<ChatMemoryChunk> = emptyList(),
+    val indexedFingerprints: Map<String, String> = emptyMap(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+data class ChatMemoryHit(
+    val text: String,
+    val messageIds: List<String>,
+    val startTimestamp: Long,
+    val endTimestamp: Long,
+    val score: Double
+)
+
+data class ChatMemoryStats(
+    val checkpoints: Int = 0,
+    val chunks: Int = 0,
+    val bytes: Long = 0L,
+    val stateCardChars: Int = 0,
+    val updatedAt: Long? = null
+)
