@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.SystemClock
 import com.ayuemin.ymnik.network.OpenRouterRequestEnhancer
 import okhttp3.Interceptor
+import okhttp3.Request
 import okhttp3.Response
 import java.io.File
 import java.text.SimpleDateFormat
@@ -131,7 +132,8 @@ class DiagnosticHttpInterceptor(
     private val context: Context,
     private val source: String,
     private val requestId: String? = null,
-    private val requestChatId: String? = null
+    private val requestChatId: String? = null,
+    private val onPreparedOpenRouterRequest: ((Request) -> Unit)? = null
 ) : Interceptor {
     private val openRouterEnhancer by lazy {
         OpenRouterRequestEnhancer(context.applicationContext, requestId, requestChatId)
@@ -144,6 +146,7 @@ class DiagnosticHttpInterceptor(
             val enhanced = openRouterEnhancer.enhance(request)
             enhanced.response?.let { return it }
             request = enhanced.request ?: request
+            onPreparedOpenRouterRequest?.invoke(request)
         }
 
         if (!DiagnosticLog.isEnabled(context)) return chain.proceed(request)

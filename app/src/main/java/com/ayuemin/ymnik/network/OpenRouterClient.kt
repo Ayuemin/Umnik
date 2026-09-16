@@ -28,6 +28,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okio.Buffer
 import java.io.File
 import java.io.IOException
 import java.util.UUID
@@ -43,7 +44,11 @@ class OpenRouterClient(
 ) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
-        .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId))
+        .addInterceptor(
+            DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId) { prepared ->
+                captureFinalRecoveryPayload(prepared)
+            }
+        )
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
         .pingInterval(30, TimeUnit.SECONDS)
@@ -82,6 +87,20 @@ class OpenRouterClient(
         }
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
+    }
+
+    private fun captureFinalRecoveryPayload(request: Request) {
+        if (!recoveryEnabled || request.method != "POST" || !request.url.encodedPath.endsWith("/chat/completions")) return
+        val id = requestId?.takeIf { it.isNotBlank() } ?: return
+        if (recoveryStore.get(id) == null) return
+        val body = request.body ?: return
+        val payload = runCatching {
+            val buffer = Buffer()
+            body.writeTo(buffer)
+            buffer.readUtf8()
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
+        recoveryStore.updatePayload(id, payload)
+        DiagnosticLog.record(context, "REQUEST_RECOVERY", "Persisted final enhanced payload request=${id.take(8)} bytes=${payload.toByteArray().size}")
     }
 
     private fun executeActive(request: Request): okhttp3.Response {

@@ -133,6 +133,7 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
             .build()
         val gson = Gson()
         val generationId = record.generationId ?: throw IOException("Missing generation id")
+        val seenAt = record.generationSeenAt ?: record.updatedAt
         val deadline = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
         var poll = 0
         var ready = false
@@ -169,14 +170,18 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         // can return the completed text directly. It costs nothing and avoids any replay at all.
         storedGenerationCompletion(client, gson, record, apiKey, generationId)?.let { return@withContext it }
 
-        // Otherwise use the exact response-cache replay. The caller already verified that the
-        // original response explicitly reported HIT/MISS and that the API-key fingerprint matches.
-        // Re-check the durable recovery record immediately before any POST so a manual Stop that
-        // happened while polling cannot trigger a late replay.
+        // Otherwise use the exact response-cache replay. Keep a safety margin inside the
+        // requested 300 s TTL and re-check cancellation immediately before any POST.
+        if (System.currentTimeMillis() - seenAt > CACHE_REPLAY_MAX_AGE_MS) {
+            throw IOException("Response cache replay window expired")
+        }
         if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
             throw IOException("Recovery cancelled")
         }
         delay(900L)
+        if (System.currentTimeMillis() - seenAt > CACHE_REPLAY_MAX_AGE_MS) {
+            throw IOException("Response cache replay window expired")
+        }
         if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
             throw IOException("Recovery cancelled")
         }
@@ -196,7 +201,8 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
             if (!response.isSuccessful) throw IOException("OpenRouter ${response.code}")
             val cache = response.header("X-OpenRouter-Cache-Status")
             if (!cache.equals("HIT", ignoreCase = true)) {
-                DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Expected cache HIT but got ${cache ?: "unknown"}; request=${record.requestId.take(8)}")
+                DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Rejected replay because cache was ${cache ?: "unknown"}; request=${record.requestId.take(8)}")
+                throw IOException("OpenRouter response cache replay was not a HIT")
             }
             OpenRouterResponseParser.parse(body, allowEmpty = false)
         }
@@ -282,8 +288,9 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
     companion object {
         private const val KEY_REQUEST_ID = "request_id"
         private const val NO_GENERATION_GRACE_MS = 120_000L
-        private const val CACHE_RECOVERY_MAX_AGE_MS = 240_000L
-        private const val RECOVERY_WINDOW_MS = 90_000L
+        private const val CACHE_RECOVERY_MAX_AGE_MS = 180_000L
+        private const val CACHE_REPLAY_MAX_AGE_MS = 240_000L
+        private const val RECOVERY_WINDOW_MS = 60_000L
 
         private fun uniqueName(requestId: String) = "umnik-openrouter-recovery-$requestId"
 
