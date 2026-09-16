@@ -40,14 +40,14 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Adapt migration to two Orchestrator worker signatures
+      - name: Adapt migration to current Orchestrator layout
         run: |
           python3 - <<'PY'
           from pathlib import Path
           path = Path("tools/apply_multi_request_core.py")
           text = path.read_text(encoding="utf-8")
           old = '''    count = text.count(old)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected 1 occurrence, got {count}")\n    return text.replace(old, new, 1)'''
-          new = '''    count = text.count(old)\n    if label == "execute chat network signature" and count == 2:\n        return text.replace(old, new, 1)\n    if count != 1:\n        raise RuntimeError(f"{label}: expected 1 occurrence, got {count}")\n    return text.replace(old, new, 1)'''
+          new = '''    count = text.count(old)\n    if label == "execute chat network signature" and count == 2:\n        return text.replace(old, new, 1)\n    if label == "stage sequence global guard" and count == 2:\n        head, sep, tail = text.rpartition(old)\n        return head + new + tail\n    if count != 1:\n        raise RuntimeError(f"{label}: expected 1 occurrence, got {count}")\n    return text.replace(old, new, 1)'''
           if old not in text:
               raise SystemExit("replace_once helper shape changed")
           path.write_text(text.replace(old, new, 1), encoding="utf-8")
