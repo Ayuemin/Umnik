@@ -48,10 +48,7 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
         batchJobs.forEach { stored ->
             // A single Batch submitted from ordinary chat is polled by the live chat request.
             // WorkManager takes over only after that foreground request/process disappears.
-            if (RequestExecutionManager.hasActiveRequest() &&
-                stored.chatId != null &&
-                stored.chatId == RequestExecutionManager.snapshots.value.activeChatId
-            ) {
+            if (stored.chatId != null && RequestExecutionManager.hasActiveChat(stored.chatId)) {
                 retry = true
                 return@forEach
             }

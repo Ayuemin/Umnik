@@ -6,6 +6,7 @@ import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -13,146 +14,326 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-/** Process-wide owner of the network job. The Activity can be recreated without cancelling it. */
+/**
+ * Process-wide owner of all foreground model jobs.
+ *
+ * Requests are isolated by requestId and chatId, so switching Activity/chat or launching
+ * another chat does not cancel or overwrite the first request. One chat may have at most
+ * one active top-level request; different chats may run concurrently.
+ */
 internal object RequestExecutionManager {
     data class Snapshot(
-        val activeChatId: String? = null,
-        val sequence: Long = 0L,
+        val requestId: String,
+        val chatId: String,
+        val messageId: String,
+        val sequence: Long,
         val lastError: String? = null,
-        val label: String? = null,
-        val startedAt: Long? = null
+        val label: String = "Модель работает…",
+        val startedAt: Long = System.currentTimeMillis()
     )
 
-    private const val WAKE_LOCK_TIMEOUT_MS = 15L * 60L * 1000L
+    private data class Runtime(
+        var snapshot: Snapshot,
+        val job: Job,
+        val cancelNetworkCall: () -> Unit
+    )
+
+    private data class PersistedRequest(
+        val requestId: String,
+        val chatId: String,
+        val messageId: String?
+    )
+
+    private const val PREFS = "request_execution"
+    private const val ACTIVE_PREFIX = "active_request::"
+    private const val FIELD_SEPARATOR = "\u001F"
+    private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-    private val mutableSnapshots = MutableStateFlow(Snapshot())
-    val snapshots: StateFlow<Snapshot> = mutableSnapshots
-    private var job: Job? = null
-    private var cancelCall: (() -> Unit)? = null
+    private val lock = Any()
+    private val runtimes = linkedMapOf<String, Runtime>()
+    private val reservations = linkedMapOf<String, String>() // chatId -> owning requestId
+    private val mutableSnapshots = MutableStateFlow<List<Snapshot>>(emptyList())
+    val snapshots: StateFlow<List<Snapshot>> = mutableSnapshots
+    private var sequence = 0L
     private var stoppingService = false
     private var wakeLock: PowerManager.WakeLock? = null
 
-    fun hasActiveRequest(): Boolean = job?.isActive == true
+    fun hasActiveRequest(): Boolean = synchronized(lock) { runtimes.isNotEmpty() }
+
+    fun activeCount(): Int = synchronized(lock) { runtimes.size }
+
+    fun activeChatIds(): Set<String> = synchronized(lock) {
+        linkedSetOf<String>().apply {
+            runtimes.values.forEach { add(it.snapshot.chatId) }
+            addAll(reservations.keys)
+        }
+    }
+
+    fun hasActiveChat(chatId: String): Boolean = synchronized(lock) {
+        runtimes.values.any { it.snapshot.chatId == chatId } || chatId in reservations
+    }
+
+    fun snapshotForChat(chatId: String): Snapshot? = synchronized(lock) {
+        runtimes.values.firstOrNull { it.snapshot.chatId == chatId }?.snapshot
+            ?: reservations[chatId]?.let { owner -> runtimes[owner]?.snapshot }
+    }
+
+    fun snapshotForRequest(requestId: String): Snapshot? = synchronized(lock) {
+        runtimes[requestId]?.snapshot
+    }
+
+    fun reserveChat(requestId: String, chatId: String): Boolean = synchronized(lock) {
+        val owner = runtimes[requestId] ?: return@synchronized false
+        val directOwner = runtimes.values.firstOrNull { it.snapshot.chatId == chatId }
+        if (directOwner != null && directOwner.snapshot.requestId != requestId) return@synchronized false
+        val reservedBy = reservations[chatId]
+        if (reservedBy != null && reservedBy != requestId) return@synchronized false
+        if (owner.snapshot.chatId == chatId || reservedBy == requestId) return@synchronized true
+        reservations[chatId] = requestId
+        sequence += 1L
+        owner.snapshot = owner.snapshot.copy(sequence = sequence)
+        publishLocked()
+        true
+    }
+
+    fun releaseChat(requestId: String, chatId: String) {
+        synchronized(lock) {
+            if (reservations[chatId] != requestId) return
+            reservations.remove(chatId)
+            runtimes[requestId]?.let { owner ->
+                sequence += 1L
+                owner.snapshot = owner.snapshot.copy(sequence = sequence)
+            }
+            publishLocked()
+        }
+    }
 
     fun recoverInterrupted(context: Context): String? {
         if (hasActiveRequest()) return null
-        val prefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-        val chatId = prefs.getString("chat_id", null) ?: return null
-        val messageId = prefs.getString("message_id", null)
-        val savedBatch = if (messageId == null) null else runCatching {
-            BatchJobRepository(context).list().firstOrNull {
-                it.chatId == chatId && it.userMessageId == messageId
+        val app = context.applicationContext
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val persisted = mutableListOf<PersistedRequest>()
+
+        prefs.all.forEach { (key, rawValue) ->
+            if (!key.startsWith(ACTIVE_PREFIX)) return@forEach
+            val requestId = key.removePrefix(ACTIVE_PREFIX)
+            val parts = (rawValue as? String).orEmpty().split(FIELD_SEPARATOR)
+            val chatId = parts.getOrNull(0).orEmpty()
+            if (requestId.isNotBlank() && chatId.isNotBlank()) {
+                persisted += PersistedRequest(requestId, chatId, parts.getOrNull(1)?.takeIf { it.isNotBlank() })
             }
-        }.getOrNull()
-        if (savedBatch != null) {
-            prefs.edit().clear().commit()
-            OpenRouterBackgroundWorker.schedule(context, replace = true)
-            return "Batch-запрос продолжает выполняться на OpenRouter. Umnik заберёт результат автоматически."
         }
 
-        val completed = if (messageId == null) false else runCatching {
-            val messages = ChatRepository(context).list().firstOrNull { it.id == chatId }?.messages.orEmpty()
-            val index = messages.indexOfFirst { it.id == messageId }
-            index >= 0 && messages.drop(index + 1).firstOrNull { it.role == "assistant" || it.role == "user" }
-                ?.role == "assistant"
-        }.getOrDefault(false)
-        if (messageId != null && !completed) runCatching {
-            ChatRepository(context).updateMessage(chatId, messageId) {
-                if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+        // v1.16.x compatibility: recover the old single-request record once.
+        prefs.getString("chat_id", null)?.let { legacyChatId ->
+            persisted += PersistedRequest(
+                requestId = "legacy",
+                chatId = legacyChatId,
+                messageId = prefs.getString("message_id", null)
+            )
+        }
+
+        if (persisted.isEmpty()) return null
+
+        val batches = runCatching { BatchJobRepository(app).list() }.getOrDefault(emptyList())
+        val chatRepository = ChatRepository(app)
+        val chats = runCatching { chatRepository.list() }.getOrDefault(emptyList())
+        var batchCount = 0
+        var interruptedCount = 0
+
+        persisted.distinctBy { it.requestId }.forEach { saved ->
+            val messageId = saved.messageId
+            val savedBatch = messageId?.let { id ->
+                batches.firstOrNull { it.chatId == saved.chatId && it.userMessageId == id }
+            }
+            if (savedBatch != null) {
+                batchCount += 1
+                return@forEach
+            }
+
+            val completed = messageId?.let { id ->
+                val messages = chats.firstOrNull { it.id == saved.chatId }?.messages.orEmpty()
+                val index = messages.indexOfFirst { it.id == id }
+                index >= 0 && messages.drop(index + 1)
+                    .firstOrNull { it.role == "assistant" || it.role == "user" }
+                    ?.role == "assistant"
+            } == true
+
+            if (messageId != null && !completed) {
+                interruptedCount += 1
+                runCatching {
+                    chatRepository.updateMessage(saved.chatId, messageId) {
+                        if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+                    }
+                }
             }
         }
+
         prefs.edit().clear().commit()
-        return if (completed) null else
-            "Предыдущий запрос был прерван системой. Он не отправлен повторно во избежание повторной оплаты; при необходимости повторите его вручную."
+        if (batchCount > 0) OpenRouterBackgroundWorker.schedule(app, replace = true)
+
+        return when {
+            interruptedCount > 0 && batchCount > 0 ->
+                "$interruptedCount запрос(а) были прерваны системой; $batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически."
+            interruptedCount > 0 ->
+                "$interruptedCount предыдущих запрос(а) были прерваны системой. Они не отправлены повторно во избежание повторной оплаты; при необходимости повторите их вручную."
+            batchCount > 0 ->
+                "$batchCount batch-запрос(а) продолжаются на OpenRouter. Umnik заберёт результаты автоматически."
+            else -> null
+        }
     }
 
     fun start(
         context: Context,
+        requestId: String,
         chatId: String,
         messageId: String,
         label: String,
         cancelNetworkCall: () -> Unit,
         execute: suspend () -> Unit
     ): Job {
-        check(!hasActiveRequest()) { "Другой запрос ещё выполняется" }
         val app = context.applicationContext
-        RequestKeepAliveService.start(app, label)
-        val prefs = app.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-        if (!prefs.edit().putString("chat_id", chatId).putString("message_id", messageId)
-                .putLong("started_at", System.currentTimeMillis()).commit()
-        ) {
-            RequestKeepAliveService.stop(app)
-            error("Не удалось сохранить состояние запроса")
+        val cleanLabel = label.trim().take(160).ifBlank { "Модель работает…" }
+        val startedAt = System.currentTimeMillis()
+        val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
+        synchronized(lock) {
+            check(requestId !in runtimes) { "Запрос уже зарегистрирован" }
+            check(runtimes.values.none { it.snapshot.chatId == chatId } && chatId !in reservations) { "В этом чате запрос уже выполняется" }
         }
-        acquireWakeLock(app)
-        cancelCall = cancelNetworkCall
-        stoppingService = false
-        mutableSnapshots.value = Snapshot(chatId, mutableSnapshots.value.sequence + 1L, label = label, startedAt = System.currentTimeMillis())
-        return scope.launch {
+
+        val persisted = listOf(chatId, messageId, startedAt.toString()).joinToString(FIELD_SEPARATOR)
+        check(prefs.edit().putString(ACTIVE_PREFIX + requestId, persisted).commit()) {
+            "Не удалось сохранить состояние запроса"
+        }
+
+        lateinit var job: Job
+        job = scope.launch(start = CoroutineStart.LAZY) {
             try {
                 execute()
             } catch (error: Throwable) {
-                DiagnosticLog.record(app, "REQUEST", "Background execution failed", error)
-                mutableSnapshots.value = mutableSnapshots.value.copy(lastError = error.message ?: "Запрос прерван")
+                DiagnosticLog.record(app, "REQUEST", "Background execution failed request=${requestId.take(8)} chat=${chatId.take(8)}", error)
+                fail(requestId, error.message ?: "Запрос прерван")
             } finally {
                 runCatching {
                     ChatRepository(app).updateMessage(chatId, messageId) {
                         if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
                     }
                 }
-                prefs.edit().clear().commit()
-                cancelCall = null
-                job = null
-                releaseWakeLock(app)
-                stoppingService = true
-                RequestKeepAliveService.stop(app)
-                mutableSnapshots.value = Snapshot(null, mutableSnapshots.value.sequence + 1L, mutableSnapshots.value.lastError)
+                prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+                val remaining = synchronized(lock) {
+                    runtimes.remove(requestId)
+                    reservations.entries.removeAll { it.value == requestId }
+                    publishLocked()
+                    runtimes.size
+                }
+                if (remaining == 0) {
+                    releaseWakeLock(app)
+                    stoppingService = true
+                    RequestKeepAliveService.stop(app)
+                } else {
+                    RequestKeepAliveService.update(app)
+                }
             }
-        }.also { job = it }
+        }
+
+        val snapshot = synchronized(lock) {
+            sequence += 1L
+            Snapshot(
+                requestId = requestId,
+                chatId = chatId,
+                messageId = messageId,
+                sequence = sequence,
+                label = cleanLabel,
+                startedAt = startedAt
+            ).also { snapshot ->
+                runtimes[requestId] = Runtime(snapshot, job, cancelNetworkCall)
+                publishLocked()
+            }
+        }
+
+        acquireWakeLock(app)
+        stoppingService = false
+        runCatching { RequestKeepAliveService.start(app) }
+            .onFailure { error ->
+                synchronized(lock) {
+                    runtimes.remove(requestId)
+                    reservations.entries.removeAll { it.value == requestId }
+                    publishLocked()
+                }
+                prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+                if (!hasActiveRequest()) releaseWakeLock(app)
+                throw error
+            }
+        DiagnosticLog.record(app, "REQUEST", "registered request=${snapshot.requestId.take(8)} chat=${chatId.take(8)} active=${activeCount()}")
+        job.start()
+        return job
     }
 
-    fun updatePhase(context: Context, label: String) {
-        if (!hasActiveRequest()) return
+    fun updatePhase(context: Context, requestId: String, label: String) {
         val clean = label.trim().take(160).ifBlank { "Модель работает…" }
-        mutableSnapshots.value = mutableSnapshots.value.copy(label = clean)
-        RequestKeepAliveService.update(context.applicationContext, clean)
+        val changed = synchronized(lock) {
+            val runtime = runtimes[requestId] ?: return@synchronized false
+            sequence += 1L
+            runtime.snapshot = runtime.snapshot.copy(sequence = sequence, label = clean)
+            publishLocked()
+            true
+        }
+        if (changed) RequestKeepAliveService.update(context.applicationContext)
     }
 
-    fun fail(message: String) {
-        mutableSnapshots.value = mutableSnapshots.value.copy(lastError = message)
+    fun fail(requestId: String, message: String) {
+        synchronized(lock) {
+            val runtime = runtimes[requestId] ?: return
+            sequence += 1L
+            runtime.snapshot = runtime.snapshot.copy(sequence = sequence, lastError = message)
+            publishLocked()
+        }
     }
 
-    fun cancel() {
-        cancelCall?.invoke()
-        job?.cancel()
+    fun cancel(requestId: String) {
+        val runtime = synchronized(lock) { runtimes[requestId] } ?: return
+        runCatching { runtime.cancelNetworkCall.invoke() }
+        runtime.job.cancel()
     }
 
-    /**
-     * Destroying the foreground Service must not itself cancel an in-flight paid request
-     * while this process and its network job are still alive. A sticky Service can be
-     * recreated independently of the Activity.
-     */
+    fun cancelChat(chatId: String) {
+        val requestId = snapshotForChat(chatId)?.requestId ?: return
+        cancel(requestId)
+    }
+
+    fun cancelAll() {
+        val ids = synchronized(lock) { runtimes.keys.toList() }
+        ids.forEach(::cancel)
+    }
+
+    /** Destroying the foreground service does not own/cancel in-process requests. */
     fun serviceStoppedUnexpectedly(context: Context) {
         if (!stoppingService && hasActiveRequest()) {
             DiagnosticLog.record(
                 context.applicationContext,
                 "REQUEST",
-                "Foreground service destroyed while request is active; network job kept alive"
+                "Foreground service destroyed while ${activeCount()} request(s) are active; network jobs kept alive"
             )
         }
+    }
+
+    private fun publishLocked() {
+        mutableSnapshots.value = runtimes.values.map { it.snapshot }
     }
 
     private fun acquireWakeLock(app: Context) {
         if (wakeLock?.isHeld == true) return
         runCatching {
             val power = app.getSystemService(PowerManager::class.java)
-            power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "${app.packageName}:active_request").apply {
+            power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "${app.packageName}:active_requests").apply {
                 setReferenceCounted(false)
                 acquire(WAKE_LOCK_TIMEOUT_MS)
             }
         }.onSuccess { lock ->
             wakeLock = lock
-            DiagnosticLog.record(app, "REQUEST", "Partial wake lock acquired for active request")
+            DiagnosticLog.record(app, "REQUEST", "Partial wake lock acquired for active requests")
         }.onFailure { error ->
             DiagnosticLog.record(app, "REQUEST", "Could not acquire wake lock", error)
         }
