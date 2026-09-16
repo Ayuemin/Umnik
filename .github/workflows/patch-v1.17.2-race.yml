@@ -1,0 +1,54 @@
+name: Patch v1.17.2 race
+
+on:
+  push:
+    branches: [ "fix/background-recovery-stages-v1.17.2" ]
+    paths: [ ".github/workflows/patch-v1.17.2-race.yml" ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          ref: fix/background-recovery-stages-v1.17.2
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install Android platform
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.13"
+
+      - name: Apply handoff race fix
+        run: python3 tools/patch_v1172_race.py
+
+      - name: Unit tests and debug APK
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+
+      - name: Commit race fix and remove one-shot tooling
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/patch-v1.17.2-race.yml tools/patch_v1172_race.py
+          git add app CHANGELOG.md
+          git commit -m "Avoid recovery handoff race"
+          git push origin HEAD:fix/background-recovery-stages-v1.17.2
