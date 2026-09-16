@@ -313,7 +313,7 @@ private fun ChatScreen(
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
-    val requestActiveHere = state.requestActive && vm.activeRequestChatId() == state.currentChatId
+    val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val requestActiveElsewhere = state.requestActive && !requestActiveHere
     val nonRequestBusy = state.isLoading && !state.requestActive
     val isUsageGuide = currentChat?.title == "Памятка по Umnik"
@@ -336,7 +336,7 @@ private fun ChatScreen(
     val activeProjectSkillCount = projectAvailableSkills.count { it.id in state.activeSkillIds }
 
     fun startVoiceRecording() {
-        if (!microphoneAvailable || nonRequestBusy || state.requestActive || imagePromptMode) return
+        if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode) return
         runCatching { voiceRecorder.start() }
             .onSuccess {
                 recordingStartedAt = System.currentTimeMillis()
@@ -581,7 +581,7 @@ onBranch = if (message.role == "assistant") {
                             }
                             IconButton(
                                 onClick = { imagePromptMode = false },
-                                enabled = !state.requestActive
+                                enabled = !requestActiveHere
                             ) {
                                 Icon(Icons.Outlined.Close, contentDescription = "Отменить генерацию изображения")
                             }
@@ -663,7 +663,7 @@ onBranch = if (message.role == "assistant") {
                                             }
                                         }
                                     },
-                                    enabled = isRecording || (!state.isLoading && !state.requestActive && microphoneAvailable),
+                                    enabled = isRecording || (!nonRequestBusy && !requestActiveHere && microphoneAvailable),
                                     modifier = Modifier.size(42.dp)
                                 ) {
                                     Icon(
@@ -704,7 +704,7 @@ onBranch = if (message.role == "assistant") {
                                         text = ""
                                     }
                                 },
-                                enabled = requestActiveHere || isRecording || (!requestActiveElsewhere && !nonRequestBusy && (
+                                enabled = requestActiveHere || isRecording || (!nonRequestBusy && (
                                     text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
                                 )),
                                 modifier = Modifier.size(48.dp)
@@ -733,7 +733,7 @@ onBranch = if (message.role == "assistant") {
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
-                            requestActiveElsewhere -> Text("Другой чат сейчас отвечает · здесь можно читать и готовить следующий запрос")
+                            requestActiveElsewhere -> Text("Другой чат отвечает · здесь можно отправить новый запрос")
                             imagePromptMode -> Text("Опишите изображение")
                             currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
                         }
@@ -942,7 +942,7 @@ onBranch = if (message.role == "assistant") {
                                 val chatId = vm.runOrchestrator(currentProject.id)
                                 if (chatId != null) { text = ""; actionsOpen = false }
                             },
-                            enabled = !state.isLoading && !state.requestActive,
+                            enabled = !nonRequestBusy && !requestActiveHere,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -959,7 +959,7 @@ onBranch = if (message.role == "assistant") {
                                     actionsOpen = false
                                 }
                             },
-                            enabled = !state.isLoading && !state.requestActive,
+                            enabled = !nonRequestBusy && !requestActiveHere,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -977,7 +977,7 @@ onBranch = if (message.role == "assistant") {
                                     actionsOpen = false
                                 }
                             },
-                            enabled = !state.isLoading && !state.requestActive,
+                            enabled = !nonRequestBusy && !requestActiveHere,
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))

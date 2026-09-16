@@ -450,6 +450,7 @@ private fun SidebarChatRow(
                 )
                 Text(
                     buildString {
+                        if (vm.isChatRequestActive(chat.id)) append("Отвечает · ")
                         if (projectName != null) append("$projectName · ")
                         append(sidebarDate(chat.updatedAt))
                     },

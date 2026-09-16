@@ -3036,6 +3036,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     ): String {
         val all = chatsRepository.list()
         val chat = all.firstOrNull { it.id == requested.id } ?: requested
+        if (!isOrchestratorChat(chat.id) && RequestExecutionManager.hasActiveChat(chat.id)) {
+            error("В чате «${chat.title}» уже выполняется другой запрос")
+        }
         val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
         if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
@@ -3100,6 +3103,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val initial = orchestratorPrompt(prompt, previous, passPrevious)
         var all = chatsRepository.list()
         val first = all.firstOrNull { it.id == requested.id } ?: requested
+        if (!isOrchestratorChat(first.id) && RequestExecutionManager.hasActiveChat(first.id)) {
+            error("В чате «${first.title}» уже выполняется другой запрос")
+        }
         val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Оркестратор запускает этапы.\n\n$initial")
         all = chatsRepository.updateChat(first.id) { current ->
             current.copy(messages = current.messages + launch, updatedAt = System.currentTimeMillis())
