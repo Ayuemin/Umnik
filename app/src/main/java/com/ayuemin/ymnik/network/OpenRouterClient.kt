@@ -76,6 +76,10 @@ class OpenRouterClient(
 
     fun cancelActiveRequest() {
         chatBatchRunner.stopTracking()
+        requestId?.takeIf { it.isNotBlank() }?.let { id ->
+            recoveryStore.remove(id)
+            OpenRouterRecoveryWorker.cancel(context, id)
+        }
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
     }

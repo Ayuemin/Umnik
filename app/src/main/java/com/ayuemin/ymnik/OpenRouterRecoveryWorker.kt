@@ -88,6 +88,10 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
                     val text = contentText(completion.message.get("content"))
                     if (text.isBlank()) return@fold Result.retry()
 
+                    if (store.get(requestId) == null) {
+                        DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovery result discarded after manual cancel/completion; request=${requestId.take(8)}")
+                        return@fold Result.success()
+                    }
                     val assistant = ChatMessage(
                         id = UUID.randomUUID().toString(),
                         role = "assistant",
