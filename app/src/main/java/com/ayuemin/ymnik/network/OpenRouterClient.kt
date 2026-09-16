@@ -484,7 +484,7 @@ class OpenRouterClient(
                 if (!recover) {
                     if (!locallyCancelled && recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Связь нестабильна · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
@@ -497,7 +497,7 @@ class OpenRouterClient(
                 if (!awaitNetworkAvailable(deadline)) {
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Сеть недоступна · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
@@ -513,7 +513,7 @@ class OpenRouterClient(
                     DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation still pending after live recovery window; handing off id=${generationId ?: "none"}")
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Ответ ещё формируется · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
