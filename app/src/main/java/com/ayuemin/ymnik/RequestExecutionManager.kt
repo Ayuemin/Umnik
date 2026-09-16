@@ -170,7 +170,7 @@ internal object RequestExecutionManager {
 
             if (messageId != null && recoveryStore.get(saved.requestId) != null) {
                 recoveryCount += 1
-                OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L)
+                OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                 return@forEach
             }
 
@@ -228,7 +228,7 @@ internal object RequestExecutionManager {
             } finally {
                 val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
                 if (recoveryPending) {
-                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L)
+                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                     DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
                 } else {
                     runCatching {

@@ -4229,7 +4229,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = nextChats,
             pendingAttachments = emptyList(),
             requestActive = true,
-            busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Модель думает…",
+            busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Готовлю запрос…",
             status = null,
             storageStats = storageRepository.stats()
         )
@@ -4318,6 +4318,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
                         network.call(profileId = profile.id, recoverable = true) { requestApi ->
+                            network.updatePhase("Готовлю контекст…")
                             val preparedContext = chatMemoryManager.prepare(
                             chat = currentChat,
                             fullHistory = before,

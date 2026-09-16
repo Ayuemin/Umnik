@@ -484,6 +484,13 @@ LazyColumn(
             items(state.messages, key = { it.id }) { message ->
                 MessageCard(
                     message = message,
+                    pendingLabel = if (message.deliveryState == "pending") {
+                        if (requestActiveHere && state.messages.lastOrNull { it.deliveryState == "pending" }?.id == message.id) {
+                            state.busyLabel ?: "Модель работает…"
+                        } else {
+                            "Восстанавливаю ответ в фоне…"
+                        }
+                    } else null,
                     tts = tts,
                     openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
                     openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
@@ -1949,6 +1956,7 @@ private fun EmptyChatCard(mode: ChatMode) {
 @Composable
 private fun MessageCard(
     message: ChatMessage,
+    pendingLabel: String? = null,
     tts: TtsController,
     openRouterSpeechEnabled: Boolean,
     openRouterSpeechPhase: OpenRouterSpeechPhase,
@@ -1995,10 +2003,27 @@ private fun MessageCard(
                             )
                         }
                     }
-                    if (message.deliveryState == "failed" || message.deliveryState == "pending") {
+                    if (message.deliveryState == "pending") {
+                        Spacer(Modifier.height(7.dp))
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                pendingLabel ?: "Модель работает…",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else if (message.deliveryState == "failed") {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            if (message.deliveryState == "pending") "Ожидается ответ…" else "Ответ не получен. Можно повторить вручную.",
+                            "Ответ не получен. Можно повторить вручную.",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.error
                         )
