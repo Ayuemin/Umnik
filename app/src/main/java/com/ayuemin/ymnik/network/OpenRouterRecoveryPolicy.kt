@@ -6,6 +6,6 @@ internal fun shouldRecoverOpenRouterBodyFailure(
     cacheStatus: String?,
     recoveryAttempt: Int
 ): Boolean {
-    if (locallyCancelled || recoveryAttempt > 0 || generationId.isNullOrBlank()) return false
+    if (locallyCancelled || recoveryAttempt >= 3 || generationId.isNullOrBlank()) return false
     return cacheStatus.equals("MISS", ignoreCase = true) || cacheStatus.equals("HIT", ignoreCase = true)
 }

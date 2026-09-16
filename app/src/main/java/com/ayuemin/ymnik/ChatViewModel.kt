@@ -4316,7 +4316,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-                        network.call { requestApi ->
+                        network.call(profileId = profile.id, recoverable = true) { requestApi ->
                             val preparedContext = chatMemoryManager.prepare(
                             chat = currentChat,
                             fullHistory = before,

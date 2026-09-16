@@ -5,6 +5,7 @@ import android.os.PowerManager
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -139,7 +140,9 @@ internal object RequestExecutionManager {
         val batches = runCatching { BatchJobRepository(app).list() }.getOrDefault(emptyList())
         val chatRepository = ChatRepository(app)
         val chats = runCatching { chatRepository.list() }.getOrDefault(emptyList())
+        val recoveryStore = OpenRouterRecoveryStore(app)
         var batchCount = 0
+        var recoveryCount = 0
         var interruptedCount = 0
 
         persisted.distinctBy { it.requestId }.forEach { saved ->
@@ -159,8 +162,18 @@ internal object RequestExecutionManager {
                     .firstOrNull { it.role == "assistant" || it.role == "user" }
                     ?.role == "assistant"
             } == true
+            if (completed) {
+                recoveryStore.remove(saved.requestId)
+                return@forEach
+            }
 
-            if (messageId != null && !completed) {
+            if (messageId != null && recoveryStore.get(saved.requestId) != null) {
+                recoveryCount += 1
+                OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L)
+                return@forEach
+            }
+
+            if (messageId != null) {
                 interruptedCount += 1
                 runCatching {
                     chatRepository.updateMessage(saved.chatId, messageId) {
@@ -173,15 +186,11 @@ internal object RequestExecutionManager {
         prefs.edit().clear().commit()
         if (batchCount > 0) OpenRouterBackgroundWorker.schedule(app, replace = true)
 
-        return when {
-            interruptedCount > 0 && batchCount > 0 ->
-                "$interruptedCount запрос(а) были прерваны системой; $batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически."
-            interruptedCount > 0 ->
-                "$interruptedCount предыдущих запрос(а) были прерваны системой. Они не отправлены повторно во избежание повторной оплаты; при необходимости повторите их вручную."
-            batchCount > 0 ->
-                "$batchCount batch-запрос(а) продолжаются на OpenRouter. Umnik заберёт результаты автоматически."
-            else -> null
-        }
+        return buildList {
+            if (recoveryCount > 0) add("$recoveryCount запрос(а) восстанавливаются в фоне после перезапуска приложения.")
+            if (batchCount > 0) add("$batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически.")
+            if (interruptedCount > 0) add("$interruptedCount запрос(а) были прерваны системой до безопасной точки восстановления; при необходимости повторите их вручную.")
+        }.joinToString(" ").takeIf { it.isNotBlank() }
     }
 
     fun start(

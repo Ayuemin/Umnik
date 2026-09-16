@@ -1,9 +1,14 @@
 package com.ayuemin.ymnik.network
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
+import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Base64
+import com.ayuemin.ymnik.OpenRouterRecoveryWorker
+import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -32,6 +37,8 @@ class OpenRouterClient(
     private val context: Context,
     private val requestId: String? = null,
     private val requestChatId: String? = null,
+    private val requestProfileId: String? = null,
+    private val recoveryEnabled: Boolean = false,
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
@@ -39,13 +46,14 @@ class OpenRouterClient(
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
-        .pingInterval(5, TimeUnit.SECONDS)
+        .pingInterval(30, TimeUnit.SECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
         .callTimeout(600, TimeUnit.SECONDS)
         .build()
     private val chatBatchRunner = OpenRouterChatBatchRunner(context, requestId, requestChatId)
+    private val recoveryStore by lazy { OpenRouterRecoveryStore(context.applicationContext) }
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
@@ -376,6 +384,9 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
+        val payloadJson = gson.toJson(payload)
+        val recoveryRecord = recoveryRecord(baseUrl, model, payloadJson)
+        recoveryRecord?.let(recoveryStore::put)
         val request = Request.Builder()
             .url(endpoint(baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
@@ -387,7 +398,7 @@ class OpenRouterClient(
             // completion after a mobile HTTP/2 interruption instead of blindly paying twice.
             .header("X-OpenRouter-Cache", "true")
             .header("X-OpenRouter-Cache-TTL", "300")
-            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+            .post(payloadJson.toRequestBody("application/json".toMediaType()))
             .build()
 
         var recoveryAttempt = 0
@@ -401,13 +412,19 @@ class OpenRouterClient(
                 executeActive(request).use { response ->
                     generationId = response.header("X-Generation-Id")
                     cacheStatus = response.header("X-OpenRouter-Cache-Status")
+                    if (recoveryRecord != null && !generationId.isNullOrBlank()) {
+                        recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
+                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId)
+                    }
                     phaseCallback(
                         if (cacheStatus.equals("HIT", ignoreCase = true))
                             "Готовый ответ найден · загружаю…"
                         else
                             "Модель формирует ответ…"
                     )
+                    // Do not clear recovery state until the whole response body has arrived.
                     val body = response.body?.string().orEmpty()
+                    clearRecovery(recoveryRecord)
                     if (!response.isSuccessful) error(apiError(response.code, body))
                     val completion = OpenRouterResponseParser.parse(body, allowEmpty)
                     DiagnosticLog.record(
@@ -428,34 +445,88 @@ class OpenRouterClient(
                 DiagnosticLog.record(
                     context,
                     "REQUEST_RECOVERY",
-                    "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; cache=${cacheStatus ?: "off"}; recover=$recover; error=${error::class.java.simpleName}: ${error.message}"
+                    "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; cache=${cacheStatus ?: "off"}; recover=$recover; attempt=$recoveryAttempt; error=${error::class.java.simpleName}: ${error.message}"
                 )
-                if (!recover) throw error
+                if (!recover) {
+                    clearRecovery(recoveryRecord)
+                    throw error
+                }
 
                 clearActiveCall()
-                phaseCallback("Связь прервалась · проверяю готовый ответ…")
+                phaseCallback("Связь прервалась · жду сеть…")
+                val deadline = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
+                if (!awaitNetworkAvailable(deadline)) {
+                    clearRecovery(recoveryRecord)
+                    throw error
+                }
+                phaseCallback("Связь доступна · проверяю готовый ответ…")
                 val ready = if (cacheStatus.equals("HIT", ignoreCase = true)) {
                     true
                 } else {
-                    awaitGenerationFinished(apiKey, baseUrl, generationId.orEmpty())
+                    awaitGenerationFinished(apiKey, baseUrl, generationId.orEmpty(), deadline)
                 }
                 if (!ready) {
                     DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation not completed in recovery window; id=${generationId ?: "none"}")
+                    clearRecovery(recoveryRecord)
                     throw error
                 }
                 recoveryAttempt += 1
                 phaseCallback("Ответ готов · восстанавливаю соединение…")
-                delay(700L)
+                delay(900L)
             } finally {
                 clearActiveCall()
             }
         }
     }
 
-    private suspend fun awaitGenerationFinished(apiKey: String, baseUrl: String, generationId: String): Boolean {
+    private fun recoveryRecord(baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
+        if (!recoveryEnabled) return null
+        val id = requestId?.takeIf { it.isNotBlank() } ?: return null
+        val snapshot = RequestExecutionManager.snapshotForRequest(id) ?: return null
+        val chatId = requestChatId?.takeIf { it.isNotBlank() } ?: snapshot.chatId
+        // Only a direct user-facing request may be delivered automatically after process death.
+        // Orchestrator worker calls have their own continuation graph and must not be injected here.
+        if (chatId != snapshot.chatId) return null
+        val profileId = requestProfileId?.takeIf { it.isNotBlank() } ?: return null
+        return OpenRouterRecoveryRecord(
+            requestId = id,
+            chatId = chatId,
+            messageId = snapshot.messageId,
+            connectionProfileId = profileId,
+            baseUrl = baseUrl,
+            modelId = model,
+            payloadJson = payloadJson
+        )
+    }
+
+    private fun clearRecovery(record: OpenRouterRecoveryRecord?) {
+        val id = record?.requestId ?: return
+        recoveryStore.remove(id)
+        OpenRouterRecoveryWorker.cancel(context, id)
+    }
+
+    private suspend fun awaitNetworkAvailable(deadlineElapsed: Long): Boolean {
+        val connectivity = context.applicationContext.getSystemService(ConnectivityManager::class.java) ?: return true
+        while (SystemClock.elapsedRealtime() < deadlineElapsed) {
+            val network = connectivity.activeNetwork
+            val capabilities = network?.let(connectivity::getNetworkCapabilities)
+            if (capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) return true
+            delay(1_000L)
+        }
+        return false
+    }
+
+    private suspend fun awaitGenerationFinished(
+        apiKey: String,
+        baseUrl: String,
+        generationId: String,
+        deadlineElapsed: Long = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
+    ): Boolean {
         if (generationId.isBlank()) return false
-        repeat(12) { attempt ->
-            if (attempt > 0) delay(2_500L)
+        var attempt = 0
+        while (SystemClock.elapsedRealtime() < deadlineElapsed) {
+            if (!awaitNetworkAvailable(deadlineElapsed)) return false
+            if (attempt > 0) delay(minOf(10_000L, 1_500L + attempt * 1_000L))
             val request = Request.Builder()
                 .url(endpoint(baseUrl, "generation") + "?id=" + Uri.encode(generationId))
                 .header("Authorization", "Bearer $apiKey")
@@ -465,7 +536,8 @@ class OpenRouterClient(
             val result = runCatching {
                 http.newCall(request).execute().use { response ->
                     if (response.code == 404) return@use null
-                    if (!response.isSuccessful) return@use false
+                    if (response.code == 401 || response.code == 403) return@use false
+                    if (!response.isSuccessful) return@use null
                     val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
                     val data = root.getAsJsonObject("data") ?: return@use null
                     if (runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true) return@use false
@@ -478,6 +550,7 @@ class OpenRouterClient(
                 return true
             }
             if (result == false) return false
+            attempt += 1
         }
         return false
     }
@@ -700,6 +773,7 @@ class OpenRouterClient(
 
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+        private const val RECOVERY_WINDOW_MS = 120_000L
     }
 
 }
