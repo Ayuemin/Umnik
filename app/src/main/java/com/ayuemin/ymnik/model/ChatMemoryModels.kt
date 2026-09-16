@@ -7,8 +7,10 @@ enum class ChatContextMode {
 }
 
 data class ChatMemoryGlobalSettings(
+    val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
     val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
     val summaryModelId: String = DEFAULT_SUMMARY_MODEL,
+    val defaultContextMode: ChatContextMode = ChatContextMode.AUTO,
     val autoThresholdTokens: Int = 30_000,
     val economyThresholdTokens: Int = 10_000,
     val autoRecentMessages: Int = 10,
@@ -16,10 +18,14 @@ data class ChatMemoryGlobalSettings(
     val topK: Int = 5,
     val checkpointTokens: Int = 8_000,
     val chunkTokens: Int = 1_200,
+    val chunkOverlapTokens: Int = 80,
+    val neighborChunks: Int = 1,
+    val embeddingContextTokens: Int? = null,
     val minimumScore: Double = 0.20,
     val stateCardMaxChars: Int = 6_000
 ) {
     companion object {
+        const val CURRENT_SCHEMA_VERSION = 2
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
         const val DEFAULT_SUMMARY_MODEL = "openrouter/auto"
     }
@@ -47,6 +53,9 @@ data class ChatMemorySnapshot(
     val chatId: String,
     val embeddingModelId: String,
     val summaryModelId: String,
+    val chunkTokens: Int = 0,
+    val chunkOverlapTokens: Int = 0,
+    val embeddingContextTokens: Int? = null,
     val stateCard: String = "",
     val checkpoints: List<ChatMemoryCheckpoint> = emptyList(),
     val chunks: List<ChatMemoryChunk> = emptyList(),
