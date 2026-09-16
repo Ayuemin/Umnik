@@ -6,6 +6,7 @@ on:
       - feature/multi-request-v1.17.0
     paths:
       - "tools/add_orchestrator_parallelism.py"
+      - "tools/fix_orchestrator_parallelism_patch.py"
       - ".github/workflows/orchestrator-parallel-v1170.yml"
 
 permissions:
@@ -41,7 +42,9 @@ jobs:
           gradle-version: "8.13"
 
       - name: Apply safe Orchestrator parallelism
-        run: python3 tools/add_orchestrator_parallelism.py
+        run: |
+          python3 tools/add_orchestrator_parallelism.py
+          python3 tools/fix_orchestrator_parallelism_patch.py
 
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
