@@ -18,7 +18,8 @@ import java.util.UUID
 /** Makes a :batch model behave like an ordinary Umnik chat request. */
 internal class OpenRouterChatBatchRunner(
     private val context: Context,
-    private val requestId: String? = null
+    private val requestId: String? = null,
+    private val requestChatId: String? = null
 ) {
     private val client = OpenRouterBatchClient(context)
     private val jobs = BatchJobRepository(context)
@@ -89,9 +90,13 @@ internal class OpenRouterChatBatchRunner(
         val originSnapshot = requestId
             ?.let(RequestExecutionManager::snapshotForRequest)
             ?: error("Batch-запрос не привязан к активной сессии")
-        val originChatId = originSnapshot.chatId
+        val originChatId = requestChatId ?: originSnapshot.chatId
         val originChat = chats.list().firstOrNull { it.id == originChatId }
-        val originMessageId = originSnapshot.messageId
+        val originMessageId = if (originChatId == originSnapshot.chatId) {
+            originSnapshot.messageId
+        } else {
+            originChat?.messages?.lastOrNull { it.role == "user" }?.id
+        }
         val customId = originMessageId?.let { "chat-$it" } ?: "chat-${UUID.randomUUID()}"
         val label = originChat?.messages
             ?.lastOrNull { it.id == originMessageId }

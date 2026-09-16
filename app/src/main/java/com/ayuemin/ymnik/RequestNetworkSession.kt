@@ -17,11 +17,20 @@ internal class RequestNetworkSession(
     private val app = context.applicationContext
     private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
 
-    private fun openRouter(): OpenRouterClient = OpenRouterClient(app, requestId) { label -> updatePhase(label) }
-        .also { clients += it }
+    private fun openRouter(chatId: String? = null): OpenRouterClient =
+        OpenRouterClient(
+            context = app,
+            requestId = requestId,
+            requestChatId = chatId ?: RequestExecutionManager.snapshotForRequest(requestId)?.chatId
+        ) { label -> updatePhase(label) }
+            .also { clients += it }
 
-    suspend fun <T> call(block: suspend (OpenRouterClient) -> T): T =
-        RequestConcurrencyLimiter.withPermit(app) { block(openRouter()) }
+    suspend fun <T> call(chatId: String? = null, block: suspend (OpenRouterClient) -> T): T =
+        RequestConcurrencyLimiter.withPermit(app) { block(openRouter(chatId)) }
+
+    fun reserveChat(chatId: String): Boolean = RequestExecutionManager.reserveChat(requestId, chatId)
+
+    fun releaseChat(chatId: String) = RequestExecutionManager.releaseChat(requestId, chatId)
 
     fun updatePhase(label: String) {
         RequestExecutionManager.updatePhase(app, requestId, label)

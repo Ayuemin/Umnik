@@ -31,11 +31,12 @@ import java.util.concurrent.TimeUnit
 class OpenRouterClient(
     private val context: Context,
     private val requestId: String? = null,
+    private val requestChatId: String? = null,
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
-        .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
+        .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
         .pingInterval(5, TimeUnit.SECONDS)
@@ -44,7 +45,7 @@ class OpenRouterClient(
         .writeTimeout(240, TimeUnit.SECONDS)
         .callTimeout(600, TimeUnit.SECONDS)
         .build()
-    private val chatBatchRunner = OpenRouterChatBatchRunner(context, requestId)
+    private val chatBatchRunner = OpenRouterChatBatchRunner(context, requestId, requestChatId)
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 

@@ -129,9 +129,13 @@ object DiagnosticLog {
 
 class DiagnosticHttpInterceptor(
     private val context: Context,
-    private val source: String
+    private val source: String,
+    private val requestId: String? = null,
+    private val requestChatId: String? = null
 ) : Interceptor {
-    private val openRouterEnhancer by lazy { OpenRouterRequestEnhancer(context.applicationContext) }
+    private val openRouterEnhancer by lazy {
+        OpenRouterRequestEnhancer(context.applicationContext, requestId, requestChatId)
+    }
 
     override fun intercept(chain: Interceptor.Chain): Response {
         var request = chain.request()

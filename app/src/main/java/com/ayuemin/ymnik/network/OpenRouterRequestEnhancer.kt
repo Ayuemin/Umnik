@@ -3,6 +3,7 @@ package com.ayuemin.ymnik.network
 import android.content.Context
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterBackgroundWorker
+import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ProjectAutomationRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
@@ -30,7 +31,11 @@ import java.util.UUID
  * It keeps ChatViewModel provider-agnostic while applying optional OpenRouter
  * features immediately before /chat/completions is sent.
  */
-internal class OpenRouterRequestEnhancer(private val context: Context) {
+internal class OpenRouterRequestEnhancer(
+    private val context: Context,
+    private val requestId: String? = null,
+    private val requestChatId: String? = null
+) {
     private val gson = Gson()
     private val prefs = OpenRouterFeaturePrefs(context)
     private val retrieval = OpenRouterRetrievalClient(context)
@@ -40,6 +45,15 @@ internal class OpenRouterRequestEnhancer(private val context: Context) {
     private val files = OpenRouterFilesClient(context)
 
     data class Result(val request: Request? = null, val response: Response? = null)
+
+    private fun activeSnapshot() = requestId?.let(RequestExecutionManager::snapshotForRequest)
+
+    private fun effectiveChatId(): String? {
+        requestChatId?.takeIf { it.isNotBlank() }?.let { return it }
+        activeSnapshot()?.chatId?.let { return it }
+        val execution = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
+        return execution.getString("target_chat_id", null) ?: execution.getString("chat_id", null)
+    }
 
     fun enhance(request: Request): Result {
         if (!request.url.encodedPath.endsWith("/chat/completions")) return Result(request = request)
@@ -56,9 +70,8 @@ internal class OpenRouterRequestEnhancer(private val context: Context) {
         val routing = prefs.routing()
         OpenRouterFeaturePayload.applyRouting(payload, routing)
 
-        val execution = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-        val requestChatId = execution.getString("target_chat_id", null) ?: execution.getString("chat_id", null)
-        val serverTools = requestChatId?.let { ProjectAutomationRepository(context).profile(it)?.tools } ?: prefs.tools()
+        val activeChatId = effectiveChatId()
+        val serverTools = activeChatId?.let { ProjectAutomationRepository(context).profile(it)?.tools } ?: prefs.tools()
         if (serverTools.webSearch != WebSearchMode.OFF) payload.remove("plugins")
         val advancedTools = OpenRouterFeaturePayload.chatServerTools(serverTools)
         if (advancedTools.size() > 0) {
@@ -187,9 +200,11 @@ internal class OpenRouterRequestEnhancer(private val context: Context) {
                 baseUrl = baseUrl
             )
         }
+        val requestSnapshot = activeSnapshot()
         val execution = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-        val chatId = execution.getString("chat_id", null)
-        val messageId = execution.getString("message_id", null)
+        val chatId = effectiveChatId()
+        val messageId = requestSnapshot?.messageId?.takeIf { chatId == requestSnapshot.chatId }
+            ?: execution.getString("message_id", null)
         val job = BatchJob(
             id = UUID.randomUUID().toString(),
             remoteId = snapshot.remoteId,

@@ -222,7 +222,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     val state: StateFlow<UiState> = _state.asStateFlow()
 
     fun activeRequestChatId(): String? = RequestExecutionManager.snapshots.value.firstOrNull()?.chatId
-    fun activeRequestChatIds(): Set<String> = RequestExecutionManager.snapshots.value.mapTo(linkedSetOf()) { it.chatId }
+    fun activeRequestChatIds(): Set<String> = RequestExecutionManager.activeChatIds()
     fun activeRequestCount(): Int = RequestExecutionManager.activeCount()
     fun isChatRequestActive(chatId: String): Boolean = RequestExecutionManager.hasActiveChat(chatId)
     fun activeRequestLabel(chatId: String): String? = RequestExecutionManager.snapshotForChat(chatId)?.label
@@ -1875,8 +1875,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun deleteChat(id: String) {
-        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
+        if (RequestExecutionManager.hasActiveChat(id)) {
+            _state.value = _state.value.copy(status = "Нельзя удалить чат, пока в нём выполняется работа")
+            return
+        }
+        cleanupTempAttachments(_state.value.pendingAttachments)
         val deletingChat = _state.value.chats.firstOrNull { it.id == id } ?: return
         if (isOrchestratorChat(id)) {
             _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
@@ -1915,8 +1919,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun clearAllChats() {
-        cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
+        val active = _state.value.chats.firstOrNull { RequestExecutionManager.hasActiveChat(it.id) }
+        if (active != null) {
+            _state.value = _state.value.copy(status = "Нельзя очистить чаты: «${active.title}» сейчас выполняет работу")
+            return
+        }
+        cleanupTempAttachments(_state.value.pendingAttachments)
 
         val protectedOrchestrators = _state.value.chats.filter { isOrchestratorChat(it.id) }
         _state.value.chats.filterNot { isOrchestratorChat(it.id) }.forEach { chat ->
@@ -3036,9 +3045,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     ): String {
         val all = chatsRepository.list()
         val chat = all.firstOrNull { it.id == requested.id } ?: requested
-        if (!isOrchestratorChat(chat.id) && RequestExecutionManager.hasActiveChat(chat.id)) {
+        val reservationRequired = !isOrchestratorChat(chat.id)
+        if (reservationRequired && !network.reserveChat(chat.id)) {
             error("В чате «${chat.title}» уже выполняется другой запрос")
         }
+        try {
         val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
         if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
@@ -3064,7 +3075,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         val knowledgeContext = knowledgeSystemContext(project, chat, task)
         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-        val result = network.call { requestApi ->
+        val result = network.call(chat.id) { requestApi ->
             requestApi.chat(
                     key, modelId, history, task, attachments,
                     buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
@@ -3087,6 +3098,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         publishChats(updated)
         return text
+        } finally {
+            if (reservationRequired) network.releaseChat(chat.id)
+        }
     }
 
     private suspend fun executeOrchestratorStageSequence(
@@ -3103,9 +3117,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val initial = orchestratorPrompt(prompt, previous, passPrevious)
         var all = chatsRepository.list()
         val first = all.firstOrNull { it.id == requested.id } ?: requested
-        if (!isOrchestratorChat(first.id) && RequestExecutionManager.hasActiveChat(first.id)) {
+        val reservationRequired = !isOrchestratorChat(first.id)
+        if (reservationRequired && !network.reserveChat(first.id)) {
             error("В чате «${first.title}» уже выполняется другой запрос")
         }
+        try {
         val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Оркестратор запускает этапы.\n\n$initial")
         all = chatsRepository.updateChat(first.id) { current ->
             current.copy(messages = current.messages + launch, updatedAt = System.currentTimeMillis())
@@ -3153,7 +3169,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull())
             val knowledgeContext = knowledgeSystemContext(project, chat, stagePrompt)
             require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-            val response = network.call { requestApi ->
+            val response = network.call(chat.id) { requestApi ->
                 requestApi.chat(
                     key, modelId, baseHistory, stagePrompt, attachments,
                     buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
@@ -3166,6 +3182,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendProjectStageMessage(chat.id, index + 1, stage.title, text, response.modelId ?: modelId, response)
         }
         return results.lastOrNull()?.second ?: "Этапы выполнены."
+        } finally {
+            if (reservationRequired) network.releaseChat(first.id)
+        }
     }
 
     private fun orchestratorAttachments(project: Project, chat: ChatSession, info: ModelInfo?): List<PendingAttachment> {
@@ -3556,6 +3575,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun deleteProject(projectId: String) {
         if (_state.value.isLoading) return
+        val active = _state.value.chats.firstOrNull {
+            it.projectId == projectId && RequestExecutionManager.hasActiveChat(it.id)
+        }
+        if (active != null) {
+            _state.value = _state.value.copy(status = "Нельзя удалить проект: «${active.title}» сейчас выполняет работу")
+            return
+        }
         projectsRepository.deleteProjectFiles(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
         _state.value.chats.filter { it.projectId == projectId }.forEach { chatMemory.deleteChat(it.id) }

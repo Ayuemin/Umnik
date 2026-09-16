@@ -52,6 +52,7 @@ internal object RequestExecutionManager {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
     private val runtimes = linkedMapOf<String, Runtime>()
+    private val reservations = linkedMapOf<String, String>() // chatId -> owning requestId
     private val mutableSnapshots = MutableStateFlow<List<Snapshot>>(emptyList())
     val snapshots: StateFlow<List<Snapshot>> = mutableSnapshots
     private var sequence = 0L
@@ -62,16 +63,50 @@ internal object RequestExecutionManager {
 
     fun activeCount(): Int = synchronized(lock) { runtimes.size }
 
+    fun activeChatIds(): Set<String> = synchronized(lock) {
+        linkedSetOf<String>().apply {
+            runtimes.values.forEach { add(it.snapshot.chatId) }
+            addAll(reservations.keys)
+        }
+    }
+
     fun hasActiveChat(chatId: String): Boolean = synchronized(lock) {
-        runtimes.values.any { it.snapshot.chatId == chatId }
+        runtimes.values.any { it.snapshot.chatId == chatId } || chatId in reservations
     }
 
     fun snapshotForChat(chatId: String): Snapshot? = synchronized(lock) {
         runtimes.values.firstOrNull { it.snapshot.chatId == chatId }?.snapshot
+            ?: reservations[chatId]?.let { owner -> runtimes[owner]?.snapshot }
     }
 
     fun snapshotForRequest(requestId: String): Snapshot? = synchronized(lock) {
         runtimes[requestId]?.snapshot
+    }
+
+    fun reserveChat(requestId: String, chatId: String): Boolean = synchronized(lock) {
+        val owner = runtimes[requestId] ?: return@synchronized false
+        val directOwner = runtimes.values.firstOrNull { it.snapshot.chatId == chatId }
+        if (directOwner != null && directOwner.snapshot.requestId != requestId) return@synchronized false
+        val reservedBy = reservations[chatId]
+        if (reservedBy != null && reservedBy != requestId) return@synchronized false
+        if (owner.snapshot.chatId == chatId || reservedBy == requestId) return@synchronized true
+        reservations[chatId] = requestId
+        sequence += 1L
+        owner.snapshot = owner.snapshot.copy(sequence = sequence)
+        publishLocked()
+        true
+    }
+
+    fun releaseChat(requestId: String, chatId: String) {
+        synchronized(lock) {
+            if (reservations[chatId] != requestId) return
+            reservations.remove(chatId)
+            runtimes[requestId]?.let { owner ->
+                sequence += 1L
+                owner.snapshot = owner.snapshot.copy(sequence = sequence)
+            }
+            publishLocked()
+        }
     }
 
     fun recoverInterrupted(context: Context): String? {
@@ -165,7 +200,7 @@ internal object RequestExecutionManager {
 
         synchronized(lock) {
             check(requestId !in runtimes) { "Запрос уже зарегистрирован" }
-            check(runtimes.values.none { it.snapshot.chatId == chatId }) { "В этом чате запрос уже выполняется" }
+            check(runtimes.values.none { it.snapshot.chatId == chatId } && chatId !in reservations) { "В этом чате запрос уже выполняется" }
         }
 
         val persisted = listOf(chatId, messageId, startedAt.toString()).joinToString(FIELD_SEPARATOR)
@@ -189,6 +224,7 @@ internal object RequestExecutionManager {
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
                 val remaining = synchronized(lock) {
                     runtimes.remove(requestId)
+                    reservations.entries.removeAll { it.value == requestId }
                     publishLocked()
                     runtimes.size
                 }
@@ -223,6 +259,7 @@ internal object RequestExecutionManager {
             .onFailure { error ->
                 synchronized(lock) {
                     runtimes.remove(requestId)
+                    reservations.entries.removeAll { it.value == requestId }
                     publishLocked()
                 }
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
