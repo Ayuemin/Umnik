@@ -1,32 +1,28 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
-import com.ayuemin.ymnik.network.CompatibleApiClient
-import com.ayuemin.ymnik.network.NvidiaImageClient
 import com.ayuemin.ymnik.network.OpenRouterClient
+import java.util.Collections
 
 /**
- * Network clients owned by one top-level request.
+ * OpenRouter network clients owned by one top-level request.
  *
- * Separate client instances mean cancelling one chat cannot cancel sockets that belong to
- * another chat. The same session can intentionally fan out several specialist calls inside
- * one orchestrator job; cancelling that orchestrator cancels all of its child calls.
+ * A session may create several clients for an Orchestrator fan-out. That allows independent
+ * specialists to work in parallel while cancellation stays scoped to this one top-level job.
  */
 internal class RequestNetworkSession(
     context: Context,
     private val requestId: String
 ) {
     private val app = context.applicationContext
+    private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
 
-    val openRouter = OpenRouterClient(app) { label ->
+    fun openRouter(): OpenRouterClient = OpenRouterClient(app) { label ->
         RequestExecutionManager.updatePhase(app, requestId, label)
-    }
-    val compatible = CompatibleApiClient(app)
-    val nvidiaImage = NvidiaImageClient(app)
+    }.also { clients += it }
 
     fun cancel() {
-        openRouter.cancelActiveRequest()
-        compatible.cancelActiveRequest()
-        nvidiaImage.cancelActiveRequest()
+        val snapshot = synchronized(clients) { clients.toList() }
+        snapshot.forEach { runCatching { it.cancelActiveRequest() } }
     }
 }
