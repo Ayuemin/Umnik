@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -37,26 +38,18 @@ class RequestKeepAliveService : Service() {
         }
 
         val active = RequestExecutionManager.snapshots.value
-        // START_STICKY can recreate the service after process death, but the old sockets
-        // do not survive that death. Do not keep an orphan foreground notification.
         if (active.isEmpty()) {
-            DiagnosticLog.record(
-                applicationContext,
-                "SERVICE",
-                "Foreground service has no in-process requests; stopping orphan service"
-            )
+            DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service has no in-process requests; stopping orphan service")
             stopSelf(startId)
             return START_NOT_STICKY
         }
 
         val pendingFlags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        val openChat = PendingIntent.getActivity(
-            this, 0, Intent(this, MainActivity::class.java), pendingFlags
-        )
+        val openChat = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java), pendingFlags)
         val cancelAll = PendingIntent.getService(
             this, 1, Intent(this, RequestKeepAliveService::class.java).setAction(ACTION_CANCEL_ALL), pendingFlags
         )
-        val title = if (active.size == 1) "Umnik" else "Umnik · ${active.size} запроса"
+        val title = if (active.size == 1) "Umnik · модель работает" else "Umnik · работают ${active.size} чата"
         val text = if (active.size == 1) {
             active.first().label
         } else {
@@ -65,53 +58,37 @@ class RequestKeepAliveService : Service() {
             }
         }
         val cancelLabel = if (active.size == 1) "Остановить" else "Остановить все"
-        val notification = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            android.app.Notification.Builder(this, CHANNEL_ID)
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setStyle(android.app.Notification.BigTextStyle().bigText(text))
-                .setContentIntent(openChat)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, cancelLabel, cancelAll)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build()
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
         } else {
             @Suppress("DEPRECATION")
-            android.app.Notification.Builder(this)
-                .setSmallIcon(android.R.drawable.stat_sys_upload)
-                .setContentTitle(title)
-                .setContentText(text)
-                .setContentIntent(openChat)
-                .addAction(android.R.drawable.ic_menu_close_clear_cancel, cancelLabel, cancelAll)
-                .setOngoing(true)
-                .setOnlyAlertOnce(true)
-                .build()
+            Notification.Builder(this)
         }
-        startForeground(NOTIFICATION_ID, notification)
-        DiagnosticLog.record(
-            applicationContext,
-            "SERVICE",
-            "Foreground request service active; startId=$startId; active=${active.size}"
-        )
+        builder
+            .setSmallIcon(R.drawable.ic_notification_umnik)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setContentIntent(openChat)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, cancelLabel, cancelAll)
+            .setCategory(Notification.CATEGORY_SERVICE)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
+        }
+        startForeground(NOTIFICATION_ID, builder.build())
+        DiagnosticLog.record(applicationContext, "SERVICE", "Foreground request service active; startId=$startId; active=${active.size}")
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        DiagnosticLog.record(
-            applicationContext,
-            "SERVICE",
-            "App task removed; active=${RequestExecutionManager.activeCount()}"
-        )
+        DiagnosticLog.record(applicationContext, "SERVICE", "App task removed; active=${RequestExecutionManager.activeCount()}")
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        DiagnosticLog.record(
-            applicationContext,
-            "SERVICE",
-            "Foreground service timeout; startId=$startId; type=$fgsType; active=${RequestExecutionManager.activeCount()}"
-        )
+        DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service timeout; startId=$startId; type=$fgsType; active=${RequestExecutionManager.activeCount()}")
         RequestExecutionManager.cancelAll()
         stopSelf(startId)
     }
@@ -119,11 +96,7 @@ class RequestKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        DiagnosticLog.record(
-            applicationContext,
-            "SERVICE",
-            "RequestKeepAliveService destroyed; active=${RequestExecutionManager.activeCount()}"
-        )
+        DiagnosticLog.record(applicationContext, "SERVICE", "RequestKeepAliveService destroyed; active=${RequestExecutionManager.activeCount()}")
         RequestExecutionManager.serviceStoppedUnexpectedly(applicationContext)
         super.onDestroy()
     }
@@ -134,10 +107,7 @@ class RequestKeepAliveService : Service() {
         private const val ACTION_CANCEL_ALL = "com.ayuemin.ymnik.CANCEL_ALL_REQUESTS"
 
         fun start(context: Context) {
-            ContextCompat.startForegroundService(
-                context,
-                Intent(context, RequestKeepAliveService::class.java)
-            )
+            ContextCompat.startForegroundService(context, Intent(context, RequestKeepAliveService::class.java))
         }
 
         fun update(context: Context) {

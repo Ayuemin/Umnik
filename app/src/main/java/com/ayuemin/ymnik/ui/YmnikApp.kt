@@ -9,6 +9,7 @@ import android.content.Intent
 import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
+import android.os.Build
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -153,6 +154,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.model.AnswerSoundChoice
@@ -197,10 +199,25 @@ fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) RequestKeepAliveService.update(context.applicationContext)
+    }
     val tts = remember { TtsController(context) }
     val openRouterSpeech = remember(viewModel) { OpenRouterSpeechPlayer(context.applicationContext, viewModel) }
     val openRouterSpeechState by openRouterSpeech.state.collectAsState()
     var screen by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(state.requestActive) {
+        if (state.requestActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            val prefs = context.getSharedPreferences("ymnik", Context.MODE_PRIVATE)
+            if (!prefs.getBoolean("notification_permission_prompted_v1171", false)) {
+                prefs.edit().putBoolean("notification_permission_prompted_v1171", true).apply()
+                notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
+            }
+        }
+    }
 
     DisposableEffect(tts, openRouterSpeech) {
         onDispose {
@@ -314,7 +331,6 @@ private fun ChatScreen(
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
-    val requestActiveElsewhere = state.requestActive && !requestActiveHere
     val nonRequestBusy = state.isLoading && !state.requestActive
     val isUsageGuide = currentChat?.title == "Памятка по Umnik"
     var guideScrollTarget by remember(state.currentChatId) { mutableStateOf<Int?>(null) }
@@ -733,7 +749,6 @@ onBranch = if (message.role == "assistant") {
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
-                            requestActiveElsewhere -> Text("Другой чат отвечает · здесь можно отправить новый запрос")
                             imagePromptMode -> Text("Опишите изображение")
                             currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
                         }
