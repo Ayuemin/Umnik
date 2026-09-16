@@ -580,6 +580,7 @@ private fun RegularChatSettingsDialog(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            item { ChatContextSettingsSection(chat, state, vm) }
             item {
                 KnowledgeBaseSection(
                     kind = KnowledgeOwnerKind.CHAT,

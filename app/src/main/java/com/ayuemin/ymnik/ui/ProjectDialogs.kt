@@ -259,6 +259,7 @@ private fun ChatProfileDialog(chat: ChatSession, state: UiState, vm: ChatViewMod
                     Switch(favorite, { favorite = it })
                 }
             }
+            item { ChatContextSettingsSection(chat, state, vm) }
             item {
                 KnowledgeBaseSection(
                     kind = KnowledgeOwnerKind.CHAT,

@@ -272,6 +272,7 @@ fun ProjectChatAutomationDialog(
                 }
             }
 
+            item { ChatContextSettingsSection(chat, state, vm) }
             item {
                 KnowledgeBaseSection(
                     kind = KnowledgeOwnerKind.CHAT,

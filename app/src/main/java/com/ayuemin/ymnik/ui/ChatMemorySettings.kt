@@ -1,0 +1,361 @@
+package com.ayuemin.ymnik.ui
+
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ElevatedCard
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.model.ChatContextMode
+import com.ayuemin.ymnik.model.ChatMemoryGlobalSettings
+import com.ayuemin.ymnik.model.ChatSession
+import com.ayuemin.ymnik.model.ModelCategory
+import com.ayuemin.ymnik.model.UiState
+import java.util.Locale
+
+@Composable
+fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewModel) {
+    var expanded by remember(chat.id) { mutableStateOf(false) }
+    val mode = vm.chatContextMode(chat.id)
+    val stats = vm.chatMemoryStats(chat.id)
+
+    MemorySettingsExpander(
+        title = "Контекст чата",
+        subtitle = modeLabel(mode),
+        expanded = expanded,
+        onToggle = { expanded = !expanded }
+    )
+    if (!expanded) return
+
+    Text(
+        "Режим определяет, сколько старой переписки отправляется модели. Исходная история чата всегда остаётся на телефоне.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+
+    ContextModeChoice(
+        selected = mode == ChatContextMode.AUTO,
+        title = "Автоматический",
+        description = "Полная история до заданного порога, затем свежие сообщения + карточка памяти + найденные старые фрагменты."
+    ) { vm.setChatContextMode(chat.id, ChatContextMode.AUTO) }
+    ContextModeChoice(
+        selected = mode == ChatContextMode.FULL,
+        title = "Всегда полный",
+        description = "Отправлять максимум исходной истории, который помещается в контекст выбранной модели. Долговременная память не используется."
+    ) { vm.setChatContextMode(chat.id, ChatContextMode.FULL) }
+    ContextModeChoice(
+        selected = mode == ChatContextMode.ECONOMY,
+        title = "Экономный",
+        description = "Раньше переходить на гибридную память и держать меньший свежий хвост диалога."
+    ) { vm.setChatContextMode(chat.id, ChatContextMode.ECONOMY) }
+
+    Text(
+        "Память: ${stats.checkpoints} checkpoint · ${stats.chunks} фрагм. · ${formatMemoryBytes(stats.bytes)}",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilledTonalButton(
+            onClick = { vm.rebuildChatMemory(chat.id) },
+            enabled = !state.isLoading && !state.requestActive && mode != ChatContextMode.FULL,
+            modifier = Modifier.weight(1f)
+        ) {
+            Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Перестроить")
+        }
+        TextButton(
+            onClick = { vm.clearChatMemory(chat.id) },
+            enabled = !state.isLoading && !state.requestActive,
+            modifier = Modifier.weight(1f)
+        ) {
+            Text("Очистить память")
+        }
+    }
+    Text(
+        "Очистка памяти не удаляет переписку. При удалении самого чата его checkpoint-конспекты, embeddings и карточка состояния удаляются автоматически.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+@Composable
+private fun ContextModeChoice(
+    selected: Boolean,
+    title: String,
+    description: String,
+    onClick: () -> Unit
+) {
+    Column(Modifier.fillMaxWidth()) {
+        FilterChip(selected = selected, onClick = onClick, label = { Text(title) })
+        Text(
+            description,
+            modifier = Modifier.padding(start = 6.dp, top = 2.dp, bottom = 4.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
+    val context = LocalContext.current
+    var expanded by remember { mutableStateOf(false) }
+    var advanced by remember { mutableStateOf(false) }
+    var confirmClear by remember { mutableStateOf(false) }
+    val initial = vm.chatMemorySettings()
+    var embeddingModel by remember(initial.embeddingModelId) { mutableStateOf(initial.embeddingModelId) }
+    var summaryModel by remember(initial.summaryModelId) { mutableStateOf(initial.summaryModelId) }
+    var autoThreshold by remember(initial.autoThresholdTokens) { mutableStateOf(initial.autoThresholdTokens.toString()) }
+    var economyThreshold by remember(initial.economyThresholdTokens) { mutableStateOf(initial.economyThresholdTokens.toString()) }
+    var autoRecent by remember(initial.autoRecentMessages) { mutableStateOf(initial.autoRecentMessages.toString()) }
+    var economyRecent by remember(initial.economyRecentMessages) { mutableStateOf(initial.economyRecentMessages.toString()) }
+    var topK by remember(initial.topK) { mutableStateOf(initial.topK.toString()) }
+    var checkpointTokens by remember(initial.checkpointTokens) { mutableStateOf(initial.checkpointTokens.toString()) }
+    var chunkTokens by remember(initial.chunkTokens) { mutableStateOf(initial.chunkTokens.toString()) }
+    var minimumScore by remember(initial.minimumScore) { mutableStateOf(String.format(Locale.US, "%.2f", initial.minimumScore)) }
+    var stateCardMaxChars by remember(initial.stateCardMaxChars) { mutableStateOf(initial.stateCardMaxChars.toString()) }
+    var embeddingMenu by remember { mutableStateOf(false) }
+    var summaryMenu by remember { mutableStateOf(false) }
+
+    val catalog = remember(context, vm) { OpenRouterHubController(context, vm) }
+    val catalogState by catalog.state.collectAsState()
+    DisposableEffect(catalog) { onDispose { catalog.close() } }
+    LaunchedEffect(expanded) {
+        if (expanded && catalogState.catalog.isEmpty() && !catalogState.loading) catalog.refreshCatalog()
+    }
+    val embeddingChoices = (listOf(embeddingModel, ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL) +
+        catalogState.catalog.filter { ModelCategory.EMBEDDINGS in it.categories }.map { it.id })
+        .filter(String::isNotBlank).distinct()
+    val textChoices = (listOf(summaryModel, state.currentChatTextModel.orEmpty(), state.textModel, "openrouter/auto") +
+        state.availableTextModels.filter { ModelCategory.TEXT in it.categories && !it.isBatch }.map { it.id })
+        .filter(String::isNotBlank).distinct()
+
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(9.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("Память и контекст", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(onClick = { expanded = !expanded }) {
+                    Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                }
+            }
+            if (!expanded) return@Column
+
+            Text(
+                "Umnik не удаляет старую переписку. После порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, краткая карточка состояния и только релевантные старые фрагменты.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text("Embedding-модель", fontWeight = FontWeight.SemiBold)
+            Box {
+                FilledTonalButton(
+                    onClick = { embeddingMenu = true },
+                    enabled = !state.isLoading && !state.requestActive,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(embeddingModel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                DropdownMenu(expanded = embeddingMenu, onDismissRequest = { embeddingMenu = false }) {
+                    embeddingChoices.forEach { id ->
+                        DropdownMenuItem(
+                            text = { Text(id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            onClick = { embeddingModel = id; embeddingMenu = false }
+                        )
+                    }
+                }
+            }
+            if (catalogState.loading) {
+                Text("Обновляю список Embeddings OpenRouter…", style = MaterialTheme.typography.bodySmall)
+            }
+
+            Text("Модель конспекта", fontWeight = FontWeight.SemiBold)
+            Box {
+                FilledTonalButton(
+                    onClick = { summaryMenu = true },
+                    enabled = !state.isLoading && !state.requestActive,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text(summaryModel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
+                DropdownMenu(expanded = summaryMenu, onDismissRequest = { summaryMenu = false }) {
+                    textChoices.forEach { id ->
+                        DropdownMenuItem(
+                            text = { Text(id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
+                            onClick = { summaryModel = id; summaryMenu = false }
+                        )
+                    }
+                }
+            }
+            OutlinedTextField(
+                value = summaryModel,
+                onValueChange = { summaryModel = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Model ID конспекта") },
+                supportingText = { Text("Обычная текстовая модель OpenRouter; можно указать ID вручную.") },
+                singleLine = true
+            )
+
+            NumericMemoryField("Автоматический: включить после, токенов", autoThreshold) { autoThreshold = it }
+            NumericMemoryField("Экономный: включить после, токенов", economyThreshold) { economyThreshold = it }
+            NumericMemoryField("Автоматический: свежих сообщений", autoRecent) { autoRecent = it }
+            NumericMemoryField("Экономный: свежих сообщений", economyRecent) { economyRecent = it }
+            NumericMemoryField("Старых фрагментов в запросе", topK) { topK = it }
+
+            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (advanced) "Скрыть дополнительные параметры" else "Дополнительные параметры")
+            }
+            if (advanced) {
+                NumericMemoryField("Размер checkpoint, токенов", checkpointTokens) { checkpointTokens = it }
+                NumericMemoryField("Размер фрагмента поиска, токенов", chunkTokens) { chunkTokens = it }
+                OutlinedTextField(
+                    value = minimumScore,
+                    onValueChange = { minimumScore = it.filter { c -> c.isDigit() || c == '.' || c == '-' } },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("Минимальная близость embeddings") },
+                    singleLine = true
+                )
+                NumericMemoryField("Максимум карточки состояния, знаков", stateCardMaxChars) { stateCardMaxChars = it }
+                Text(
+                    "Хранилище памяти не ограничивается Umnik по размеру и находится отдельно от обычных файлов и базы знаний.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            FilledTonalButton(
+                onClick = {
+                    vm.saveChatMemorySettings(
+                        ChatMemoryGlobalSettings(
+                            embeddingModelId = embeddingModel,
+                            summaryModelId = summaryModel,
+                            autoThresholdTokens = autoThreshold.toIntOrNull() ?: initial.autoThresholdTokens,
+                            economyThresholdTokens = economyThreshold.toIntOrNull() ?: initial.economyThresholdTokens,
+                            autoRecentMessages = autoRecent.toIntOrNull() ?: initial.autoRecentMessages,
+                            economyRecentMessages = economyRecent.toIntOrNull() ?: initial.economyRecentMessages,
+                            topK = topK.toIntOrNull() ?: initial.topK,
+                            checkpointTokens = checkpointTokens.toIntOrNull() ?: initial.checkpointTokens,
+                            chunkTokens = chunkTokens.toIntOrNull() ?: initial.chunkTokens,
+                            minimumScore = minimumScore.toDoubleOrNull() ?: initial.minimumScore,
+                            stateCardMaxChars = stateCardMaxChars.toIntOrNull() ?: initial.stateCardMaxChars
+                        )
+                    )
+                },
+                enabled = embeddingModel.isNotBlank() && summaryModel.isNotBlank() && !state.isLoading && !state.requestActive,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Сохранить настройки памяти") }
+
+            TextButton(
+                onClick = { confirmClear = true },
+                enabled = !state.isLoading && !state.requestActive,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Outlined.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Очистить память всех чатов")
+            }
+        }
+    }
+
+    if (confirmClear) {
+        AlertDialog(
+            onDismissRequest = { confirmClear = false },
+            title = { Text("Очистить служебную память?") },
+            text = { Text("Переписка и файлы не удалятся. Checkpoint-конспекты, embeddings и карточки состояния будут удалены и при необходимости построятся заново.") },
+            confirmButton = {
+                TextButton(onClick = { vm.clearAllChatMemory(); confirmClear = false }) { Text("Очистить") }
+            },
+            dismissButton = { TextButton(onClick = { confirmClear = false }) { Text("Отмена") } }
+        )
+    }
+}
+
+@Composable
+private fun NumericMemoryField(label: String, value: String, onValue: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = { next -> onValue(next.filter { it.isDigit() }) },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        singleLine = true
+    )
+}
+
+@Composable
+private fun MemorySettingsExpander(
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    onToggle: () -> Unit
+) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(21.dp))
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            IconButton(onClick = onToggle) {
+                Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+            }
+        }
+    }
+}
+
+private fun modeLabel(mode: ChatContextMode): String = when (mode) {
+    ChatContextMode.AUTO -> "Автоматический"
+    ChatContextMode.FULL -> "Всегда полный"
+    ChatContextMode.ECONOMY -> "Экономный"
+}
+
+private fun formatMemoryBytes(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes Б"
+    bytes < 1024L * 1024L -> "%.1f КБ".format(Locale.getDefault(), bytes / 1024.0)
+    bytes < 1024L * 1024L * 1024L -> "%.1f МБ".format(Locale.getDefault(), bytes / 1024.0 / 1024.0)
+    else -> "%.2f ГБ".format(Locale.getDefault(), bytes / 1024.0 / 1024.0 / 1024.0)
+}
