@@ -283,17 +283,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(status = "Настройки памяти и контекста сохранены")
     }
 
+    fun chatContextModeOverride(chatId: String): ChatContextMode? = chatMemory.modeOverride(chatId)
+
     fun chatContextMode(chatId: String): ChatContextMode = chatMemory.mode(chatId)
 
-    fun setChatContextMode(chatId: String, mode: ChatContextMode) {
+    fun setChatContextMode(chatId: String, mode: ChatContextMode?) {
         if (_state.value.isLoading || _state.value.requestActive) return
         if (_state.value.chats.none { it.id == chatId }) return
         chatMemory.saveMode(chatId, mode)
-        val label = when (mode) {
+        val effective = chatMemory.mode(chatId)
+        val effectiveLabel = when (effective) {
             ChatContextMode.AUTO -> "Автоматический"
             ChatContextMode.FULL -> "Всегда полный"
             ChatContextMode.ECONOMY -> "Экономный"
         }
+        val label = if (mode == null) "По умолчанию ($effectiveLabel)" else effectiveLabel
         _state.value = _state.value.copy(status = "Контекст чата: $label")
     }
 
