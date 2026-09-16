@@ -54,3 +54,5 @@ jobs:
           git add -A
           git commit -m 'Harden OpenRouter recovery replay safety'
           git push origin HEAD:fix/background-recovery-v1.17.1
+
+# rerun after compile-fix
