@@ -35,7 +35,8 @@ class ChatMemoryManager(
         fullHistory: List<ChatMessage>,
         query: String,
         apiKey: String?,
-        baseUrl: String?
+        baseUrl: String?,
+        apiOverride: OpenRouterClient? = null
     ): PreparedContext {
         if (chat == null || query.isBlank()) return PreparedContext(fullHistory)
         val mode = repository.mode(chat.id)
@@ -66,7 +67,7 @@ class ChatMemoryManager(
         }
 
         return runCatching {
-            sync(chat, fullHistory, settings, recentCount, apiKey, baseUrl)
+            sync(chat, fullHistory, settings, recentCount, apiKey, baseUrl, apiOverride)
             val snapshot = repository.snapshot(chat.id)
             val recent = completed.takeLast(recentCount.coerceAtMost(completed.size))
             val recentIds = recent.map { it.id }.toSet()
@@ -143,7 +144,7 @@ class ChatMemoryManager(
         val recent = evenRecentCount(
             if (mode == ChatContextMode.ECONOMY) settings.economyRecentMessages else settings.autoRecentMessages
         )
-        sync(chat, chat.messages, settings, recent, apiKey, baseUrl)
+        sync(chat, chat.messages, settings, recent, apiKey, baseUrl, null)
     }
 
     private suspend fun sync(
@@ -152,7 +153,8 @@ class ChatMemoryManager(
         settings: ChatMemoryGlobalSettings,
         recentCount: Int,
         apiKey: String,
-        baseUrl: String
+        baseUrl: String,
+        apiOverride: OpenRouterClient?
     ) {
         val completed = ConversationContext.completedTextTurns(history)
         val keep = evenRecentCount(recentCount).coerceAtMost(completed.size)
@@ -223,7 +225,7 @@ class ChatMemoryManager(
             val source = formatMessages(messages)
             val previousState = repository.snapshot(chat.id)?.stateCard.orEmpty()
             val (summary, stateCard) = runCatching {
-                summarize(settings, apiKey, baseUrl, source, previousState)
+                summarize(settings, apiKey, baseUrl, source, previousState, apiOverride)
             }.onFailure { error ->
                 DiagnosticLog.record(context, "CHAT_MEMORY", "summary failed chat=${chat.id.take(8)} group=${groupIndex + 1}", error)
             }.getOrElse {
@@ -263,7 +265,8 @@ class ChatMemoryManager(
         apiKey: String,
         baseUrl: String,
         sourceText: String,
-        previousStateCard: String
+        previousStateCard: String,
+        apiOverride: OpenRouterClient?
     ): Pair<String, String> {
         val prompt = buildString {
             appendLine("Обнови долговременную память рабочего чата. Не придумывай факты и не повышай статус предположения до решения.")
@@ -277,7 +280,7 @@ class ChatMemoryManager(
             appendLine("===== НОВЫЙ ФРАГМЕНТ =====")
             appendLine(sourceText)
         }
-        val result = api.chat(
+        val result = (apiOverride ?: api).chat(
             apiKey = apiKey,
             model = settings.summaryModelId,
             history = emptyList(),

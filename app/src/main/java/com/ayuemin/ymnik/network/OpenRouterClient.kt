@@ -4,7 +4,6 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
-import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -29,7 +28,11 @@ import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-class OpenRouterClient(private val context: Context) {
+class OpenRouterClient(
+    private val context: Context,
+    private val requestId: String? = null,
+    private val phaseCallback: (String) -> Unit = {}
+) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
@@ -41,7 +44,7 @@ class OpenRouterClient(private val context: Context) {
         .writeTimeout(240, TimeUnit.SECONDS)
         .callTimeout(600, TimeUnit.SECONDS)
         .build()
-    private val chatBatchRunner = OpenRouterChatBatchRunner(context)
+    private val chatBatchRunner = OpenRouterChatBatchRunner(context, requestId)
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
 
@@ -391,15 +394,13 @@ class OpenRouterClient(private val context: Context) {
             var generationId: String? = null
             var cacheStatus: String? = null
             try {
-                RequestExecutionManager.updatePhase(
-                    context,
+                phaseCallback(
                     if (recoveryAttempt == 0) "Запрос отправлен · модель отвечает…" else "Забираю восстановленный ответ…"
                 )
                 executeActive(request).use { response ->
                     generationId = response.header("X-Generation-Id")
                     cacheStatus = response.header("X-OpenRouter-Cache-Status")
-                    RequestExecutionManager.updatePhase(
-                        context,
+                    phaseCallback(
                         if (cacheStatus.equals("HIT", ignoreCase = true))
                             "Готовый ответ найден · загружаю…"
                         else
@@ -431,7 +432,7 @@ class OpenRouterClient(private val context: Context) {
                 if (!recover) throw error
 
                 clearActiveCall()
-                RequestExecutionManager.updatePhase(context, "Связь прервалась · проверяю готовый ответ…")
+                phaseCallback("Связь прервалась · проверяю готовый ответ…")
                 val ready = if (cacheStatus.equals("HIT", ignoreCase = true)) {
                     true
                 } else {
@@ -442,7 +443,7 @@ class OpenRouterClient(private val context: Context) {
                     throw error
                 }
                 recoveryAttempt += 1
-                RequestExecutionManager.updatePhase(context, "Ответ готов · восстанавливаю соединение…")
+                phaseCallback("Ответ готов · восстанавливаю соединение…")
                 delay(700L)
             } finally {
                 clearActiveCall()

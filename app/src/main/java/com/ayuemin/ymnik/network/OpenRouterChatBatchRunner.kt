@@ -16,7 +16,10 @@ import kotlinx.coroutines.delay
 import java.util.UUID
 
 /** Makes a :batch model behave like an ordinary Umnik chat request. */
-internal class OpenRouterChatBatchRunner(private val context: Context) {
+internal class OpenRouterChatBatchRunner(
+    private val context: Context,
+    private val requestId: String? = null
+) {
     private val client = OpenRouterBatchClient(context)
     private val jobs = BatchJobRepository(context)
     private val chats = ChatRepository(context)
@@ -39,9 +42,12 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
         }
         if (!jobId.isNullOrBlank()) jobs.remove(jobId)
         AsyncJobEvents.notifyChanged()
-        RequestExecutionManager.fail(
-            "Отслеживание Batch остановлено. Задание OpenRouter может продолжать выполняться и тарифицироваться на сервере."
-        )
+        requestId?.let { id ->
+            RequestExecutionManager.fail(
+                id,
+                "Отслеживание Batch остановлено. Задание OpenRouter может продолжать выполняться и тарифицироваться на сервере."
+            )
+        }
         DiagnosticLog.record(context, "BATCH", "Local Batch tracking stopped; remote job can continue")
     }
 
@@ -80,11 +86,12 @@ internal class OpenRouterChatBatchRunner(private val context: Context) {
                 )
             }
         }
-        val originChatId = RequestExecutionManager.snapshots.value.activeChatId
+        val originSnapshot = requestId
+            ?.let(RequestExecutionManager::snapshotForRequest)
+            ?: error("Batch-запрос не привязан к активной сессии")
+        val originChatId = originSnapshot.chatId
         val originChat = chats.list().firstOrNull { it.id == originChatId }
-        val originMessageId = originChat?.messages
-            ?.lastOrNull { it.role == "user" && it.deliveryState == "pending" }
-            ?.id
+        val originMessageId = originSnapshot.messageId
         val customId = originMessageId?.let { "chat-$it" } ?: "chat-${UUID.randomUUID()}"
         val label = originChat?.messages
             ?.lastOrNull { it.id == originMessageId }

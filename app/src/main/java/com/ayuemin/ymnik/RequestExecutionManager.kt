@@ -70,6 +70,10 @@ internal object RequestExecutionManager {
         runtimes.values.firstOrNull { it.snapshot.chatId == chatId }?.snapshot
     }
 
+    fun snapshotForRequest(requestId: String): Snapshot? = synchronized(lock) {
+        runtimes[requestId]?.snapshot
+    }
+
     fun recoverInterrupted(context: Context): String? {
         if (hasActiveRequest()) return null
         val app = context.applicationContext

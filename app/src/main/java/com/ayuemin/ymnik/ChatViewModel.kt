@@ -59,8 +59,6 @@ import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
-import com.ayuemin.ymnik.network.CompatibleApiClient
-import com.ayuemin.ymnik.network.NvidiaImageClient
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.ProviderRegistry
@@ -68,6 +66,9 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -97,15 +98,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val storageRepository = StorageRepository(context)
     private val api = OpenRouterClient(context)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
-    private val compatibleApi = CompatibleApiClient(context)
-    private val nvidiaImageApi = NvidiaImageClient(context)
     private val providerRegistry = ProviderRegistry(context)
     private val gson = Gson()
     private val recoveredRequest = RequestExecutionManager.recoverInterrupted(context)
-    private var activeRequestJob: Job? = null
-    private var activeRequestPending: List<PendingAttachment> = emptyList()
-    private var projectStagesJob: Job? = null
-    private var requestGeneration: Long = 0L
+    private val activeRequestPending = mutableMapOf<String, List<PendingAttachment>>()
+    private val requestGenerations = mutableMapOf<String, Long>()
 
     private fun chatSkillsKey(chatId: String): String = "chat_active_skills::$chatId"
 
@@ -223,6 +220,37 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    fun activeRequestChatId(): String? = RequestExecutionManager.snapshots.value.firstOrNull()?.chatId
+    fun activeRequestChatIds(): Set<String> = RequestExecutionManager.snapshots.value.mapTo(linkedSetOf()) { it.chatId }
+    fun activeRequestCount(): Int = RequestExecutionManager.activeCount()
+    fun isChatRequestActive(chatId: String): Boolean = RequestExecutionManager.hasActiveChat(chatId)
+    fun activeRequestLabel(chatId: String): String? = RequestExecutionManager.snapshotForChat(chatId)?.label
+    fun activeRequestStartedAt(chatId: String): Long? = RequestExecutionManager.snapshotForChat(chatId)?.startedAt
+
+    fun concurrentRequestLimit(): Int = RequestConcurrencyLimiter.configuredLimit(context)
+
+    fun setConcurrentRequestLimit(limit: Int) {
+        if (_state.value.isLoading || RequestExecutionManager.hasActiveRequest()) return
+        val clean = limit.coerceAtLeast(0)
+        prefs.edit().putInt(RequestConcurrencyLimiter.PREF_KEY, clean).apply()
+        _state.value = _state.value.copy(
+            status = if (clean == 0) "Одновременная работа: без ограничений" else "Одновременно запросов: не более $clean"
+        )
+    }
+
+    private fun nextRequestGeneration(chatId: String): Long {
+        val next = (requestGenerations[chatId] ?: 0L) + 1L
+        requestGenerations[chatId] = next
+        return next
+    }
+
+    private fun isCurrentRequestGeneration(chatId: String, generation: Long): Boolean =
+        requestGenerations[chatId] == generation
+
+    private fun invalidateRequestGeneration(chatId: String) {
+        requestGenerations[chatId] = (requestGenerations[chatId] ?: 0L) + 1L
+    }
 
     private fun ensureProjectOrchestrators(projects: List<Project>, chats: List<ChatSession>): List<ChatSession> {
         if (projects.isEmpty()) return chats
@@ -349,7 +377,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
     fun isOrchestratorChat(chatId: String): Boolean = projectAutomation.isOrchestrator(chatId)
-    fun activeRequestChatId(): String? = RequestExecutionManager.snapshots.value.activeChatId
     fun orchestratorSteps(chatId: String): List<OrchestratorStep> = projectAutomation.steps(chatId)
     fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
 
@@ -626,17 +653,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
         viewModelScope.launch {
-            RequestExecutionManager.snapshots.collect { snapshot ->
-                if (snapshot.sequence == 0L) return@collect
+            RequestExecutionManager.snapshots.collect { snapshots ->
                 val chats = chatsRepository.list()
-                val active = snapshot.activeChatId != null
+                val current = snapshots.firstOrNull { it.chatId == _state.value.currentChatId }
+                val latestError = snapshots.mapNotNull { it.lastError }.lastOrNull()
                 _state.value = _state.value.copy(
                     chats = chats,
                     messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
-                    isLoading = active,
-                    requestActive = active,
-                    busyLabel = if (active) snapshot.label ?: "Модель работает…" else null,
-                    status = if (active) null else snapshot.lastError,
+                    requestActive = snapshots.isNotEmpty(),
+                    busyLabel = current?.label,
+                    status = latestError ?: _state.value.status,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
                 )
@@ -2320,7 +2346,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ВАЖНО:
             - Не придумывай id. Используй только id из списка выше.
             - Никогда не выбирай сам ◆ Оркестратор как targetChatId рабочего действия.
-            - Максимум 8 линейных действий.
+            - Не ограничивай число действий искусственно: создай столько рабочих действий, сколько реально требуется поручением.
+            - Если действия независимы друг от друга, ставь passPreviousResult=false: Umnik сможет запустить разные чаты параллельно.
             - Никаких циклов, скрытых повторов, if/else и автономных проверок. Если пользователь требует условие/цикл, объясни в reply, что это следующий уровень и сейчас нужен линейный вариант; execute=false.
             - Если пользователь просто разговаривает, спрашивает совет или обсуждает проект, верни actions=[] и нормальный reply.
             - Если пользователь просит «только покажи план», выставь execute=false, но actions заполни.
@@ -2361,7 +2388,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         project: Project,
         orchestrator: ChatSession,
         command: String,
-        history: List<ChatMessage>
+        history: List<ChatMessage>,
+        network: RequestNetworkSession
     ): OrchestratorControlPlan {
         val runtime = projectAutomation.profile(orchestrator.id) ?: defaultRuntimeProfile(orchestrator)
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == orchestrator.connectionProfileId } ?: openRouterProfile()
@@ -2380,8 +2408,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val knowledgeContext = knowledgeSystemContext(project, orchestrator, command)
         val systemPrompt = orchestratorControlSystemPrompt(project, orchestrator) + knowledgeContext
         val selectedHistory = history.takeLast(18)
-        val result = if (profile.type == ProviderType.OPENROUTER) {
-            api.chat(
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+        val result = network.call { requestApi ->
+            requestApi.chat(
                 apiKey,
                 modelId,
                 selectedHistory,
@@ -2393,17 +2422,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 effort,
                 false,
                 effectiveTextBaseUrl(profile),
-                requestInfo
-            )
-        } else {
-            compatibleApi.chat(
-                apiKey,
-                effectiveTextBaseUrl(profile),
-                modelId,
-                selectedHistory,
-                command,
-                emptyList(),
-                systemPrompt,
                 requestInfo
             )
         }
@@ -2559,7 +2577,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         orchestrator: ChatSession,
         action: OrchestratorControlAction,
         previous: String,
-        commandAttachments: List<PendingAttachment>
+        commandAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
     ): String {
         fun targetChat(): ChatSession {
             val id = action.targetChatId ?: error("Не выбран целевой чат")
@@ -2623,7 +2642,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     previous = carried,
                     passPrevious = carried.isNotBlank(),
                     runtimeOverride = runtime,
-                    extraAttachments = extra
+                    extraAttachments = extra,
+                    network = network
                 )
             }
             "RUN_CHAT_STAGES" -> {
@@ -2644,7 +2664,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     previous = carried,
                     passPrevious = carried.isNotBlank(),
                     runtimeOverride = runtime,
-                    extraAttachments = extra
+                    extraAttachments = extra,
+                    network = network
                 )
             }
             "RUN_PROJECT_STAGES" -> {
@@ -2659,7 +2680,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     previous = carried,
                     passPrevious = carried.isNotBlank(),
                     runtimeOverride = runtime,
-                    extraAttachments = extra
+                    extraAttachments = extra,
+                    network = network
                 )
             }
             else -> error("Неизвестное действие Оркестратора: ${action.type}")
@@ -2671,8 +2693,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         pending: List<PendingAttachment>,
         persistentChatFiles: List<PendingAttachment>
     ) {
-        if (_state.value.isLoading || _state.value.requestActive) return
         val chatId = _state.value.currentChatId
+        if (_state.value.isLoading || RequestExecutionManager.hasActiveChat(chatId)) return
         val orchestrator = _state.value.chats.firstOrNull { it.id == chatId && isOrchestratorChat(it.id) } ?: return
         val project = orchestrator.projectId?.let { id -> _state.value.projects.firstOrNull { it.id == id } } ?: return
         val clean = command.trim().ifBlank {
@@ -2695,18 +2717,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = nextMessages,
             chats = nextChats,
             pendingAttachments = emptyList(),
-            isLoading = true,
             requestActive = true,
             busyLabel = "◆ Оркестратор · разбираю поручение…",
             status = null
         )
-        val requestId = ++requestGeneration
-        activeRequestPending = pending
-        activeRequestJob = launchRequest(chatId, user.id, "◆ Оркестратор · ${project.name}") {
+        val requestId = nextRequestGeneration(chatId)
+        activeRequestPending[chatId] = pending
+        launchRequest(chatId, user.id, "◆ Оркестратор · ${project.name}") { network ->
             var failed: Throwable? = null
             try {
-                val plan = planOrchestratorControl(project, orchestrator, clean, before)
-                if (requestId != requestGeneration) return@launchRequest
+                val plan = planOrchestratorControl(project, orchestrator, clean, before, network)
+                if (!isCurrentRequestGeneration(chatId, requestId)) return@launchRequest
                 val planMessage = ChatMessage(
                     UUID.randomUUID().toString(),
                     "assistant",
@@ -2717,9 +2738,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 publishChats(finished)
                 if (!plan.execute || plan.actions.isEmpty()) {
                     _state.value = _state.value.copy(
-                        isLoading = false,
-                        requestActive = false,
-                        busyLabel = null,
                         status = null
                     )
                     playReadySound()
@@ -2730,7 +2748,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     _state.value = _state.value.copy(
                         busyLabel = "◆ Оркестратор · шаг ${index + 1} из ${plan.actions.size}: ${action.title.ifBlank { action.type }}"
                     )
-                    val result = executeOrchestratorControlAction(project, orchestrator, action, previous, pending)
+                    val result = executeOrchestratorControlAction(project, orchestrator, action, previous, pending, network)
                     previous = result
                     appendOrchestratorLog(chatId, index + 1, action.title.ifBlank { action.type }, result)
                 }
@@ -2747,13 +2765,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 appendOrchestratorLog(chatId, -1, "Поручение остановлено", error.message ?: "Ошибка выполнения")
             } finally {
                 cleanupTempAttachments(pending)
-                if (requestId == requestGeneration) {
-                    activeRequestJob = null
-                    activeRequestPending = emptyList()
+                if (isCurrentRequestGeneration(chatId, requestId)) {
+                    activeRequestPending.remove(chatId)
                     _state.value = _state.value.copy(
-                        isLoading = false,
-                        requestActive = false,
-                        busyLabel = null,
                         status = failed?.message
                     )
                 }
@@ -2762,9 +2776,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun runOrchestrator(projectId: String): String? {
-        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
+        if (_state.value.isLoading) return null
         val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
         val orchestratorId = projectAutomation.orchestratorChatId(projectId) ?: return null
+        if (RequestExecutionManager.hasActiveChat(orchestratorId)) return null
         val orchestrator = _state.value.chats.firstOrNull { it.id == orchestratorId } ?: return null
         val steps = projectAutomation.steps(orchestratorId)
         if (steps.isEmpty()) {
@@ -2779,12 +2794,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(
             chats = prepared,
             messages = prepared.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
-            isLoading = true,
             requestActive = true,
             busyLabel = "Оркестратор · шаг 1 из ${steps.size}",
             status = null
         )
-        activeRequestJob = launchRequest(orchestratorId, launch.id, "Оркестратор · ${project.name}") {
+        launchRequest(orchestratorId, launch.id, "Оркестратор · ${project.name}") { network ->
             var previous = ""
             var failed: Throwable? = null
             try {
@@ -2795,18 +2809,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             val target = chatsRepository.list().firstOrNull {
                                 it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
                             } ?: error("Для шага «${step.title}» не выбран чат")
-                            executeOrchestratorChatTask(project, target, step.prompt, previous, step.passPreviousResult)
+                            executeOrchestratorChatTask(project, target, step.prompt, previous, step.passPreviousResult, network = network)
                         }
                         OrchestratorStepType.RUN_CHAT_STAGES -> {
                             val target = chatsRepository.list().firstOrNull {
                                 it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
                             } ?: error("Для шага «${step.title}» не выбран чат")
                             if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет этапов")
-                            executeOrchestratorStageSequence(project, target, target.stages.orEmpty(), step.prompt, previous, step.passPreviousResult)
+                            executeOrchestratorStageSequence(project, target, target.stages.orEmpty(), step.prompt, previous, step.passPreviousResult, network = network)
                         }
                         OrchestratorStepType.RUN_PROJECT_STAGES -> {
                             if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
-                            executeOrchestratorStageSequence(project, orchestrator, project.stages.orEmpty(), step.prompt, previous, step.passPreviousResult)
+                            executeOrchestratorStageSequence(project, orchestrator, project.stages.orEmpty(), step.prompt, previous, step.passPreviousResult, network = network)
                         }
                     }
                     previous = result
@@ -2816,7 +2830,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 failed = error
                 appendOrchestratorLog(orchestratorId, -1, "Сценарий остановлен", error.message ?: "Ошибка выполнения")
             } finally {
-                context.getSharedPreferences("request_execution", Context.MODE_PRIVATE).edit().remove("target_chat_id").apply()
                 appendOrchestratorLog(
                     orchestratorId,
                     0,
@@ -2824,9 +2837,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     if (failed == null) "Сценарий завершён. Выполнено шагов: ${steps.size}." else "Сценарий остановлен: ${failed?.message ?: "ошибка"}"
                 )
                 _state.value = _state.value.copy(
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = if (failed == null) "Сценарий оркестратора выполнен" else "Оркестратор остановлен"
                 )
             }
@@ -2848,7 +2858,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         previous: String,
         passPrevious: Boolean,
         runtimeOverride: ProjectChatRuntimeProfile? = null,
-        extraAttachments: List<PendingAttachment> = emptyList()
+        extraAttachments: List<PendingAttachment> = emptyList(),
+        network: RequestNetworkSession
     ): String {
         val all = chatsRepository.list()
         val chat = all.firstOrNull { it.id == requested.id } ?: requested
@@ -2875,24 +2886,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
         )
         val knowledgeContext = knowledgeSystemContext(project, chat, task)
-        val execPrefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-        execPrefs.edit().putString("target_chat_id", chat.id).commit()
-        val result = try {
-            if (profile.type == ProviderType.OPENROUTER) {
-                api.chat(
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+        val result = network.call { requestApi ->
+            requestApi.chat(
                     key, modelId, history, task, attachments,
                     buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
                     runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
                     effectiveTextBaseUrl(profile), requestInfo
-                )
-            } else {
-                compatibleApi.chat(
-                    key, effectiveTextBaseUrl(profile), modelId, history, task, attachments,
-                    buildSystemPrompt(skillText, project, chat, false) + knowledgeContext, requestInfo
-                )
-            }
-        } finally {
-            execPrefs.edit().remove("target_chat_id").commit()
+            )
         }
         val text = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
         val assistant = ChatMessage(
@@ -2919,7 +2920,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         previous: String,
         passPrevious: Boolean,
         runtimeOverride: ProjectChatRuntimeProfile? = null,
-        extraAttachments: List<PendingAttachment> = emptyList()
+        extraAttachments: List<PendingAttachment> = emptyList(),
+        network: RequestNetworkSession
     ): String {
         val initial = orchestratorPrompt(prompt, previous, passPrevious)
         var all = chatsRepository.list()
@@ -2969,19 +2971,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
             val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull())
             val knowledgeContext = knowledgeSystemContext(project, chat, stagePrompt)
-            val execPrefs = context.getSharedPreferences("request_execution", Context.MODE_PRIVATE)
-            execPrefs.edit().putString("target_chat_id", chat.id).commit()
-            val response = try {
-                if (profile.type == ProviderType.OPENROUTER) api.chat(
+            require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+            val response = network.call { requestApi ->
+                requestApi.chat(
                     key, modelId, baseHistory, stagePrompt, attachments,
                     buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
                     runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
                     effectiveTextBaseUrl(profile), requestInfo
-                ) else compatibleApi.chat(
-                    key, effectiveTextBaseUrl(profile), modelId, baseHistory, stagePrompt, attachments,
-                    buildSystemPrompt(skillText, project, chat, false) + knowledgeContext, requestInfo
                 )
-            } finally { execPrefs.edit().remove("target_chat_id").commit() }
+            }
             val text = ProjectOutputPolicy.apply(response.text, project.masterPrompt).ifBlank { "Готово." }
             results += stage to text
             appendProjectStageMessage(chat.id, index + 1, stage.title, text, response.modelId ?: modelId, response)
@@ -3042,7 +3040,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         initialTask: String,
         sequenceName: String
     ): String? {
-        if (_state.value.isLoading || _state.value.requestActive || projectStagesJob != null) return null
+        if (_state.value.isLoading) return null
         val stages = configuredStages.filter { it.instruction.isNotBlank() }
         if (stages.isEmpty()) {
             _state.value = _state.value.copy(status = "Сначала добавьте хотя бы один этап работы")
@@ -3058,6 +3056,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
         val chatId = if (activeChat?.projectId == project.id) activeChat.id else createChat(project.id)
+        if (RequestExecutionManager.hasActiveChat(chatId)) {
+            _state.value = _state.value.copy(status = "В этом чате уже выполняется запрос")
+            return null
+        }
         val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
         // Freeze the originating chat runtime. Navigation may change global UI state while stages run.
         val launchState = _state.value
@@ -3085,23 +3087,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = chatId,
             messages = stageChat.messages,
             pendingAttachments = emptyList(),
-            isLoading = true,
             requestActive = true,
             busyLabel = "Этап 1 из ${stages.size}…",
             status = null
         )
-        val generation = ++requestGeneration
+        val generation = nextRequestGeneration(chatId)
         DiagnosticLog.action(
             context,
             "stage_sequence_start",
             "project=${project.id.take(8)}; chat=${chatId.take(8)}; sequence=$sequenceName; stages=${stages.size}"
         )
 
-        projectStagesJob = launchRequest(chatId, user.id, "Этапы $sequenceName · ${project.name}") {
+        launchRequest(chatId, user.id, "Этапы $sequenceName · ${project.name}") { network ->
             val results = mutableListOf<Pair<ProjectStage, String>>()
             try {
                 stages.forEachIndexed { index, stage ->
-                    if (generation != requestGeneration) return@launchRequest
+                    if (!isCurrentRequestGeneration(chatId, generation)) return@launchRequest
                     val currentState = launchState
                     val requestedModel = stage.modelId?.takeIf { it.isNotBlank() }
                         ?: currentState.currentChatTextModel
@@ -3201,7 +3202,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
                     }
                     val phaseLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}"
-                    RequestExecutionManager.updatePhase(context, phaseLabel)
+                    network.updatePhase(phaseLabel)
                     _state.value = _state.value.copy(busyLabel = phaseLabel)
                     DiagnosticLog.record(
                         context,
@@ -3210,20 +3211,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     )
 
                     val result = try {
-                        api.chat(
-                            apiKey,
-                            modelId,
-                            baseHistory,
-                            prompt,
-                            attachments,
-                            systemPrompt,
-                            currentState.webSearchEnabled,
-                            actualReasoning,
-                            effort,
-                            modelInfo?.supportsTools == true,
-                            effectiveTextBaseUrl(profile),
-                            requestModelInfo
-                        )
+                        network.call { requestApi ->
+                            requestApi.chat(
+                                apiKey,
+                                modelId,
+                                baseHistory,
+                                prompt,
+                                attachments,
+                                systemPrompt,
+                                currentState.webSearchEnabled,
+                                actualReasoning,
+                                effort,
+                                modelInfo?.supportsTools == true,
+                                effectiveTextBaseUrl(profile),
+                                requestModelInfo
+                            )
+                        }
                     } catch (cancelled: CancellationException) {
                         throw cancelled
                     } catch (error: Throwable) {
@@ -3245,21 +3248,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     appendProjectStageMessage(chatId, index + 1, stage.title, stageText, result.modelId ?: modelId, result)
                     DiagnosticLog.record(context, "PROJECT_STAGE", "success project=${project.id.take(8)}; stage=${index + 1}/${stages.size}; model=${result.modelId ?: modelId}; chars=${stageText.length}")
                 }
-                if (generation == requestGeneration) {
+                if (isCurrentRequestGeneration(chatId, generation)) {
                     _state.value = _state.value.copy(status = "Все этапы $sequenceName выполнены: ${stages.size}")
                     playReadySound()
                 }
             } finally {
-                if (generation == requestGeneration) {
+                if (isCurrentRequestGeneration(chatId, generation)) {
                     _state.value = _state.value.copy(
-                        isLoading = false,
-                        requestActive = false,
-                        busyLabel = null,
                         storedFiles = storageRepository.list(),
                         storageStats = storageRepository.stats()
                     )
                 }
-                projectStagesJob = null
             }
         }
         return chatId
@@ -3766,7 +3765,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun addVoiceRecording(localPath: String): Boolean {
         DiagnosticLog.action(context, "voice_recording_result")
-        if (_state.value.isLoading || _state.value.requestActive) {
+        if (_state.value.isLoading || RequestExecutionManager.hasActiveChat(_state.value.currentChatId)) {
             File(localPath).delete()
             return false
         }
@@ -3854,32 +3853,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun stopGeneration() {
-        projectStagesJob?.let { running ->
-            requestGeneration += 1L
-            running.cancel()
-            api.cancelActiveRequest()
-            projectStagesJob = null
-            _state.value = _state.value.copy(
-                isLoading = false,
-                requestActive = false,
-                busyLabel = null,
-                status = "Выполнение этапов остановлено"
-            )
-            return
-        }
-        if (!_state.value.requestActive) return
-        requestGeneration += 1L
-        RequestExecutionManager.fail("Работа остановлена. При необходимости повторите запрос вручную.")
-        RequestExecutionManager.cancel()
-        activeRequestJob = null
-        val restore = activeRequestPending
-        activeRequestPending = emptyList()
+        val chatId = _state.value.currentChatId
+        val snapshot = RequestExecutionManager.snapshotForChat(chatId) ?: return
+        invalidateRequestGeneration(chatId)
+        RequestExecutionManager.fail(snapshot.requestId, "Работа остановлена. При необходимости повторите запрос вручную.")
+        RequestExecutionManager.cancel(snapshot.requestId)
+        val restore = activeRequestPending.remove(chatId).orEmpty()
         _state.value = _state.value.copy(
             pendingAttachments = restore,
-            isLoading = false,
-            requestActive = false,
             busyLabel = null,
-            status = "Работа остановлена. Уточните запрос и отправьте снова."
+            status = "Работа в этом чате остановлена. Уточните запрос и отправьте снова."
         )
     }
 
@@ -3909,28 +3892,32 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatId: String,
         messageId: String,
         label: String,
-        execute: suspend () -> Unit
-    ): Job? = runCatching {
-        RequestExecutionManager.start(
-            context, chatId, messageId, label,
-            cancelNetworkCall = {
-                api.cancelActiveRequest()
-                compatibleApi.cancelActiveRequest()
-                nvidiaImageApi.cancelActiveRequest()
-            },
-            execute = execute
-        )
-    }.getOrElse { error ->
-        val chats = chatsRepository.finishRequest(chatId, messageId, null)
-        _state.value = _state.value.copy(
-            chats = chats,
-            messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
-            requestActive = false,
-            isLoading = false,
-            busyLabel = null,
-            status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
-        )
-        null
+        execute: suspend (RequestNetworkSession) -> Unit
+    ): Job? {
+        val requestId = UUID.randomUUID().toString()
+        val network = RequestNetworkSession(context, requestId)
+        return runCatching {
+            RequestExecutionManager.start(
+                context = context,
+                requestId = requestId,
+                chatId = chatId,
+                messageId = messageId,
+                label = label,
+                cancelNetworkCall = network::cancel,
+                execute = { execute(network) }
+            )
+        }.getOrElse { error ->
+            activeRequestPending.remove(chatId)
+            val chats = chatsRepository.finishRequest(chatId, messageId, null)
+            _state.value = _state.value.copy(
+                chats = chats,
+                messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                requestActive = RequestExecutionManager.hasActiveRequest(),
+                busyLabel = RequestExecutionManager.snapshotForChat(_state.value.currentChatId)?.label,
+                status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
+            )
+            null
+        }
     }
 
     fun prepareImageGeneration(): Boolean {
@@ -3974,6 +3961,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val mode = _state.value.mode
         val chatId = _state.value.currentChatId
+        if (RequestExecutionManager.hasActiveChat(chatId)) {
+            _state.value = _state.value.copy(status = "В этом чате уже выполняется запрос")
+            return
+        }
         val currentChat = _state.value.chats.firstOrNull { it.id == chatId }
         val persistentChatFiles = if (mode == ChatMode.TEXT) {
             currentChat?.chatFiles.orEmpty().map(::chatFileAsAttachment)
@@ -4030,7 +4021,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = nextMessages,
             chats = nextChats,
             pendingAttachments = emptyList(),
-            isLoading = true,
             requestActive = true,
             busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Модель думает…",
             status = null,
@@ -4048,9 +4038,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(
                     chats = failedChats,
                     messages = failedChats.firstOrNull { it.id == chatId }?.messages.orEmpty(),
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = "Эта модель предназначена не для обычного текстового чата. Выберите текстовую модель в каталоге OpenRouter."
                 )
                 refreshModels(ChatMode.TEXT)
@@ -4098,15 +4085,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     localPath = file.localPath
                 ) }
         } else emptyList()
-        val requestId = ++requestGeneration
-        activeRequestPending = pending
+        val requestId = nextRequestGeneration(chatId)
+        activeRequestPending[chatId] = pending
         DiagnosticLog.record(
             context,
             "REQUEST",
             "start id=$requestId; provider=${profile.name}; mode=$mode; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; history=${before.size}; pending=${pending.size}; persistent=${persistentChatFiles.size}; promptChars=${clean.length}"
         )
 
-        activeRequestJob = launchRequest(chatId, user.id, "${profile.name} · ${if (mode == ChatMode.TEXT) textModel else imageModel}") {
+        launchRequest(chatId, user.id, "${profile.name} · ${if (mode == ChatMode.TEXT) textModel else imageModel}") { network ->
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
@@ -4122,15 +4109,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             .distinctBy { it.localPath ?: it.uri }
                         val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
-                        val preparedContext = chatMemoryManager.prepare(
+                        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+                        network.call { requestApi ->
+                            val preparedContext = chatMemoryManager.prepare(
                             chat = currentChat,
                             fullHistory = before,
                             query = clean,
                             apiKey = memoryCredentials?.first,
-                            baseUrl = memoryCredentials?.second
-                        )
-                        if (profile.type == ProviderType.OPENROUTER) {
-                            api.chat(
+                            baseUrl = memoryCredentials?.second,
+                                apiOverride = requestApi
+                            )
+                            requestApi.chat(
                                 key,
                                 textModel,
                                 preparedContext.history,
@@ -4145,33 +4134,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 effectiveTextBaseUrl(profile),
                                 requestModelInfo
                             )
-                        } else {
-                            compatibleApi.chat(
-                                key,
-                                effectiveTextBaseUrl(profile),
-                                textModel,
-                                preparedContext.history,
-                                clean,
-                                allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, false) +
-                                    preparedContext.systemContext + knowledgeContext,
-                                requestModelInfo
-                            )
                         }
                     }
                     ChatMode.IMAGE -> {
                         val projectImages = requestProjectImages
                         val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
                         val imagePrompt = listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n")
-                        generateImageForProfile(
-                            profile = profile,
-                            apiKey = key,
-                            model = imageModel,
-                            prompt = imagePrompt,
-                            attachments = pending + projectImages,
-                            aspectRatio = imageAspectRatio,
-                            resolution = imageResolution
-                        )
+                        network.call { requestApi ->
+                            generateImageForProfile(
+                                profile = profile,
+                                apiKey = key,
+                                model = imageModel,
+                                prompt = imagePrompt,
+                                attachments = pending + projectImages,
+                                aspectRatio = imageAspectRatio,
+                                resolution = imageResolution,
+                                requestApi = requestApi
+                            )
+                        }
                     }
                 }
             }.mapCatching { result ->
@@ -4179,7 +4159,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 result
             }
 
-            if (requestId != requestGeneration) {
+            if (!isCurrentRequestGeneration(chatId, requestId)) {
                 return@launchRequest
             }
 
@@ -4205,9 +4185,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(
                     messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = chats,
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = null,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
@@ -4237,14 +4214,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         "Выбранная модель предназначена для видео, а не для обычного чата. Назначьте её для видео или выберите текстовую модель."
                     else -> rawError.ifBlank { "Ошибка запроса" }
                 }
-                RequestExecutionManager.fail(friendlyError)
+                RequestExecutionManager.snapshotForChat(chatId)?.requestId?.let { activeRequestId ->
+                    RequestExecutionManager.fail(activeRequestId, friendlyError)
+                }
                 val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
                 _state.value = _state.value.copy(
                     messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = failedChats,
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = friendlyError
                 )
                 if (
@@ -4256,9 +4232,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }
             cleanupTempAttachments(pending)
-            if (requestId == requestGeneration) {
-                activeRequestJob = null
-                activeRequestPending = emptyList()
+            if (isCurrentRequestGeneration(chatId, requestId)) {
+                activeRequestPending.remove(chatId)
             }
         }
     }
@@ -4289,6 +4264,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val prompt = clean.ifBlank { "Создай вариант приложенного изображения" }
         val chatId = _state.value.currentChatId
+        if (RequestExecutionManager.hasActiveChat(chatId)) {
+            _state.value = _state.value.copy(status = "В этом чате уже выполняется запрос")
+            return false
+        }
         val before = _state.value.messages
         val user = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -4307,7 +4286,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = nextMessages,
             chats = nextChats,
             pendingAttachments = emptyList(),
-            isLoading = true,
             requestActive = true,
             busyLabel = "Генерирую изображение…",
             status = null,
@@ -4323,26 +4301,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val imageResolution = _state.value.imageResolution?.takeIf {
             profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("resolution") == true
         }
-        val requestId = ++requestGeneration
-        activeRequestPending = pending
+        val requestId = nextRequestGeneration(chatId)
+        activeRequestPending[chatId] = pending
 
-        activeRequestJob = launchRequest(chatId, user.id, "${profile.name} · $imageModel") {
+        launchRequest(chatId, user.id, "${profile.name} · $imageModel") { network ->
             val operation = runCatching {
-                generateImageForProfile(
-                    profile = profile,
-                    apiKey = key,
-                    model = imageModel,
-                    prompt = prompt,
-                    attachments = pending,
-                    aspectRatio = imageAspectRatio,
-                    resolution = imageResolution
-                )
+                network.call { requestApi ->
+                    generateImageForProfile(
+                        profile = profile,
+                        apiKey = key,
+                        model = imageModel,
+                        prompt = prompt,
+                        attachments = pending,
+                        aspectRatio = imageAspectRatio,
+                        resolution = imageResolution,
+                        requestApi = requestApi
+                    )
+                }
             }.mapCatching { result ->
                 require(result.text.isNotBlank() || result.files.isNotEmpty()) { "Модель вернула пустой ответ" }
                 result
             }
 
-            if (requestId != requestGeneration) return@launchRequest
+            if (!isCurrentRequestGeneration(chatId, requestId)) return@launchRequest
 
             operation.onSuccess { result ->
                 val assistant = ChatMessage(
@@ -4356,9 +4337,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(
                     messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = chats,
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = null,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
@@ -4370,21 +4348,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }.onFailure {
                 val friendlyError = it.message ?: "Ошибка генерации изображения"
-                RequestExecutionManager.fail(friendlyError)
+                RequestExecutionManager.snapshotForChat(chatId)?.requestId?.let { activeRequestId ->
+                    RequestExecutionManager.fail(activeRequestId, friendlyError)
+                }
                 val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
                 _state.value = _state.value.copy(
                     messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     chats = failedChats,
-                    isLoading = false,
-                    requestActive = false,
-                    busyLabel = null,
                     status = friendlyError
                 )
             }
             cleanupTempAttachments(pending)
-            if (requestId == requestGeneration) {
-                activeRequestJob = null
-                activeRequestPending = emptyList()
+            if (isCurrentRequestGeneration(chatId, requestId)) {
+                activeRequestPending.remove(chatId)
             }
         }
         return true
@@ -4397,10 +4373,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         prompt: String,
         attachments: List<PendingAttachment>,
         aspectRatio: String?,
-        resolution: String?
+        resolution: String?,
+        requestApi: OpenRouterClient = api
     ): OpenRouterClient.Result {
-        if (profile.type == ProviderType.OPENROUTER) {
-            return generateOpenRouterImageWithResolutionFallback(
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+        return generateOpenRouterImageWithResolutionFallback(
                 profileId = profile.id,
                 apiKey = apiKey,
                 model = model,
@@ -4408,24 +4385,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 attachments = attachments,
                 baseUrl = effectiveImageBaseUrl(profile),
                 aspectRatio = aspectRatio,
-                resolution = resolution
+                resolution = resolution,
+                requestApi = requestApi
             )
-        }
-        return when (resolvedImageProtocol(profile)) {
-            ImageApiProtocol.NVIDIA_NIM -> nvidiaImageApi.generateImage(
-                apiKey = apiKey,
-                baseUrl = effectiveImageBaseUrl(profile),
-                model = model,
-                prompt = prompt,
-                aspectRatio = aspectRatio
-            )
-            ImageApiProtocol.OPENAI_COMPATIBLE, ImageApiProtocol.AUTO -> compatibleApi.generateImage(
-                apiKey = apiKey,
-                baseUrl = effectiveImageBaseUrl(profile),
-                model = model,
-                prompt = prompt
-            )
-        }
     }
 
     private suspend fun generateOpenRouterImageWithResolutionFallback(
@@ -4436,10 +4398,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         attachments: List<PendingAttachment>,
         baseUrl: String,
         aspectRatio: String?,
-        resolution: String?
+        resolution: String?,
+        requestApi: OpenRouterClient = api
     ): OpenRouterClient.Result {
         try {
-            return api.generateImage(
+            return requestApi.generateImage(
                 apiKey = apiKey,
                 model = model,
                 prompt = prompt,
@@ -4455,7 +4418,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 ("omit resolution" in message || "larger resolution" in message)
             if (!canRetryWithoutResolution) throw first
 
-            val result = api.generateImage(
+            val result = requestApi.generateImage(
                 apiKey = apiKey,
                 model = model,
                 prompt = prompt,
@@ -5003,13 +4966,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private suspend fun textModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
         val key = secrets.getProfileApiKey(profile.id).orEmpty()
-        val models = if (profile.type == ProviderType.OPENROUTER) {
-            api.models(key, effectiveTextBaseUrl(profile))
-        } else {
-            compatibleApi.models(key, effectiveTextBaseUrl(profile))
-        }
-        return models.filter { ModelCategory.TEXT in it.categories && !it.isBatch }
+        return api.models(key, effectiveTextBaseUrl(profile))
+            .filter { ModelCategory.TEXT in it.categories && !it.isBatch }
     }
 
     private suspend fun imageModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
