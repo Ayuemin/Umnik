@@ -630,7 +630,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     isLoading = active,
                     requestActive = active,
-                    busyLabel = if (active) "Модель работает…" else null,
+                    busyLabel = if (active) snapshot.label ?: "Модель работает…" else null,
                     status = if (active) null else snapshot.lastError,
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()

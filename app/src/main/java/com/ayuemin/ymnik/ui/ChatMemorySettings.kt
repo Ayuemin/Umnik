@@ -187,36 +187,18 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
 
     ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Outlined.History,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(9.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        "Память и контекст",
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.primary
-                    )
-                    Text(
-                        "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                IconButton(onClick = { expanded = !expanded }) {
-                    Icon(
-                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            if (!expanded) return@Column
+        ExpandableSettingsHeader(
+            icon = Icons.Outlined.History,
+            title = "Память и контекст",
+            subtitle = "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
+            expanded = expanded,
+            onToggle = { expanded = !expanded }
+        )
+        if (!expanded) return@ElevatedCard
+        Column(
+            Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
+            verticalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
 
             Text(
                 "Umnik не удаляет старую переписку. После порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, краткая карточка состояния и только релевантные старые фрагменты.",
@@ -420,29 +402,13 @@ private fun MemorySettingsExpander(
     onToggle: () -> Unit
 ) {
     ElevatedCard(Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Outlined.History,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(21.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            IconButton(onClick = onToggle) {
-                Icon(
-                    if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary
-                )
-            }
-        }
+        ExpandableSettingsHeader(
+            icon = Icons.Outlined.History,
+            title = title,
+            subtitle = subtitle,
+            expanded = expanded,
+            onToggle = onToggle
+        )
     }
 }
 
