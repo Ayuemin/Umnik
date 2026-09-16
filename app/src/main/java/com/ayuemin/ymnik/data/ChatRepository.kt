@@ -35,6 +35,13 @@ class ChatRepository(context: Context) {
         }
     }
 
+    fun updateChat(chatId: String, transform: (ChatSession) -> ChatSession): List<ChatSession> = synchronized(fileLock) {
+        val chats = list()
+        val updated = chats.map { chat -> if (chat.id == chatId) transform(chat) else chat }
+        save(updated)
+        updated
+    }
+
     @Synchronized
     fun updateMessage(chatId: String, messageId: String, transform: (ChatMessage) -> ChatMessage) {
         synchronized(fileLock) {

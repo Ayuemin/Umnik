@@ -2743,15 +2743,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     playReadySound()
                     return@launchRequest
                 }
-                var previous = ""
-                plan.actions.forEachIndexed { index, action ->
-                    _state.value = _state.value.copy(
-                        busyLabel = "◆ Оркестратор · шаг ${index + 1} из ${plan.actions.size}: ${action.title.ifBlank { action.type }}"
-                    )
-                    val result = executeOrchestratorControlAction(project, orchestrator, action, previous, pending, network)
-                    previous = result
-                    appendOrchestratorLog(chatId, index + 1, action.title.ifBlank { action.type }, result)
-                }
+                executeOrchestratorControlActions(
+                    project = project,
+                    orchestrator = orchestrator,
+                    actions = plan.actions,
+                    pending = pending,
+                    network = network,
+                    logChatId = chatId
+                )
                 appendOrchestratorLog(chatId, 0, "Оркестратор", "Поручение выполнено. Шагов: ${plan.actions.size}.")
                 playReadySound()
             } catch (error: Throwable) {
@@ -2773,6 +2772,96 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }
         }
+    }
+
+    private fun parallelControlCandidate(action: OrchestratorControlAction): Boolean =
+        action.type in setOf("EXECUTE_CHAT", "RUN_CHAT_STAGES") &&
+            !action.passPreviousResult &&
+            action.sourceChatId.isNullOrBlank() &&
+            !action.includeSourceResult &&
+            !action.includeSourceFiles &&
+            !action.persistSettings &&
+            !action.targetChatId.isNullOrBlank()
+
+    private suspend fun executeOrchestratorControlActions(
+        project: Project,
+        orchestrator: ChatSession,
+        actions: List<OrchestratorControlAction>,
+        pending: List<PendingAttachment>,
+        network: RequestNetworkSession,
+        logChatId: String
+    ): String {
+        var previous = ""
+        var index = 0
+        while (index < actions.size) {
+            val first = actions[index]
+            val batch = mutableListOf<Pair<Int, OrchestratorControlAction>>()
+            if (parallelControlCandidate(first)) {
+                val targets = mutableSetOf<String>()
+                var cursor = index
+                while (cursor < actions.size) {
+                    val candidate = actions[cursor]
+                    val target = candidate.targetChatId
+                    if (!parallelControlCandidate(candidate) || target == null || !targets.add(target)) break
+                    batch += cursor to candidate
+                    cursor += 1
+                }
+            }
+
+            if (batch.size > 1) {
+                network.updatePhase("◆ Оркестратор · параллельно ${batch.size} исполнителя…")
+                val completed = coroutineScope {
+                    batch.map { (actionIndex, action) ->
+                        async {
+                            val outcome = try {
+                                Result.success(
+                                    executeOrchestratorControlAction(
+                                        project, orchestrator, action, "", pending, network
+                                    )
+                                )
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                Result.failure<String>(error)
+                            }
+                            Triple(actionIndex, action, outcome)
+                        }
+                    }.awaitAll()
+                }.sortedBy { it.first }
+
+                completed.forEach { (actionIndex, action, outcome) ->
+                    outcome.getOrNull()?.let { result ->
+                        appendOrchestratorLog(
+                            logChatId,
+                            actionIndex + 1,
+                            action.title.ifBlank { action.type },
+                            result
+                        )
+                    }
+                }
+                completed.firstOrNull { it.third.isFailure }
+                    ?.third?.exceptionOrNull()?.let { throw it }
+                previous = completed.last().third.getOrThrow()
+                index += batch.size
+            } else {
+                val action = first
+                network.updatePhase(
+                    "◆ Оркестратор · шаг ${index + 1} из ${actions.size}: ${action.title.ifBlank { action.type }}"
+                )
+                val result = executeOrchestratorControlAction(
+                    project, orchestrator, action, previous, pending, network
+                )
+                previous = result
+                appendOrchestratorLog(
+                    logChatId,
+                    index + 1,
+                    action.title.ifBlank { action.type },
+                    result
+                )
+                index += 1
+            }
+        }
+        return previous
     }
 
     fun runOrchestrator(projectId: String): String? {
@@ -2802,30 +2891,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             var previous = ""
             var failed: Throwable? = null
             try {
-                steps.forEachIndexed { index, step ->
-                    _state.value = _state.value.copy(busyLabel = "Оркестратор · шаг ${index + 1} из ${steps.size}: ${step.title}")
-                    val result = when (step.type) {
-                        OrchestratorStepType.EXECUTE_CHAT -> {
-                            val target = chatsRepository.list().firstOrNull {
-                                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
-                            } ?: error("Для шага «${step.title}» не выбран чат")
-                            executeOrchestratorChatTask(project, target, step.prompt, previous, step.passPreviousResult, network = network)
-                        }
-                        OrchestratorStepType.RUN_CHAT_STAGES -> {
-                            val target = chatsRepository.list().firstOrNull {
-                                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
-                            } ?: error("Для шага «${step.title}» не выбран чат")
-                            if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет этапов")
-                            executeOrchestratorStageSequence(project, target, target.stages.orEmpty(), step.prompt, previous, step.passPreviousResult, network = network)
-                        }
-                        OrchestratorStepType.RUN_PROJECT_STAGES -> {
-                            if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
-                            executeOrchestratorStageSequence(project, orchestrator, project.stages.orEmpty(), step.prompt, previous, step.passPreviousResult, network = network)
-                        }
-                    }
-                    previous = result
-                    appendOrchestratorLog(orchestratorId, index + 1, step.title, result)
-                }
+                executeFixedOrchestratorSteps(
+                    project = project,
+                    orchestrator = orchestrator,
+                    steps = steps,
+                    network = network,
+                    logChatId = orchestratorId
+                )
             } catch (error: Throwable) {
                 failed = error
                 appendOrchestratorLog(orchestratorId, -1, "Сценарий остановлен", error.message ?: "Ошибка выполнения")
@@ -2842,6 +2914,107 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
         return orchestratorId
+    }
+
+    private fun parallelFixedStepCandidate(step: OrchestratorStep): Boolean =
+        step.type in setOf(OrchestratorStepType.EXECUTE_CHAT, OrchestratorStepType.RUN_CHAT_STAGES) &&
+            !step.passPreviousResult &&
+            !step.targetChatId.isNullOrBlank()
+
+    private suspend fun executeFixedOrchestratorStep(
+        project: Project,
+        orchestrator: ChatSession,
+        step: OrchestratorStep,
+        previous: String,
+        network: RequestNetworkSession
+    ): String = when (step.type) {
+        OrchestratorStepType.EXECUTE_CHAT -> {
+            val target = chatsRepository.list().firstOrNull {
+                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
+            } ?: error("Для шага «${step.title}» не выбран чат")
+            executeOrchestratorChatTask(
+                project, target, step.prompt, previous, step.passPreviousResult, network = network
+            )
+        }
+        OrchestratorStepType.RUN_CHAT_STAGES -> {
+            val target = chatsRepository.list().firstOrNull {
+                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
+            } ?: error("Для шага «${step.title}» не выбран чат")
+            if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет этапов")
+            executeOrchestratorStageSequence(
+                project, target, target.stages.orEmpty(), step.prompt, previous,
+                step.passPreviousResult, network = network
+            )
+        }
+        OrchestratorStepType.RUN_PROJECT_STAGES -> {
+            if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
+            executeOrchestratorStageSequence(
+                project, orchestrator, project.stages.orEmpty(), step.prompt, previous,
+                step.passPreviousResult, network = network
+            )
+        }
+    }
+
+    private suspend fun executeFixedOrchestratorSteps(
+        project: Project,
+        orchestrator: ChatSession,
+        steps: List<OrchestratorStep>,
+        network: RequestNetworkSession,
+        logChatId: String
+    ): String {
+        var previous = ""
+        var index = 0
+        while (index < steps.size) {
+            val first = steps[index]
+            val batch = mutableListOf<Pair<Int, OrchestratorStep>>()
+            if (parallelFixedStepCandidate(first)) {
+                val targets = mutableSetOf<String>()
+                var cursor = index
+                while (cursor < steps.size) {
+                    val candidate = steps[cursor]
+                    val target = candidate.targetChatId
+                    if (!parallelFixedStepCandidate(candidate) || target == null || !targets.add(target)) break
+                    batch += cursor to candidate
+                    cursor += 1
+                }
+            }
+
+            if (batch.size > 1) {
+                network.updatePhase("Оркестратор · параллельно ${batch.size} исполнителя…")
+                val completed = coroutineScope {
+                    batch.map { (stepIndex, step) ->
+                        async {
+                            val outcome = try {
+                                Result.success(executeFixedOrchestratorStep(project, orchestrator, step, "", network))
+                            } catch (cancelled: CancellationException) {
+                                throw cancelled
+                            } catch (error: Throwable) {
+                                Result.failure<String>(error)
+                            }
+                            Triple(stepIndex, step, outcome)
+                        }
+                    }.awaitAll()
+                }.sortedBy { it.first }
+
+                completed.forEach { (stepIndex, step, outcome) ->
+                    outcome.getOrNull()?.let { result ->
+                        appendOrchestratorLog(logChatId, stepIndex + 1, step.title, result)
+                    }
+                }
+                completed.firstOrNull { it.third.isFailure }
+                    ?.third?.exceptionOrNull()?.let { throw it }
+                previous = completed.last().third.getOrThrow()
+                index += batch.size
+            } else {
+                val step = first
+                network.updatePhase("Оркестратор · шаг ${index + 1} из ${steps.size}: ${step.title}")
+                val result = executeFixedOrchestratorStep(project, orchestrator, step, previous, network)
+                previous = result
+                appendOrchestratorLog(logChatId, index + 1, step.title, result)
+                index += 1
+            }
+        }
+        return previous
     }
 
     private fun orchestratorPrompt(prompt: String, previous: String, passPrevious: Boolean): String = buildString {
@@ -2874,8 +3047,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val task = orchestratorPrompt(prompt, previous, passPrevious)
         val history = chat.messages
         val user = ChatMessage(UUID.randomUUID().toString(), "user", task)
-        var updated = all.map { if (it.id == chat.id) it.copy(messages = it.messages + user, updatedAt = System.currentTimeMillis()) else it }
-        chatsRepository.save(updated)
+        var updated = chatsRepository.updateChat(chat.id) { current ->
+            current.copy(messages = current.messages + user, updatedAt = System.currentTimeMillis())
+        }
         publishChats(updated)
         val attachments = (orchestratorAttachments(project, chat, modelInfo) + extraAttachments).distinctBy { it.localPath ?: it.uri }
         val skillText = skills.promptFor(runtime.skillIds)
@@ -2905,9 +3079,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             inputTokens = result.inputTokens,
             outputTokens = result.outputTokens
         )
-        val latest = chatsRepository.list()
-        updated = latest.map { if (it.id == chat.id) it.copy(messages = it.messages + assistant, updatedAt = System.currentTimeMillis()) else it }
-        chatsRepository.save(updated)
+        updated = chatsRepository.updateChat(chat.id) { current ->
+            current.copy(messages = current.messages + assistant, updatedAt = System.currentTimeMillis())
+        }
         publishChats(updated)
         return text
     }
@@ -2927,8 +3101,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         var all = chatsRepository.list()
         val first = all.firstOrNull { it.id == requested.id } ?: requested
         val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Оркестратор запускает этапы.\n\n$initial")
-        all = all.map { if (it.id == first.id) it.copy(messages = it.messages + launch, updatedAt = System.currentTimeMillis()) else it }
-        chatsRepository.save(all)
+        all = chatsRepository.updateChat(first.id) { current ->
+            current.copy(messages = current.messages + launch, updatedAt = System.currentTimeMillis())
+        }
         publishChats(all)
         val baseHistory = all.first { it.id == first.id }.messages
         val results = mutableListOf<Pair<ProjectStage, String>>()
@@ -3272,8 +3447,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         modelId: String?,
         result: OpenRouterClient.Result?
     ) {
-        val stored = chatsRepository.list()
-        val chat = stored.firstOrNull { it.id == chatId } ?: return
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "assistant",
@@ -3285,9 +3458,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             inputTokens = result?.inputTokens,
             outputTokens = result?.outputTokens
         )
-        val updatedChat = chat.copy(messages = chat.messages + message, updatedAt = System.currentTimeMillis())
-        val updated = stored.map { if (it.id == chatId) updatedChat else it }
-        chatsRepository.save(updated)
+        val updated = chatsRepository.updateChat(chatId) { chat ->
+            chat.copy(messages = chat.messages + message, updatedAt = System.currentTimeMillis())
+        }
+        val updatedChat = updated.firstOrNull { it.id == chatId } ?: return
         _state.value = _state.value.copy(
             chats = updated,
             messages = if (_state.value.currentChatId == chatId) updatedChat.messages else _state.value.messages,
