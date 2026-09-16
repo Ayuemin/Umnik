@@ -67,8 +67,10 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
                 onSuccess = { completion ->
                     val toolCalls = completion.message.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
                     if (toolCalls != null && toolCalls.size() > 0) {
-                        DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovered completion requires tool continuation; request=${requestId.take(8)}")
-                        return@fold Result.retry()
+                        DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovered completion requires local tool continuation; request=${requestId.take(8)}")
+                        failPending(record, "Ответ модели восстановлен, но он требует продолжения локального инструмента. Повторите запрос вручную.")
+                        store.remove(requestId)
+                        return@fold Result.success()
                     }
                     val text = contentText(completion.message.get("content"))
                     if (text.isBlank()) return@fold Result.retry()

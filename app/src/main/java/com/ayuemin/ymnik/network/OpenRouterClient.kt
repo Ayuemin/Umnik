@@ -448,6 +448,11 @@ class OpenRouterClient(
                     "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; cache=${cacheStatus ?: "off"}; recover=$recover; attempt=$recoveryAttempt; error=${error::class.java.simpleName}: ${error.message}"
                 )
                 if (!recover) {
+                    if (!locallyCancelled && recoveryRecord != null && !generationId.isNullOrBlank()) {
+                        phaseCallback("Связь нестабильна · продолжу восстановление в фоне…")
+                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        throw error
+                    }
                     clearRecovery(recoveryRecord)
                     throw error
                 }
@@ -456,6 +461,11 @@ class OpenRouterClient(
                 phaseCallback("Связь прервалась · жду сеть…")
                 val deadline = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
                 if (!awaitNetworkAvailable(deadline)) {
+                    if (recoveryRecord != null && !generationId.isNullOrBlank()) {
+                        phaseCallback("Сеть недоступна · продолжу восстановление в фоне…")
+                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        throw error
+                    }
                     clearRecovery(recoveryRecord)
                     throw error
                 }
@@ -466,7 +476,12 @@ class OpenRouterClient(
                     awaitGenerationFinished(apiKey, baseUrl, generationId.orEmpty(), deadline)
                 }
                 if (!ready) {
-                    DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation not completed in recovery window; id=${generationId ?: "none"}")
+                    DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation still pending after live recovery window; handing off id=${generationId ?: "none"}")
+                    if (recoveryRecord != null && !generationId.isNullOrBlank()) {
+                        phaseCallback("Ответ ещё формируется · продолжу восстановление в фоне…")
+                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        throw error
+                    }
                     clearRecovery(recoveryRecord)
                     throw error
                 }

@@ -61,6 +61,7 @@ import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
+import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.ayuemin.ymnik.network.ProviderRegistry
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -4420,15 +4421,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         "Выбранная модель предназначена для видео, а не для обычного чата. Назначьте её для видео или выберите текстовую модель."
                     else -> rawError.ifBlank { "Ошибка запроса" }
                 }
-                RequestExecutionManager.snapshotForChat(chatId)?.requestId?.let { activeRequestId ->
-                    RequestExecutionManager.fail(activeRequestId, friendlyError)
+                val activeRequestId = RequestExecutionManager.snapshotForChat(chatId)?.requestId
+                val recoveryPending = activeRequestId?.let { OpenRouterRecoveryStore(context).get(it) != null } == true
+                if (recoveryPending) {
+                    activeRequestId?.let { RequestExecutionManager.updatePhase(context, it, "Восстанавливаю ответ в фоне…") }
+                    val currentChats = chatsRepository.list()
+                    _state.value = _state.value.copy(
+                        messages = currentChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                        chats = currentChats,
+                        status = "Соединение прервалось. Ответ уже принят OpenRouter и восстанавливается в фоне."
+                    )
+                } else {
+                    activeRequestId?.let { RequestExecutionManager.fail(it, friendlyError) }
+                    val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                    _state.value = _state.value.copy(
+                        messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                        chats = failedChats,
+                        status = friendlyError
+                    )
                 }
-                val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
-                _state.value = _state.value.copy(
-                    messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
-                    chats = failedChats,
-                    status = friendlyError
-                )
                 if (
                     profile.type == ProviderType.NVIDIA &&
                     mode == ChatMode.TEXT &&

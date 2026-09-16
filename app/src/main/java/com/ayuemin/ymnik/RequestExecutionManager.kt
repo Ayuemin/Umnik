@@ -225,9 +225,15 @@ internal object RequestExecutionManager {
                 DiagnosticLog.record(app, "REQUEST", "Background execution failed request=${requestId.take(8)} chat=${chatId.take(8)}", error)
                 fail(requestId, error.message ?: "Запрос прерван")
             } finally {
-                runCatching {
-                    ChatRepository(app).updateMessage(chatId, messageId) {
-                        if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+                val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
+                if (recoveryPending) {
+                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L)
+                    DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
+                } else {
+                    runCatching {
+                        ChatRepository(app).updateMessage(chatId, messageId) {
+                            if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+                        }
                     }
                 }
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
