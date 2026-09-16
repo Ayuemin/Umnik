@@ -13,6 +13,12 @@ updates:
       - dependency-name: "*"
         update-types:
           - "version-update:semver-major"
+      # Core 1.18+ raises compileSdk requirements beyond the current
+      # SDK 36 baseline. Move this line only during a deliberate SDK/AGP migration.
+      - dependency-name: "androidx.core:core-ktx"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
 
   - package-ecosystem: "github-actions"
     directory: "/"
