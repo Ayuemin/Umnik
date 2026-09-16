@@ -14,6 +14,9 @@ def replace_once(path, old, new):
 # Persist the actual payload after OpenRouterRequestEnhancer has applied provider/privacy/tools/RAG changes.
 path = 'app/src/main/java/com/ayuemin/ymnik/diagnostics/DiagnosticLog.kt'
 replace_once(path,
+'import okhttp3.Interceptor\nimport okhttp3.Response',
+'import okhttp3.Interceptor\nimport okhttp3.Request\nimport okhttp3.Response')
+replace_once(path,
 '''class DiagnosticHttpInterceptor(
     private val context: Context,
     private val source: String,
@@ -95,7 +98,6 @@ replace_once(path,
             }
         )
 ''')
-# Insert helper before executeActive.
 replace_once(path,
 '''    private fun executeActive(request: Request): okhttp3.Response {
 ''',
@@ -105,10 +107,9 @@ replace_once(path,
         if (recoveryStore.get(id) == null) return
         val body = request.body ?: return
         val payload = runCatching {
-            Buffer().use { buffer ->
-                body.writeTo(buffer)
-                buffer.readUtf8()
-            }
+            val buffer = Buffer()
+            body.writeTo(buffer)
+            buffer.readUtf8()
         }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
         recoveryStore.updatePayload(id, payload)
         DiagnosticLog.record(context, "REQUEST_RECOVERY", "Persisted final enhanced payload request=${id.take(8)} bytes=${payload.toByteArray().size}")
@@ -119,6 +120,14 @@ replace_once(path,
 
 # A replay must never be accepted unless OpenRouter explicitly says HIT, and must stay comfortably inside TTL.
 path = 'app/src/main/java/com/ayuemin/ymnik/OpenRouterRecoveryWorker.kt'
+replace_once(path,
+'''        val generationId = record.generationId ?: throw IOException("Missing generation id")
+        val deadline = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
+''',
+'''        val generationId = record.generationId ?: throw IOException("Missing generation id")
+        val seenAt = record.generationSeenAt ?: record.updatedAt
+        val deadline = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
+''')
 replace_once(path,
 '''        // Otherwise use the exact response-cache replay. The caller already verified that the
         // original response explicitly reported HIT/MISS and that the API-key fingerprint matches.
