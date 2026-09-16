@@ -10,6 +10,7 @@ import android.graphics.BitmapFactory
 import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.RepeatMode
@@ -312,6 +313,16 @@ private fun ChatScreen(
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
+    val isUsageGuide = currentChat?.title == "Памятка по Umnik"
+    var guideScrollTarget by remember(state.currentChatId) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(guideScrollTarget) {
+        val target = guideScrollTarget ?: return@LaunchedEffect
+        listState.animateScrollToItem(target)
+        guideScrollTarget = null
+    }
+    BackHandler(enabled = isUsageGuide && listState.firstVisibleItemIndex > 0) {
+        guideScrollTarget = 0
+    }
     val currentChatFiles = currentChat?.chatFiles.orEmpty()
     val currentProject = currentChat?.projectId
         ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
@@ -386,7 +397,7 @@ private fun ChatScreen(
     LaunchedEffect(state.currentChatId, state.messages.lastOrNull()?.id) {
         if (state.messages.isNotEmpty()) {
             delay(180)
-            listState.scrollToItem(state.messages.size)
+            if (isUsageGuide) listState.scrollToItem(0) else listState.scrollToItem(state.messages.size)
         }
     }
 
@@ -467,6 +478,11 @@ LazyColumn(
                         fileToSave = file
                         save.launch(file.name)
                     },
+                    onGuideLink = if (isUsageGuide && message.providerName == "Umnik") {
+                        { target ->
+                            guideScrollTarget = target.coerceIn(0, state.messages.lastIndex.coerceAtLeast(0))
+                        }
+                    } else null,
 onBranch = if (message.role == "assistant") {
     { vm.branchFromMessage(message.id) }
 } else null,
@@ -1920,6 +1936,7 @@ private fun MessageCard(
     onOpenRouterSpeech: () -> Unit,
     onSaveGenerated: (GeneratedFile) -> Unit,
     onExportText: () -> Unit,
+    onGuideLink: ((Int) -> Unit)?,
     onBranch: (() -> Unit)?,
     onRetry: (() -> Unit)?
 ) {
@@ -1940,7 +1957,7 @@ private fun MessageCard(
             ) {
                 Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
                     if (message.text.isNotBlank()) {
-                        MessageBody(message.text, content)
+                        MessageBody(message.text, content, onGuideLink)
                     }
                     message.attachmentNames.forEach { name ->
                         Spacer(Modifier.height(7.dp))
@@ -1976,7 +1993,7 @@ private fun MessageCard(
                     .padding(horizontal = 4.dp)
             ) {
                 if (message.text.isNotBlank()) {
-                    MessageBody(message.text, content)
+                    MessageBody(message.text, content, onGuideLink)
                 }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
@@ -2085,7 +2102,7 @@ private data class MessagePart(
 )
 
 @Composable
-private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color) {
+private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color, onGuideLink: ((Int) -> Unit)? = null) {
     val parts = remember(text) { splitRichBlocks(text) }
     val context = LocalContext.current
 
@@ -2093,7 +2110,7 @@ private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color)
         parts.forEach { part ->
             when (part.kind) {
                 MessagePartKind.PLAIN -> if (part.text.isNotBlank()) {
-                    MarkdownText(part.text.trim(), color)
+                    MarkdownText(part.text.trim(), color, onGuideLink)
                 }
                 MessagePartKind.CODE -> IsolatedBlock(
                     title = part.language.ifBlank { "Код" },
@@ -2113,7 +2130,7 @@ private fun MessageBody(text: String, color: androidx.compose.ui.graphics.Color)
 }
 
 @Composable
-private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color) {
+private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color, onGuideLink: ((Int) -> Unit)? = null) {
     val lines = remember(text) { text.replace("\r\n", "\n").split("\n") }
     val paragraph = mutableListOf<String>()
 
@@ -2147,11 +2164,29 @@ private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color
             val ordered = Regex("^\\s*(\\d+)[.)]\\s+(.+)$").matchEntire(line)
             val quote = Regex("^\\s*>\\s?(.*)$").matchEntire(line)
             val horizontalRule = Regex("^\\s*((-{3,})|(\\*{3,})|(_{3,}))\\s*$").matches(line)
+            val guideLink = Regex("^\\[([^]]+)]\\(umnik://guide/(\\d+)\\)$").matchEntire(line.trim())
             val possibleHeader = markdownTableCells(line)
             val tableStart = possibleHeader.size >= 2 && index + 1 < lines.size &&
                 isMarkdownTableSeparator(lines[index + 1], possibleHeader.size)
 
             when {
+                guideLink != null -> {
+                    flushParagraph()
+                    val label = guideLink.groupValues[1]
+                    val target = guideLink.groupValues[2].toIntOrNull()
+                    TextButton(
+                        onClick = { target?.let { onGuideLink?.invoke(it) } },
+                        enabled = onGuideLink != null && target != null,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            label,
+                            color = MaterialTheme.colorScheme.primary,
+                            textDecoration = TextDecoration.Underline,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
                 tableStart -> {
                     flushParagraph()
                     val rows = mutableListOf(possibleHeader)
