@@ -1,0 +1,29 @@
+name: Apply adaptive memory v1.16.1
+
+on:
+  push:
+    branches:
+      - feature/adaptive-chat-memory-v1.16.1
+    paths:
+      - .github/workflows/apply-adaptive-memory-v1.16.1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: feature/adaptive-chat-memory-v1.16.1
+          fetch-depth: 0
+      - name: Apply patch
+        run: python .github/scripts/apply_adaptive_memory_v1161.py
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/build.gradle.kts CHANGELOG.md app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt app/src/main/java/com/ayuemin/ymnik/help/UmnikUsageGuide.kt
+          git commit -m "Finish adaptive chat memory v1.16.1"
+          git push origin HEAD:feature/adaptive-chat-memory-v1.16.1
