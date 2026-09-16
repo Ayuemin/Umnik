@@ -52,12 +52,18 @@ import java.util.Locale
 @Composable
 fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewModel) {
     var expanded by remember(chat.id) { mutableStateOf(false) }
-    val mode = vm.chatContextMode(chat.id)
+    val overrideMode = vm.chatContextModeOverride(chat.id)
+    val effectiveMode = vm.chatContextMode(chat.id)
+    val defaultMode = vm.chatMemorySettings().defaultContextMode
     val stats = vm.chatMemoryStats(chat.id)
 
     MemorySettingsExpander(
         title = "Контекст чата",
-        subtitle = modeLabel(mode),
+        subtitle = if (overrideMode == null) {
+            "По умолчанию · ${modeLabel(effectiveMode)}"
+        } else {
+            modeLabel(effectiveMode)
+        },
         expanded = expanded,
         onToggle = { expanded = !expanded }
     )
@@ -70,17 +76,22 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
     )
 
     ContextModeChoice(
-        selected = mode == ChatContextMode.AUTO,
+        selected = overrideMode == null,
+        title = "По умолчанию: ${modeLabel(defaultMode)}",
+        description = "Следовать общему режиму из Настройки → Память и контекст. Если общий режим изменится, этот чат изменится вместе с ним."
+    ) { vm.setChatContextMode(chat.id, null) }
+    ContextModeChoice(
+        selected = overrideMode == ChatContextMode.AUTO,
         title = "Автоматический",
         description = "Полная история до заданного порога, затем свежие сообщения + карточка памяти + найденные старые фрагменты."
     ) { vm.setChatContextMode(chat.id, ChatContextMode.AUTO) }
     ContextModeChoice(
-        selected = mode == ChatContextMode.FULL,
+        selected = overrideMode == ChatContextMode.FULL,
         title = "Всегда полный",
         description = "Отправлять максимум исходной истории, который помещается в контекст выбранной модели. Долговременная память не используется."
     ) { vm.setChatContextMode(chat.id, ChatContextMode.FULL) }
     ContextModeChoice(
-        selected = mode == ChatContextMode.ECONOMY,
+        selected = overrideMode == ChatContextMode.ECONOMY,
         title = "Экономный",
         description = "Раньше переходить на гибридную память и держать меньший свежий хвост диалога."
     ) { vm.setChatContextMode(chat.id, ChatContextMode.ECONOMY) }
@@ -93,7 +104,7 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(
             onClick = { vm.rebuildChatMemory(chat.id) },
-            enabled = !state.isLoading && !state.requestActive && mode != ChatContextMode.FULL,
+            enabled = !state.isLoading && !state.requestActive && effectiveMode != ChatContextMode.FULL,
             modifier = Modifier.weight(1f)
         ) {
             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -142,6 +153,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     val initial = vm.chatMemorySettings()
     var embeddingModel by remember(initial.embeddingModelId) { mutableStateOf(initial.embeddingModelId) }
     var summaryModel by remember(initial.summaryModelId) { mutableStateOf(initial.summaryModelId) }
+    var defaultMode by remember(initial.defaultContextMode) { mutableStateOf(initial.defaultContextMode) }
     var autoThreshold by remember(initial.autoThresholdTokens) { mutableStateOf(initial.autoThresholdTokens.toString()) }
     var economyThreshold by remember(initial.economyThresholdTokens) { mutableStateOf(initial.economyThresholdTokens.toString()) }
     var autoRecent by remember(initial.autoRecentMessages) { mutableStateOf(initial.autoRecentMessages.toString()) }
@@ -149,6 +161,8 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     var topK by remember(initial.topK) { mutableStateOf(initial.topK.toString()) }
     var checkpointTokens by remember(initial.checkpointTokens) { mutableStateOf(initial.checkpointTokens.toString()) }
     var chunkTokens by remember(initial.chunkTokens) { mutableStateOf(initial.chunkTokens.toString()) }
+    var chunkOverlap by remember(initial.chunkOverlapTokens) { mutableStateOf(initial.chunkOverlapTokens.toString()) }
+    var neighborChunks by remember(initial.neighborChunks) { mutableStateOf(initial.neighborChunks.toString()) }
     var minimumScore by remember(initial.minimumScore) { mutableStateOf(String.format(Locale.US, "%.2f", initial.minimumScore)) }
     var stateCardMaxChars by remember(initial.stateCardMaxChars) { mutableStateOf(initial.stateCardMaxChars.toString()) }
     var embeddingMenu by remember { mutableStateOf(false) }
@@ -166,14 +180,28 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     val textChoices = (listOf(summaryModel, state.currentChatTextModel.orEmpty(), state.textModel, "openrouter/auto") +
         state.availableTextModels.filter { ModelCategory.TEXT in it.categories && !it.isBatch }.map { it.id })
         .filter(String::isNotBlank).distinct()
+    val selectedEmbeddingInfo = catalogState.catalog.firstOrNull { it.id == embeddingModel }
+    val detectedEmbeddingContext = selectedEmbeddingInfo?.contextLength
+        ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
+    val requestedChunk = chunkTokens.toIntOrNull() ?: initial.chunkTokens
+    val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
 
     ElevatedCard(Modifier.fillMaxWidth()) {
         Column(Modifier.fillMaxWidth().padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(22.dp))
+                Icon(
+                    Icons.Outlined.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
                 Spacer(Modifier.width(9.dp))
                 Column(Modifier.weight(1f)) {
-                    Text("Память и контекст", fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Память и контекст",
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                     Text(
                         "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
                         style = MaterialTheme.typography.bodySmall,
@@ -181,7 +209,11 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                     )
                 }
                 IconButton(onClick = { expanded = !expanded }) {
-                    Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                    Icon(
+                        if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
             if (!expanded) return@Column
@@ -191,6 +223,33 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+
+            Text("Режим контекста по умолчанию", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Используется чатами, где не задан индивидуальный режим.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                FilterChip(
+                    selected = defaultMode == ChatContextMode.AUTO,
+                    onClick = { defaultMode = ChatContextMode.AUTO },
+                    label = { Text("Авто") }
+                )
+                FilterChip(
+                    selected = defaultMode == ChatContextMode.FULL,
+                    onClick = { defaultMode = ChatContextMode.FULL },
+                    label = { Text("Полный") }
+                )
+                FilterChip(
+                    selected = defaultMode == ChatContextMode.ECONOMY,
+                    onClick = { defaultMode = ChatContextMode.ECONOMY },
+                    label = { Text("Эконом") }
+                )
+            }
 
             Text("Embedding-модель", fontWeight = FontWeight.SemiBold)
             Box {
@@ -208,8 +267,21 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                     }
                 }
             }
-            if (catalogState.loading) {
-                Text("Обновляю список Embeddings OpenRouter…", style = MaterialTheme.typography.bodySmall)
+            when {
+                catalogState.loading -> Text(
+                    "Обновляю список Embeddings OpenRouter…",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                detectedEmbeddingContext != null -> Text(
+                    "Окно выбранной Embedding-модели: $detectedEmbeddingContext токенов. Рабочий фрагмент: до $effectiveChunk токенов с запасом для токенизации.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                else -> Text(
+                    "OpenRouter не сообщил лимит этой модели. Umnik использует заданный размер фрагмента; при выборе модели из каталога лимит сохраняется автоматически.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             Text("Модель конспекта", fontWeight = FontWeight.SemiBold)
@@ -241,14 +313,25 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
             NumericMemoryField("Экономный: включить после, токенов", economyThreshold) { economyThreshold = it }
             NumericMemoryField("Автоматический: свежих сообщений", autoRecent) { autoRecent = it }
             NumericMemoryField("Экономный: свежих сообщений", economyRecent) { economyRecent = it }
-            NumericMemoryField("Старых фрагментов в запросе", topK) { topK = it }
+            NumericMemoryField("Старых фрагментов в поиске", topK) { topK = it }
 
             TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (advanced) "Скрыть дополнительные параметры" else "Дополнительные параметры")
             }
             if (advanced) {
                 NumericMemoryField("Размер checkpoint, токенов", checkpointTokens) { checkpointTokens = it }
-                NumericMemoryField("Размер фрагмента поиска, токенов", chunkTokens) { chunkTokens = it }
+                NumericMemoryField("Желаемый размер фрагмента поиска, токенов", chunkTokens) { chunkTokens = it }
+                NumericMemoryField("Перекрытие соседних фрагментов, токенов", chunkOverlap) { chunkOverlap = it }
+                NumericMemoryField("Соседних фрагментов с каждой стороны (0–1)", neighborChunks) { neighborChunks = it }
+                Text(
+                    if (detectedEmbeddingContext != null) {
+                        "Адаптивный предел сейчас: $effectiveChunk токенов. Больший заданный размер автоматически уменьшается под окно выбранной Embedding-модели."
+                    } else {
+                        "Если каталог сообщает окно Embedding-модели, Umnik автоматически ограничивает размер фрагмента примерно 75% этого окна."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 OutlinedTextField(
                     value = minimumScore,
                     onValueChange = { minimumScore = it.filter { c -> c.isDigit() || c == '.' || c == '-' } },
@@ -266,10 +349,14 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
 
             FilledTonalButton(
                 onClick = {
+                    val catalogLimit = catalogState.catalog.firstOrNull { it.id == embeddingModel }?.contextLength
+                    val savedLimit = catalogLimit
+                        ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
                     vm.saveChatMemorySettings(
                         ChatMemoryGlobalSettings(
                             embeddingModelId = embeddingModel,
                             summaryModelId = summaryModel,
+                            defaultContextMode = defaultMode,
                             autoThresholdTokens = autoThreshold.toIntOrNull() ?: initial.autoThresholdTokens,
                             economyThresholdTokens = economyThreshold.toIntOrNull() ?: initial.economyThresholdTokens,
                             autoRecentMessages = autoRecent.toIntOrNull() ?: initial.autoRecentMessages,
@@ -277,6 +364,9 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                             topK = topK.toIntOrNull() ?: initial.topK,
                             checkpointTokens = checkpointTokens.toIntOrNull() ?: initial.checkpointTokens,
                             chunkTokens = chunkTokens.toIntOrNull() ?: initial.chunkTokens,
+                            chunkOverlapTokens = chunkOverlap.toIntOrNull() ?: initial.chunkOverlapTokens,
+                            neighborChunks = neighborChunks.toIntOrNull() ?: initial.neighborChunks,
+                            embeddingContextTokens = savedLimit,
                             minimumScore = minimumScore.toDoubleOrNull() ?: initial.minimumScore,
                             stateCardMaxChars = stateCardMaxChars.toIntOrNull() ?: initial.stateCardMaxChars
                         )
@@ -334,17 +424,34 @@ private fun MemorySettingsExpander(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Outlined.History, contentDescription = null, modifier = Modifier.size(21.dp))
+            Icon(
+                Icons.Outlined.History,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(21.dp)
+            )
             Spacer(Modifier.width(8.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.SemiBold)
+                Text(title, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             IconButton(onClick = onToggle) {
-                Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = null)
+                Icon(
+                    if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }
+}
+
+private fun adaptiveChunkTarget(requestedTokens: Int, embeddingContextTokens: Int?): Int {
+    val requested = requestedTokens.coerceIn(128, 4_000)
+    val safe = embeddingContextTokens
+        ?.takeIf { it >= 128 }
+        ?.let { (it * 3 / 4).coerceAtLeast(96) }
+    return minOf(requested, safe ?: requested).coerceAtLeast(96)
 }
 
 private fun modeLabel(mode: ChatContextMode): String = when (mode) {
