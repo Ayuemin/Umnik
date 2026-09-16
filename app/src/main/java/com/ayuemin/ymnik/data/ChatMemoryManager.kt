@@ -68,6 +68,11 @@ class ChatMemoryManager(
             sync(chat, fullHistory, settings, recentCount, apiKey, baseUrl)
             val snapshot = repository.snapshot(chat.id)
             val recent = completed.takeLast(recentCount.coerceAtMost(completed.size))
+            val recentIds = recent.map { it.id }.toSet()
+            val indexedIds = snapshot?.indexedFingerprints?.keys.orEmpty()
+            val directHistory = completed.filter { message ->
+                message.id !in indexedIds || message.id in recentIds
+            }
             val queryVector = embeddings.embed(
                 apiKey = apiKey,
                 modelId = settings.embeddingModelId,
@@ -104,9 +109,9 @@ class ChatMemoryManager(
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; original=${completed.size}; recent=${recent.size}; hits=${hits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; memoryChars=${memoryText.length}"
+                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; original=${completed.size}; recent=${recent.size}; direct=${directHistory.size}; hits=${hits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; memoryChars=${memoryText.length}"
             )
-            PreparedContext(recent, "\n$memoryText\n", "hybrid")
+            PreparedContext(directHistory, "\n$memoryText\n", "hybrid")
         }.onFailure { error ->
             DiagnosticLog.record(context, "CHAT_MEMORY", "chat=${chat.id.take(8)}; hybrid failed; fallback=full", error)
         }.getOrElse { PreparedContext(fullHistory, description = "fallback-full") }
@@ -160,6 +165,18 @@ class ChatMemoryManager(
             turn.size == 2 && turn.any { indexed[it.id] != fingerprint(it) }
         }
         if (newTurns.isEmpty()) return
+
+        val pendingTokens = newTurns.sumOf { turn ->
+            turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
+        }
+        if (snapshot != null && pendingTokens < settings.checkpointTokens) {
+            DiagnosticLog.record(
+                context,
+                "CHAT_MEMORY",
+                "checkpoint pending chat=${chat.id.take(8)}; tokens=$pendingTokens/${settings.checkpointTokens}; turns=${newTurns.size}"
+            )
+            return
+        }
 
         val groups = mutableListOf<MutableList<ChatMessage>>()
         var group = mutableListOf<ChatMessage>()
