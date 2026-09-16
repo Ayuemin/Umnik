@@ -15,7 +15,13 @@ import kotlinx.coroutines.launch
 
 /** Process-wide owner of the network job. The Activity can be recreated without cancelling it. */
 internal object RequestExecutionManager {
-    data class Snapshot(val activeChatId: String? = null, val sequence: Long = 0L, val lastError: String? = null)
+    data class Snapshot(
+        val activeChatId: String? = null,
+        val sequence: Long = 0L,
+        val lastError: String? = null,
+        val label: String? = null,
+        val startedAt: Long? = null
+    )
 
     private const val WAKE_LOCK_TIMEOUT_MS = 15L * 60L * 1000L
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -81,7 +87,7 @@ internal object RequestExecutionManager {
         acquireWakeLock(app)
         cancelCall = cancelNetworkCall
         stoppingService = false
-        mutableSnapshots.value = Snapshot(chatId, mutableSnapshots.value.sequence + 1L)
+        mutableSnapshots.value = Snapshot(chatId, mutableSnapshots.value.sequence + 1L, label = label, startedAt = System.currentTimeMillis())
         return scope.launch {
             try {
                 execute()
@@ -103,6 +109,13 @@ internal object RequestExecutionManager {
                 mutableSnapshots.value = Snapshot(null, mutableSnapshots.value.sequence + 1L, mutableSnapshots.value.lastError)
             }
         }.also { job = it }
+    }
+
+    fun updatePhase(context: Context, label: String) {
+        if (!hasActiveRequest()) return
+        val clean = label.trim().take(160).ifBlank { "Модель работает…" }
+        mutableSnapshots.value = mutableSnapshots.value.copy(label = clean)
+        RequestKeepAliveService.update(context.applicationContext, clean)
     }
 
     fun fail(message: String) {

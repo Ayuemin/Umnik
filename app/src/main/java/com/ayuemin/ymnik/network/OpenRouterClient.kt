@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
 import android.util.Base64
+import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -16,6 +17,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
@@ -23,6 +25,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.File
+import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -31,7 +34,8 @@ class OpenRouterClient(private val context: Context) {
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
-        .retryOnConnectionFailure(false)
+        .retryOnConnectionFailure(true)
+        .pingInterval(20, TimeUnit.SECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -214,11 +218,16 @@ class OpenRouterClient(private val context: Context) {
         DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: "provider"}; output=provider; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
+        val requestRunId = UUID.randomUUID().toString()
         var loops = 0
         while (loops++ < 5) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
+                add("metadata", JsonObject().apply {
+                    addProperty("umnik_request_id", requestRunId)
+                    addProperty("umnik_step", loops.toString())
+                })
                 if (toolsEnabled) add("tools", tools())
 
                 if (webSearchEnabled) {
@@ -370,19 +379,105 @@ class OpenRouterClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
             .header("X-OpenRouter-Metadata", "enabled")
+            // A short-lived response cache lets Umnik recover the exact already-paid
+            // completion after a mobile HTTP/2 interruption instead of blindly paying twice.
+            .header("X-OpenRouter-Cache", "true")
+            .header("X-OpenRouter-Cache-TTL", "300")
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
-        try {
-            executeActive(request).use { response ->
-                val body = response.body?.string().orEmpty()
-                if (!response.isSuccessful) error(apiError(response.code, body))
-                val completion = OpenRouterResponseParser.parse(body, allowEmpty)
-                DiagnosticLog.record(context, "COMPLETION", "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}")
-                return completion
+
+        var recoveryAttempt = 0
+        while (true) {
+            var generationId: String? = null
+            var cacheStatus: String? = null
+            try {
+                RequestExecutionManager.updatePhase(
+                    context,
+                    if (recoveryAttempt == 0) "Запрос отправлен · модель отвечает…" else "Забираю восстановленный ответ…"
+                )
+                executeActive(request).use { response ->
+                    generationId = response.header("X-Generation-Id")
+                    cacheStatus = response.header("X-OpenRouter-Cache-Status")
+                    RequestExecutionManager.updatePhase(
+                        context,
+                        if (cacheStatus.equals("HIT", ignoreCase = true))
+                            "Готовый ответ найден · загружаю…"
+                        else
+                            "Модель формирует ответ…"
+                    )
+                    val body = response.body?.string().orEmpty()
+                    if (!response.isSuccessful) error(apiError(response.code, body))
+                    val completion = OpenRouterResponseParser.parse(body, allowEmpty)
+                    DiagnosticLog.record(
+                        context,
+                        "COMPLETION",
+                        "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}; cache=${cacheStatus ?: "off"}"
+                    )
+                    return completion
+                }
+            } catch (error: IOException) {
+                val locallyCancelled = synchronized(activeCallLock) { activeCall?.isCanceled() == true }
+                val recover = shouldRecoverOpenRouterBodyFailure(
+                    locallyCancelled = locallyCancelled,
+                    generationId = generationId,
+                    cacheStatus = cacheStatus,
+                    recoveryAttempt = recoveryAttempt
+                )
+                DiagnosticLog.record(
+                    context,
+                    "REQUEST_RECOVERY",
+                    "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; cache=${cacheStatus ?: "off"}; recover=$recover; error=${error::class.java.simpleName}: ${error.message}"
+                )
+                if (!recover) throw error
+
+                clearActiveCall()
+                RequestExecutionManager.updatePhase(context, "Связь прервалась · проверяю готовый ответ…")
+                val ready = if (cacheStatus.equals("HIT", ignoreCase = true)) {
+                    true
+                } else {
+                    awaitGenerationFinished(apiKey, baseUrl, generationId.orEmpty())
+                }
+                if (!ready) {
+                    DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation not completed in recovery window; id=${generationId ?: "none"}")
+                    throw error
+                }
+                recoveryAttempt += 1
+                RequestExecutionManager.updatePhase(context, "Ответ готов · восстанавливаю соединение…")
+                delay(700L)
+            } finally {
+                clearActiveCall()
             }
-        } finally {
-            clearActiveCall()
         }
+    }
+
+    private suspend fun awaitGenerationFinished(apiKey: String, baseUrl: String, generationId: String): Boolean {
+        if (generationId.isBlank()) return false
+        repeat(12) { attempt ->
+            if (attempt > 0) delay(2_500L)
+            val request = Request.Builder()
+                .url(endpoint(baseUrl, "generation") + "?id=" + Uri.encode(generationId))
+                .header("Authorization", "Bearer $apiKey")
+                .header("X-Title", "Umnik Android")
+                .get()
+                .build()
+            val result = runCatching {
+                http.newCall(request).execute().use { response ->
+                    if (response.code == 404) return@use null
+                    if (!response.isSuccessful) return@use false
+                    val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+                    val data = root.getAsJsonObject("data") ?: return@use null
+                    if (runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true) return@use false
+                    val finish = data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                    if (finish.isNotBlank()) true else null
+                }
+            }.getOrNull()
+            if (result == true) {
+                DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation completed; id=$generationId; poll=${attempt + 1}")
+                return true
+            }
+            if (result == false) return false
+        }
+        return false
     }
 
     private fun message(role: String, text: String) = JsonObject().apply {

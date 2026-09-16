@@ -66,6 +66,7 @@ class RequestKeepAliveService : Service() {
                 .setContentIntent(openChat)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", cancel)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
                 .build()
         } else {
             @Suppress("DEPRECATION")
@@ -76,6 +77,7 @@ class RequestKeepAliveService : Service() {
                 .setContentIntent(openChat)
                 .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Остановить", cancel)
                 .setOngoing(true)
+                .setOnlyAlertOnce(true)
                 .build()
         }
         startForeground(NOTIFICATION_ID, notification)
@@ -130,6 +132,10 @@ class RequestKeepAliveService : Service() {
                 context,
                 Intent(context, RequestKeepAliveService::class.java).putExtra(EXTRA_LABEL, label)
             )
+        }
+
+        fun update(context: Context, label: String) {
+            start(context, label)
         }
 
         fun stop(context: Context) {
