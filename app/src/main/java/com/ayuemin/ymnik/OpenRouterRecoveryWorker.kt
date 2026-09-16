@@ -22,6 +22,7 @@ import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.ayuemin.ymnik.network.OpenRouterResponseParser
 import com.ayuemin.ymnik.network.isOpenRouterResponseCacheRecoverable
+import com.ayuemin.ymnik.network.openRouterApiKeyFingerprint
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -68,6 +69,11 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
 
         val apiKey = SecretStore(applicationContext).getProfileApiKey(record.connectionProfileId)
         if (apiKey.isNullOrBlank()) return Result.retry()
+        if (openRouterApiKeyFingerprint(apiKey) != record.apiKeyFingerprint) {
+            failPending(record, "API-ключ OpenRouter изменился после отправки запроса. Автоматический повтор отменён, чтобы исключить двойную оплату.")
+            store.remove(requestId)
+            return Result.success()
+        }
 
         return runCatching { recover(record, apiKey) }
             .fold(
@@ -147,7 +153,12 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         }
         if (!ready) throw IOException("Generation is not complete yet")
 
-        // Give OpenRouter a brief moment to make the just-completed response cache-visible.
+        // If the account has opted into OpenRouter input/output logging, this read-only endpoint
+        // can return the completed text directly. It costs nothing and avoids any replay at all.
+        storedGenerationCompletion(client, gson, record, apiKey, generationId)?.let { return@withContext it }
+
+        // Otherwise use the exact response-cache replay. The caller already verified that the
+        // original response explicitly reported HIT/MISS and that the API-key fingerprint matches.
         delay(900L)
         val request = Request.Builder()
             .url(endpoint(record.baseUrl, "chat/completions"))
@@ -169,6 +180,52 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
             }
             OpenRouterResponseParser.parse(body, allowEmpty = false)
         }
+    }
+
+    private fun storedGenerationCompletion(
+        client: OkHttpClient,
+        gson: Gson,
+        record: OpenRouterRecoveryRecord,
+        apiKey: String,
+        generationId: String
+    ): OpenRouterResponseParser.Completion? {
+        val request = Request.Builder()
+            .url(endpoint(record.baseUrl, "generation/content") + "?id=" + Uri.encode(generationId))
+            .header("Authorization", "Bearer $apiKey")
+            .header("X-Title", "Umnik Android")
+            .get()
+            .build()
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) return@use null
+                if (!response.isSuccessful) return@use null
+                val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+                val completion = root?.getAsJsonObject("data")
+                    ?.getAsJsonObject("output")
+                    ?.get("completion")
+                    ?.takeUnless { it.isJsonNull }
+                    ?.asString
+                    ?.takeIf { it.isNotBlank() }
+                    ?: return@use null
+                DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovered directly from generation/content request=${record.requestId.take(8)}")
+                OpenRouterResponseParser.Completion(
+                    message = JsonObject().apply {
+                        addProperty("role", "assistant")
+                        addProperty("content", completion)
+                    },
+                    id = generationId,
+                    provider = "",
+                    model = record.modelId,
+                    finishReason = "stop",
+                    nativeFinishReason = "",
+                    promptTokens = null,
+                    completionTokens = null,
+                    totalTokens = null,
+                    reasoningTokens = null,
+                    costUsd = null
+                )
+            }
+        }.getOrNull()
     }
 
     private fun networkAvailable(): Boolean {

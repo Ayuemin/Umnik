@@ -65,7 +65,7 @@ class RequestKeepAliveService : Service() {
             Notification.Builder(this)
         }
         builder
-            .setSmallIcon(R.drawable.ic_umnik)
+            .setSmallIcon(R.drawable.ic_notification_umnik)
             .setContentTitle(title)
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))

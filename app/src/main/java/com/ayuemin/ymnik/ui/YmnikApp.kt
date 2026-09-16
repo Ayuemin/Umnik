@@ -154,6 +154,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.model.AnswerSoundChoice
@@ -198,7 +199,9 @@ fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
-    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) RequestKeepAliveService.update(context.applicationContext)
+    }
     val tts = remember { TtsController(context) }
     val openRouterSpeech = remember(viewModel) { OpenRouterSpeechPlayer(context.applicationContext, viewModel) }
     val openRouterSpeechState by openRouterSpeech.state.collectAsState()

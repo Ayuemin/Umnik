@@ -9,6 +9,7 @@ internal data class OpenRouterRecoveryRecord(
     val chatId: String,
     val messageId: String,
     val connectionProfileId: String,
+    val apiKeyFingerprint: String,
     val baseUrl: String,
     val modelId: String,
     val payloadJson: String,

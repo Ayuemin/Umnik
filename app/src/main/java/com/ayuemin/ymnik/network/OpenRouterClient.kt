@@ -385,7 +385,7 @@ class OpenRouterClient(
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
         val payloadJson = gson.toJson(payload)
-        val recoveryRecord = recoveryRecord(baseUrl, model, payloadJson)
+        val recoveryRecord = recoveryRecord(apiKey, baseUrl, model, payloadJson)
         recoveryRecord?.let { record ->
             recoveryStore.put(record)
             // Persist the fallback before network I/O. If Android kills the process before
@@ -505,7 +505,7 @@ class OpenRouterClient(
         }
     }
 
-    private fun recoveryRecord(baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
+    private fun recoveryRecord(apiKey: String, baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
         if (!recoveryEnabled) return null
         val id = requestId?.takeIf { it.isNotBlank() } ?: return null
         val snapshot = RequestExecutionManager.snapshotForRequest(id) ?: return null
@@ -519,6 +519,7 @@ class OpenRouterClient(
             chatId = chatId,
             messageId = snapshot.messageId,
             connectionProfileId = profileId,
+            apiKeyFingerprint = openRouterApiKeyFingerprint(apiKey),
             baseUrl = baseUrl,
             modelId = model,
             payloadJson = payloadJson

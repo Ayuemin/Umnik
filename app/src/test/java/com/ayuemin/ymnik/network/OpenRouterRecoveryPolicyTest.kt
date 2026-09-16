@@ -1,6 +1,8 @@
 package com.ayuemin.ymnik.network
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -10,6 +12,15 @@ class OpenRouterRecoveryPolicyTest {
         assertTrue(isOpenRouterResponseCacheRecoverable("hit"))
         assertFalse(isOpenRouterResponseCacheRecoverable(null))
         assertFalse(isOpenRouterResponseCacheRecoverable("BYPASS"))
+    }
+
+    @Test fun apiKeyFingerprintIsStableButDoesNotStoreTheKey() {
+        val key = "sk-or-test-secret-123"
+        val first = openRouterApiKeyFingerprint(key)
+        assertEquals(first, openRouterApiKeyFingerprint(key))
+        assertNotEquals(first, openRouterApiKeyFingerprint("sk-or-other"))
+        assertFalse(first.contains(key))
+        assertEquals(64, first.length)
     }
 
     @Test fun recoversCachedGenerationAfterRemoteBodyFailure() {
