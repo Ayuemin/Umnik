@@ -16,6 +16,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import kotlin.math.abs
 import kotlin.math.sqrt
 
 /**
@@ -35,12 +36,22 @@ class ChatMemoryRepository(private val context: Context) {
         prefs.edit().putString(KEY_SETTINGS, gson.toJson(sanitize(value))).apply()
     }
 
-    fun mode(chatId: String): ChatContextMode = runCatching {
-        ChatContextMode.valueOf(prefs.getString(modeKey(chatId), ChatContextMode.AUTO.name) ?: ChatContextMode.AUTO.name)
-    }.getOrDefault(ChatContextMode.AUTO)
+    /** Null means that this chat follows the global default context mode. */
+    fun modeOverride(chatId: String): ChatContextMode? {
+        val key = modeKey(chatId)
+        if (!prefs.contains(key)) return null
+        return runCatching {
+            ChatContextMode.valueOf(prefs.getString(key, null).orEmpty())
+        }.getOrNull()
+    }
 
-    fun saveMode(chatId: String, mode: ChatContextMode) {
-        prefs.edit().putString(modeKey(chatId), mode.name).apply()
+    /** Effective mode after applying the global default to chats without an override. */
+    fun mode(chatId: String): ChatContextMode = modeOverride(chatId) ?: settings().defaultContextMode
+
+    fun saveMode(chatId: String, mode: ChatContextMode?) {
+        val editor = prefs.edit()
+        if (mode == null) editor.remove(modeKey(chatId)) else editor.putString(modeKey(chatId), mode.name)
+        editor.apply()
     }
 
     fun snapshot(chatId: String): ChatMemorySnapshot? = synchronized(this) {
@@ -66,8 +77,19 @@ class ChatMemoryRepository(private val context: Context) {
         require(chunks.size == vectors.size) { "Число фрагментов памяти и embeddings не совпадает" }
         val clean = sanitize(settings)
         val current = snapshot(chatId)?.takeIf {
-            it.embeddingModelId == clean.embeddingModelId && it.summaryModelId == clean.summaryModelId
-        } ?: ChatMemorySnapshot(chatId, clean.embeddingModelId, clean.summaryModelId)
+            it.embeddingModelId == clean.embeddingModelId &&
+                it.summaryModelId == clean.summaryModelId &&
+                it.chunkTokens == clean.chunkTokens &&
+                it.chunkOverlapTokens == clean.chunkOverlapTokens &&
+                it.embeddingContextTokens == clean.embeddingContextTokens
+        } ?: ChatMemorySnapshot(
+            chatId = chatId,
+            embeddingModelId = clean.embeddingModelId,
+            summaryModelId = clean.summaryModelId,
+            chunkTokens = clean.chunkTokens,
+            chunkOverlapTokens = clean.chunkOverlapTokens,
+            embeddingContextTokens = clean.embeddingContextTokens
+        )
 
         val storedChunks = chunks.mapIndexed { index, chunk ->
             val vector = vectors[index]
@@ -90,14 +112,17 @@ class ChatMemoryRepository(private val context: Context) {
         chatId: String,
         query: FloatArray,
         topK: Int,
-        minimumScore: Double
+        minimumScore: Double,
+        neighborRadius: Int = 0
     ): List<ChatMemoryHit> = withContext(Dispatchers.IO) {
         val snapshot = snapshot(chatId) ?: return@withContext emptyList()
         if (query.isEmpty()) return@withContext emptyList()
         val queryNorm = sqrt(query.fold(0.0) { acc, value -> acc + value * value })
         if (queryNorm <= 0.0) return@withContext emptyList()
 
-        snapshot.chunks.mapNotNull { chunk ->
+        data class Scored(val chunk: ChatMemoryChunk, val score: Double)
+
+        val scored = snapshot.chunks.mapNotNull { chunk ->
             if (chunk.vectorDimension != query.size) return@mapNotNull null
             val vector = readVector(vectorFile(chatId, chunk.id)) ?: return@mapNotNull null
             if (vector.size != query.size) return@mapNotNull null
@@ -108,14 +133,39 @@ class ChatMemoryRepository(private val context: Context) {
                 norm += vector[index] * vector[index]
             }
             val score = if (norm <= 0.0) 0.0 else dot / (queryNorm * sqrt(norm))
-            if (score < minimumScore) null else ChatMemoryHit(
-                text = chunk.text,
-                messageIds = chunk.messageIds,
-                startTimestamp = chunk.startTimestamp,
-                endTimestamp = chunk.endTimestamp,
-                score = score
+            Scored(chunk, score)
+        }
+        val centers = scored
+            .filter { it.score >= minimumScore }
+            .sortedByDescending { it.score }
+            .take(topK.coerceIn(1, 10))
+        if (centers.isEmpty()) return@withContext emptyList()
+
+        val radius = neighborRadius.coerceIn(0, 1)
+        val scoredById = scored.associateBy { it.chunk.id }
+        val selectedIds = linkedSetOf<String>()
+        centers.forEach { center ->
+            snapshot.chunks.forEach { candidate ->
+                if (
+                    candidate.checkpointId == center.chunk.checkpointId &&
+                    abs(candidate.ordinal - center.chunk.ordinal) <= radius &&
+                    candidate.id in scoredById
+                ) {
+                    selectedIds += candidate.id
+                }
+            }
+        }
+
+        selectedIds.mapNotNull { id ->
+            val item = scoredById[id] ?: return@mapNotNull null
+            ChatMemoryHit(
+                text = item.chunk.text,
+                messageIds = item.chunk.messageIds,
+                startTimestamp = item.chunk.startTimestamp,
+                endTimestamp = item.chunk.endTimestamp,
+                score = item.score
             )
-        }.sortedByDescending { it.score }.take(topK.coerceIn(1, 12))
+        }.sortedWith(compareBy<ChatMemoryHit> { it.startTimestamp }.thenBy { it.endTimestamp })
     }
 
     fun stats(chatId: String): ChatMemoryStats {
@@ -132,7 +182,7 @@ class ChatMemoryRepository(private val context: Context) {
 
     fun totalBytes(): Long = directorySize(root)
 
-    /** Removes generated memory but preserves the selected context mode. */
+    /** Removes generated memory but preserves the selected context-mode override. */
     @Synchronized
     fun clearMemory(chatId: String) {
         chatDir(chatId, create = false)?.deleteRecursively()
@@ -198,18 +248,33 @@ class ChatMemoryRepository(private val context: Context) {
     }.getOrNull()
 
     private fun sanitize(value: ChatMemoryGlobalSettings): ChatMemoryGlobalSettings {
+        val legacy = value.schemaVersion < ChatMemoryGlobalSettings.CURRENT_SCHEMA_VERSION
         val autoThreshold = value.autoThresholdTokens.coerceIn(8_000, 1_000_000)
         val economyThreshold = value.economyThresholdTokens.coerceIn(4_000, autoThreshold)
+        val defaultMode = if (legacy) {
+            ChatContextMode.AUTO
+        } else {
+            runCatching { value.defaultContextMode }.getOrNull() ?: ChatContextMode.AUTO
+        }
+        val overlap = if (legacy) 80 else value.chunkOverlapTokens.coerceIn(0, 1_000)
+        val neighbors = if (legacy) 1 else value.neighborChunks.coerceIn(0, 1)
+        val embeddingId = runCatching { value.embeddingModelId }.getOrNull()?.trim().orEmpty()
+        val summaryId = runCatching { value.summaryModelId }.getOrNull()?.trim().orEmpty()
         return value.copy(
-            embeddingModelId = value.embeddingModelId.trim().ifBlank { ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL },
-            summaryModelId = value.summaryModelId.trim().ifBlank { ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL },
+            schemaVersion = ChatMemoryGlobalSettings.CURRENT_SCHEMA_VERSION,
+            embeddingModelId = embeddingId.ifBlank { ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL },
+            summaryModelId = summaryId.ifBlank { ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL },
+            defaultContextMode = defaultMode,
             autoThresholdTokens = autoThreshold,
             economyThresholdTokens = economyThreshold,
             autoRecentMessages = value.autoRecentMessages.coerceIn(4, 30),
             economyRecentMessages = value.economyRecentMessages.coerceIn(2, 20),
             topK = value.topK.coerceIn(1, 10),
             checkpointTokens = value.checkpointTokens.coerceIn(4_000, 30_000),
-            chunkTokens = value.chunkTokens.coerceIn(400, 4_000),
+            chunkTokens = value.chunkTokens.coerceIn(128, 4_000),
+            chunkOverlapTokens = overlap,
+            neighborChunks = neighbors,
+            embeddingContextTokens = value.embeddingContextTokens?.coerceIn(128, 1_000_000),
             minimumScore = value.minimumScore.coerceIn(-1.0, 1.0),
             stateCardMaxChars = value.stateCardMaxChars.coerceIn(1_000, 20_000)
         )
