@@ -270,7 +270,7 @@ private fun ChatScreen(
     onOpenSkills: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
-    var text by remember { mutableStateOf("") }
+    var text by remember(state.currentChatId) { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var sidebarOpen by remember { mutableStateOf(false) }
     var projectsOpen by remember { mutableStateOf(false) }
@@ -313,6 +313,9 @@ private fun ChatScreen(
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
+    val requestActiveHere = state.requestActive && vm.activeRequestChatId() == state.currentChatId
+    val requestActiveElsewhere = state.requestActive && !requestActiveHere
+    val nonRequestBusy = state.isLoading && !state.requestActive
     val isUsageGuide = currentChat?.title == "Памятка по Umnik"
     var guideScrollTarget by remember(state.currentChatId) { mutableStateOf<Int?>(null) }
     LaunchedEffect(guideScrollTarget) {
@@ -333,7 +336,7 @@ private fun ChatScreen(
     val activeProjectSkillCount = projectAvailableSkills.count { it.id in state.activeSkillIds }
 
     fun startVoiceRecording() {
-        if (!microphoneAvailable || state.isLoading || state.requestActive || imagePromptMode) return
+        if (!microphoneAvailable || nonRequestBusy || state.requestActive || imagePromptMode) return
         runCatching { voiceRecorder.start() }
             .onSuccess {
                 recordingStartedAt = System.currentTimeMillis()
@@ -364,8 +367,8 @@ private fun ChatScreen(
         }
     }
 
-    LaunchedEffect(state.requestActive) {
-        if (!state.requestActive) {
+    LaunchedEffect(requestActiveHere) {
+        if (!requestActiveHere) {
             requestElapsedSeconds = 0
             return@LaunchedEffect
         }
@@ -680,7 +683,7 @@ onBranch = if (message.role == "assistant") {
                             }
                             IconButton(
                                 onClick = {
-                                    if (state.requestActive) {
+                                    if (requestActiveHere) {
                                         vm.stopGeneration()
                                     } else if (isRecording) {
                                         val file = voiceRecorder.stop()
@@ -701,12 +704,12 @@ onBranch = if (message.role == "assistant") {
                                         text = ""
                                     }
                                 },
-                                enabled = state.requestActive || isRecording || (!state.isLoading && (
+                                enabled = requestActiveHere || isRecording || (!requestActiveElsewhere && !nonRequestBusy && (
                                     text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
                                 )),
                                 modifier = Modifier.size(48.dp)
                             ) {
-                                if (state.requestActive) {
+                                if (requestActiveHere) {
                                     WorkingStopIcon()
                                 } else {
                                     Icon(
@@ -723,13 +726,14 @@ onBranch = if (message.role == "assistant") {
                     },
                     placeholder = {
                         when {
-                            state.requestActive -> Text(
+                            requestActiveHere -> Text(
                                 text = formatRequestDuration(requestElapsedSeconds),
                                 modifier = Modifier.fillMaxWidth(),
                                 textAlign = TextAlign.Center,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
+                            requestActiveElsewhere -> Text("Другой чат сейчас отвечает · здесь можно читать и готовить следующий запрос")
                             imagePromptMode -> Text("Опишите изображение")
                             currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
                         }

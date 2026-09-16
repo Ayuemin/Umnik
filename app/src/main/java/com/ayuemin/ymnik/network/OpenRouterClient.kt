@@ -35,7 +35,7 @@ class OpenRouterClient(private val context: Context) {
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter"))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
-        .pingInterval(20, TimeUnit.SECONDS)
+        .pingInterval(5, TimeUnit.SECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
