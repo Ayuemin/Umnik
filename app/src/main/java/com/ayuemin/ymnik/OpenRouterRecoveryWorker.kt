@@ -78,6 +78,10 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         return runCatching { recover(record, apiKey) }
             .fold(
                 onSuccess = { completion ->
+                    if (store.get(requestId) == null) {
+                        DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovered result discarded after manual cancellation request=${requestId.take(8)}")
+                        return@fold Result.success()
+                    }
                     val toolCalls = completion.message.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
                     if (toolCalls != null && toolCalls.size() > 0) {
                         DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Recovered completion requires local tool continuation; request=${requestId.take(8)}")
@@ -109,6 +113,10 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
                     Result.success()
                 },
                 onFailure = { error ->
+                    if (store.get(requestId) == null) {
+                        DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Background recovery stopped after manual cancellation request=${requestId.take(8)}")
+                        return@fold Result.success()
+                    }
                     DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Background recovery attempt failed request=${requestId.take(8)}", error)
                     Result.retry()
                 }
@@ -163,7 +171,15 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
 
         // Otherwise use the exact response-cache replay. The caller already verified that the
         // original response explicitly reported HIT/MISS and that the API-key fingerprint matches.
+        // Re-check the durable recovery record immediately before any POST so a manual Stop that
+        // happened while polling cannot trigger a late replay.
+        if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
+            throw IOException("Recovery cancelled")
+        }
         delay(900L)
+        if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
+            throw IOException("Recovery cancelled")
+        }
         val request = Request.Builder()
             .url(endpoint(record.baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")

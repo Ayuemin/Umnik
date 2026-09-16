@@ -36,7 +36,8 @@ internal object RequestExecutionManager {
     private data class Runtime(
         var snapshot: Snapshot,
         val job: Job,
-        val cancelNetworkCall: () -> Unit
+        val cancelNetworkCall: () -> Unit,
+        val appContext: Context
     )
 
     private data class PersistedRequest(
@@ -263,7 +264,7 @@ internal object RequestExecutionManager {
                 label = cleanLabel,
                 startedAt = startedAt
             ).also { snapshot ->
-                runtimes[requestId] = Runtime(snapshot, job, cancelNetworkCall)
+                runtimes[requestId] = Runtime(snapshot, job, cancelNetworkCall, app)
                 publishLocked()
             }
         }
@@ -309,8 +310,12 @@ internal object RequestExecutionManager {
 
     fun cancel(requestId: String) {
         val runtime = synchronized(lock) { runtimes[requestId] } ?: return
+        // Manual Stop is final: no WorkManager recovery may resurrect this answer later.
+        OpenRouterRecoveryStore(runtime.appContext).remove(requestId)
+        OpenRouterRecoveryWorker.cancel(runtime.appContext, requestId)
         runCatching { runtime.cancelNetworkCall.invoke() }
         runtime.job.cancel()
+        DiagnosticLog.record(runtime.appContext, "REQUEST_RECOVERY", "Manual cancellation cleared recovery request=${requestId.take(8)}")
     }
 
     fun cancelChat(chatId: String) {
