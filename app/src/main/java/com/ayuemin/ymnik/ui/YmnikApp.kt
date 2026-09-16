@@ -367,12 +367,12 @@ private fun ChatScreen(
         }
     }
 
-    LaunchedEffect(requestActiveHere) {
+    LaunchedEffect(requestActiveHere, state.currentChatId) {
         if (!requestActiveHere) {
             requestElapsedSeconds = 0
             return@LaunchedEffect
         }
-        val startedAt = System.currentTimeMillis()
+        val startedAt = vm.activeRequestStartedAt(state.currentChatId) ?: System.currentTimeMillis()
         while (true) {
             requestElapsedSeconds = ((System.currentTimeMillis() - startedAt) / 1000L)
                 .toInt()
