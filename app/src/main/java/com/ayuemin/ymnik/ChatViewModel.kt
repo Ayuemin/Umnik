@@ -3059,6 +3059,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
         val chatId = if (activeChat?.projectId == project.id) activeChat.id else createChat(project.id)
         val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        // Freeze the originating chat runtime. Navigation may change global UI state while stages run.
+        val launchState = _state.value
         val baseHistory = currentChat.messages
         val chatAttachments = currentChat.chatFiles.orEmpty().map(::chatFileAsAttachment)
         val startText = initialTask.trim().ifBlank {
@@ -3095,12 +3097,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             "project=${project.id.take(8)}; chat=${chatId.take(8)}; sequence=$sequenceName; stages=${stages.size}"
         )
 
-        projectStagesJob = viewModelScope.launch {
+        projectStagesJob = launchRequest(chatId, user.id, "Этапы $sequenceName · ${project.name}") {
             val results = mutableListOf<Pair<ProjectStage, String>>()
             try {
                 stages.forEachIndexed { index, stage ->
-                    if (generation != requestGeneration) return@launch
-                    val currentState = _state.value
+                    if (generation != requestGeneration) return@launchRequest
+                    val currentState = launchState
                     val requestedModel = stage.modelId?.takeIf { it.isNotBlank() }
                         ?: currentState.currentChatTextModel
                         ?: currentState.textModel
@@ -3198,7 +3200,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         appendLine()
                         appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
                     }
-                    _state.value = _state.value.copy(busyLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}")
+                    val phaseLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}"
+                    RequestExecutionManager.updatePhase(context, phaseLabel)
+                    _state.value = _state.value.copy(busyLabel = phaseLabel)
                     DiagnosticLog.record(
                         context,
                         "PROJECT_STAGE",
@@ -3233,7 +3237,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         appendProjectStageMessage(chatId, index + 1, stage.title, "Ошибка: $friendly", modelId, null)
                         DiagnosticLog.record(context, "PROJECT_STAGE", "failed project=${project.id.take(8)}; stage=${index + 1}; model=$modelId", error)
                         _state.value = _state.value.copy(status = "Этап ${index + 1} остановлен: $friendly")
-                        return@launch
+                        return@launchRequest
                     }
 
                     val stageText = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
@@ -4064,6 +4068,36 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val webSearchEnabled = _state.value.webSearchEnabled
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
+        // Everything below belongs to the chat that launched the request. Do not read
+        // mutable current-chat state from inside the background job after navigation.
+        val requestSkillIds = _state.value.activeSkillIds
+        val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
+        val requestProjectTextAttachments = if (mode == ChatMode.TEXT) {
+            currentProject?.files.orEmpty().map { file ->
+                PendingAttachment(
+                    uri = "project://${file.id}",
+                    name = file.name,
+                    mimeType = file.mimeType,
+                    size = file.size,
+                    localPath = file.localPath
+                )
+            }.filter { attachmentAllowed(it).first }
+        } else emptyList()
+        val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
+            persistentChatFiles.filter { attachmentAllowed(it).first }
+        } else emptyList()
+        val requestProjectImages = if (mode == ChatMode.IMAGE) {
+            currentProject?.files.orEmpty()
+                .filter { it.mimeType.startsWith("image/") && imageInfo?.accepts("image") == true }
+                .map { file -> PendingAttachment(
+                    uri = "project://${file.id}",
+                    name = file.name,
+                    mimeType = file.mimeType,
+                    size = file.size,
+                    localPath = file.localPath
+                ) }
+        } else emptyList()
         val requestId = ++requestGeneration
         activeRequestPending = pending
         DiagnosticLog.record(
@@ -4076,24 +4110,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillIds = _state.value.activeSkillIds
-                        val skillText = skills.promptFor(skillIds)
-                        val projectFiles = currentProject?.files.orEmpty().map { file ->
-                            PendingAttachment(
-                                uri = "project://${file.id}",
-                                name = file.name,
-                                mimeType = file.mimeType,
-                                size = file.size,
-                                localPath = file.localPath
-                            )
-                        }.filter { attachmentAllowed(it).first }
-                        val modelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
+                        val skillText = skills.promptFor(requestSkillIds)
+                        val projectFiles = requestProjectTextAttachments
+                        val modelInfo = requestTextModelInfo
                         val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
                         val requestModelInfo = (modelInfo ?: ModelInfo(textModel)).copy(contextLength = chosenWindow)
                         val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true &&
                             (modelInfo.reasoningEfforts.isEmpty() || reasoningEffort.apiValue in modelInfo.reasoningEfforts)
                         val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
-                        val allAttachments = (pending + persistentChatFiles.filter { attachmentAllowed(it).first } + projectFiles)
+                        val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
@@ -4135,15 +4160,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         }
                     }
                     ChatMode.IMAGE -> {
-                        val projectImages = currentProject?.files.orEmpty()
-                            .filter { it.mimeType.startsWith("image/") && currentImageModelInfo()?.accepts("image") == true }
-                            .map { file -> PendingAttachment(
-                                uri = "project://${file.id}",
-                                name = file.name,
-                                mimeType = file.mimeType,
-                                size = file.size,
-                                localPath = file.localPath
-                            ) }
+                        val projectImages = requestProjectImages
                         val projectPrefix = buildImageProjectPrompt(currentProject, currentChat)
                         val imagePrompt = listOf(projectPrefix, clean).filter { it.isNotBlank() }.joinToString("\n\n")
                         generateImageForProfile(
