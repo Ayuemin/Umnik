@@ -3747,7 +3747,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 DiagnosticLog.record(context, "ATTACHMENT", "camera loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
                     File(localPath).delete()
-                    _state.value = _state.value.copy(status = "Фото превышает ограничение 25 МБ")
+                    _state.value = _state.value.copy(status = "Фото превышает ограничение $MAX_ATTACHMENT_MB МБ")
                 } else {
                     val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
@@ -3778,7 +3778,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         if (file.length() > MAX_ATTACHMENT_BYTES) {
             file.delete()
-            _state.value = _state.value.copy(status = "Голосовое сообщение превышает ограничение 25 МБ")
+            _state.value = _state.value.copy(status = "Голосовое сообщение превышает ограничение $MAX_ATTACHMENT_MB МБ")
             return false
         }
         val attachment = PendingAttachment(
