@@ -17,9 +17,12 @@ internal class RequestNetworkSession(
     private val app = context.applicationContext
     private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
 
-    fun openRouter(): OpenRouterClient = OpenRouterClient(app) { label ->
+    fun openRouter(): OpenRouterClient = OpenRouterClient(app) { label -> updatePhase(label) }
+        .also { clients += it }
+
+    fun updatePhase(label: String) {
         RequestExecutionManager.updatePhase(app, requestId, label)
-    }.also { clients += it }
+    }
 
     fun cancel() {
         val snapshot = synchronized(clients) { clients.toList() }
