@@ -6,6 +6,7 @@ import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
+import com.ayuemin.ymnik.network.ServerJobRecoveryStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -147,8 +148,10 @@ internal object RequestExecutionManager {
         val chatRepository = ChatRepository(app)
         val chats = runCatching { chatRepository.list() }.getOrDefault(emptyList())
         val recoveryStore = OpenRouterRecoveryStore(app)
+        val serverRecoveryStore = ServerJobRecoveryStore(app)
         var batchCount = 0
         var recoveryCount = 0
+        var serverRecoveryCount = 0
         var interruptedCount = 0
 
         persisted.distinctBy { it.requestId }.forEach { saved ->
@@ -173,6 +176,12 @@ internal object RequestExecutionManager {
                 return@forEach
             }
 
+            if (messageId != null && serverRecoveryStore.get(saved.requestId) != null) {
+                serverRecoveryCount += 1
+                ServerJobRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replace = true)
+                return@forEach
+            }
+
             if (messageId != null && recoveryStore.get(saved.requestId) != null) {
                 recoveryCount += 1
                 OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
@@ -194,6 +203,7 @@ internal object RequestExecutionManager {
 
         return buildList {
             if (recoveryCount > 0) add("$recoveryCount запрос(а) восстанавливаются в фоне после перезапуска приложения.")
+            if (serverRecoveryCount > 0) add("$serverRecoveryCount серверных запрос(а) продолжаются на VPS и будут получены автоматически.")
             if (batchCount > 0) add("$batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически.")
             if (interruptedCount > 0) add("$interruptedCount запрос(а) были прерваны системой до безопасной точки восстановления; при необходимости повторите их вручную.")
         }.joinToString(" ").takeIf { it.isNotBlank() }
