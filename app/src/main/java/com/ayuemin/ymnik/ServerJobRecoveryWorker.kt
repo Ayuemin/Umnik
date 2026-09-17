@@ -18,6 +18,7 @@ import com.ayuemin.ymnik.network.OpenRouterResponseParser
 import com.ayuemin.ymnik.network.ServerJobRecoveryRecord
 import com.ayuemin.ymnik.network.ServerJobRecoveryStore
 import com.ayuemin.ymnik.network.UmnikServerClient
+import com.ayuemin.ymnik.network.UmnikServerHttpException
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import java.util.UUID
@@ -31,7 +32,12 @@ class ServerJobRecoveryWorker(context: Context, params: WorkerParameters) : Coro
 
         if (RequestExecutionManager.snapshotForRequest(requestId) != null) return Result.retry()
 
-        val serverToken = ServerConnectionStore(applicationContext).token() ?: return Result.retry()
+        val serverToken = ServerConnectionStore(applicationContext).token()
+            ?: return terminalFailure(
+                record,
+                recovery,
+                "Токен личного сервера отсутствует. Автоматическое восстановление остановлено."
+            )
         val payload = runCatching { Gson().fromJson(record.payloadJson, JsonObject::class.java) }.getOrNull()
             ?: return terminalFailure(record, recovery, "Не удалось прочитать сохранённый серверный запрос.")
 
@@ -57,6 +63,13 @@ class ServerJobRecoveryWorker(context: Context, params: WorkerParameters) : Coro
                 }
             },
             onFailure = { error ->
+                if (error is UmnikServerHttpException && error.statusCode in setOf(401, 403)) {
+                    return@fold terminalFailure(
+                        record,
+                        recovery,
+                        "Личный сервер отклонил сохранённый токен. Проверьте настройки подключения."
+                    )
+                }
                 DiagnosticLog.record(
                     applicationContext,
                     "SERVER_RECOVERY",
