@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "test/local-runtime-v1.18" ]
   pull_request:
     branches: [ "main" ]
 
@@ -37,14 +37,14 @@ jobs:
           gradle-version: "8.13"
 
       - name: Enable runtime transport experiment
-        if: github.event_name == 'pull_request'
+        if: github.ref_name == 'test/local-runtime-v1.18' || github.event_name == 'pull_request'
         run: python3 tools/enable_runtime_transport_test.py
 
       - name: Unit tests and debug APK
         run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
 
       - name: Upload debug APK
-        if: success() && github.event_name == 'pull_request'
+        if: success() && (github.ref_name == 'test/local-runtime-v1.18' || github.event_name == 'pull_request')
         uses: actions/upload-artifact@v4
         with:
           name: Umnik-1.18.0-local-beta1-runtime-debug
