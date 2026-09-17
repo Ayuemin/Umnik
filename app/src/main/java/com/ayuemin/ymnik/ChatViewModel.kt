@@ -4345,7 +4345,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 modelInfo?.supportsTools == true,
                                 effectiveTextBaseUrl(profile),
                                 requestModelInfo
-                            )
+                            ,
+                                streamToUi = true)
                         }
                     }
                     ChatMode.IMAGE -> {

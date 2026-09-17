@@ -119,7 +119,7 @@ internal object OpenRouterStreamParser {
             val piece = contentText(delta.get("content"))
             if (piece.isNotEmpty()) {
                 appendPiece(text, piece)
-                onText(text.toString())
+                onText(piece)
             }
 
             delta.getAsJsonArray("tool_calls")?.forEachIndexed { fallbackIndex, element ->

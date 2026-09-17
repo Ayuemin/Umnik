@@ -242,7 +242,8 @@ class OpenRouterClient(
         reasoningEffort: String? = "medium",
         toolsEnabled: Boolean = true,
         baseUrl: String = DEFAULT_BASE_URL,
-        modelInfo: ModelInfo? = null
+        modelInfo: ModelInfo? = null,
+        streamToUi: Boolean = false
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -295,8 +296,10 @@ class OpenRouterClient(
                     add("reasoning", JsonObject().apply { addProperty("effort", "none") })
                 }
             }
-            streamCallback("")
-            val completion = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
+            if (streamToUi) streamCallback("")
+            val completion = requestCompletion(
+                apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
+            )
             val responseMessage = completion.message
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
@@ -408,7 +411,13 @@ class OpenRouterClient(
         }
     }
 
-    private suspend fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): OpenRouterResponseParser.Completion {
+    private suspend fun requestCompletion(
+        apiKey: String,
+        baseUrl: String,
+        payload: JsonObject,
+        allowEmpty: Boolean,
+        streamToUi: Boolean = false
+    ): OpenRouterResponseParser.Completion {
         val model = payload.get("model")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
@@ -477,15 +486,34 @@ class OpenRouterClient(
                         response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
                     ) {
                         var streamAnnounced = false
-                        OpenRouterStreamParser.parse(responseBody.source(), allowEmpty) { partial ->
-                            if (!streamAnnounced && partial.isNotBlank()) {
-                                streamAnnounced = true
-                                phaseCallback("Получаю ответ…")
+                        val preview = StringBuilder()
+                        var lastPreviewAt = 0L
+                        var lastPreviewLength = 0
+                        OpenRouterStreamParser.parse(responseBody.source(), allowEmpty) { delta ->
+                            if (streamToUi && delta.isNotEmpty()) {
+                                preview.append(delta)
+                                val now = SystemClock.elapsedRealtime()
+                                val shouldPublish = lastPreviewLength == 0 ||
+                                    now - lastPreviewAt >= STREAM_PREVIEW_INTERVAL_MS ||
+                                    preview.length - lastPreviewLength >= STREAM_PREVIEW_MIN_CHARS
+                                if (shouldPublish) {
+                                    if (!streamAnnounced) {
+                                        streamAnnounced = true
+                                        phaseCallback("Получаю ответ…")
+                                    }
+                                    streamCallback(preview.toString())
+                                    lastPreviewAt = now
+                                    lastPreviewLength = preview.length
+                                }
                             }
-                            streamCallback(partial)
                         }.also { parsed ->
-                            val finalText = extractText(parsed.message.get("content"))
-                            if (finalText.isNotBlank()) streamCallback(finalText)
+                            if (streamToUi) {
+                                val finalText = extractText(parsed.message.get("content"))
+                                if (finalText.isNotBlank() && finalText.length != lastPreviewLength) {
+                                    if (!streamAnnounced) phaseCallback("Получаю ответ…")
+                                    streamCallback(finalText)
+                                }
+                            }
                         }
                     } else {
                         // Defensive compatibility path for an endpoint that ignores stream=true.
@@ -885,6 +913,8 @@ class OpenRouterClient(
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
         private const val RECOVERY_WINDOW_MS = 120_000L
+        private const val STREAM_PREVIEW_INTERVAL_MS = 120L
+        private const val STREAM_PREVIEW_MIN_CHARS = 96
     }
 
 }

@@ -423,6 +423,19 @@ private fun ChatScreen(
         }
     }
 
+    val streamFollowThresholdPx = with(LocalDensity.current) { 180.dp.roundToPx() }
+    LaunchedEffect(streamingText.length) {
+        if (streamingText.isBlank() || isUsageGuide) return@LaunchedEffect
+        val layout = listState.layoutInfo
+        val total = layout.totalItemsCount
+        val lastVisible = layout.visibleItemsInfo.lastOrNull() ?: return@LaunchedEffect
+        val streamOrEndVisible = lastVisible.index >= (total - 2).coerceAtLeast(0)
+        val bottomDistance = (lastVisible.offset + lastVisible.size - layout.viewportEndOffset).coerceAtLeast(0)
+        if (streamOrEndVisible && bottomDistance <= streamFollowThresholdPx && total > 0) {
+            listState.scrollToItem(total - 1)
+        }
+    }
+
     val density = LocalDensity.current
     val menuSwipeTriggerPx = with(density) { 52.dp.toPx() }
     val menuEdgeTriggerPx = with(density) { 30.dp.toPx() }
