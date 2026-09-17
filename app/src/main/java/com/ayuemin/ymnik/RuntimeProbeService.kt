@@ -28,6 +28,7 @@ import java.util.concurrent.TimeUnit
  */
 class RuntimeProbeService : Service() {
     private val scheduler = Executors.newSingleThreadScheduledExecutor()
+    private var heartbeatStarted = false
 
     override fun onCreate() {
         super.onCreate()
@@ -37,12 +38,6 @@ class RuntimeProbeService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
-            appendProbe("explicit-stop")
-            stopSelf(startId)
-            return START_NOT_STICKY
-        }
-
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -81,6 +76,7 @@ class RuntimeProbeService : Service() {
 
     override fun onDestroy() {
         appendProbe("destroyed")
+        heartbeatStarted = false
         scheduler.shutdownNow()
         DiagnosticLog.record(applicationContext, "RUNTIME_PROBE", "runtime process destroyed pid=${Process.myPid()}")
         super.onDestroy()
@@ -118,10 +114,8 @@ class RuntimeProbeService : Service() {
     companion object {
         private const val CHANNEL_ID = "umnik_runtime_probe"
         private const val NOTIFICATION_ID = 4111
-        private const val ACTION_STOP = "com.ayuemin.ymnik.RUNTIME_PROBE_STOP"
         private const val MAX_LOG_BYTES = 256L * 1024L
         private const val MAX_LOG_LINES = 1500
-        @Volatile private var heartbeatStarted = false
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(
@@ -131,8 +125,8 @@ class RuntimeProbeService : Service() {
         }
 
         fun stop(context: Context) {
-            context.applicationContext.startService(
-                Intent(context.applicationContext, RuntimeProbeService::class.java).setAction(ACTION_STOP)
+            context.applicationContext.stopService(
+                Intent(context.applicationContext, RuntimeProbeService::class.java)
             )
         }
     }
