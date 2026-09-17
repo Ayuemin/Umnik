@@ -1,10 +1,10 @@
 package com.ayuemin.ymnik.model
 
 /**
- * New project-domain identity. An agent is not a ChatSession.
+ * Project-domain identity for the agent-first architecture. An agent is not a ChatSession.
  *
- * Keep this model independent from legacy project/chat stages. The latter are
- * migration-only concepts and must not leak into the agent-first architecture.
+ * The model is intentionally independent from the obsolete stage-based project design.
+ * Stages must not leak into the new agent architecture.
  */
 enum class AgentKind {
     ORCHESTRATOR,
@@ -41,7 +41,7 @@ data class AgentSkill(
 
 /**
  * A conversation belongs to an agent; it does not define the agent.
- * Message persistence is deliberately kept in the existing chat store during migration.
+ * The reference is kept separate so conversation storage can evolve independently.
  */
 data class AgentConversationRef(
     val conversationId: String,
