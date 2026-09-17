@@ -4,7 +4,7 @@ set -euo pipefail
 # Umnik Personal Server installer.
 # Target: a fresh Debian/Ubuntu VPS with a public IPv4 address and ports 22/80/443 reachable.
 # Required environment: OPENROUTER_API_KEY
-# Optional: UMNIK_SERVER_TOKEN, UMNIK_PUBLIC_IP, UMNIK_GIT_REF, LETSENCRYPT_EMAIL
+# Optional: UMNIK_SERVER_TOKEN, UMNIK_PUBLIC_IP, UMNIK_GIT_REF, LETSENCRYPT_EMAIL, UMNIK_LOCAL_PORT
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run as root (or via sudo)." >&2
@@ -31,6 +31,12 @@ CERTBOT_DIR=/opt/umnik-certbot
 WEBROOT=/var/www/umnik-certbot
 GIT_REF="${UMNIK_GIT_REF:-main}"
 REPO_URL="https://github.com/Ayuemin/Umnik.git"
+LOCAL_PORT="${UMNIK_LOCAL_PORT:-8787}"
+
+if ! printf '%s' "$LOCAL_PORT" | grep -Eq '^[0-9]+$' || [ "$LOCAL_PORT" -lt 1024 ] || [ "$LOCAL_PORT" -gt 65535 ]; then
+  echo "UMNIK_LOCAL_PORT must be a number from 1024 to 65535." >&2
+  exit 1
+fi
 
 apt-get update
 apt-get install -y ca-certificates curl git nginx python3 python3-venv openssl
@@ -73,6 +79,7 @@ fi
 cat > "$REPO_DIR/server/.env" <<EOF
 OPENROUTER_API_KEY=$OPENROUTER_API_KEY
 UMNIK_SERVER_TOKEN=$SERVER_TOKEN
+UMNIK_LOCAL_PORT=$LOCAL_PORT
 EOF
 chmod 600 "$REPO_DIR/server/.env"
 
@@ -164,7 +171,7 @@ server {
     proxy_send_timeout 90s;
 
     location / {
-        proxy_pass http://127.0.0.1:8787;
+        proxy_pass http://127.0.0.1:$LOCAL_PORT;
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
@@ -220,8 +227,9 @@ cat <<EOF
 
 Umnik Personal Server is ready.
 
-Server address: https://$PUBLIC_IP
-Server token:   $SERVER_TOKEN
+Server address:     https://$PUBLIC_IP
+Server token:       $SERVER_TOKEN
+Local backend port: $LOCAL_PORT
 
 Save the token now. In Umnik open:
 Настройки -> OpenRouter -> Через сервер
