@@ -95,6 +95,7 @@ class ServerJobRecoveryWorker(context: Context, params: WorkerParameters) : Coro
         if (text.isBlank()) return Result.retry()
         if (recovery.get(record.requestId) == null) return Result.success()
 
+        val marker = "async:server:${record.clientRequestId}"
         val assistant = ChatMessage(
             id = UUID.randomUUID().toString(),
             role = "assistant",
@@ -103,19 +104,32 @@ class ServerJobRecoveryWorker(context: Context, params: WorkerParameters) : Coro
             providerName = completion.provider.takeIf { it.isNotBlank() } ?: "OpenRouter",
             costUsd = completion.costUsd,
             inputTokens = completion.promptTokens,
-            outputTokens = completion.completionTokens
+            outputTokens = completion.completionTokens,
+            deliveryState = marker
         )
-        runCatching {
-            ChatRepository(applicationContext).finishRequest(record.chatId, record.messageId, assistant)
+        val delivered = runCatching {
+            var inserted = false
+            ChatRepository(applicationContext).updateChat(record.chatId) { chat ->
+                if (chat.messages.any { it.role == "assistant" && it.deliveryState == marker }) return@updateChat chat
+                val userIndex = chat.messages.indexOfFirst { it.id == record.messageId && it.role == "user" }
+                if (userIndex < 0) return@updateChat chat
+                val messages = chat.messages.toMutableList()
+                messages[userIndex] = messages[userIndex].copy(deliveryState = null)
+                messages.add(userIndex + 1, assistant)
+                inserted = true
+                chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
+            }
+            inserted
         }.getOrElse {
             DiagnosticLog.record(applicationContext, "SERVER_RECOVERY", "Could not deliver recovered server answer", it)
             return Result.retry()
         }
         recovery.remove(record.requestId)
+        if (delivered) AsyncJobEvents.notifyChanged()
         DiagnosticLog.record(
             applicationContext,
             "SERVER_RECOVERY",
-            "Recovered server job delivered request=${record.requestId.take(8)} chat=${record.chatId.take(8)}"
+            "Recovered server job delivered request=${record.requestId.take(8)} chat=${record.chatId.take(8)} inserted=$delivered"
         )
         return Result.success()
     }
