@@ -46,6 +46,13 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Test builds from the work branch must coexist with the installed
+            // stable Umnik and must never require removing user data first.
+            applicationIdSuffix = ".test"
+            versionNameSuffix = "-test"
+        }
+
         release {
             isMinifyEnabled = false
             proguardFiles(
