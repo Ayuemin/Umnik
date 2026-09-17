@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# One-off deterministic migration for work/modernize-sdk37.
 path = Path("app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt")
 text = path.read_text(encoding="utf-8")
 
