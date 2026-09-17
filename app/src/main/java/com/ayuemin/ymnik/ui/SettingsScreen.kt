@@ -148,7 +148,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
         }.getOrDefault("—")
     }
     var storageOpen by remember { mutableStateOf(false) }
-    var modelPicker by remember { mutableStateOf<ChatMode?>(null) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
@@ -923,9 +922,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     }
 
     if (storageOpen) StorageDialog(state = state, vm = vm, onDismiss = { storageOpen = false })
-    modelPicker?.let { mode ->
-        ModelPickerDialog(mode = mode, state = state, vm = vm, onDismiss = { modelPicker = null })
-    }
     if (quickModelsSettingsOpen) {
         QuickModelsSettingsDialog(state = state, vm = vm, onDismiss = { quickModelsSettingsOpen = false })
     }
