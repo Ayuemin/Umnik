@@ -8,6 +8,8 @@ import java.io.RandomAccessFile
 internal data class RuntimeTransportRecord(
     val transportId: String,
     val requestId: String,
+    val profileId: String,
+    val baseUrl: String,
     val phase: String = "queued",
     val payloadJson: String,
     val allowEmpty: Boolean = false,
@@ -21,20 +23,13 @@ internal data class RuntimeTransportRecord(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
-/**
- * Process-safe mailbox shared by the UI process and the isolated :runtime process.
- *
- * API keys are intentionally never persisted here. The payload can be large, so it lives in
- * app-private storage instead of Intent extras. Every read/write is guarded by an OS file lock.
- */
+/** Process-safe mailbox shared by the UI process and the private :runtime process. */
 internal class RuntimeTransportStore(context: Context) {
     private val gson = Gson()
     private val root = File(context.applicationContext.filesDir, "runtime_transport").apply { mkdirs() }
     private val lockFile = File(root, ".lock")
 
-    fun get(transportId: String): RuntimeTransportRecord? = withFileLock {
-        readUnlocked(transportId)
-    }
+    fun get(transportId: String): RuntimeTransportRecord? = withFileLock { readUnlocked(transportId) }
 
     fun put(record: RuntimeTransportRecord) = withFileLock {
         writeAtomicUnlocked(record.copy(updatedAt = System.currentTimeMillis()))
