@@ -63,7 +63,7 @@ fun ServerConnectionSettings() {
                 onClick = {
                     val saved = store.config()
                     if (saved.baseUrl.isBlank() || !saved.tokenConfigured) {
-                        Toast.makeText(context, "Сначала сохраните адрес и токен личного сервера", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, "Сначала сохраните HTTPS-адрес и токен личного сервера", Toast.LENGTH_SHORT).show()
                     } else {
                         store.setMode(RequestRouteMode.SERVER)
                         config = store.config()
@@ -110,10 +110,20 @@ fun ServerConnectionSettings() {
         Spacer(Modifier.height(8.dp))
         FilledTonalButton(
             onClick = {
-                store.saveServer(baseUrl, token.takeIf { it.isNotBlank() })
-                token = ""
-                config = store.config()
-                Toast.makeText(context, "Настройки личного сервера сохранены", Toast.LENGTH_SHORT).show()
+                runCatching {
+                    store.saveServer(baseUrl, token.takeIf { it.isNotBlank() })
+                }.onSuccess {
+                    token = ""
+                    config = store.config()
+                    baseUrl = config.baseUrl
+                    Toast.makeText(context, "Настройки личного сервера сохранены", Toast.LENGTH_SHORT).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        context,
+                        error.message ?: "Не удалось сохранить адрес сервера",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             },
             modifier = Modifier.fillMaxWidth(),
             enabled = baseUrl.isNotBlank()
@@ -127,7 +137,7 @@ fun ServerConnectionSettings() {
                 val saved = store.config()
                 val savedToken = store.token()
                 if (saved.baseUrl.isBlank() || savedToken.isNullOrBlank()) {
-                    Toast.makeText(context, "Сначала сохраните адрес и токен сервера", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Сначала сохраните HTTPS-адрес и токен сервера", Toast.LENGTH_SHORT).show()
                     return@FilledTonalButton
                 }
                 checking = true
