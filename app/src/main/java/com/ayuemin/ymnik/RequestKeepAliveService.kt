@@ -78,8 +78,6 @@ class RequestKeepAliveService : Service() {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
         startForeground(NOTIFICATION_ID, builder.build())
-        runCatching { RuntimeProbeService.start(applicationContext) }
-            .onFailure { DiagnosticLog.record(applicationContext, "RUNTIME_PROBE", "Could not start isolated runtime probe", it) }
         DiagnosticLog.record(applicationContext, "SERVICE", "Foreground request service active; startId=$startId; active=${active.size}")
         return START_STICKY
     }
@@ -118,7 +116,6 @@ class RequestKeepAliveService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, RequestKeepAliveService::class.java))
-            runCatching { RuntimeProbeService.stop(context) }
         }
     }
 }
