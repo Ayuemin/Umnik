@@ -46,6 +46,10 @@ class RuntimeOpenRouterService : Service() {
     private val http by lazy {
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
+            // Experiment: keep the actual HTTP/2 connection active while the screen is off.
+            // This is deliberately different from the local heartbeat below: pingInterval sends
+            // HTTP/2 PING frames over the same connection used by the OpenRouter request.
+            .pingInterval(NETWORK_PING_INTERVAL_SECONDS, TimeUnit.SECONDS)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(240, TimeUnit.SECONDS)
             .writeTimeout(240, TimeUnit.SECONDS)
@@ -58,7 +62,11 @@ class RuntimeOpenRouterService : Service() {
         super.onCreate()
         store = RuntimeTransportStore(applicationContext)
         createChannel()
-        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "runtime created pid=${Process.myPid()}")
+        DiagnosticLog.record(
+            applicationContext,
+            "RUNTIME_TRANSPORT",
+            "runtime created pid=${Process.myPid()} http2Ping=${NETWORK_PING_INTERVAL_SECONDS}s"
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -82,7 +90,7 @@ class RuntimeOpenRouterService : Service() {
                     DiagnosticLog.record(
                         applicationContext,
                         "RUNTIME_TRANSPORT",
-                        "claimed id=${transportId.take(8)} active=${activeTransports.size} heartbeat=${HEARTBEAT_INTERVAL_MS}ms pid=${Process.myPid()}"
+                        "claimed id=${transportId.take(8)} active=${activeTransports.size} heartbeat=${HEARTBEAT_INTERVAL_MS}ms http2Ping=${NETWORK_PING_INTERVAL_SECONDS}s pid=${Process.myPid()}"
                     )
                     scope.launch { executeTransport(transportId, startId) }
                 }
@@ -124,7 +132,7 @@ class RuntimeOpenRouterService : Service() {
                 DiagnosticLog.record(
                     applicationContext,
                     "RUNTIME_TRANSPORT",
-                    "POST start id=${transportId.take(8)} request=${record.requestId.take(8)} bytes=${record.payloadJson.toByteArray().size} pid=${Process.myPid()}"
+                    "POST start id=${transportId.take(8)} request=${record.requestId.take(8)} bytes=${record.payloadJson.toByteArray().size} http2Ping=${NETWORK_PING_INTERVAL_SECONDS}s pid=${Process.myPid()}"
                 )
                 call.execute().use { response ->
                     val generationId = response.header("X-Generation-Id")
@@ -394,6 +402,7 @@ class RuntimeOpenRouterService : Service() {
         private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
         private const val HEARTBEAT_INTERVAL_MS = 3_000L
         private const val HEARTBEAT_LOG_EVERY = 10L
+        private const val NETWORK_PING_INTERVAL_SECONDS = 10L
         private const val PARTIAL_WRITE_INTERVAL_MS = 160L
         private const val PARTIAL_WRITE_MIN_CHARS = 128
         private const val MAX_PARTIAL_CHARS = 120_000
