@@ -89,7 +89,10 @@ fun ServerConnectionSettings() {
             onValueChange = { baseUrl = it.trim().take(300) },
             modifier = Modifier.fillMaxWidth(),
             label = { Text("Адрес личного сервера") },
-            placeholder = { Text("https://umnik.example.com") },
+            placeholder = { Text("https://umnik.example.com:8443") },
+            supportingText = {
+                Text("Можно указать нестандартный HTTPS-порт после адреса, например :8443. Без порта используется стандартный 443.")
+            },
             singleLine = true
         )
         Spacer(Modifier.height(7.dp))
