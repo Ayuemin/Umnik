@@ -154,6 +154,7 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
@@ -331,6 +332,8 @@ private fun ChatScreen(
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
+    val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
+    val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
     val nonRequestBusy = state.isLoading && !state.requestActive
     val isUsageGuide = currentChat?.title == "Памятка по Umnik"
     var guideScrollTarget by remember(state.currentChatId) { mutableStateOf<Int?>(null) }
@@ -529,6 +532,11 @@ onBranch = if (message.role == "assistant") {
                         else -> null
                     }
                 )
+            }
+            if (requestActiveHere && streamingText.isNotBlank()) {
+                item(key = "streaming-${state.currentChatId}") {
+                    StreamingAssistantMessage(streamingText)
+                }
             }
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
@@ -1947,6 +1955,33 @@ private fun EmptyChatCard(mode: ChatMode) {
                     "Напишите сообщение, приложите файл или подключите навык."
                 else
                     "Опишите изображение. При необходимости приложите изображение-референс.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun StreamingAssistantMessage(text: String) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        verticalArrangement = Arrangement.spacedBy(7.dp)
+    ) {
+        MessageBody(text, MaterialTheme.colorScheme.onSurface, null)
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(12.dp),
+                strokeWidth = 1.5.dp,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                "Ответ поступает…",
+                style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }

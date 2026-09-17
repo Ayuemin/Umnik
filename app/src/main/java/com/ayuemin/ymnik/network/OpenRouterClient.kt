@@ -26,7 +26,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
@@ -41,6 +40,7 @@ class OpenRouterClient(
     private val requestChatId: String? = null,
     private val requestProfileId: String? = null,
     private val recoveryEnabled: Boolean = false,
+    private val streamCallback: (String) -> Unit = {},
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
@@ -52,9 +52,8 @@ class OpenRouterClient(
         )
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
-        // Direct Umnik requests do not multiplex on one client. HTTP/1.1 avoids the
-        // Android background HTTP/2 socket abort reproduced on real devices.
-        .protocols(listOf(Protocol.HTTP_1_1))
+        // Keep OkHttp defaults: negotiate HTTP/2 when available and fall back to HTTP/1.1.
+        // No active ping is configured; SSE traffic itself keeps long responses active.
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -296,6 +295,7 @@ class OpenRouterClient(
                     add("reasoning", JsonObject().apply { addProperty("effort", "none") })
                 }
             }
+            streamCallback("")
             val completion = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
             val responseMessage = completion.message
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
@@ -413,7 +413,11 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
-        val payloadJson = gson.toJson(payload)
+        val requestPayload = payload.deepCopy().apply {
+            addProperty("stream", true)
+            add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+        }
+        val payloadJson = gson.toJson(requestPayload)
         val recoveryRecord = recoveryRecord(apiKey, baseUrl, model, payloadJson)
         recoveryRecord?.let { record ->
             recoveryStore.put(record)
@@ -429,7 +433,7 @@ class OpenRouterClient(
             .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
             .header("X-OpenRouter-Metadata", "enabled")
             // A short-lived response cache lets Umnik recover the exact already-paid
-            // completion after a mobile HTTP/2 interruption instead of blindly paying twice.
+            // completion after a mobile transport interruption instead of blindly paying twice.
             .header("X-OpenRouter-Cache", "true")
             .header("X-OpenRouter-Cache-TTL", "300")
             .post(payloadJson.toRequestBody("application/json".toMediaType()))
@@ -456,17 +460,38 @@ class OpenRouterClient(
                             clearRecovery(recoveryRecord)
                         }
                     }
+                    if (!response.isSuccessful) {
+                        val body = response.body?.string().orEmpty()
+                        clearRecovery(recoveryRecord)
+                        error(apiError(response.code, body))
+                    }
                     phaseCallback(
                         if (cacheStatus.equals("HIT", ignoreCase = true))
                             "Готовый ответ найден · загружаю…"
                         else
                             "Модель формирует ответ…"
                     )
-                    // Do not clear recovery state until the whole response body has arrived.
-                    val body = response.body?.string().orEmpty()
+                    // Do not clear recovery state until the whole SSE/body has arrived.
+                    val responseBody = response.body ?: error("OpenRouter вернул ответ без тела")
+                    val completion = if (
+                        response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
+                    ) {
+                        var streamAnnounced = false
+                        OpenRouterStreamParser.parse(responseBody.source(), allowEmpty) { partial ->
+                            if (!streamAnnounced && partial.isNotBlank()) {
+                                streamAnnounced = true
+                                phaseCallback("Получаю ответ…")
+                            }
+                            streamCallback(partial)
+                        }.also { parsed ->
+                            val finalText = extractText(parsed.message.get("content"))
+                            if (finalText.isNotBlank()) streamCallback(finalText)
+                        }
+                    } else {
+                        // Defensive compatibility path for an endpoint that ignores stream=true.
+                        OpenRouterResponseParser.parse(responseBody.string(), allowEmpty)
+                    }
                     clearRecovery(recoveryRecord)
-                    if (!response.isSuccessful) error(apiError(response.code, body))
-                    val completion = OpenRouterResponseParser.parse(body, allowEmpty)
                     DiagnosticLog.record(
                         context,
                         "COMPLETION",

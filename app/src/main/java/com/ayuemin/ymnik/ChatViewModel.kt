@@ -654,8 +654,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         if (initialProfile.id !in initialDisabledConnectionIds && isProfileConfigured(initialProfile)) refreshModelCapabilities()
         viewModelScope.launch {
+            var previousRequestIds = emptySet<String>()
             RequestExecutionManager.snapshots.collect { snapshots ->
-                val chats = chatsRepository.list()
+                val requestIds = snapshots.mapTo(linkedSetOf()) { it.requestId }
+                val topologyChanged = requestIds != previousRequestIds
+                val chats = if (topologyChanged) chatsRepository.list() else _state.value.chats
+                previousRequestIds = requestIds
                 val current = snapshots.firstOrNull { it.chatId == _state.value.currentChatId }
                 val latestError = snapshots.mapNotNull { it.lastError }.lastOrNull()
                 _state.value = _state.value.copy(

@@ -27,8 +27,10 @@ internal class RequestNetworkSession(
             requestId = requestId,
             requestChatId = chatId ?: RequestExecutionManager.snapshotForRequest(requestId)?.chatId,
             requestProfileId = profileId,
-            recoveryEnabled = recoverable
-        ) { label -> updatePhase(label) }
+            recoveryEnabled = recoverable,
+            streamCallback = { text -> updatePartial(text) },
+            phaseCallback = { label -> updatePhase(label) }
+        )
             .also { clients += it }
 
     suspend fun <T> call(
@@ -46,6 +48,10 @@ internal class RequestNetworkSession(
 
     fun updatePhase(label: String) {
         RequestExecutionManager.updatePhase(app, requestId, label)
+    }
+
+    fun updatePartial(text: String) {
+        RequestExecutionManager.updatePartial(requestId, text)
     }
 
     fun cancel() {

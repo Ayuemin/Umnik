@@ -22,6 +22,7 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.ayuemin.ymnik.network.OpenRouterResponseParser
+import com.ayuemin.ymnik.network.OpenRouterStreamParser
 import com.ayuemin.ymnik.network.isOpenRouterResponseCacheRecoverable
 import com.ayuemin.ymnik.network.openRouterApiKeyFingerprint
 import com.google.gson.Gson
@@ -32,7 +33,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
@@ -136,7 +136,6 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
     private suspend fun recover(record: OpenRouterRecoveryRecord, apiKey: String): OpenRouterResponseParser.Completion = withContext(Dispatchers.IO) {
         val client = OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
-            .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(240, TimeUnit.SECONDS)
             .writeTimeout(240, TimeUnit.SECONDS)
@@ -229,14 +228,22 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
             .post(record.payloadJson.toRequestBody("application/json".toMediaType()))
             .build()
         client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) throw IOException("OpenRouter ${response.code}")
+            if (!response.isSuccessful) {
+                response.body?.close()
+                throw IOException("OpenRouter ${response.code}")
+            }
             val cache = response.header("X-OpenRouter-Cache-Status")
             if (!cache.equals("HIT", ignoreCase = true)) {
+                response.body?.close()
                 DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Rejected replay because cache was ${cache ?: "unknown"}; request=${record.requestId.take(8)}")
                 throw IOException("OpenRouter response cache replay was not a HIT")
             }
-            OpenRouterResponseParser.parse(body, allowEmpty = false)
+            val body = response.body ?: throw IOException("OpenRouter cache replay returned no body")
+            if (response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
+                OpenRouterStreamParser.parse(body.source(), allowEmpty = false)
+            } else {
+                OpenRouterResponseParser.parse(body.string(), allowEmpty = false)
+            }
         }
     }
 

@@ -30,6 +30,7 @@ internal object RequestExecutionManager {
         val sequence: Long,
         val lastError: String? = null,
         val label: String = "Модель работает…",
+        val partialText: String = "",
         val startedAt: Long = System.currentTimeMillis()
     )
 
@@ -37,7 +38,8 @@ internal object RequestExecutionManager {
         var snapshot: Snapshot,
         val job: Job,
         val cancelNetworkCall: () -> Unit,
-        val appContext: Context
+        val appContext: Context,
+        var lastPartialUpdateAt: Long = 0L
     )
 
     private data class PersistedRequest(
@@ -50,6 +52,9 @@ internal object RequestExecutionManager {
     private const val ACTIVE_PREFIX = "active_request::"
     private const val FIELD_SEPARATOR = "\u001F"
     private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
+    private const val PARTIAL_UPDATE_MIN_INTERVAL_MS = 120L
+    private const val PARTIAL_UPDATE_MIN_CHARS = 96
+    private const val MAX_PARTIAL_PREVIEW_CHARS = 120_000
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
@@ -311,6 +316,23 @@ internal object RequestExecutionManager {
             true
         }
         if (changed) RequestKeepAliveService.update(context.applicationContext)
+    }
+
+    fun updatePartial(requestId: String, text: String) {
+        val clean = text.take(MAX_PARTIAL_PREVIEW_CHARS)
+        synchronized(lock) {
+            val runtime = runtimes[requestId] ?: return
+            if (runtime.snapshot.partialText == clean) return
+            val now = System.currentTimeMillis()
+            val force = clean.isBlank()
+            val enoughTime = now - runtime.lastPartialUpdateAt >= PARTIAL_UPDATE_MIN_INTERVAL_MS
+            val enoughText = kotlin.math.abs(clean.length - runtime.snapshot.partialText.length) >= PARTIAL_UPDATE_MIN_CHARS
+            if (!force && !enoughTime && !enoughText) return
+            runtime.lastPartialUpdateAt = now
+            runtime.snapshot = runtime.snapshot.copy(partialText = clean)
+            // Do not update the foreground notification for every token; the StateFlow is enough for Compose.
+            publishLocked()
+        }
     }
 
     fun fail(requestId: String, message: String) {
