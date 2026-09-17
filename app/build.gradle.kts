@@ -1,4 +1,4 @@
-// Umnik v1.17.5 — modernized build baseline
+// Umnik v1.18.0 — modernization and server-mode test line
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 128
-        versionName = "1.17.5"
+        versionCode = 129
+        versionName = "1.18.0"
     }
 
     buildFeatures {
@@ -50,7 +50,6 @@ android {
             // Test builds from the work branch must coexist with the installed
             // stable Umnik and must never require removing user data first.
             applicationIdSuffix = ".test"
-            versionNameSuffix = "-test"
         }
 
         release {
