@@ -23,7 +23,7 @@ internal data class RuntimeTransportRecord(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
-/** Process-safe mailbox shared by the UI process and the private :runtime process. */
+/** Thread-safe and process-safe mailbox shared by the UI process and private :runtime process. */
 internal class RuntimeTransportStore(context: Context) {
     private val gson = Gson()
     private val root = File(context.applicationContext.filesDir, "runtime_transport").apply { mkdirs() }
@@ -73,12 +73,21 @@ internal class RuntimeTransportStore(context: Context) {
         return File(root, "$safe.json")
     }
 
-    private inline fun <T> withFileLock(block: () -> T): T {
+    private inline fun <T> withFileLock(block: () -> T): T = synchronized(PROCESS_LOCK) {
         root.mkdirs()
         RandomAccessFile(lockFile, "rw").use { raf ->
             raf.channel.use { channel ->
-                channel.lock().use { return block() }
+                channel.lock().use { return@synchronized block() }
             }
         }
+    }
+
+    companion object {
+        /**
+         * FileChannel locks coordinate the UI and :runtime processes, but Java throws
+         * OverlappingFileLockException when two threads in the same JVM try to acquire the same
+         * region concurrently. A process-local monitor closes that gap for all store instances.
+         */
+        private val PROCESS_LOCK = Any()
     }
 }
