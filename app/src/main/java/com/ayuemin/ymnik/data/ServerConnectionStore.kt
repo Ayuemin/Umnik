@@ -33,7 +33,7 @@ class ServerConnectionStore(context: Context) {
         mode = runCatching {
             RequestRouteMode.valueOf(prefs.getString(KEY_MODE, RequestRouteMode.DIRECT.name).orEmpty())
         }.getOrDefault(RequestRouteMode.DIRECT),
-        baseUrl = prefs.getString(KEY_BASE_URL, "").orEmpty().trim().trimEnd('/'),
+        baseUrl = normalizedStoredBaseUrl(),
         tokenConfigured = readToken() != null
     )
 
@@ -42,12 +42,12 @@ class ServerConnectionStore(context: Context) {
     }
 
     fun saveServer(baseUrl: String, token: String?) {
-        val cleanUrl = baseUrl.trim().trimEnd('/')
+        val cleanUrl = ServerEndpointPolicy.normalize(baseUrl)
         prefs.edit().putString(KEY_BASE_URL, cleanUrl).apply()
         if (!token.isNullOrBlank()) saveToken(token.trim())
     }
 
-    fun baseUrl(): String = prefs.getString(KEY_BASE_URL, "").orEmpty().trim().trimEnd('/')
+    fun baseUrl(): String = normalizedStoredBaseUrl()
 
     fun token(): String? = readToken()
 
@@ -57,6 +57,12 @@ class ServerConnectionStore(context: Context) {
             .remove(KEY_BASE_URL)
             .remove(KEY_TOKEN)
             .apply()
+    }
+
+    private fun normalizedStoredBaseUrl(): String {
+        val stored = prefs.getString(KEY_BASE_URL, "").orEmpty()
+        if (stored.isBlank()) return ""
+        return runCatching { ServerEndpointPolicy.normalize(stored) }.getOrDefault("")
     }
 
     private fun saveToken(value: String) {
