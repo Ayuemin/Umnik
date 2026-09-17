@@ -165,24 +165,44 @@ class MainActivity : Activity() {
 
     private fun startUidtTest() {
         if (Build.VERSION.SDK_INT < 34 || !validateAndSave()) return
-        LabState.clearLog(this)
-        LabState.log(this, "APP", "UIDT test requested while activity visible")
-
-        val job = JobInfo.Builder(JOB_ID, ComponentName(this, LabUidtJobService::class.java))
-            .setUserInitiated(true)
-            .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-            .setEstimatedNetworkBytes(256_000L, 2_000_000L)
-            .build()
-
         val scheduler = getSystemService(JobScheduler::class.java)
-        val result = scheduler.schedule(job)
-        LabState.log(this, "APP", "UIDT schedule result=$result jobId=$JOB_ID")
-        if (result == JobScheduler.RESULT_SUCCESS) {
-            Toast.makeText(this, "UIDT запущен. Теперь погасите экран.", Toast.LENGTH_LONG).show()
-        } else {
-            LabState.setStatus(this, "UIDT не удалось запланировать: result=$result")
-        }
+
+        // Remove any stale lab jobs left by an earlier APK/test before starting a new clean run.
+        val staleCount = scheduler.allPendingJobs.size
+        scheduler.cancelAll()
+        LabState.clearLog(this)
+        LabState.log(this, "APP", "UIDT clean start requested; cancelledPending=$staleCount")
+        LabState.setStatus(this, "UIDT: подготавливаю чистый запуск…")
         refreshOutput()
+
+        handler.postDelayed({
+            val jobId = nextJobId()
+            try {
+                val job = JobInfo.Builder(jobId, ComponentName(this, LabUidtJobService::class.java))
+                    .setUserInitiated(true)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setEstimatedNetworkBytes(256_000L, 2_000_000L)
+                    .build()
+
+                val result = scheduler.schedule(job)
+                LabState.log(this, "APP", "UIDT schedule result=$result jobId=$jobId")
+                if (result == JobScheduler.RESULT_SUCCESS) {
+                    LabState.setStatus(this, "UIDT запланирован · jobId=$jobId")
+                    Toast.makeText(this, "UIDT запущен. Теперь погасите экран.", Toast.LENGTH_LONG).show()
+                } else {
+                    LabState.setStatus(this, "UIDT не удалось запланировать: result=$result")
+                }
+            } catch (t: Throwable) {
+                LabState.setStatus(this, "UIDT schedule FAIL · ${t::class.java.simpleName}: ${t.message.orEmpty()}")
+                LabState.log(this, "APP", "UIDT schedule FAIL", t)
+            }
+            refreshOutput()
+        }, UIDT_CLEAN_START_DELAY_MS)
+    }
+
+    private fun nextJobId(): Int {
+        val raw = (System.currentTimeMillis() % 1_000_000_000L).toInt()
+        return raw.coerceAtLeast(1)
     }
 
     private fun refreshOutput() {
@@ -198,6 +218,6 @@ class MainActivity : Activity() {
     }
 
     companion object {
-        private const val JOB_ID = 7301
+        private const val UIDT_CLEAN_START_DELAY_MS = 1_000L
     }
 }
