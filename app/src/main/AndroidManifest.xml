@@ -40,7 +40,7 @@
             android:foregroundServiceType="dataSync" />
 
         <service
-            android:name="com.ayuemin.ymnik.RuntimeProbeService"
+            android:name="com.ayuemin.ymnik.RuntimeOpenRouterService"
             android:process=":runtime"
             android:exported="false"
             android:stopWithTask="false"
