@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
 import com.ayuemin.ymnik.RequestExecutionManager
+import com.ayuemin.ymnik.ServerJobRecoveryWorker
 import com.ayuemin.ymnik.data.RequestRouteMode
 import com.ayuemin.ymnik.data.ServerConnectionStore
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
@@ -49,6 +50,7 @@ class OpenRouterClient(
     private val gson = Gson()
     private val serverConnection = ServerConnectionStore(context.applicationContext)
     private val serverApi = UmnikServerClient()
+    private val serverRecoveryStore = ServerJobRecoveryStore(context.applicationContext)
     private val http = OkHttpClient.Builder()
         .addInterceptor(
             DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId) { prepared ->
@@ -93,6 +95,8 @@ class OpenRouterClient(
         requestId?.takeIf { it.isNotBlank() }?.let { id ->
             recoveryStore.remove(id)
             OpenRouterRecoveryWorker.cancel(context, id)
+            serverRecoveryStore.remove(id)
+            ServerJobRecoveryWorker.cancel(context, id)
         }
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
@@ -618,6 +622,22 @@ class OpenRouterClient(
     }
     val payloadJson = gson.toJson(requestPayload)
     val clientRequestId = stableServerRequestId(payloadJson)
+    val recoverySnapshot = requestId?.takeIf { it.isNotBlank() }
+        ?.let(RequestExecutionManager::snapshotForRequest)
+        ?.takeIf { recoveryEnabled && requestChatId == it.chatId }
+    recoverySnapshot?.let { snapshot ->
+        val record = ServerJobRecoveryRecord(
+            requestId = snapshot.requestId,
+            chatId = snapshot.chatId,
+            messageId = snapshot.messageId,
+            clientRequestId = clientRequestId,
+            serverBaseUrl = serverBaseUrl,
+            payloadJson = payloadJson,
+            modelId = payload.get("model")?.asString.orEmpty()
+        )
+        serverRecoveryStore.put(record)
+        ServerJobRecoveryWorker.schedule(context, snapshot.requestId)
+    }
     phaseCallback("Передаю задачу личному серверу…")
     val initial = serverApi.createChatJob(
         baseUrl = serverBaseUrl,
@@ -647,6 +667,10 @@ class OpenRouterClient(
         "SERVER_COMPLETION",
         "Umnik server job=${initial.id.take(12)} model=${payload.get("model")?.asString.orEmpty()} finish=${completion.finishReason}"
     )
+    recoverySnapshot?.let { snapshot ->
+        serverRecoveryStore.remove(snapshot.requestId)
+        ServerJobRecoveryWorker.cancel(context, snapshot.requestId)
+    }
     return completion
 }
 
