@@ -1,3 +1,4 @@
+# one-shot workflow; removed after successful patch
 name: Harden server idempotency once
 
 on:
@@ -54,6 +55,7 @@ jobs:
           Path(".github/workflows/server-idempotency-fix-once.yml").unlink()
           PY
       - name: Commit
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
