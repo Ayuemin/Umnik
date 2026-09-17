@@ -441,10 +441,6 @@ class OpenRouterClient(
             .header("X-Title", "Umnik Android")
             .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
             .header("X-OpenRouter-Metadata", "enabled")
-            // A short-lived response cache lets Umnik recover the exact already-paid
-            // completion after a mobile transport interruption instead of blindly paying twice.
-            .header("X-OpenRouter-Cache", "true")
-            .header("X-OpenRouter-Cache-TTL", "300")
             .post(payloadJson.toRequestBody("application/json".toMediaType()))
             .build()
 
@@ -460,14 +456,10 @@ class OpenRouterClient(
                     generationId = response.header("X-Generation-Id")
                     cacheStatus = response.header("X-OpenRouter-Cache-Status")
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
-                        if (isOpenRouterResponseCacheRecoverable(cacheStatus)) {
-                            recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
-                            OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, replaceExisting = true)
-                        } else {
-                            // Never persist an automatic paid replay unless OpenRouter explicitly
-                            // confirms this exact request participates in response caching.
-                            clearRecovery(recoveryRecord)
-                        }
+                        // Persist every accepted generation. Recovery only performs GET requests;
+                        // it never repeats this paid POST, regardless of cache status.
+                        recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
+                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, replaceExisting = true)
                     }
                     if (!response.isSuccessful) {
                         val body = response.body?.string().orEmpty()
@@ -532,7 +524,6 @@ class OpenRouterClient(
                 val recover = shouldRecoverOpenRouterBodyFailure(
                     locallyCancelled = locallyCancelled,
                     generationId = generationId,
-                    cacheStatus = cacheStatus,
                     recoveryAttempt = recoveryAttempt
                 )
                 DiagnosticLog.record(
@@ -592,9 +583,11 @@ class OpenRouterClient(
                     }
                     GenerationState.COMPLETED -> Unit
                 }
-                recoveryAttempt += 1
-                phaseCallback("Ответ готов · восстанавливаю соединение…")
-                delay(900L)
+                // The generation is complete, but repeating the original POST can still be billed
+                // before a cache HIT/MISS header is known. Hand the existing generation to the
+                // read-only worker, which may retrieve /generation/content without a second request.
+                phaseCallback("Ответ готов · забираю сохранённый результат…")
+                throw error
             } finally {
                 clearActiveCall()
             }

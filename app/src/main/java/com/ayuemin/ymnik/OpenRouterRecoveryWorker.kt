@@ -22,8 +22,6 @@ import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.ayuemin.ymnik.network.OpenRouterResponseParser
-import com.ayuemin.ymnik.network.OpenRouterStreamParser
-import com.ayuemin.ymnik.network.isOpenRouterResponseCacheRecoverable
 import com.ayuemin.ymnik.network.openRouterApiKeyFingerprint
 import com.google.gson.Gson
 import com.google.gson.JsonElement
@@ -31,10 +29,8 @@ import com.google.gson.JsonObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -55,12 +51,6 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         if (generationId.isNullOrBlank()) {
             if (System.currentTimeMillis() - record.createdAt < NO_GENERATION_GRACE_MS) return Result.retry()
             failPending(record, "Запрос был прерван системой до получения идентификатора генерации. Повторите его вручную.")
-            store.remove(requestId)
-            return Result.success()
-        }
-
-        if (!isOpenRouterResponseCacheRecoverable(record.cacheStatus)) {
-            failPending(record, "OpenRouter не подтвердил безопасный response cache. Запрос не отправлен повторно, чтобы исключить двойную оплату.")
             store.remove(requestId)
             return Result.success()
         }
@@ -201,50 +191,12 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         // can return the completed text directly. It costs nothing and avoids any replay at all.
         storedGenerationCompletion(client, gson, record, apiKey, generationId)?.let { return@withContext it }
 
-        // Otherwise use the exact response-cache replay. Keep a safety margin inside the
-        // requested 300 s TTL and re-check cancellation immediately before any POST.
-        if (System.currentTimeMillis() - seenAt > CACHE_REPLAY_MAX_AGE_MS) {
-            throw IOException("Response cache replay window expired")
-        }
-        if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
-            throw IOException("Recovery cancelled")
-        }
-        delay(900L)
-        if (System.currentTimeMillis() - seenAt > CACHE_REPLAY_MAX_AGE_MS) {
-            throw IOException("Response cache replay window expired")
-        }
-        if (OpenRouterRecoveryStore(applicationContext).get(record.requestId) == null) {
-            throw IOException("Recovery cancelled")
-        }
-        val request = Request.Builder()
-            .url(endpoint(record.baseUrl, "chat/completions"))
-            .header("Authorization", "Bearer $apiKey")
-            .header("Content-Type", "application/json")
-            .header("X-Title", "Umnik Android")
-            .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
-            .header("X-OpenRouter-Metadata", "enabled")
-            .header("X-OpenRouter-Cache", "true")
-            .header("X-OpenRouter-Cache-TTL", "300")
-            .post(record.payloadJson.toRequestBody("application/json".toMediaType()))
-            .build()
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                response.body?.close()
-                throw IOException("OpenRouter ${response.code}")
-            }
-            val cache = response.header("X-OpenRouter-Cache-Status")
-            if (!cache.equals("HIT", ignoreCase = true)) {
-                response.body?.close()
-                DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Rejected replay because cache was ${cache ?: "unknown"}; request=${record.requestId.take(8)}")
-                throw IOException("OpenRouter response cache replay was not a HIT")
-            }
-            val body = response.body ?: throw IOException("OpenRouter cache replay returned no body")
-            if (response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)) {
-                OpenRouterStreamParser.parse(body.source(), allowEmpty = false)
-            } else {
-                OpenRouterResponseParser.parse(body.string(), allowEmpty = false)
-            }
-        }
+        // There is intentionally no fallback POST here. A cache status is only known after
+        // sending that POST, so even a byte-identical replay could become a second paid request.
+        throw TerminalRecoveryException(
+            "OpenRouter завершил генерацию, но не предоставил её текст через безопасный read-only endpoint. " +
+                "Umnik не повторяет запрос автоматически, чтобы исключить двойную оплату."
+        )
     }
 
     private fun storedGenerationCompletion(
@@ -328,7 +280,6 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
         private const val KEY_REQUEST_ID = "request_id"
         private const val NO_GENERATION_GRACE_MS = 120_000L
         private const val CACHE_RECOVERY_MAX_AGE_MS = 180_000L
-        private const val CACHE_REPLAY_MAX_AGE_MS = 240_000L
         private const val RECOVERY_WINDOW_MS = 60_000L
 
         private fun uniqueName(requestId: String) = "umnik-openrouter-recovery-$requestId"
