@@ -1,14 +1,8 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.ToneGenerator
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.os.Handler
-import android.os.Looper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -23,6 +17,7 @@ import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
 import com.ayuemin.ymnik.model.AnswerSoundChoice
@@ -97,6 +92,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
+    private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
     private val providerRegistry = ProviderRegistry(context)
@@ -4803,41 +4799,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun playReadySound() {
-        val state = _state.value
-        if (!state.answerSoundEnabled) return
-
-        if (state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
-            val custom = state.answerSoundCustomPath?.let(::File)
-            if (custom?.isFile == true) {
-                runCatching {
-                    val volume = state.answerSoundVolume.coerceIn(0, 100) / 100f
-                    MediaPlayer().apply {
-                        setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build()
-                        )
-                        setDataSource(custom.absolutePath)
-                        setVolume(volume, volume)
-                        setOnPreparedListener { it.start() }
-                        setOnCompletionListener { it.release() }
-                        setOnErrorListener { mp, _, _ -> mp.release(); true }
-                        prepareAsync()
-                    }
-                    return
-                }
-            }
-        }
-
-        runCatching {
-            val tone = ToneGenerator(
-                AudioManager.STREAM_MUSIC,
-                state.answerSoundVolume.coerceIn(0, 100)
-            )
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
-            Handler(Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 180)
-        }
+        answerSoundPlayer.play(_state.value)
     }
 
     private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
