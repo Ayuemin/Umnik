@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -34,6 +35,7 @@ class RuntimeOpenRouterService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gson = Gson()
     private lateinit var store: RuntimeTransportStore
+    private val activeTransports = ConcurrentHashMap.newKeySet<String>()
     private val activeCalls = ConcurrentHashMap<String, Call>()
     private val http by lazy {
         OkHttpClient.Builder()
@@ -67,8 +69,16 @@ class RuntimeOpenRouterService : Service() {
                     maybeStop(startId)
                     return START_NOT_STICKY
                 }
-                if (!activeCalls.containsKey(transportId)) {
+                // Claim the mailbox before launching the coroutine. The previous implementation only
+                // considered an OkHttp Call to be active, leaving a small window where Android could
+                // stop the service before credentials/request construction completed.
+                if (activeTransports.add(transportId)) {
                     acquireWakeLock()
+                    DiagnosticLog.record(
+                        applicationContext,
+                        "RUNTIME_TRANSPORT",
+                        "claimed id=${transportId.take(8)} active=${activeTransports.size} pid=${Process.myPid()}"
+                    )
                     scope.launch { executeTransport(transportId, startId) }
                 }
                 return START_STICKY
@@ -81,133 +91,141 @@ class RuntimeOpenRouterService : Service() {
     }
 
     private suspend fun executeTransport(transportId: String, startId: Int) {
-        val record = store.get(transportId)
-        if (record == null) {
-            DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "missing mailbox id=${transportId.take(8)}")
-            maybeStop(startId)
-            return
-        }
-        val apiKey = SecretStore(applicationContext).getProfileApiKey(record.profileId).orEmpty()
-        if (apiKey.isBlank()) {
-            store.update(transportId) { it.copy(phase = "failed", error = "Runtime could not read connection credentials") }
-            maybeStop(startId)
-            return
-        }
-        store.update(transportId) { it.copy(phase = "running", error = null) }
-        val request = Request.Builder()
-            .url(endpoint(record.baseUrl, "chat/completions"))
-            .header("Authorization", "Bearer $apiKey")
-            .header("Content-Type", "application/json")
-            .header("X-Title", "Umnik Android")
-            .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
-            .header("X-OpenRouter-Metadata", "enabled")
-            .post(record.payloadJson.toRequestBody("application/json".toMediaType()))
-            .build()
-
-        val call = http.newCall(request)
-        activeCalls[transportId] = call
         try {
-            DiagnosticLog.record(
-                applicationContext,
-                "RUNTIME_TRANSPORT",
-                "POST start id=${transportId.take(8)} request=${record.requestId.take(8)} bytes=${record.payloadJson.toByteArray().size} pid=${Process.myPid()}"
-            )
-            call.execute().use { response ->
-                val generationId = response.header("X-Generation-Id")
-                val cacheStatus = response.header("X-OpenRouter-Cache-Status")
-                store.update(transportId) {
-                    it.copy(phase = "headers", generationId = generationId, cacheStatus = cacheStatus, httpCode = response.code)
-                }
-                if (!response.isSuccessful) {
-                    val body = response.body?.string().orEmpty()
-                    store.update(transportId) {
-                        it.copy(
-                            phase = "failed",
-                            generationId = generationId,
-                            cacheStatus = cacheStatus,
-                            httpCode = response.code,
-                            error = "OpenRouter ${response.code}: ${body.take(800)}"
-                        )
-                    }
-                    return@use
-                }
+            val record = store.get(transportId)
+            if (record == null) {
+                DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "missing mailbox id=${transportId.take(8)}")
+                return
+            }
+            val apiKey = SecretStore(applicationContext).getProfileApiKey(record.profileId).orEmpty()
+            if (apiKey.isBlank()) {
+                store.update(transportId) { it.copy(phase = "failed", error = "Runtime could not read connection credentials") }
+                return
+            }
+            store.update(transportId) { it.copy(phase = "running", error = null) }
+            val request = Request.Builder()
+                .url(endpoint(record.baseUrl, "chat/completions"))
+                .header("Authorization", "Bearer $apiKey")
+                .header("Content-Type", "application/json")
+                .header("X-Title", "Umnik Android")
+                .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
+                .header("X-OpenRouter-Metadata", "enabled")
+                .post(record.payloadJson.toRequestBody("application/json".toMediaType()))
+                .build()
 
-                val body = response.body ?: throw IOException("OpenRouter вернул ответ без тела")
-                val completion: OpenRouterResponseParser.Completion = if (
-                    response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
-                ) {
-                    val preview = StringBuilder()
-                    var lastSavedAt = 0L
-                    var lastSavedLength = 0
-                    OpenRouterStreamParser.parse(body.source(), record.allowEmpty) { delta ->
-                        if (delta.isNotEmpty()) {
-                            preview.append(delta)
-                            val now = System.currentTimeMillis()
-                            if (
-                                lastSavedLength == 0 ||
-                                now - lastSavedAt >= PARTIAL_WRITE_INTERVAL_MS ||
-                                preview.length - lastSavedLength >= PARTIAL_WRITE_MIN_CHARS
-                            ) {
-                                val snapshot = preview.toString().take(MAX_PARTIAL_CHARS)
-                                store.update(transportId) {
-                                    it.copy(
-                                        phase = "streaming",
-                                        generationId = generationId,
-                                        cacheStatus = cacheStatus,
-                                        partialText = snapshot
-                                    )
+            val call = http.newCall(request)
+            activeCalls[transportId] = call
+            try {
+                DiagnosticLog.record(
+                    applicationContext,
+                    "RUNTIME_TRANSPORT",
+                    "POST start id=${transportId.take(8)} request=${record.requestId.take(8)} bytes=${record.payloadJson.toByteArray().size} pid=${Process.myPid()}"
+                )
+                call.execute().use { response ->
+                    val generationId = response.header("X-Generation-Id")
+                    val cacheStatus = response.header("X-OpenRouter-Cache-Status")
+                    store.update(transportId) {
+                        it.copy(phase = "headers", generationId = generationId, cacheStatus = cacheStatus, httpCode = response.code)
+                    }
+                    if (!response.isSuccessful) {
+                        val body = response.body?.string().orEmpty()
+                        store.update(transportId) {
+                            it.copy(
+                                phase = "failed",
+                                generationId = generationId,
+                                cacheStatus = cacheStatus,
+                                httpCode = response.code,
+                                error = "OpenRouter ${response.code}: ${body.take(800)}"
+                            )
+                        }
+                        return@use
+                    }
+
+                    val body = response.body ?: throw IOException("OpenRouter вернул ответ без тела")
+                    val completion: OpenRouterResponseParser.Completion = if (
+                        response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
+                    ) {
+                        val preview = StringBuilder()
+                        var lastSavedAt = 0L
+                        var lastSavedLength = 0
+                        OpenRouterStreamParser.parse(body.source(), record.allowEmpty) { delta ->
+                            if (delta.isNotEmpty()) {
+                                preview.append(delta)
+                                val now = System.currentTimeMillis()
+                                if (
+                                    lastSavedLength == 0 ||
+                                    now - lastSavedAt >= PARTIAL_WRITE_INTERVAL_MS ||
+                                    preview.length - lastSavedLength >= PARTIAL_WRITE_MIN_CHARS
+                                ) {
+                                    val snapshot = preview.toString().take(MAX_PARTIAL_CHARS)
+                                    store.update(transportId) {
+                                        it.copy(
+                                            phase = "streaming",
+                                            generationId = generationId,
+                                            cacheStatus = cacheStatus,
+                                            partialText = snapshot
+                                        )
+                                    }
+                                    lastSavedAt = now
+                                    lastSavedLength = preview.length
                                 }
-                                lastSavedAt = now
-                                lastSavedLength = preview.length
                             }
                         }
+                    } else {
+                        OpenRouterResponseParser.parse(body.string(), record.allowEmpty)
                     }
-                } else {
-                    OpenRouterResponseParser.parse(body.string(), record.allowEmpty)
-                }
 
+                    store.update(transportId) {
+                        it.copy(
+                            phase = "completed",
+                            generationId = generationId,
+                            cacheStatus = cacheStatus,
+                            completionJson = gson.toJson(completion),
+                            partialText = "",
+                            error = null
+                        )
+                    }
+                    DiagnosticLog.record(
+                        applicationContext,
+                        "RUNTIME_TRANSPORT",
+                        "completed id=${transportId.take(8)} generation=${generationId?.take(12) ?: "none"} finish=${completion.finishReason} pid=${Process.myPid()}"
+                    )
+                }
+            } catch (error: Throwable) {
+                val cancelled = call.isCanceled()
+                val current = store.get(transportId)
                 store.update(transportId) {
                     it.copy(
-                        phase = "completed",
-                        generationId = generationId,
-                        cacheStatus = cacheStatus,
-                        completionJson = gson.toJson(completion),
-                        partialText = "",
-                        error = null
+                        phase = if (cancelled) "cancelled" else "failed",
+                        error = if (cancelled) "Запрос отменён" else "${error::class.java.simpleName}: ${error.message ?: "runtime transport failed"}"
                     )
                 }
                 DiagnosticLog.record(
                     applicationContext,
                     "RUNTIME_TRANSPORT",
-                    "completed id=${transportId.take(8)} generation=${generationId?.take(12) ?: "none"} finish=${completion.finishReason} pid=${Process.myPid()}"
+                    "failed id=${transportId.take(8)} generation=${current?.generationId?.take(12) ?: "none"} cancel=$cancelled pid=${Process.myPid()}",
+                    error
                 )
+            } finally {
+                activeCalls.remove(transportId)
             }
-        } catch (error: Throwable) {
-            val cancelled = call.isCanceled()
-            val current = store.get(transportId)
-            store.update(transportId) {
-                it.copy(
-                    phase = if (cancelled) "cancelled" else "failed",
-                    error = if (cancelled) "Запрос отменён" else "${error::class.java.simpleName}: ${error.message ?: "runtime transport failed"}"
-                )
-            }
+        } finally {
+            activeTransports.remove(transportId)
+            if (activeTransports.isEmpty()) releaseWakeLock()
             DiagnosticLog.record(
                 applicationContext,
                 "RUNTIME_TRANSPORT",
-                "failed id=${transportId.take(8)} generation=${current?.generationId?.take(12) ?: "none"} cancel=$cancelled pid=${Process.myPid()}",
-                error
+                "released id=${transportId.take(8)} active=${activeTransports.size} pid=${Process.myPid()}"
             )
-        } finally {
-            activeCalls.remove(transportId)
-            if (activeCalls.isEmpty()) releaseWakeLock()
             maybeStop(startId)
         }
     }
 
     private fun cancelTransport(transportId: String) {
+        activeTransports.remove(transportId)
         activeCalls.remove(transportId)?.cancel()
         store.update(transportId) { it.copy(phase = "cancelled", error = "Запрос отменён") }
-        if (activeCalls.isEmpty()) releaseWakeLock()
+        if (activeTransports.isEmpty()) releaseWakeLock()
         DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "cancel id=${transportId.take(8)} pid=${Process.myPid()}")
     }
 
@@ -227,7 +245,11 @@ class RuntimeOpenRouterService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
-        startForeground(NOTIFICATION_ID, builder.build())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+        } else {
+            startForeground(NOTIFICATION_ID, builder.build())
+        }
     }
 
     private fun createChannel() {
@@ -256,13 +278,17 @@ class RuntimeOpenRouterService : Service() {
     }
 
     private fun maybeStop(startId: Int) {
-        if (activeCalls.isNotEmpty()) return
+        if (activeTransports.isNotEmpty()) return
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf(startId)
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "task removed; active=${activeCalls.size} pid=${Process.myPid()}")
+        DiagnosticLog.record(
+            applicationContext,
+            "RUNTIME_TRANSPORT",
+            "task removed; active=${activeTransports.size} calls=${activeCalls.size} pid=${Process.myPid()}"
+        )
         super.onTaskRemoved(rootIntent)
     }
 
@@ -270,18 +296,29 @@ class RuntimeOpenRouterService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "RUNTIME_TRANSPORT",
-            "foreground timeout startId=$startId type=$fgsType active=${activeCalls.size} pid=${Process.myPid()}"
+            "unexpected foreground timeout startId=$startId type=$fgsType active=${activeTransports.size} calls=${activeCalls.size} pid=${Process.myPid()}"
         )
-        activeCalls.keys.toList().forEach(::cancelTransport)
+        activeTransports.toList().forEach(::cancelTransport)
         stopSelf(startId)
     }
 
     override fun onDestroy() {
+        // A normal stop only happens after activeTransports becomes empty. If Android destroys the
+        // service while work is still claimed, mark it explicitly so the main process/recovery path
+        // can distinguish a system interruption from a user cancellation.
+        val interrupted = activeTransports.toList()
         activeCalls.values.forEach { runCatching { it.cancel() } }
         activeCalls.clear()
+        interrupted.forEach { id ->
+            store.update(id) {
+                if (it.phase in setOf("completed", "failed", "cancelled")) it
+                else it.copy(phase = "failed", error = "Runtime service was stopped by Android")
+            }
+        }
+        activeTransports.clear()
         releaseWakeLock()
         scope.cancel()
-        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "runtime destroyed pid=${Process.myPid()}")
+        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "runtime destroyed interrupted=${interrupted.size} pid=${Process.myPid()}")
         super.onDestroy()
     }
 
