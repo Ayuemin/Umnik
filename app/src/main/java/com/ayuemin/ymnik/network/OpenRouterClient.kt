@@ -34,7 +34,6 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import java.io.File
 import java.io.IOException
-import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -674,20 +673,8 @@ class OpenRouterClient(
     return completion
 }
 
-private fun stableServerRequestId(payloadJson: String): String {
-    val normalized = runCatching {
-        gson.fromJson(payloadJson, JsonObject::class.java).deepCopy().apply {
-            getAsJsonObject("metadata")?.remove("umnik_request_id")
-        }
-    }.getOrElse { JsonObject().apply { addProperty("payload", payloadJson) } }
-    val canonical = gson.toJson(normalized)
-    val digest = MessageDigest.getInstance("SHA-256")
-        .digest(canonical.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-        .take(32)
-    val chatPart = requestChatId?.takeIf { it.isNotBlank() } ?: "global"
-    return "$chatPart-$digest"
-}
+private fun stableServerRequestId(payloadJson: String): String =
+    ServerRequestIdentity.build(requestId, payloadJson)
 
     private fun recoveryRecord(apiKey: String, baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
         if (!recoveryEnabled) return null
