@@ -139,6 +139,51 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
     }
 }
 
+private enum class SettingsCategory(val title: String, val subtitle: String) {
+    CONNECTION("Подключение", "OpenRouter и личный сервер"),
+    MODELS("Модели", "Чат, изображения, reasoning и речь"),
+    CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
+    INTERFACE("Интерфейс", "Оформление и звук"),
+    DATA("Данные", "Локальное хранилище и файлы"),
+    ABOUT("Диагностика и о приложении", "Логи, памятка и версия")
+}
+
+private fun settingsCategoryIcon(category: SettingsCategory): ImageVector = when (category) {
+    SettingsCategory.CONNECTION -> Icons.Outlined.Language
+    SettingsCategory.MODELS -> Icons.Outlined.TextFields
+    SettingsCategory.CONTEXT -> Icons.Outlined.Description
+    SettingsCategory.INTERFACE -> Icons.Outlined.Palette
+    SettingsCategory.DATA -> Icons.Outlined.Storage
+    SettingsCategory.ABOUT -> Icons.Outlined.Settings
+}
+
+@Composable
+private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit) {
+    ElevatedCard(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+    ) {
+        TextButton(
+            onClick = onClick,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+        ) {
+            Icon(settingsCategoryIcon(category), contentDescription = null)
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                Text(category.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    category.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 @Composable
 internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
@@ -147,6 +192,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
         }.getOrDefault("—")
     }
+    var settingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var storageOpen by remember { mutableStateOf(false) }
     var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
@@ -215,707 +261,737 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     }
 
     Column(Modifier.fillMaxSize()) {
-        PinnedBackHeader(title = "Настройки", onBack = onBack)
+        val activeCategory = settingsCategory
+        PinnedBackHeader(
+            title = activeCategory?.title ?: "Настройки",
+            onBack = {
+                if (activeCategory == null) onBack() else settingsCategory = null
+            }
+        )
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            item {
-                ExpandableSettingsCard(
-                    title = "Модели",
-                    subtitle = state.textModel.substringAfterLast('/'),
-                    icon = Icons.Outlined.TextFields,
-                    expanded = modelsExpanded,
-                    onToggle = { modelsExpanded = !modelsExpanded }
-                ) {
-                    FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.TextFields, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Чат по умолчанию", fontWeight = FontWeight.Medium)
-                            Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
-                    Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
-                        Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Быстрые модели", fontWeight = FontWeight.Medium)
-                            Text(
-                                if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size} · нажмите для каталога",
-                                style = MaterialTheme.typography.bodySmall
-                            )
-                        }
-                    }
-                    if (state.quickTextModels.isNotEmpty()) {
-                        Spacer(Modifier.height(5.dp))
-                        state.quickTextModels.forEach { ref ->
-                            val modelId = quickModelId(ref)
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    modelId,
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                TextButton(onClick = { vm.toggleQuickTextModelForConnection("openrouter", modelId) }) {
-                                    Text("Убрать")
-                                }
-                            }
-                        }
-                    }
-                    if (state.textModel != "openrouter/auto") {
-                        TextButton(
-                            onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Сбросить модель чата на Auto") }
-                    }
-                    Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Каталог и модели OpenRouter", fontWeight = FontWeight.Medium)
-                            Text(
-                                "Видео, речь, Batch, Embeddings, Rerank, маршрутизация и RAG",
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
+            if (settingsCategory == null) {
+                SettingsCategory.entries.forEach { category ->
+                    item(key = category.name) {
+                        SettingsCategoryCard(category = category, onClick = { settingsCategory = category })
                     }
                 }
-            }
-
-            item { ChatMemoryGlobalSettingsSection(state, vm) }
-
-            item {
-                val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
-                ExpandableSettingsCard(
-                    title = "Генерация изображений",
-                    subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { "не выбрана" }} · $imageConnectionName",
-                    icon = Icons.Outlined.Image,
-                    expanded = imageModelsExpanded,
-                    onToggle = { imageModelsExpanded = !imageModelsExpanded }
-                ) {
-                    Text(
-                        "Выбор модели выполняется в общем каталоге OpenRouter. Здесь показана текущая модель для «+ → Создать».",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(9.dp))
-                    FilledTonalButton(
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
-                        modifier = Modifier.fillMaxWidth()
+            } else {
+                when (settingsCategory) {
+                    SettingsCategory.CONNECTION -> {
+                item {
+                    val openRouterSettingsProfile = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
+                        ?: state.connectionProfiles.first()
+                    ExpandableSettingsCard(
+                        title = "OpenRouter",
+                        subtitle = "API-ключ и соединение",
+                        icon = Icons.Outlined.Language,
+                        expanded = connectionsExpanded,
+                        onToggle = { connectionsExpanded = !connectionsExpanded }
                     ) {
-                        Icon(Icons.Outlined.Image, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Модель изображений", fontWeight = FontWeight.Medium)
-                            Text(
-                                state.imageModel.ifBlank { "Не выбрана" },
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                    if (state.imageModel.isNotBlank()) {
-                        TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
-                            Text("Снять выбор модели изображений")
-                        }
-                    }
-                    Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(
-                        onClick = { imageParametersOpen = true },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Параметры изображения", fontWeight = FontWeight.Medium)
-                            Text(
-                                imageParameterSummary(state),
-                                style = MaterialTheme.typography.bodySmall,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
-            }
-
-            item {
-                ReasoningSettingsCard(
-                    state = state,
-                    vm = vm,
-                    expanded = reasoningExpanded,
-                    onToggle = { reasoningExpanded = !reasoningExpanded }
-                )
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Навыки",
-                    subtitle = if (state.skills.isEmpty()) "Библиотека пуста" else "${state.skills.size} навыков",
-                    icon = Icons.Outlined.Extension,
-                    expanded = skillsLibraryExpanded,
-                    onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded }
-                ) {
-                    SkillLibrarySettings(state, vm)
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Звук готового ответа",
-                    subtitle = when {
-                        !state.answerSoundEnabled -> "Выключен"
-                        state.answerSoundChoice == AnswerSoundChoice.CUSTOM -> state.answerSoundCustomName ?: "Свой звук"
-                        else -> "Основной сигнал"
-                    },
-                    icon = Icons.Outlined.VolumeUp,
-                    expanded = soundExpanded,
-                    onToggle = { soundExpanded = !soundExpanded }
-                ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Text("Уведомлять после ответа", modifier = Modifier.weight(1f))
-                        Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
-                    }
-                    if (state.answerSoundEnabled) {
-                        Spacer(Modifier.height(10.dp))
-                        FilterChip(
-                            selected = state.answerSoundChoice == AnswerSoundChoice.DEFAULT,
-                            onClick = { vm.setAnswerSoundChoice(AnswerSoundChoice.DEFAULT) },
-                            label = { Text("Основной") },
-                            leadingIcon = if (state.answerSoundChoice == AnswerSoundChoice.DEFAULT) {
-                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                            } else null
-                        )
-                        if (importedSounds.isNotEmpty()) {
-                            Spacer(Modifier.height(6.dp))
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                items(importedSounds, key = { it.id }) { sound ->
-                                    FilterChip(
-                                        selected = state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM,
-                                        onClick = { vm.selectAnswerSound(sound) },
-                                        label = { Text(sound.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                        leadingIcon = if (state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
-                                            { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
-                                        } else null
-                                    )
-                                }
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                        FilledTonalButton(
-                            onClick = { soundPicker.launch(arrayOf("audio/*")) },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.Add, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text("Добавить звук с телефона")
-                        }
                         Text(
-                            "Выбранный файл копируется в память Umnik и остаётся доступным, пока вы не удалите его в «Хранилище Umnik».",
+                            "Umnik работает через OpenRouter. Здесь настраивается единственное подключение приложения; выбор моделей находится в разделе «Модели».",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 7.dp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Громкость", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                            Text("${state.answerSoundVolume}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Slider(
-                            value = state.answerSoundVolume.toFloat(),
-                            onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
-                            valueRange = 0f..100f
-                        )
-                        FilledTonalButton(
-                            onClick = vm::previewAnswerSound,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Text("Проверить звук")
-                        }
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Озвучивание ответов OpenRouter",
-                    subtitle = when {
-                        state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
-                        else -> buildList {
-                            add(state.openRouterSpeechModel.substringAfterLast('/'))
-                            if (state.openRouterSpeechVoice.isNotBlank()) add(state.openRouterSpeechVoice)
-                            add(state.openRouterSpeechResponseFormat.ifBlank { "Авто" }.uppercase())
-                        }.joinToString(" · ")
-                    },
-                    icon = Icons.Outlined.VolumeUp,
-                    expanded = openRouterSpeechExpanded,
-                    onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded }
-                ) {
-                    Text(
-                        "Используется только кнопкой OR под ответами.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Настроить модель и параметры")
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Озвучивание текста и документов",
-                    subtitle = "Отдельная модель и параметры",
-                    icon = Icons.Outlined.Description,
-                    expanded = openRouterDocumentSpeechExpanded,
-                    onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded }
-                ) {
-                    Text(
-                        "Используется режимом «+ → Озвучить» и не меняет озвучивание ответов.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Открыть настройки озвучивания")
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Хранилище Umnik",
-                    subtitle = "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
-                    icon = Icons.Outlined.Storage,
-                    expanded = storageExpanded,
-                    onToggle = { storageExpanded = !storageExpanded }
-                ) {
-                    FilledTonalButton(
-                        onClick = {
-                            vm.refreshStorage()
-                            storageOpen = true
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Открыть хранилище")
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Коротко обо мне",
-                    subtitle = if (state.userProfile.isEmpty()) "Не задано" else "Профиль заполнен · ${profileScopeLabel(state.userProfileScope)}",
-                    icon = Icons.Outlined.Description,
-                    expanded = profileExpanded,
-                    onToggle = { profileExpanded = !profileExpanded }
-                ) {
-                    Text(
-                        "Необязательно. Передаётся модели только в выбранной области.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(9.dp))
-                    OutlinedTextField(profileName, { profileName = it }, Modifier.fillMaxWidth(), label = { Text("Имя") }, singleLine = true)
-                    Spacer(Modifier.height(7.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        OutlinedTextField(profileGender, { profileGender = it }, Modifier.weight(1f), label = { Text("Пол") }, singleLine = true)
-                        OutlinedTextField(profileAge, { profileAge = it }, Modifier.weight(1f), label = { Text("Возраст") }, singleLine = true)
-                    }
-                    Spacer(Modifier.height(7.dp))
-                    OutlinedTextField(profileOccupation, { profileOccupation = it }, Modifier.fillMaxWidth(), label = { Text("Род занятий") }, singleLine = true)
-                    Spacer(Modifier.height(7.dp))
-                    OutlinedTextField(
-                        profileNote,
-                        { profileNote = it.take(240) },
-                        Modifier.fillMaxWidth(),
-                        label = { Text("Короткая установка") },
-                        minLines = 2,
-                        maxLines = 3
-                    )
-                    Spacer(Modifier.height(9.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                        items(profileScopes) { scope ->
-                            FilterChip(
-                                selected = state.userProfileScope == scope,
-                                onClick = { vm.setUserProfileScope(scope) },
-                                label = { Text(profileScopeLabel(scope)) }
-                            )
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = { vm.saveUserProfile(profileName, profileGender, profileAge, profileOccupation, profileNote) },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text("Сохранить профиль")
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Цветовая схема",
-                    subtitle = if (state.themeChoice == ThemeChoice.CUSTOM) {
-                        "Свой цвет · #%06X".format(state.customThemeColor and 0xFFFFFF)
-                    } else {
-                        themeLabel(state.themeChoice)
-                    },
-                    icon = Icons.Outlined.Palette,
-                    expanded = themeExpanded,
-                    onToggle = { themeExpanded = !themeExpanded }
-                ) {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(themes) { choice ->
-                            FilterChip(
-                                selected = state.themeChoice == choice,
-                                onClick = { vm.setThemeChoice(choice) },
-                                label = { Text(themeLabel(choice)) },
-                                leadingIcon = if (choice == ThemeChoice.CUSTOM) {
-                                    {
-                                        Surface(
-                                            shape = CircleShape,
-                                            color = Color(state.customThemeColor),
-                                            modifier = Modifier.size(14.dp)
-                                        ) {}
-                                    }
-                                } else null
-                            )
-                        }
-                    }
-                    if (state.themeChoice == ThemeChoice.CUSTOM) {
-                        Spacer(Modifier.height(10.dp))
-                        val cleanHex = customColorText.trim().removePrefix("#")
-                        val parsedColor = cleanHex
-                            .takeIf { value ->
-                                value.length == 6 && value.all { ch -> ch.isDigit() || ch.uppercaseChar() in 'A'..'F' }
-                            }
-                            ?.toLongOrNull(16)
-                            ?.let { rgb -> (0xFF000000L or rgb).toInt() }
-
-                        Row(
+                        ServerConnectionSettings()
+                        Spacer(Modifier.height(12.dp))
+                        HorizontalDivider()
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = connectionKey,
+                            onValueChange = { connectionKey = it },
                             modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = Color(parsedColor ?: state.customThemeColor),
-                                modifier = Modifier.size(38.dp)
-                            ) {}
-                            OutlinedTextField(
-                                value = customColorText,
-                                onValueChange = { customColorText = it.trim().uppercase().take(7) },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("HEX-код") },
-                                placeholder = { Text("#6750A4") },
-                                singleLine = true,
-                                isError = customColorText.isNotBlank() && parsedColor == null
-                            )
-                        }
+                            label = { Text("API-ключ OpenRouter") },
+                            placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            singleLine = true
+                        )
                         Spacer(Modifier.height(8.dp))
                         FilledTonalButton(
-                            onClick = { parsedColor?.let(vm::setCustomThemeColor) },
-                            enabled = parsedColor != null,
+                            onClick = {
+                                vm.saveApiKey(connectionKey.takeIf { it.isNotBlank() })
+                                connectionKey = ""
+                            },
                             modifier = Modifier.fillMaxWidth()
                         ) {
                             Icon(Icons.Outlined.Check, contentDescription = null)
                             Spacer(Modifier.width(7.dp))
-                            Text("Применить цвет")
+                            Text("Сохранить API-ключ")
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = { vm.checkConnection(openRouterSettingsProfile.id) },
+                            enabled = !state.isLoading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Refresh, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Проверить подключение")
+                        }
+                        Spacer(Modifier.height(5.dp))
+                        TextButton(
+                            onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                if (connectionAdvancedExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text("Технические настройки OpenRouter")
+                        }
+                        if (connectionAdvancedExpanded) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Автоматический адрес API")
+                                    Text(
+                                        "Рекомендуется. Umnik использует актуальный стандартный адрес OpenRouter.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Switch(
+                                    checked = connectionUseProviderDefaults,
+                                    onCheckedChange = { connectionUseProviderDefaults = it }
+                                )
+                            }
+                            if (!connectionUseProviderDefaults) {
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedTextField(
+                                    value = connectionUrl,
+                                    onValueChange = { connectionUrl = it.trim().take(300) },
+                                    modifier = Modifier.fillMaxWidth(),
+                                    label = { Text("Адрес API OpenRouter") },
+                                    placeholder = { Text("https://openrouter.ai/api/v1") },
+                                    singleLine = true
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            OutlinedTextField(
+                                value = connectionContextWindow,
+                                onValueChange = { value -> connectionContextWindow = value.filter(Char::isDigit).take(7) },
+                                modifier = Modifier.fillMaxWidth(),
+                                label = { Text("Ручной предел контекста, токенов") },
+                                placeholder = { Text("Необязательно · обычно определяется по модели") },
+                                singleLine = true
+                            )
+                            Text(
+                                "Оставьте поле пустым, если не требуется вручную ограничивать контекст.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 5.dp)
+                            )
+                            Spacer(Modifier.height(9.dp))
+                            FilledTonalButton(
+                                onClick = {
+                                    vm.saveConnectionProfile(
+                                        profileId = openRouterSettingsProfile.id,
+                                        name = "OpenRouter",
+                                        baseUrl = connectionUrl,
+                                        apiKey = connectionKey.takeIf { it.isNotBlank() },
+                                        imageEnabled = true,
+                                        imageBaseUrl = null,
+                                        imageProtocol = ImageApiProtocol.AUTO,
+                                        useSameImageApiKey = true,
+                                        imageApiKey = null,
+                                        useProviderDefaults = connectionUseProviderDefaults,
+                                        contextLimitTokens = connectionContextWindow.toIntOrNull()
+                                    )
+                                    connectionKey = ""
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Сохранить технические настройки") }
                         }
                         Text(
-                            "Введите стандартный HEX-код цвета, например #1E88E5.",
+                            "API-ключ хранится локально и шифруется через Android Keystore.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
+                            modifier = Modifier.padding(top = 8.dp)
                         )
                     }
                 }
-            }
 
-            item {
-                val openRouterSettingsProfile = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
-                    ?: state.connectionProfiles.first()
-                ExpandableSettingsCard(
-                    title = "OpenRouter",
-                    subtitle = "API-ключ и соединение",
-                    icon = Icons.Outlined.Language,
-                    expanded = connectionsExpanded,
-                    onToggle = { connectionsExpanded = !connectionsExpanded }
-                ) {
-                    Text(
-                        "Umnik работает через OpenRouter. Здесь настраивается единственное подключение приложения; выбор моделей находится в разделе «Модели».",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    ServerConnectionSettings()
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedTextField(
-                        value = connectionKey,
-                        onValueChange = { connectionKey = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        label = { Text("API-ключ OpenRouter") },
-                        placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
-                        visualTransformation = PasswordVisualTransformation(),
-                        singleLine = true
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    FilledTonalButton(
-                        onClick = {
-                            vm.saveApiKey(connectionKey.takeIf { it.isNotBlank() })
-                            connectionKey = ""
-                        },
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.Check, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Сохранить API-ключ")
                     }
-                    Spacer(Modifier.height(7.dp))
-                    FilledTonalButton(
-                        onClick = { vm.checkConnection(openRouterSettingsProfile.id) },
-                        enabled = !state.isLoading,
-                        modifier = Modifier.fillMaxWidth()
+                    SettingsCategory.MODELS -> {
+                item {
+                    ExpandableSettingsCard(
+                        title = "Модели",
+                        subtitle = state.textModel.substringAfterLast('/'),
+                        icon = Icons.Outlined.TextFields,
+                        expanded = modelsExpanded,
+                        onToggle = { modelsExpanded = !modelsExpanded }
                     ) {
-                        Icon(Icons.Outlined.Refresh, contentDescription = null)
-                        Spacer(Modifier.width(7.dp))
-                        Text("Проверить подключение")
+                        FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Outlined.TextFields, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Чат по умолчанию", fontWeight = FontWeight.Medium)
+                                Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
+                            Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Быстрые модели", fontWeight = FontWeight.Medium)
+                                Text(
+                                    if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size} · нажмите для каталога",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        if (state.quickTextModels.isNotEmpty()) {
+                            Spacer(Modifier.height(5.dp))
+                            state.quickTextModels.forEach { ref ->
+                                val modelId = quickModelId(ref)
+                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        modelId,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    TextButton(onClick = { vm.toggleQuickTextModelForConnection("openrouter", modelId) }) {
+                                        Text("Убрать")
+                                    }
+                                }
+                            }
+                        }
+                        if (state.textModel != "openrouter/auto") {
+                            TextButton(
+                                onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("Сбросить модель чата на Auto") }
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Settings, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Каталог и модели OpenRouter", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "Видео, речь, Batch, Embeddings, Rerank, маршрутизация и RAG",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
-                    Spacer(Modifier.height(5.dp))
-                    TextButton(
-                        onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
-                        modifier = Modifier.fillMaxWidth()
+                }
+
+                item {
+                    val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
+                    ExpandableSettingsCard(
+                        title = "Генерация изображений",
+                        subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { "не выбрана" }} · $imageConnectionName",
+                        icon = Icons.Outlined.Image,
+                        expanded = imageModelsExpanded,
+                        onToggle = { imageModelsExpanded = !imageModelsExpanded }
                     ) {
-                        Icon(
-                            if (connectionAdvancedExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                            contentDescription = null
+                        Text(
+                            "Выбор модели выполняется в общем каталоге OpenRouter. Здесь показана текущая модель для «+ → Создать».",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.width(6.dp))
-                        Text("Технические настройки OpenRouter")
+                        Spacer(Modifier.height(9.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Image, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Модель изображений", fontWeight = FontWeight.Medium)
+                                Text(
+                                    state.imageModel.ifBlank { "Не выбрана" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                        if (state.imageModel.isNotBlank()) {
+                            TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
+                                Text("Снять выбор модели изображений")
+                            }
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = { imageParametersOpen = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Settings, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Параметры изображения", fontWeight = FontWeight.Medium)
+                                Text(
+                                    imageParameterSummary(state),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
                     }
-                    if (connectionAdvancedExpanded) {
+                }
+
+                item {
+                    ReasoningSettingsCard(
+                        state = state,
+                        vm = vm,
+                        expanded = reasoningExpanded,
+                        onToggle = { reasoningExpanded = !reasoningExpanded }
+                    )
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Озвучивание ответов OpenRouter",
+                        subtitle = when {
+                            state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
+                            else -> buildList {
+                                add(state.openRouterSpeechModel.substringAfterLast('/'))
+                                if (state.openRouterSpeechVoice.isNotBlank()) add(state.openRouterSpeechVoice)
+                                add(state.openRouterSpeechResponseFormat.ifBlank { "Авто" }.uppercase())
+                            }.joinToString(" · ")
+                        },
+                        icon = Icons.Outlined.VolumeUp,
+                        expanded = openRouterSpeechExpanded,
+                        onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded }
+                    ) {
+                        Text(
+                            "Используется только кнопкой OR под ответами.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Настроить модель и параметры")
+                        }
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Озвучивание текста и документов",
+                        subtitle = "Отдельная модель и параметры",
+                        icon = Icons.Outlined.Description,
+                        expanded = openRouterDocumentSpeechExpanded,
+                        onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded }
+                    ) {
+                        Text(
+                            "Используется режимом «+ → Озвучить» и не меняет озвучивание ответов.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Открыть настройки озвучивания")
+                        }
+                    }
+                }
+
+                    }
+                    SettingsCategory.CONTEXT -> {
+                item { ChatMemoryGlobalSettingsSection(state, vm) }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Навыки",
+                        subtitle = if (state.skills.isEmpty()) "Библиотека пуста" else "${state.skills.size} навыков",
+                        icon = Icons.Outlined.Extension,
+                        expanded = skillsLibraryExpanded,
+                        onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded }
+                    ) {
+                        SkillLibrarySettings(state, vm)
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Коротко обо мне",
+                        subtitle = if (state.userProfile.isEmpty()) "Не задано" else "Профиль заполнен · ${profileScopeLabel(state.userProfileScope)}",
+                        icon = Icons.Outlined.Description,
+                        expanded = profileExpanded,
+                        onToggle = { profileExpanded = !profileExpanded }
+                    ) {
+                        Text(
+                            "Необязательно. Передаётся модели только в выбранной области.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Spacer(Modifier.height(9.dp))
+                        OutlinedTextField(profileName, { profileName = it }, Modifier.fillMaxWidth(), label = { Text("Имя") }, singleLine = true)
+                        Spacer(Modifier.height(7.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            OutlinedTextField(profileGender, { profileGender = it }, Modifier.weight(1f), label = { Text("Пол") }, singleLine = true)
+                            OutlinedTextField(profileAge, { profileAge = it }, Modifier.weight(1f), label = { Text("Возраст") }, singleLine = true)
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        OutlinedTextField(profileOccupation, { profileOccupation = it }, Modifier.fillMaxWidth(), label = { Text("Род занятий") }, singleLine = true)
+                        Spacer(Modifier.height(7.dp))
+                        OutlinedTextField(
+                            profileNote,
+                            { profileNote = it.take(240) },
+                            Modifier.fillMaxWidth(),
+                            label = { Text("Короткая установка") },
+                            minLines = 2,
+                            maxLines = 3
+                        )
+                        Spacer(Modifier.height(9.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                            items(profileScopes) { scope ->
+                                FilterChip(
+                                    selected = state.userProfileScope == scope,
+                                    onClick = { vm.setUserProfileScope(scope) },
+                                    label = { Text(profileScopeLabel(scope)) }
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { vm.saveUserProfile(profileName, profileGender, profileAge, profileOccupation, profileNote) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Сохранить профиль")
+                        }
+                    }
+                }
+
+                    }
+                    SettingsCategory.INTERFACE -> {
+                item {
+                    ExpandableSettingsCard(
+                        title = "Звук готового ответа",
+                        subtitle = when {
+                            !state.answerSoundEnabled -> "Выключен"
+                            state.answerSoundChoice == AnswerSoundChoice.CUSTOM -> state.answerSoundCustomName ?: "Свой звук"
+                            else -> "Основной сигнал"
+                        },
+                        icon = Icons.Outlined.VolumeUp,
+                        expanded = soundExpanded,
+                        onToggle = { soundExpanded = !soundExpanded }
+                    ) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Уведомлять после ответа", modifier = Modifier.weight(1f))
+                            Switch(checked = state.answerSoundEnabled, onCheckedChange = vm::setAnswerSoundEnabled)
+                        }
+                        if (state.answerSoundEnabled) {
+                            Spacer(Modifier.height(10.dp))
+                            FilterChip(
+                                selected = state.answerSoundChoice == AnswerSoundChoice.DEFAULT,
+                                onClick = { vm.setAnswerSoundChoice(AnswerSoundChoice.DEFAULT) },
+                                label = { Text("Основной") },
+                                leadingIcon = if (state.answerSoundChoice == AnswerSoundChoice.DEFAULT) {
+                                    { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                } else null
+                            )
+                            if (importedSounds.isNotEmpty()) {
+                                Spacer(Modifier.height(6.dp))
+                                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    items(importedSounds, key = { it.id }) { sound ->
+                                        FilterChip(
+                                            selected = state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM,
+                                            onClick = { vm.selectAnswerSound(sound) },
+                                            label = { Text(sound.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                            leadingIcon = if (state.answerSoundCustomPath == sound.localPath && state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
+                                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                            } else null
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            FilledTonalButton(
+                                onClick = { soundPicker.launch(arrayOf("audio/*")) },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Outlined.Add, contentDescription = null)
+                                Spacer(Modifier.width(7.dp))
+                                Text("Добавить звук с телефона")
+                            }
+                            Text(
+                                "Выбранный файл копируется в память Umnik и остаётся доступным, пока вы не удалите его в «Хранилище Umnik».",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 7.dp)
+                            )
+                            Spacer(Modifier.height(10.dp))
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Громкость", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                                Text("${state.answerSoundVolume}%", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Slider(
+                                value = state.answerSoundVolume.toFloat(),
+                                onValueChange = { vm.setAnswerSoundVolume(it.toInt()) },
+                                valueRange = 0f..100f
+                            )
+                            FilledTonalButton(
+                                onClick = vm::previewAnswerSound,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Outlined.VolumeUp, contentDescription = null)
+                                Spacer(Modifier.width(7.dp))
+                                Text("Проверить звук")
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Цветовая схема",
+                        subtitle = if (state.themeChoice == ThemeChoice.CUSTOM) {
+                            "Свой цвет · #%06X".format(state.customThemeColor and 0xFFFFFF)
+                        } else {
+                            themeLabel(state.themeChoice)
+                        },
+                        icon = Icons.Outlined.Palette,
+                        expanded = themeExpanded,
+                        onToggle = { themeExpanded = !themeExpanded }
+                    ) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items(themes) { choice ->
+                                FilterChip(
+                                    selected = state.themeChoice == choice,
+                                    onClick = { vm.setThemeChoice(choice) },
+                                    label = { Text(themeLabel(choice)) },
+                                    leadingIcon = if (choice == ThemeChoice.CUSTOM) {
+                                        {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = Color(state.customThemeColor),
+                                                modifier = Modifier.size(14.dp)
+                                            ) {}
+                                        }
+                                    } else null
+                                )
+                            }
+                        }
+                        if (state.themeChoice == ThemeChoice.CUSTOM) {
+                            Spacer(Modifier.height(10.dp))
+                            val cleanHex = customColorText.trim().removePrefix("#")
+                            val parsedColor = cleanHex
+                                .takeIf { value ->
+                                    value.length == 6 && value.all { ch -> ch.isDigit() || ch.uppercaseChar() in 'A'..'F' }
+                                }
+                                ?.toLongOrNull(16)
+                                ?.let { rgb -> (0xFF000000L or rgb).toInt() }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = Color(parsedColor ?: state.customThemeColor),
+                                    modifier = Modifier.size(38.dp)
+                                ) {}
+                                OutlinedTextField(
+                                    value = customColorText,
+                                    onValueChange = { customColorText = it.trim().uppercase().take(7) },
+                                    modifier = Modifier.weight(1f),
+                                    label = { Text("HEX-код") },
+                                    placeholder = { Text("#6750A4") },
+                                    singleLine = true,
+                                    isError = customColorText.isNotBlank() && parsedColor == null
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            FilledTonalButton(
+                                onClick = { parsedColor?.let(vm::setCustomThemeColor) },
+                                enabled = parsedColor != null,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Outlined.Check, contentDescription = null)
+                                Spacer(Modifier.width(7.dp))
+                                Text("Применить цвет")
+                            }
+                            Text(
+                                "Введите стандартный HEX-код цвета, например #1E88E5.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp)
+                            )
+                        }
+                    }
+                }
+
+                    }
+                    SettingsCategory.DATA -> {
+                item {
+                    ExpandableSettingsCard(
+                        title = "Хранилище Umnik",
+                        subtitle = "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
+                        icon = Icons.Outlined.Storage,
+                        expanded = storageExpanded,
+                        onToggle = { storageExpanded = !storageExpanded }
+                    ) {
+                        FilledTonalButton(
+                            onClick = {
+                                vm.refreshStorage()
+                                storageOpen = true
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Открыть хранилище")
+                        }
+                    }
+                }
+
+                    }
+                    SettingsCategory.ABOUT -> {
+                item {
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
+                    ) {
+                        TextButton(
+                            onClick = {
+                                vm.openUsageGuide()
+                                onBack()
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+                        ) {
+                            Icon(Icons.Outlined.Description, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Памятка Umnik", fontWeight = FontWeight.Bold)
+                                Text("Краткое руководство", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Диагностика и логи",
+                        subtitle = if (diagnosticLoggingEnabled)
+                            "Запись включена · ${humanSize(diagnosticLogBytes)}"
+                        else
+                            "Выключено · включайте только при поиске ошибки",
+                        icon = Icons.Outlined.Description,
+                        expanded = diagnosticsExpanded,
+                        onToggle = {
+                            diagnosticsExpanded = !diagnosticsExpanded
+                            diagnosticLoggingEnabled = vm.isDiagnosticLoggingEnabled()
+                            diagnosticLogBytes = vm.diagnosticLogSize()
+                        }
+                    ) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
-                                Text("Автоматический адрес API")
+                                Text("Запись логов", fontWeight = FontWeight.Medium)
                                 Text(
-                                    "Рекомендуется. Umnik использует актуальный стандартный адрес OpenRouter.",
+                                    "Включите, повторите действия с ошибкой и затем отправьте лог.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Switch(
-                                checked = connectionUseProviderDefaults,
-                                onCheckedChange = { connectionUseProviderDefaults = it }
-                            )
-                        }
-                        if (!connectionUseProviderDefaults) {
-                            Spacer(Modifier.height(8.dp))
-                            OutlinedTextField(
-                                value = connectionUrl,
-                                onValueChange = { connectionUrl = it.trim().take(300) },
-                                modifier = Modifier.fillMaxWidth(),
-                                label = { Text("Адрес API OpenRouter") },
-                                placeholder = { Text("https://openrouter.ai/api/v1") },
-                                singleLine = true
+                                checked = diagnosticLoggingEnabled,
+                                onCheckedChange = { enabled ->
+                                    vm.setDiagnosticLoggingEnabled(enabled)
+                                    diagnosticLoggingEnabled = enabled
+                                    diagnosticLogBytes = vm.diagnosticLogSize()
+                                }
                             )
                         }
                         Spacer(Modifier.height(8.dp))
-                        OutlinedTextField(
-                            value = connectionContextWindow,
-                            onValueChange = { value -> connectionContextWindow = value.filter(Char::isDigit).take(7) },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("Ручной предел контекста, токенов") },
-                            placeholder = { Text("Необязательно · обычно определяется по модели") },
-                            singleLine = true
-                        )
                         Text(
-                            "Оставьте поле пустым, если не требуется вручную ограничивать контекст.",
+                            "Для ручной проверки журнал фиксирует сетевые стадии, действия, выбранную модель, типы вложений, фоновые задания и возврат результатов в чат. Тексты сообщений, содержимое файлов и API-ключи не записываются. Журнал хранит до ~8 МБ последних событий.",
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 5.dp)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.height(9.dp))
-                        FilledTonalButton(
-                            onClick = {
-                                vm.saveConnectionProfile(
-                                    profileId = openRouterSettingsProfile.id,
-                                    name = "OpenRouter",
-                                    baseUrl = connectionUrl,
-                                    apiKey = connectionKey.takeIf { it.isNotBlank() },
-                                    imageEnabled = true,
-                                    imageBaseUrl = null,
-                                    imageProtocol = ImageApiProtocol.AUTO,
-                                    useSameImageApiKey = true,
-                                    imageApiKey = null,
-                                    useProviderDefaults = connectionUseProviderDefaults,
-                                    contextLimitTokens = connectionContextWindow.toIntOrNull()
-                                )
-                                connectionKey = ""
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        ) { Text("Сохранить технические настройки") }
-                    }
-                    Text(
-                        "API-ключ хранится локально и шифруется через Android Keystore.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 8.dp)
-                    )
-                }
-            }
-
-            item {
-                ElevatedCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(18.dp),
-                    colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-                ) {
-                    TextButton(
-                        onClick = {
-                            vm.openUsageGuide()
-                            onBack()
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                    ) {
-                        Icon(Icons.Outlined.Description, contentDescription = null)
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("Памятка Umnik", fontWeight = FontWeight.Bold)
-                            Text("Краткое руководство", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-
-            item {
-                ExpandableSettingsCard(
-                    title = "Диагностика и логи",
-                    subtitle = if (diagnosticLoggingEnabled)
-                        "Запись включена · ${humanSize(diagnosticLogBytes)}"
-                    else
-                        "Выключено · включайте только при поиске ошибки",
-                    icon = Icons.Outlined.Description,
-                    expanded = diagnosticsExpanded,
-                    onToggle = {
-                        diagnosticsExpanded = !diagnosticsExpanded
-                        diagnosticLoggingEnabled = vm.isDiagnosticLoggingEnabled()
-                        diagnosticLogBytes = vm.diagnosticLogSize()
-                    }
-                ) {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Запись логов", fontWeight = FontWeight.Medium)
-                            Text(
-                                "Включите, повторите действия с ошибкой и затем отправьте лог.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Switch(
-                            checked = diagnosticLoggingEnabled,
-                            onCheckedChange = { enabled ->
-                                vm.setDiagnosticLoggingEnabled(enabled)
-                                diagnosticLoggingEnabled = enabled
-                                diagnosticLogBytes = vm.diagnosticLogSize()
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(
+                                onClick = {
+                                    val file = vm.diagnosticLogFile()
+                                    if (file != null) {
+                                        shareGeneratedFile(context, file)
+                                        diagnosticLogBytes = vm.diagnosticLogSize()
+                                    }
+                                },
+                                enabled = diagnosticLogBytes > 0L,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Outlined.Share, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Поделиться", maxLines = 1)
                             }
-                        )
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "Для ручной проверки журнал фиксирует сетевые стадии, действия, выбранную модель, типы вложений, фоновые задания и возврат результатов в чат. Тексты сообщений, содержимое файлов и API-ключи не записываются. Журнал хранит до ~8 МБ последних событий.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(
+                            FilledTonalButton(
+                                onClick = {
+                                    val file = vm.diagnosticLogFile()
+                                    if (file != null) {
+                                        diagnosticFileToSave = file
+                                        diagnosticSave.launch(file.name)
+                                    }
+                                },
+                                enabled = diagnosticLogBytes > 0L,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(Icons.Outlined.Download, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Сохранить", maxLines = 1)
+                            }
+                        }
+                        TextButton(
                             onClick = {
-                                val file = vm.diagnosticLogFile()
-                                if (file != null) {
-                                    shareGeneratedFile(context, file)
-                                    diagnosticLogBytes = vm.diagnosticLogSize()
-                                }
+                                vm.clearDiagnosticLog()
+                                diagnosticLogBytes = 0L
                             },
                             enabled = diagnosticLogBytes > 0L,
-                            modifier = Modifier.weight(1f)
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(Icons.Outlined.Share, contentDescription = null)
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
                             Spacer(Modifier.width(6.dp))
-                            Text("Поделиться", maxLines = 1)
+                            Text("Очистить лог")
                         }
-                        FilledTonalButton(
-                            onClick = {
-                                val file = vm.diagnosticLogFile()
-                                if (file != null) {
-                                    diagnosticFileToSave = file
-                                    diagnosticSave.launch(file.name)
-                                }
-                            },
-                            enabled = diagnosticLogBytes > 0L,
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Icon(Icons.Outlined.Download, contentDescription = null)
-                            Spacer(Modifier.width(6.dp))
-                            Text("Сохранить", maxLines = 1)
-                        }
-                    }
-                    TextButton(
-                        onClick = {
-                            vm.clearDiagnosticLog()
-                            diagnosticLogBytes = 0L
-                        },
-                        enabled = diagnosticLogBytes > 0L,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
-                        Spacer(Modifier.width(6.dp))
-                        Text("Очистить лог")
                     }
                 }
-            }
 
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Umnik", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(
-                        "Версия $appVersion",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                item {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text("Umnik", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            "Версия $appVersion",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                    }
+                    null -> Unit
                 }
             }
         }
