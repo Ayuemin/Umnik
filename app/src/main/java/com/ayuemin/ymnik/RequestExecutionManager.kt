@@ -137,13 +137,10 @@ internal object RequestExecutionManager {
             }
         }
 
-        // The durable journal is the future cross-process source of truth. Merge it with the
-        // legacy preference marker during the transition so either record can recover the request.
         runCatching { durableStore.list() }.getOrDefault(emptyList()).forEach { saved ->
             persisted += PersistedRequest(saved.requestId, saved.chatId, saved.messageId)
         }
 
-        // v1.16.x compatibility: recover the old single-request record once.
         prefs.getString("chat_id", null)?.let { legacyChatId ->
             persisted += PersistedRequest(
                 requestId = "legacy",
@@ -292,8 +289,6 @@ internal object RequestExecutionManager {
                     publishLocked()
                     runtimes.size
                 }
-                // Schedule only after publishing the runtime removal. An expedited worker can now
-                // start immediately without mistaking the just-finished foreground job for a live owner.
                 if (recoveryPending) {
                     OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                     DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
@@ -346,6 +341,7 @@ internal object RequestExecutionManager {
         val clean = label.trim().take(160).ifBlank { "Модель работает…" }
         val changed = synchronized(lock) {
             val runtime = runtimes[requestId] ?: return@synchronized false
+            if (runtime.snapshot.label == clean) return@synchronized false
             sequence += 1L
             runtime.snapshot = runtime.snapshot.copy(sequence = sequence, label = clean)
             publishLocked()
@@ -375,7 +371,6 @@ internal object RequestExecutionManager {
             runtime.lastPartialUpdateAt = now
             runtime.snapshot = runtime.snapshot.copy(partialText = clean)
             app = runtime.appContext
-            // Do not update the foreground notification for every token; the StateFlow is enough for Compose.
             publishLocked()
         }
         app?.let { context ->
@@ -407,7 +402,6 @@ internal object RequestExecutionManager {
 
     fun cancel(requestId: String) {
         val runtime = synchronized(lock) { runtimes[requestId] } ?: return
-        // Manual Stop is final: no WorkManager recovery may resurrect this answer later.
         OpenRouterRecoveryStore(runtime.appContext).remove(requestId)
         OpenRouterRecoveryWorker.cancel(runtime.appContext, requestId)
         DurableRequestStore(runtime.appContext).remove(requestId)
@@ -426,7 +420,6 @@ internal object RequestExecutionManager {
         ids.forEach(::cancel)
     }
 
-    /** Destroying the foreground service does not own/cancel in-process requests. */
     fun serviceStoppedUnexpectedly(context: Context) {
         if (!stoppingService && hasActiveRequest()) {
             DiagnosticLog.record(
