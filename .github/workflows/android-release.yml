@@ -192,11 +192,22 @@ jobs:
           else
             RELEASE_KIND=(--latest)
           fi
-          gh release create "$RELEASE_TAG" \
-            "dist/Umnik-v${VERSION}.apk" \
-            "dist/Umnik-v${VERSION}.apk.sha256" \
-            "dist/Umnik-signing-certificate-sha256.txt" \
-            --verify-tag \
-            --title "Umnik v${VERSION}" \
-            --notes-file dist/release-notes.md \
-            "${RELEASE_KIND[@]}"
+          ASSETS=(
+            "dist/Umnik-v${VERSION}.apk"
+            "dist/Umnik-v${VERSION}.apk.sha256"
+            "dist/Umnik-signing-certificate-sha256.txt"
+          )
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Umnik v${VERSION}" \
+              --notes-file dist/release-notes.md \
+              "${RELEASE_KIND[@]}"
+          else
+            gh release create "$RELEASE_TAG" \
+              "${ASSETS[@]}" \
+              --verify-tag \
+              --title "Umnik v${VERSION}" \
+              --notes-file dist/release-notes.md \
+              "${RELEASE_KIND[@]}"
+          fi
