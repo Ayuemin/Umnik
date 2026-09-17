@@ -32,6 +32,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
@@ -39,6 +40,9 @@ import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
+    private enum class GenerationState { PENDING, COMPLETED, CANCELLED, TERMINAL_FAILURE }
+    private class TerminalRecoveryException(message: String) : IOException(message)
+
     override suspend fun doWork(): Result {
         val requestId = inputData.getString(KEY_REQUEST_ID)?.takeIf { it.isNotBlank() } ?: return Result.success()
         val store = OpenRouterRecoveryStore(applicationContext)
@@ -118,6 +122,11 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
                         DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Background recovery stopped after manual cancellation request=${requestId.take(8)}")
                         return@fold Result.success()
                     }
+                    if (error is TerminalRecoveryException) {
+                        failPending(record, error.message ?: "OpenRouter завершил генерацию без доступного ответа. Повторите запрос вручную.")
+                        store.remove(requestId)
+                        return@fold Result.success()
+                    }
                     DiagnosticLog.record(applicationContext, "REQUEST_RECOVERY", "Background recovery attempt failed request=${requestId.take(8)}", error)
                     Result.retry()
                 }
@@ -127,6 +136,7 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
     private suspend fun recover(record: OpenRouterRecoveryRecord, apiKey: String): OpenRouterResponseParser.Completion = withContext(Dispatchers.IO) {
         val client = OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
+            .protocols(listOf(Protocol.HTTP_1_1))
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(240, TimeUnit.SECONDS)
             .writeTimeout(240, TimeUnit.SECONDS)
@@ -151,18 +161,39 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
                 .header("X-Title", "Umnik Android")
                 .get()
                 .build()
-            val status = runCatching {
+            val state = try {
                 client.newCall(statusRequest).execute().use { response ->
-                    if (response.code == 404) return@use null
-                    if (response.code == 401 || response.code == 403) throw IOException("OpenRouter ${response.code}")
-                    if (!response.isSuccessful) return@use null
-                    val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
-                    val data = root?.getAsJsonObject("data") ?: return@use null
-                    if (runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true) throw IOException("Generation cancelled")
-                    data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString?.isNotBlank() == true
+                    when {
+                        response.code == 404 -> GenerationState.PENDING
+                        response.code == 401 || response.code == 403 -> GenerationState.TERMINAL_FAILURE
+                        !response.isSuccessful -> GenerationState.PENDING
+                        else -> {
+                            val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+                            val data = root?.getAsJsonObject("data") ?: return@use GenerationState.PENDING
+                            val cancelled = runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true
+                            val finish = data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                            DiagnosticLog.record(
+                                applicationContext,
+                                "REQUEST_RECOVERY",
+                                "background generation poll id=${generationId.take(12)} http=${response.code} cancelled=$cancelled finish=${finish.ifBlank { "pending" }} poll=${poll + 1}"
+                            )
+                            when {
+                                cancelled -> GenerationState.CANCELLED
+                                finish.isNotBlank() -> GenerationState.COMPLETED
+                                else -> GenerationState.PENDING
+                            }
+                        }
+                    }
                 }
-            }.getOrNull()
-            ready = status == true
+            } catch (_: IOException) {
+                GenerationState.PENDING
+            }
+            when (state) {
+                GenerationState.COMPLETED -> ready = true
+                GenerationState.CANCELLED -> throw TerminalRecoveryException("OpenRouter отменил генерацию после обрыва связи. Повторите запрос вручную.")
+                GenerationState.TERMINAL_FAILURE -> throw TerminalRecoveryException("OpenRouter не разрешил проверить генерацию. Повторите запрос вручную.")
+                GenerationState.PENDING -> Unit
+            }
             poll += 1
         }
         if (!ready) throw IOException("Generation is not complete yet")

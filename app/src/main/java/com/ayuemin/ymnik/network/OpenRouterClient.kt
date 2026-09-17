@@ -26,6 +26,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
@@ -51,6 +52,9 @@ class OpenRouterClient(
         )
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
+        // Direct Umnik requests do not multiplex on one client. HTTP/1.1 avoids the
+        // Android background HTTP/2 socket abort reproduced on real devices.
+        .protocols(listOf(Protocol.HTTP_1_1))
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -60,6 +64,8 @@ class OpenRouterClient(
     private val recoveryStore by lazy { OpenRouterRecoveryStore(context.applicationContext) }
     private val activeCallLock = Any()
     @Volatile private var activeCall: Call? = null
+
+    private enum class GenerationState { PENDING, COMPLETED, CANCELLED, TERMINAL_FAILURE }
 
     data class Result(
         val text: String,
@@ -504,20 +510,34 @@ class OpenRouterClient(
                     throw error
                 }
                 phaseCallback("Связь доступна · проверяю готовый ответ…")
-                val ready = if (cacheStatus.equals("HIT", ignoreCase = true)) {
-                    true
+                val generationState = if (cacheStatus.equals("HIT", ignoreCase = true)) {
+                    GenerationState.COMPLETED
                 } else {
-                    awaitGenerationFinished(apiKey, baseUrl, generationId.orEmpty(), deadline)
+                    awaitGenerationState(apiKey, baseUrl, generationId.orEmpty(), deadline)
                 }
-                if (!ready) {
-                    DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation still pending after live recovery window; handing off id=${generationId ?: "none"}")
-                    if (recoveryRecord != null && !generationId.isNullOrBlank()) {
-                        phaseCallback("Ответ ещё формируется · продолжу восстановление в фоне…")
-                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
+                when (generationState) {
+                    GenerationState.CANCELLED -> {
+                        DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation cancelled; stopping recovery id=${generationId ?: "none"}")
+                        phaseCallback("OpenRouter отменил генерацию · запрос остановлен")
+                        clearRecovery(recoveryRecord)
+                        throw IOException("OpenRouter отменил генерацию после обрыва связи. Повторите запрос.")
+                    }
+                    GenerationState.TERMINAL_FAILURE -> {
+                        DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation cannot be recovered; stopping id=${generationId ?: "none"}")
+                        clearRecovery(recoveryRecord)
+                        throw IOException("Не удалось безопасно восстановить генерацию OpenRouter. Повторите запрос.")
+                    }
+                    GenerationState.PENDING -> {
+                        DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation still pending after live recovery window; handing off id=${generationId ?: "none"}")
+                        if (recoveryRecord != null && !generationId.isNullOrBlank()) {
+                            phaseCallback("Ответ ещё формируется · продолжу восстановление в фоне…")
+                            // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
+                            throw error
+                        }
+                        clearRecovery(recoveryRecord)
                         throw error
                     }
-                    clearRecovery(recoveryRecord)
-                    throw error
+                    GenerationState.COMPLETED -> Unit
                 }
                 recoveryAttempt += 1
                 phaseCallback("Ответ готов · восстанавливаю соединение…")
@@ -566,16 +586,16 @@ class OpenRouterClient(
         return false
     }
 
-    private suspend fun awaitGenerationFinished(
+    private suspend fun awaitGenerationState(
         apiKey: String,
         baseUrl: String,
         generationId: String,
         deadlineElapsed: Long = SystemClock.elapsedRealtime() + RECOVERY_WINDOW_MS
-    ): Boolean {
-        if (generationId.isBlank()) return false
+    ): GenerationState {
+        if (generationId.isBlank()) return GenerationState.TERMINAL_FAILURE
         var attempt = 0
         while (SystemClock.elapsedRealtime() < deadlineElapsed) {
-            if (!awaitNetworkAvailable(deadlineElapsed)) return false
+            if (!awaitNetworkAvailable(deadlineElapsed)) return GenerationState.PENDING
             if (attempt > 0) delay(minOf(10_000L, 1_500L + attempt * 1_000L))
             val request = Request.Builder()
                 .url(endpoint(baseUrl, "generation") + "?id=" + Uri.encode(generationId))
@@ -583,32 +603,42 @@ class OpenRouterClient(
                 .header("X-Title", "Umnik Android")
                 .get()
                 .build()
-            val result = runCatching {
+            val state = try {
                 http.newCall(request).execute().use { response ->
-                    if (response.code == 404) return@use null
-                    if (response.code == 401 || response.code == 403) return@use false
-                    if (!response.isSuccessful) return@use null
-                    val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
-                    val data = root.getAsJsonObject("data") ?: return@use null
-                    val cancelled = runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true
-                    val finish = data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
-                    DiagnosticLog.record(
-                        context,
-                        "REQUEST_RECOVERY",
-                        "generation poll id=${generationId.take(12)} http=${response.code} cancelled=$cancelled finish=${finish.ifBlank { "pending" }} poll=${attempt + 1}"
-                    )
-                    if (cancelled) return@use false
-                    if (finish.isNotBlank()) true else null
+                    when {
+                        response.code == 404 -> GenerationState.PENDING
+                        response.code == 401 || response.code == 403 -> GenerationState.TERMINAL_FAILURE
+                        !response.isSuccessful -> GenerationState.PENDING
+                        else -> {
+                            val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
+                            val data = root.getAsJsonObject("data") ?: return@use GenerationState.PENDING
+                            val cancelled = runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true
+                            val finish = data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                            DiagnosticLog.record(
+                                context,
+                                "REQUEST_RECOVERY",
+                                "generation poll id=${generationId.take(12)} http=${response.code} cancelled=$cancelled finish=${finish.ifBlank { "pending" }} poll=${attempt + 1}"
+                            )
+                            when {
+                                cancelled -> GenerationState.CANCELLED
+                                finish.isNotBlank() -> GenerationState.COMPLETED
+                                else -> GenerationState.PENDING
+                            }
+                        }
+                    }
                 }
-            }.getOrNull()
-            if (result == true) {
-                DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation completed; id=$generationId; poll=${attempt + 1}")
-                return true
+            } catch (_: IOException) {
+                GenerationState.PENDING
             }
-            if (result == false) return false
+            if (state != GenerationState.PENDING) {
+                if (state == GenerationState.COMPLETED) {
+                    DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation completed; id=$generationId; poll=${attempt + 1}")
+                }
+                return state
+            }
             attempt += 1
         }
-        return false
+        return GenerationState.PENDING
     }
 
     private fun message(role: String, text: String) = JsonObject().apply {
