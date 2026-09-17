@@ -11,6 +11,7 @@ import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
 import androidx.core.content.ContextCompat
+import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.OpenRouterResponseParser
 import com.ayuemin.ymnik.network.OpenRouterStreamParser
@@ -29,13 +30,6 @@ import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-/**
- * Owns the paid OpenRouter POST/SSE socket in an isolated Android process.
- *
- * The main process prepares the complete JSON payload and writes it to RuntimeTransportStore.
- * This process receives only the transport id, API key and base URL, then writes progress and
- * the final parsed completion back to the same process-safe mailbox.
- */
 class RuntimeOpenRouterService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val gson = Gson()
@@ -56,11 +50,7 @@ class RuntimeOpenRouterService : Service() {
         super.onCreate()
         store = RuntimeTransportStore(applicationContext)
         createChannel()
-        DiagnosticLog.record(
-            applicationContext,
-            "RUNTIME_TRANSPORT",
-            "isolated runtime created pid=${Process.myPid()}"
-        )
+        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "runtime created pid=${Process.myPid()}")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -73,18 +63,13 @@ class RuntimeOpenRouterService : Service() {
                 return START_NOT_STICKY
             }
             ACTION_EXECUTE -> {
-                val apiKey = intent.getStringExtra(EXTRA_API_KEY).orEmpty()
-                val baseUrl = intent.getStringExtra(EXTRA_BASE_URL).orEmpty()
-                if (transportId.isBlank() || apiKey.isBlank() || baseUrl.isBlank()) {
-                    if (transportId.isNotBlank()) {
-                        store.update(transportId) { it.copy(phase = "failed", error = "Runtime transport received incomplete command") }
-                    }
+                if (transportId.isBlank()) {
                     maybeStop(startId)
                     return START_NOT_STICKY
                 }
                 if (!activeCalls.containsKey(transportId)) {
                     acquireWakeLock()
-                    scope.launch { executeTransport(transportId, apiKey, baseUrl, startId) }
+                    scope.launch { executeTransport(transportId, startId) }
                 }
                 return START_STICKY
             }
@@ -95,21 +80,22 @@ class RuntimeOpenRouterService : Service() {
         }
     }
 
-    private suspend fun executeTransport(
-        transportId: String,
-        apiKey: String,
-        baseUrl: String,
-        startId: Int
-    ) {
+    private suspend fun executeTransport(transportId: String, startId: Int) {
         val record = store.get(transportId)
         if (record == null) {
             DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "missing mailbox id=${transportId.take(8)}")
             maybeStop(startId)
             return
         }
+        val apiKey = SecretStore(applicationContext).getProfileApiKey(record.profileId).orEmpty()
+        if (apiKey.isBlank()) {
+            store.update(transportId) { it.copy(phase = "failed", error = "Runtime could not read connection credentials") }
+            maybeStop(startId)
+            return
+        }
         store.update(transportId) { it.copy(phase = "running", error = null) }
         val request = Request.Builder()
-            .url(endpoint(baseUrl, "chat/completions"))
+            .url(endpoint(record.baseUrl, "chat/completions"))
             .header("Authorization", "Bearer $apiKey")
             .header("Content-Type", "application/json")
             .header("X-Title", "Umnik Android")
@@ -130,12 +116,7 @@ class RuntimeOpenRouterService : Service() {
                 val generationId = response.header("X-Generation-Id")
                 val cacheStatus = response.header("X-OpenRouter-Cache-Status")
                 store.update(transportId) {
-                    it.copy(
-                        phase = "headers",
-                        generationId = generationId,
-                        cacheStatus = cacheStatus,
-                        httpCode = response.code
-                    )
+                    it.copy(phase = "headers", generationId = generationId, cacheStatus = cacheStatus, httpCode = response.code)
                 }
                 if (!response.isSuccessful) {
                     val body = response.body?.string().orEmpty()
@@ -253,7 +234,7 @@ class RuntimeOpenRouterService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             getSystemService(NotificationManager::class.java).createNotificationChannel(
                 NotificationChannel(CHANNEL_ID, "Фоновый runtime", NotificationManager.IMPORTANCE_LOW).apply {
-                    description = "Изолированный процесс сетевых запросов Umnik"
+                    description = "Отдельный процесс сетевых запросов Umnik"
                     setShowBadge(false)
                 }
             )
@@ -281,11 +262,7 @@ class RuntimeOpenRouterService : Service() {
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        DiagnosticLog.record(
-            applicationContext,
-            "RUNTIME_TRANSPORT",
-            "task removed; active=${activeCalls.size} pid=${Process.myPid()}"
-        )
+        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "task removed; active=${activeCalls.size} pid=${Process.myPid()}")
         super.onTaskRemoved(rootIntent)
     }
 
@@ -304,7 +281,7 @@ class RuntimeOpenRouterService : Service() {
         activeCalls.clear()
         releaseWakeLock()
         scope.cancel()
-        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "isolated runtime destroyed pid=${Process.myPid()}")
+        DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "runtime destroyed pid=${Process.myPid()}")
         super.onDestroy()
     }
 
@@ -321,19 +298,15 @@ class RuntimeOpenRouterService : Service() {
         private const val ACTION_EXECUTE = "com.ayuemin.ymnik.RUNTIME_TRANSPORT_EXECUTE"
         private const val ACTION_CANCEL = "com.ayuemin.ymnik.RUNTIME_TRANSPORT_CANCEL"
         private const val EXTRA_TRANSPORT_ID = "transport_id"
-        private const val EXTRA_API_KEY = "api_key"
-        private const val EXTRA_BASE_URL = "base_url"
         private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
         private const val PARTIAL_WRITE_INTERVAL_MS = 160L
         private const val PARTIAL_WRITE_MIN_CHARS = 128
         private const val MAX_PARTIAL_CHARS = 120_000
 
-        fun start(context: Context, transportId: String, apiKey: String, baseUrl: String) {
+        fun start(context: Context, transportId: String) {
             val intent = Intent(context.applicationContext, RuntimeOpenRouterService::class.java)
                 .setAction(ACTION_EXECUTE)
                 .putExtra(EXTRA_TRANSPORT_ID, transportId)
-                .putExtra(EXTRA_API_KEY, apiKey)
-                .putExtra(EXTRA_BASE_URL, baseUrl)
             ContextCompat.startForegroundService(context.applicationContext, intent)
         }
 
