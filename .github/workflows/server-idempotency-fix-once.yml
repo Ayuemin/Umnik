@@ -1,4 +1,3 @@
-# one-shot workflow; removed after successful patch
 name: Harden server idempotency once
 
 on:
@@ -26,30 +25,8 @@ jobs:
           from pathlib import Path
           path = Path("app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt")
           text = path.read_text()
-          old = '''private fun stableServerRequestId(payloadJson: String): String {
-    val digest = MessageDigest.getInstance("SHA-256")
-        .digest(payloadJson.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-        .take(24)
-    val requestPart = requestId?.takeIf { it.isNotBlank() } ?: "local"
-    return "$requestPart-$digest"
-}
-'''
-          new = '''private fun stableServerRequestId(payloadJson: String): String {
-    val normalized = runCatching {
-        gson.fromJson(payloadJson, JsonObject::class.java).deepCopy().apply {
-            getAsJsonObject("metadata")?.remove("umnik_request_id")
-        }
-    }.getOrElse { JsonObject().apply { addProperty("payload", payloadJson) } }
-    val canonical = gson.toJson(normalized)
-    val digest = MessageDigest.getInstance("SHA-256")
-        .digest(canonical.toByteArray(Charsets.UTF_8))
-        .joinToString("") { byte -> "%02x".format(byte) }
-        .take(32)
-    val chatPart = requestChatId?.takeIf { it.isNotBlank() } ?: "global"
-    return "$chatPart-$digest"
-}
-'''
+          old = "private fun stableServerRequestId(payloadJson: String): String {\n    val digest = MessageDigest.getInstance(\"SHA-256\")\n        .digest(payloadJson.toByteArray(Charsets.UTF_8))\n        .joinToString(\"\") { byte -> \"%02x\".format(byte) }\n        .take(24)\n    val requestPart = requestId?.takeIf { it.isNotBlank() } ?: \"local\"\n    return \"$requestPart-$digest\"\n}\n"
+          new = "private fun stableServerRequestId(payloadJson: String): String {\n    val normalized = runCatching {\n        gson.fromJson(payloadJson, JsonObject::class.java).deepCopy().apply {\n            getAsJsonObject(\"metadata\")?.remove(\"umnik_request_id\")\n        }\n    }.getOrElse { JsonObject().apply { addProperty(\"payload\", payloadJson) } }\n    val canonical = gson.toJson(normalized)\n    val digest = MessageDigest.getInstance(\"SHA-256\")\n        .digest(canonical.toByteArray(Charsets.UTF_8))\n        .joinToString(\"\") { byte -> \"%02x\".format(byte) }\n        .take(32)\n    val chatPart = requestChatId?.takeIf { it.isNotBlank() } ?: \"global\"\n    return \"$chatPart-$digest\"\n}\n"
           assert old in text
           path.write_text(text.replace(old, new, 1))
           Path(".github/workflows/server-idempotency-fix-once.yml").unlink()
