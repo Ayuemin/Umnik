@@ -3,8 +3,8 @@ package com.ayuemin.ymnik.model
 /**
  * Runtime objects for the agent-first orchestrator architecture.
  *
- * These are deliberately separate from legacy ProjectStage/OrchestratorStep so the
- * new execution engine can evolve without inheriting the stage-based design.
+ * These are deliberately separate from the obsolete ProjectStage/OrchestratorStep design so the
+ * new execution engine can evolve without inheriting stage-based behavior.
  */
 enum class AgentTaskStatus {
     CREATED,
@@ -20,6 +20,7 @@ data class AgentTaskPackage(
     val workspaceId: String,
     val agentId: String,
     val objective: String,
+    val assignmentInstruction: String = "",
     val constraints: List<String> = emptyList(),
     val inputResultIds: List<String> = emptyList(),
     val inputFileIds: List<String> = emptyList(),
