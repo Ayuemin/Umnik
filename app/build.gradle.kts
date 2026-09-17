@@ -1,7 +1,6 @@
-// Umnik v1.17.5
+// Umnik v1.17.5 — modernized build baseline
 plugins {
     id("com.android.application")
-    id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
@@ -18,11 +17,14 @@ val releaseSigningConfigured = listOf(
 
 android {
     namespace = "com.ayuemin.ymnik"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.ayuemin.umnik"
         minSdk = 26
+        // Keep runtime behaviour on the proven Android 16 baseline while
+        // the toolchain and libraries move to API 37. targetSdk 37 will be
+        // a separate, testable migration step.
         targetSdk = 36
         versionCode = 128
         versionName = "1.17.5"
@@ -75,19 +77,19 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.17.0")
-    implementation("androidx.activity:activity-compose:1.11.0")
-    implementation(platform("androidx.compose:compose-bom:2025.08.01"))
+    implementation("androidx.core:core-ktx:1.19.0")
+    implementation("androidx.activity:activity-compose:1.13.0")
+    implementation(platform("androidx.compose:compose-bom:2026.08.00"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.9.3")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.9.3")
-    implementation("androidx.work:work-runtime-ktx:2.10.1")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.11.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.11.0")
+    implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.code.gson:gson:2.13.1")
+    implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
