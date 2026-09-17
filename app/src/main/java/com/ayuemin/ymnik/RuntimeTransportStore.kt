@@ -1,0 +1,89 @@
+package com.ayuemin.ymnik
+
+import android.content.Context
+import com.google.gson.Gson
+import java.io.File
+import java.io.RandomAccessFile
+
+internal data class RuntimeTransportRecord(
+    val transportId: String,
+    val requestId: String,
+    val phase: String = "queued",
+    val payloadJson: String,
+    val allowEmpty: Boolean = false,
+    val partialText: String = "",
+    val completionJson: String? = null,
+    val generationId: String? = null,
+    val cacheStatus: String? = null,
+    val httpCode: Int? = null,
+    val error: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
+
+/**
+ * Process-safe mailbox shared by the UI process and the isolated :runtime process.
+ *
+ * API keys are intentionally never persisted here. The payload can be large, so it lives in
+ * app-private storage instead of Intent extras. Every read/write is guarded by an OS file lock.
+ */
+internal class RuntimeTransportStore(context: Context) {
+    private val gson = Gson()
+    private val root = File(context.applicationContext.filesDir, "runtime_transport").apply { mkdirs() }
+    private val lockFile = File(root, ".lock")
+
+    fun get(transportId: String): RuntimeTransportRecord? = withFileLock {
+        readUnlocked(transportId)
+    }
+
+    fun put(record: RuntimeTransportRecord) = withFileLock {
+        writeAtomicUnlocked(record.copy(updatedAt = System.currentTimeMillis()))
+    }
+
+    fun update(
+        transportId: String,
+        transform: (RuntimeTransportRecord) -> RuntimeTransportRecord
+    ): RuntimeTransportRecord? = withFileLock {
+        val current = readUnlocked(transportId) ?: return@withFileLock null
+        val updated = transform(current).copy(updatedAt = System.currentTimeMillis())
+        writeAtomicUnlocked(updated)
+        updated
+    }
+
+    fun remove(transportId: String) = withFileLock {
+        val target = fileFor(transportId)
+        if (target.exists()) target.delete()
+        File(root, target.name + ".tmp").delete()
+    }
+
+    private fun readUnlocked(transportId: String): RuntimeTransportRecord? {
+        val target = fileFor(transportId)
+        if (!target.exists()) return null
+        return runCatching { gson.fromJson(target.readText(), RuntimeTransportRecord::class.java) }.getOrNull()
+    }
+
+    private fun writeAtomicUnlocked(record: RuntimeTransportRecord) {
+        root.mkdirs()
+        val target = fileFor(record.transportId)
+        val temp = File(root, target.name + ".tmp")
+        temp.writeText(gson.toJson(record))
+        if (!temp.renameTo(target)) {
+            target.writeText(temp.readText())
+            temp.delete()
+        }
+    }
+
+    private fun fileFor(transportId: String): File {
+        val safe = transportId.replace(Regex("[^A-Za-z0-9._-]"), "_").take(180)
+        return File(root, "$safe.json")
+    }
+
+    private inline fun <T> withFileLock(block: () -> T): T {
+        root.mkdirs()
+        RandomAccessFile(lockFile, "rw").use { raf ->
+            raf.channel.use { channel ->
+                channel.lock().use { return block() }
+            }
+        }
+    }
+}
