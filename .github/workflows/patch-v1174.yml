@@ -17,6 +17,17 @@ jobs:
           ref: feature/streaming-v1.17.4
           fetch-depth: 0
 
+      - name: Normalize patch match
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('.github/scripts/patch_v1174.py')
+          s = p.read_text()
+          s = s.replace('"                    // completion after a mobile HTTP/2 interruption instead of blindly paying twice.\\n",', '"            // completion after a mobile HTTP/2 interruption instead of blindly paying twice.\\n",')
+          s = s.replace('"                    // completion after a mobile transport interruption instead of blindly paying twice.\\n",', '"            // completion after a mobile transport interruption instead of blindly paying twice.\\n",')
+          p.write_text(s)
+          PY
+
       - name: Apply production patch
         run: python3 .github/scripts/patch_v1174.py
 
