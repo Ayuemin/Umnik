@@ -2,7 +2,7 @@ name: Android CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "test/local-runtime-v1.18" ]
   pull_request:
     branches: [ "main" ]
 
@@ -36,5 +36,27 @@ jobs:
         with:
           gradle-version: "8.13"
 
-      - name: Unit tests and debug APK
-        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
+      - name: Enable runtime transport experiment
+        if: github.ref_name == 'test/local-runtime-v1.18' || github.event_name == 'pull_request'
+        run: python3 tools/enable_runtime_transport_test.py
+
+      - name: Unit tests and debug APKs
+        run: gradle --no-daemon :app:testDebugUnitTest :app:assembleDebug :backgroundlab:assembleDebug --stacktrace
+
+      - name: Upload Umnik debug APK
+        if: success() && (github.ref_name == 'test/local-runtime-v1.18' || github.event_name == 'pull_request')
+        uses: actions/upload-artifact@v4
+        with:
+          name: Umnik-1.18.0-local-beta1-runtime-debug
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Background Lab APK
+        if: success() && (github.ref_name == 'test/local-runtime-v1.18' || github.event_name == 'pull_request')
+        uses: actions/upload-artifact@v4
+        with:
+          name: Umnik-Background-Lab-debug
+          path: backgroundlab/build/outputs/apk/debug/backgroundlab-debug.apk
+          if-no-files-found: error
+          retention-days: 14

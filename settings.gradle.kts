@@ -16,3 +16,4 @@ dependencyResolutionManagement {
 
 rootProject.name = "Umnik"
 include(":app")
+include(":backgroundlab")

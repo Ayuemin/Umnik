@@ -21,6 +21,10 @@ import kotlinx.coroutines.launch
  * Requests are isolated by requestId and chatId, so switching Activity/chat or launching
  * another chat does not cancel or overwrite the first request. One chat may have at most
  * one active top-level request; different chats may run concurrently.
+ *
+ * The live objects below still belong to this process, but every top-level request is mirrored
+ * into [DurableRequestStore]. That journal is file-locked and can be consumed by a dedicated
+ * runtime process without depending on the Activity process.
  */
 internal object RequestExecutionManager {
     data class Snapshot(
@@ -120,6 +124,7 @@ internal object RequestExecutionManager {
         if (hasActiveRequest()) return null
         val app = context.applicationContext
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val durableStore = DurableRequestStore(app)
         val persisted = mutableListOf<PersistedRequest>()
 
         prefs.all.forEach { (key, rawValue) ->
@@ -132,7 +137,10 @@ internal object RequestExecutionManager {
             }
         }
 
-        // v1.16.x compatibility: recover the old single-request record once.
+        runCatching { durableStore.list() }.getOrDefault(emptyList()).forEach { saved ->
+            persisted += PersistedRequest(saved.requestId, saved.chatId, saved.messageId)
+        }
+
         prefs.getString("chat_id", null)?.let { legacyChatId ->
             persisted += PersistedRequest(
                 requestId = "legacy",
@@ -158,6 +166,7 @@ internal object RequestExecutionManager {
             }
             if (savedBatch != null) {
                 batchCount += 1
+                durableStore.remove(saved.requestId)
                 return@forEach
             }
 
@@ -170,11 +179,13 @@ internal object RequestExecutionManager {
             } == true
             if (completed) {
                 recoveryStore.remove(saved.requestId)
+                durableStore.remove(saved.requestId)
                 return@forEach
             }
 
             if (messageId != null && recoveryStore.get(saved.requestId) != null) {
                 recoveryCount += 1
+                durableStore.update(saved.requestId) { it.copy(phase = "recovering", label = "Восстанавливаю ответ в фоне…") }
                 OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                 return@forEach
             }
@@ -187,6 +198,7 @@ internal object RequestExecutionManager {
                     }
                 }
             }
+            durableStore.remove(saved.requestId)
         }
 
         prefs.edit().clear().commit()
@@ -212,6 +224,7 @@ internal object RequestExecutionManager {
         val cleanLabel = label.trim().take(160).ifBlank { "Модель работает…" }
         val startedAt = System.currentTimeMillis()
         val prefs = app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val durableStore = DurableRequestStore(app)
 
         synchronized(lock) {
             check(requestId !in runtimes) { "Запрос уже зарегистрирован" }
@@ -222,10 +235,26 @@ internal object RequestExecutionManager {
         check(prefs.edit().putString(ACTIVE_PREFIX + requestId, persisted).commit()) {
             "Не удалось сохранить состояние запроса"
         }
+        try {
+            durableStore.put(
+                DurableRequestRecord(
+                    requestId = requestId,
+                    chatId = chatId,
+                    messageId = messageId,
+                    phase = "registered",
+                    label = cleanLabel,
+                    startedAt = startedAt
+                )
+            )
+        } catch (error: Throwable) {
+            prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+            throw IllegalStateException("Не удалось создать журнал фонового запроса", error)
+        }
 
         lateinit var job: Job
         job = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                durableStore.update(requestId) { it.copy(phase = "running", label = cleanLabel) }
                 execute()
             } catch (error: Throwable) {
                 val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
@@ -249,6 +278,9 @@ internal object RequestExecutionManager {
                             if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
                         }
                     }
+                    durableStore.remove(requestId)
+                } else {
+                    durableStore.update(requestId) { it.copy(phase = "recovering", label = "Восстанавливаю ответ в фоне…") }
                 }
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
                 val remaining = synchronized(lock) {
@@ -257,8 +289,6 @@ internal object RequestExecutionManager {
                     publishLocked()
                     runtimes.size
                 }
-                // Schedule only after publishing the runtime removal. An expedited worker can now
-                // start immediately without mistaking the just-finished foreground job for a live owner.
                 if (recoveryPending) {
                     OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                     DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
@@ -298,6 +328,7 @@ internal object RequestExecutionManager {
                     publishLocked()
                 }
                 prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+                durableStore.remove(requestId)
                 if (!hasActiveRequest()) releaseWakeLock(app)
                 throw error
             }
@@ -310,16 +341,25 @@ internal object RequestExecutionManager {
         val clean = label.trim().take(160).ifBlank { "Модель работает…" }
         val changed = synchronized(lock) {
             val runtime = runtimes[requestId] ?: return@synchronized false
+            if (runtime.snapshot.label == clean) return@synchronized false
             sequence += 1L
             runtime.snapshot = runtime.snapshot.copy(sequence = sequence, label = clean)
             publishLocked()
             true
         }
-        if (changed) RequestKeepAliveService.update(context.applicationContext)
+        if (changed) {
+            runCatching {
+                DurableRequestStore(context.applicationContext).update(requestId) {
+                    it.copy(phase = "running", label = clean)
+                }
+            }
+            RequestKeepAliveService.update(context.applicationContext)
+        }
     }
 
     fun updatePartial(requestId: String, text: String) {
         val clean = text.take(MAX_PARTIAL_PREVIEW_CHARS)
+        var app: Context? = null
         synchronized(lock) {
             val runtime = runtimes[requestId] ?: return
             if (runtime.snapshot.partialText == clean) return
@@ -330,25 +370,41 @@ internal object RequestExecutionManager {
             if (!force && !enoughTime && !enoughText) return
             runtime.lastPartialUpdateAt = now
             runtime.snapshot = runtime.snapshot.copy(partialText = clean)
-            // Do not update the foreground notification for every token; the StateFlow is enough for Compose.
+            app = runtime.appContext
             publishLocked()
+        }
+        app?.let { context ->
+            runCatching {
+                DurableRequestStore(context).update(requestId) {
+                    it.copy(phase = "streaming", partialText = clean)
+                }
+            }
         }
     }
 
     fun fail(requestId: String, message: String) {
+        var app: Context? = null
         synchronized(lock) {
             val runtime = runtimes[requestId] ?: return
             sequence += 1L
             runtime.snapshot = runtime.snapshot.copy(sequence = sequence, lastError = message)
+            app = runtime.appContext
             publishLocked()
+        }
+        app?.let { context ->
+            runCatching {
+                DurableRequestStore(context).update(requestId) {
+                    it.copy(phase = "failed", lastError = message)
+                }
+            }
         }
     }
 
     fun cancel(requestId: String) {
         val runtime = synchronized(lock) { runtimes[requestId] } ?: return
-        // Manual Stop is final: no WorkManager recovery may resurrect this answer later.
         OpenRouterRecoveryStore(runtime.appContext).remove(requestId)
         OpenRouterRecoveryWorker.cancel(runtime.appContext, requestId)
+        DurableRequestStore(runtime.appContext).remove(requestId)
         runCatching { runtime.cancelNetworkCall.invoke() }
         runtime.job.cancel()
         DiagnosticLog.record(runtime.appContext, "REQUEST_RECOVERY", "Manual cancellation cleared recovery request=${requestId.take(8)}")
@@ -364,7 +420,6 @@ internal object RequestExecutionManager {
         ids.forEach(::cancel)
     }
 
-    /** Destroying the foreground service does not own/cancel in-process requests. */
     fun serviceStoppedUnexpectedly(context: Context) {
         if (!stoppingService && hasActiveRequest()) {
             DiagnosticLog.record(
