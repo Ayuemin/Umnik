@@ -77,10 +77,8 @@ jobs:
       - name: Install Android 17 platform
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
 
-      - name: Set up Gradle
+      - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v6
-        with:
-          gradle-version: "9.6.1"
 
       - name: Restore permanent signing key
         shell: bash
@@ -104,7 +102,7 @@ jobs:
             -alias "$KEY_ALIAS" >/dev/null
 
       - name: Run unit tests
-        run: gradle --no-daemon :app:testDebugUnitTest --stacktrace
+        run: ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace
 
       - name: Build signed release APK
         env:
@@ -112,7 +110,7 @@ jobs:
           UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: gradle --no-daemon :app:assembleRelease --stacktrace
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
 
       - name: Verify APK signature
         shell: bash
