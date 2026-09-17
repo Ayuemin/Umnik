@@ -32,7 +32,7 @@ jobs:
         run: bash -n server/install.sh
 
       - name: Compile Python server
-        run: python -m py_compile server/app/main.py
+        run: python -m py_compile server/app/main.py server/tests/test_protocol.py
 
       - name: Install server dependencies
         run: pip install -r server/requirements.txt
@@ -43,6 +43,13 @@ jobs:
           UMNIK_SERVER_TOKEN: test-token
           UMNIK_DATA_DIR: ${{ runner.temp }}/umnik-server-test
         run: python -c 'from server.app.main import app; assert app.title'
+
+      - name: Test durable job protocol
+        env:
+          OPENROUTER_API_KEY: test-key
+          UMNIK_SERVER_TOKEN: test-token
+          UMNIK_DATA_DIR: ${{ runner.temp }}/umnik-server-test
+        run: python -m unittest discover -s server/tests -p 'test_*.py' -v
 
       - name: Validate Docker Compose
         working-directory: server
