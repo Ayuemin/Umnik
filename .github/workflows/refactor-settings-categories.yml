@@ -1,0 +1,33 @@
+name: One-off settings categories refactor
+
+on:
+  push:
+    branches:
+      - work/modernize-sdk37
+    paths:
+      - tools/refactor-settings-categories.py
+
+permissions:
+  contents: write
+
+jobs:
+  refactor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: work/modernize-sdk37
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: python tools/refactor-settings-categories.py
+      - name: Commit settings categories
+        shell: bash
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ui/SettingsScreen.kt
+          git commit -m "Group settings into focused sections"
+          git push origin HEAD:work/modernize-sdk37
