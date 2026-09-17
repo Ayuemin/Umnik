@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Umnik Personal Server installer (beta).
+# Umnik Personal Server installer.
 # Target: a fresh Debian/Ubuntu VPS with a public IPv4 address and ports 22/80/443 reachable.
 # Required environment: OPENROUTER_API_KEY
 # Optional: UMNIK_SERVER_TOKEN, UMNIK_PUBLIC_IP, UMNIK_GIT_REF, LETSENCRYPT_EMAIL
@@ -19,7 +19,7 @@ fi
 case "$(. /etc/os-release 2>/dev/null; echo "${ID:-}")" in
   ubuntu|debian) ;;
   *)
-    echo "This beta installer currently supports Debian/Ubuntu only." >&2
+    echo "This installer currently supports Debian/Ubuntu only." >&2
     exit 1
     ;;
 esac
@@ -29,7 +29,7 @@ INSTALL_ROOT=/opt/umnik-server
 REPO_DIR="$INSTALL_ROOT/repo"
 CERTBOT_DIR=/opt/umnik-certbot
 WEBROOT=/var/www/umnik-certbot
-GIT_REF="${UMNIK_GIT_REF:-test/server-mode-v1.18}"
+GIT_REF="${UMNIK_GIT_REF:-main}"
 REPO_URL="https://github.com/Ayuemin/Umnik.git"
 
 apt-get update
@@ -107,8 +107,8 @@ systemctl reload nginx
 if [ ! -x "$CERTBOT_DIR/bin/certbot" ]; then
   python3 -m venv "$CERTBOT_DIR"
   "$CERTBOT_DIR/bin/pip" install --upgrade pip
-  "$CERTBOT_DIR/bin/pip" install 'certbot>=5.4,<6'
 fi
+"$CERTBOT_DIR/bin/pip" install --upgrade 'certbot==5.8.0'
 
 CERTBOT_ARGS=(
   certonly
@@ -223,7 +223,7 @@ Umnik Personal Server is ready.
 Server address: https://$PUBLIC_IP
 Server token:   $SERVER_TOKEN
 
-Save the token now. In Umnik beta select:
-Settings -> OpenRouter -> Through server
+Save the token now. In Umnik open:
+Настройки -> OpenRouter -> Через сервер
 and enter the address and token above.
 EOF
