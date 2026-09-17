@@ -11,6 +11,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.OutOfQuotaPolicy
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
@@ -294,15 +295,28 @@ class OpenRouterRecoveryWorker(context: Context, params: WorkerParameters) : Cor
 
         private fun uniqueName(requestId: String) = "umnik-openrouter-recovery-$requestId"
 
-        fun schedule(context: Context, requestId: String, initialDelaySeconds: Long = 45L) {
-            val request = OneTimeWorkRequestBuilder<OpenRouterRecoveryWorker>()
+        fun schedule(
+            context: Context,
+            requestId: String,
+            initialDelaySeconds: Long = 45L,
+            replaceExisting: Boolean = false,
+            expedited: Boolean = false
+        ) {
+            val builder = OneTimeWorkRequestBuilder<OpenRouterRecoveryWorker>()
                 .setInputData(workDataOf(KEY_REQUEST_ID to requestId))
                 .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
-                .setInitialDelay(initialDelaySeconds.coerceAtLeast(0L), TimeUnit.SECONDS)
                 .setBackoffCriteria(BackoffPolicy.LINEAR, 30, TimeUnit.SECONDS)
-                .build()
+            val delaySeconds = initialDelaySeconds.coerceAtLeast(0L)
+            if (expedited && delaySeconds == 0L) {
+                builder.setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            } else if (delaySeconds > 0L) {
+                builder.setInitialDelay(delaySeconds, TimeUnit.SECONDS)
+            }
+            val request = builder.build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                uniqueName(requestId), ExistingWorkPolicy.KEEP, request
+                uniqueName(requestId),
+                if (replaceExisting) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
+                request
             )
         }
 

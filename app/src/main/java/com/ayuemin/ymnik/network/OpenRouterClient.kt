@@ -51,7 +51,6 @@ class OpenRouterClient(
         )
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
-        .pingInterval(30, TimeUnit.SECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -310,6 +309,7 @@ class OpenRouterClient(
                 )
             }
 
+            phaseCallback("Выполняю инструменты…")
             messages.add(responseMessage.deepCopy())
             toolCalls.forEach { callElement ->
                 val call = callElement.asJsonObject
@@ -443,7 +443,7 @@ class OpenRouterClient(
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
                         if (isOpenRouterResponseCacheRecoverable(cacheStatus)) {
                             recoveryStore.updateGeneration(recoveryRecord.requestId, generationId.orEmpty(), cacheStatus)
-                            OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId)
+                            OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, replaceExisting = true)
                         } else {
                             // Never persist an automatic paid replay unless OpenRouter explicitly
                             // confirms this exact request participates in response caching.
@@ -484,7 +484,7 @@ class OpenRouterClient(
                 if (!recover) {
                     if (!locallyCancelled && recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Связь нестабильна · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
@@ -497,7 +497,7 @@ class OpenRouterClient(
                 if (!awaitNetworkAvailable(deadline)) {
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Сеть недоступна · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
@@ -513,7 +513,7 @@ class OpenRouterClient(
                     DiagnosticLog.record(context, "REQUEST_RECOVERY", "generation still pending after live recovery window; handing off id=${generationId ?: "none"}")
                     if (recoveryRecord != null && !generationId.isNullOrBlank()) {
                         phaseCallback("Ответ ещё формируется · продолжу восстановление в фоне…")
-                        OpenRouterRecoveryWorker.schedule(context, recoveryRecord.requestId, initialDelaySeconds = 0L)
+                        // RequestExecutionManager performs the urgent handoff after its live runtime is unregistered.
                         throw error
                     }
                     clearRecovery(recoveryRecord)
@@ -590,8 +590,14 @@ class OpenRouterClient(
                     if (!response.isSuccessful) return@use null
                     val root = gson.fromJson(response.body?.string().orEmpty(), JsonObject::class.java)
                     val data = root.getAsJsonObject("data") ?: return@use null
-                    if (runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true) return@use false
+                    val cancelled = runCatching { data.get("cancelled")?.asBoolean }.getOrNull() == true
                     val finish = data.get("finish_reason")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                    DiagnosticLog.record(
+                        context,
+                        "REQUEST_RECOVERY",
+                        "generation poll id=${generationId.take(12)} http=${response.code} cancelled=$cancelled finish=${finish.ifBlank { "pending" }} poll=${attempt + 1}"
+                    )
+                    if (cancelled) return@use false
                     if (finish.isNotBlank()) true else null
                 }
             }.getOrNull()

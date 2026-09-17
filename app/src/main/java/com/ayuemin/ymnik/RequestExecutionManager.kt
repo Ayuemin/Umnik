@@ -170,7 +170,7 @@ internal object RequestExecutionManager {
 
             if (messageId != null && recoveryStore.get(saved.requestId) != null) {
                 recoveryCount += 1
-                OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L)
+                OpenRouterRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
                 return@forEach
             }
 
@@ -223,14 +223,22 @@ internal object RequestExecutionManager {
             try {
                 execute()
             } catch (error: Throwable) {
-                DiagnosticLog.record(app, "REQUEST", "Background execution failed request=${requestId.take(8)} chat=${chatId.take(8)}", error)
-                fail(requestId, error.message ?: "Запрос прерван")
-            } finally {
                 val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
                 if (recoveryPending) {
-                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L)
-                    DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
+                    DiagnosticLog.record(
+                        app,
+                        "REQUEST_RECOVERY",
+                        "Foreground transport interrupted; preserving pending request=${requestId.take(8)} chat=${chatId.take(8)}",
+                        error
+                    )
+                    updatePhase(app, requestId, "Восстанавливаю ответ в фоне…")
                 } else {
+                    DiagnosticLog.record(app, "REQUEST", "Background execution failed request=${requestId.take(8)} chat=${chatId.take(8)}", error)
+                    fail(requestId, error.message ?: "Запрос прерван")
+                }
+            } finally {
+                val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
+                if (!recoveryPending) {
                     runCatching {
                         ChatRepository(app).updateMessage(chatId, messageId) {
                             if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
@@ -243,6 +251,12 @@ internal object RequestExecutionManager {
                     reservations.entries.removeAll { it.value == requestId }
                     publishLocked()
                     runtimes.size
+                }
+                // Schedule only after publishing the runtime removal. An expedited worker can now
+                // start immediately without mistaking the just-finished foreground job for a live owner.
+                if (recoveryPending) {
+                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+                    DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
                 }
                 if (remaining == 0) {
                     releaseWakeLock(app)
