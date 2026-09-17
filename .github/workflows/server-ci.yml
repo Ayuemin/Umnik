@@ -1,6 +1,10 @@
 name: Server CI
 
 on:
+  push:
+    paths:
+      - "server/**"
+      - ".github/workflows/server-ci.yml"
   pull_request:
     branches: [ "main" ]
     paths:
@@ -15,12 +19,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v7
         with:
-          python-version: "3.12"
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: server/requirements.txt
 
       - name: Validate shell installer
         run: bash -n server/install.sh
