@@ -3267,6 +3267,10 @@ private fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(10.dp))
+                    ServerConnectionSettings()
+                    Spacer(Modifier.height(12.dp))
+                    HorizontalDivider()
+                    Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
                         value = connectionKey,
                         onValueChange = { connectionKey = it },

@@ -9,6 +9,8 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
 import com.ayuemin.ymnik.RequestExecutionManager
+import com.ayuemin.ymnik.data.RequestRouteMode
+import com.ayuemin.ymnik.data.ServerConnectionStore
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -31,6 +33,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
 import java.io.File
 import java.io.IOException
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -44,6 +47,8 @@ class OpenRouterClient(
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
+    private val serverConnection = ServerConnectionStore(context.applicationContext)
+    private val serverApi = UmnikServerClient()
     private val http = OkHttpClient.Builder()
         .addInterceptor(
             DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId) { prepared ->
@@ -422,6 +427,9 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
+        if (serverConnection.config().mode == RequestRouteMode.SERVER) {
+            return requestCompletionViaServer(payload, allowEmpty, streamToUi)
+        }
         val requestPayload = payload.deepCopy().apply {
             addProperty("stream", true)
             add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
@@ -593,6 +601,63 @@ class OpenRouterClient(
             }
         }
     }
+
+    private suspend fun requestCompletionViaServer(
+    payload: JsonObject,
+    allowEmpty: Boolean,
+    streamToUi: Boolean
+): OpenRouterResponseParser.Completion {
+    val config = serverConnection.config()
+    val serverBaseUrl = config.baseUrl.takeIf { it.isNotBlank() }
+        ?: error("Не указан адрес личного сервера Umnik")
+    val serverToken = serverConnection.token()
+        ?: error("Не указан токен личного сервера Umnik")
+    val requestPayload = payload.deepCopy().apply {
+        addProperty("stream", false)
+        remove("stream_options")
+    }
+    val payloadJson = gson.toJson(requestPayload)
+    val clientRequestId = stableServerRequestId(payloadJson)
+    phaseCallback("Передаю задачу личному серверу…")
+    val initial = serverApi.createChatJob(
+        baseUrl = serverBaseUrl,
+        token = serverToken,
+        clientRequestId = clientRequestId,
+        payload = requestPayload
+    )
+    phaseCallback("Личный сервер выполняет запрос…")
+    val response = serverApi.awaitChatJob(
+        baseUrl = serverBaseUrl,
+        token = serverToken,
+        initial = initial,
+        onStatus = { status ->
+            when (status) {
+                "queued" -> phaseCallback("Задача принята сервером…")
+                "running" -> phaseCallback("Сервер ждёт ответ модели…")
+            }
+        }
+    )
+    val completion = OpenRouterResponseParser.parse(gson.toJson(response), allowEmpty)
+    if (streamToUi) {
+        val finalText = extractText(completion.message.get("content"))
+        if (finalText.isNotBlank()) streamCallback(finalText)
+    }
+    DiagnosticLog.record(
+        context,
+        "SERVER_COMPLETION",
+        "Umnik server job=${initial.id.take(12)} model=${payload.get("model")?.asString.orEmpty()} finish=${completion.finishReason}"
+    )
+    return completion
+}
+
+private fun stableServerRequestId(payloadJson: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(payloadJson.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
+        .take(24)
+    val requestPart = requestId?.takeIf { it.isNotBlank() } ?: "local"
+    return "$requestPart-$digest"
+}
 
     private fun recoveryRecord(apiKey: String, baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
         if (!recoveryEnabled) return null
