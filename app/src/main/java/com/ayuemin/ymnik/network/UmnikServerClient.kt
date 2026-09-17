@@ -111,6 +111,7 @@ class UmnikServerClient {
     ): JsonObject {
         val startedAt = System.currentTimeMillis()
         var job = initial
+        var transientFailures = 0
         while (true) {
             onStatus(job.status)
             when (job.status) {
@@ -121,7 +122,17 @@ class UmnikServerClient {
                 error("Сервер продолжает работу дольше ожидаемого. Задачу можно проверить повторно по ID ${job.id}.")
             }
             delay(pollIntervalMs.coerceAtLeast(500L))
-            job = getChatJob(baseUrl, token, job.id)
+            val refreshed = runCatching { getChatJob(baseUrl, token, job.id) }
+            refreshed.onSuccess {
+                transientFailures = 0
+                job = it
+            }.onFailure {
+                transientFailures += 1
+                onStatus("reconnecting")
+                // Polling is read-only. A temporary phone/network failure must never turn
+                // into a second paid generation, so keep asking for the same server job.
+                delay((1_000L * transientFailures.coerceAtMost(8)).coerceAtMost(8_000L))
+            }
         }
     }
 
