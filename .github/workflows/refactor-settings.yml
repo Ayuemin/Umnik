@@ -1,0 +1,43 @@
+name: One-off settings extraction
+
+on:
+  push:
+    branches:
+      - work/modernize-sdk37
+    paths:
+      - tools/extract-settings.py
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout working branch
+        uses: actions/checkout@v7
+        with:
+          ref: work/modernize-sdk37
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Extract settings UI
+        run: python tools/extract-settings.py
+
+      - name: Commit refactor
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+                  app/src/main/java/com/ayuemin/ymnik/ui/SettingsScreen.kt
+          git commit -m "Extract settings UI from YmnikApp"
+          git push origin HEAD:work/modernize-sdk37
