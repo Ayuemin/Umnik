@@ -12,17 +12,18 @@ permissions:
 
 jobs:
   integrate:
-    if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - name: Checkout beta branch
+        uses: actions/checkout@v5
         with:
           ref: test/server-mode-v1.18
           fetch-depth: 0
 
       - name: Patch Android client
-        shell: python
+        shell: bash
         run: |
+          cat > /tmp/patch_server_mode.py <<'PY'
           from pathlib import Path
 
           client_path = Path("app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt")
@@ -47,81 +48,77 @@ jobs:
               text = text.replace(old, new, 1)
 
           old = '''        if (model.endsWith(":batch", ignoreCase = true)) {
-            return chatBatchRunner.complete(apiKey, baseUrl, payload)
-        }
-        val requestPayload = payload.deepCopy().apply {
-'''
-          new = '''        if (model.endsWith(":batch", ignoreCase = true)) {
-            return chatBatchRunner.complete(apiKey, baseUrl, payload)
-        }
-        if (serverConnection.config().mode == RequestRouteMode.SERVER) {
-            return requestCompletionViaServer(payload, allowEmpty, streamToUi)
-        }
-        val requestPayload = payload.deepCopy().apply {
-'''
+              return chatBatchRunner.complete(apiKey, baseUrl, payload)
+          }
+          val requestPayload = payload.deepCopy().apply {
+          '''
+          # Preserve the source's exact 8-space indentation; triple-string layout above
+          # is only used as a readable fallback if formatting changes.
+          exact_old = """        if (model.endsWith(\":batch\", ignoreCase = true)) {\n            return chatBatchRunner.complete(apiKey, baseUrl, payload)\n        }\n        val requestPayload = payload.deepCopy().apply {\n"""
+          exact_new = """        if (model.endsWith(\":batch\", ignoreCase = true)) {\n            return chatBatchRunner.complete(apiKey, baseUrl, payload)\n        }\n        if (serverConnection.config().mode == RequestRouteMode.SERVER) {\n            return requestCompletionViaServer(payload, allowEmpty, streamToUi)\n        }\n        val requestPayload = payload.deepCopy().apply {\n"""
           if "return requestCompletionViaServer(payload, allowEmpty, streamToUi)" not in text:
-              assert old in text
-              text = text.replace(old, new, 1)
+              assert exact_old in text
+              text = text.replace(exact_old, exact_new, 1)
 
           marker = "    private fun recoveryRecord(apiKey: String, baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {\n"
           helper = '''    private suspend fun requestCompletionViaServer(
-        payload: JsonObject,
-        allowEmpty: Boolean,
-        streamToUi: Boolean
-    ): OpenRouterResponseParser.Completion {
-        val config = serverConnection.config()
-        val serverBaseUrl = config.baseUrl.takeIf { it.isNotBlank() }
-            ?: error("Не указан адрес личного сервера Umnik")
-        val serverToken = serverConnection.token()
-            ?: error("Не указан токен личного сервера Umnik")
-        val requestPayload = payload.deepCopy().apply {
-            addProperty("stream", false)
-            remove("stream_options")
-        }
-        val payloadJson = gson.toJson(requestPayload)
-        val clientRequestId = stableServerRequestId(payloadJson)
-        phaseCallback("Передаю задачу личному серверу…")
-        val initial = serverApi.createChatJob(
-            baseUrl = serverBaseUrl,
-            token = serverToken,
-            clientRequestId = clientRequestId,
-            payload = requestPayload
-        )
-        phaseCallback("Личный сервер выполняет запрос…")
-        val response = serverApi.awaitChatJob(
-            baseUrl = serverBaseUrl,
-            token = serverToken,
-            initial = initial,
-            onStatus = { status ->
-                when (status) {
-                    "queued" -> phaseCallback("Задача принята сервером…")
-                    "running" -> phaseCallback("Сервер ждёт ответ модели…")
-                }
-            }
-        )
-        val completion = OpenRouterResponseParser.parse(gson.toJson(response), allowEmpty)
-        if (streamToUi) {
-            val finalText = extractText(completion.message.get("content"))
-            if (finalText.isNotBlank()) streamCallback(finalText)
-        }
-        DiagnosticLog.record(
-            context,
-            "SERVER_COMPLETION",
-            "Umnik server job=${initial.id.take(12)} model=${payload.get(\"model\")?.asString.orEmpty()} finish=${completion.finishReason}"
-        )
-        return completion
-    }
+              payload: JsonObject,
+              allowEmpty: Boolean,
+              streamToUi: Boolean
+          ): OpenRouterResponseParser.Completion {
+              val config = serverConnection.config()
+              val serverBaseUrl = config.baseUrl.takeIf { it.isNotBlank() }
+                  ?: error("Не указан адрес личного сервера Umnik")
+              val serverToken = serverConnection.token()
+                  ?: error("Не указан токен личного сервера Umnik")
+              val requestPayload = payload.deepCopy().apply {
+                  addProperty("stream", false)
+                  remove("stream_options")
+              }
+              val payloadJson = gson.toJson(requestPayload)
+              val clientRequestId = stableServerRequestId(payloadJson)
+              phaseCallback("Передаю задачу личному серверу…")
+              val initial = serverApi.createChatJob(
+                  baseUrl = serverBaseUrl,
+                  token = serverToken,
+                  clientRequestId = clientRequestId,
+                  payload = requestPayload
+              )
+              phaseCallback("Личный сервер выполняет запрос…")
+              val response = serverApi.awaitChatJob(
+                  baseUrl = serverBaseUrl,
+                  token = serverToken,
+                  initial = initial,
+                  onStatus = { status ->
+                      when (status) {
+                          "queued" -> phaseCallback("Задача принята сервером…")
+                          "running" -> phaseCallback("Сервер ждёт ответ модели…")
+                      }
+                  }
+              )
+              val completion = OpenRouterResponseParser.parse(gson.toJson(response), allowEmpty)
+              if (streamToUi) {
+                  val finalText = extractText(completion.message.get("content"))
+                  if (finalText.isNotBlank()) streamCallback(finalText)
+              }
+              DiagnosticLog.record(
+                  context,
+                  "SERVER_COMPLETION",
+                  "Umnik server job=${initial.id.take(12)} model=${payload.get(\"model\")?.asString.orEmpty()} finish=${completion.finishReason}"
+              )
+              return completion
+          }
 
-    private fun stableServerRequestId(payloadJson: String): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(payloadJson.toByteArray(Charsets.UTF_8))
-            .joinToString("") { byte -> "%02x".format(byte) }
-            .take(24)
-        val requestPart = requestId?.takeIf { it.isNotBlank() } ?: "local"
-        return "$requestPart-$digest"
-    }
+          private fun stableServerRequestId(payloadJson: String): String {
+              val digest = MessageDigest.getInstance("SHA-256")
+                  .digest(payloadJson.toByteArray(Charsets.UTF_8))
+                  .joinToString("") { byte -> "%02x".format(byte) }
+                  .take(24)
+              val requestPart = requestId?.takeIf { it.isNotBlank() } ?: "local"
+              return "$requestPart-$digest"
+          }
 
-'''
+          '''
           if "private suspend fun requestCompletionViaServer" not in text:
               assert marker in text
               text = text.replace(marker, helper + marker, 1)
@@ -135,18 +132,16 @@ jobs:
               pos = ui.index(sentence)
               spacer = "                    Spacer(Modifier.height(10.dp))\n"
               insert_at = ui.index(spacer, pos) + len(spacer)
-              block = '''                    ServerConnectionSettings()
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-'''
+              block = """                    ServerConnectionSettings()\n                    Spacer(Modifier.height(12.dp))\n                    HorizontalDivider()\n                    Spacer(Modifier.height(12.dp))\n"""
               ui = ui[:insert_at] + block + ui[insert_at:]
           ui_path.write_text(ui)
 
-          workflow = Path(".github/workflows/server-mode-integrate-once.yml")
-          workflow.unlink()
+          Path(".github/workflows/server-mode-integrate-once.yml").unlink()
+          PY
+          python3 /tmp/patch_server_mode.py
 
       - name: Commit integration
+        shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
