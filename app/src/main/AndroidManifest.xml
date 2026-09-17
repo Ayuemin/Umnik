@@ -39,6 +39,13 @@
             android:stopWithTask="false"
             android:foregroundServiceType="dataSync" />
 
+        <service
+            android:name="com.ayuemin.ymnik.RuntimeProbeService"
+            android:process=":runtime"
+            android:exported="false"
+            android:stopWithTask="false"
+            android:foregroundServiceType="dataSync" />
+
         <activity
             android:name="com.ayuemin.ymnik.MainActivity"
             android:exported="true"
