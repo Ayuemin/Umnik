@@ -26,7 +26,6 @@ import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import okio.Buffer
@@ -41,6 +40,7 @@ class OpenRouterClient(
     private val requestChatId: String? = null,
     private val requestProfileId: String? = null,
     private val recoveryEnabled: Boolean = false,
+    private val streamCallback: (String) -> Unit = {},
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
@@ -52,9 +52,8 @@ class OpenRouterClient(
         )
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
-        // Direct Umnik requests do not multiplex on one client. HTTP/1.1 avoids the
-        // Android background HTTP/2 socket abort reproduced on real devices.
-        .protocols(listOf(Protocol.HTTP_1_1))
+        // Keep OkHttp defaults: negotiate HTTP/2 when available and fall back to HTTP/1.1.
+        // No active ping is configured; SSE traffic itself keeps long responses active.
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(240, TimeUnit.SECONDS)
@@ -243,7 +242,8 @@ class OpenRouterClient(
         reasoningEffort: String? = "medium",
         toolsEnabled: Boolean = true,
         baseUrl: String = DEFAULT_BASE_URL,
-        modelInfo: ModelInfo? = null
+        modelInfo: ModelInfo? = null,
+        streamToUi: Boolean = false
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -296,7 +296,10 @@ class OpenRouterClient(
                     add("reasoning", JsonObject().apply { addProperty("effort", "none") })
                 }
             }
-            val completion = requestCompletion(apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty())
+            if (streamToUi) streamCallback("")
+            val completion = requestCompletion(
+                apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
+            )
             val responseMessage = completion.message
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
@@ -408,12 +411,22 @@ class OpenRouterClient(
         }
     }
 
-    private suspend fun requestCompletion(apiKey: String, baseUrl: String, payload: JsonObject, allowEmpty: Boolean): OpenRouterResponseParser.Completion {
+    private suspend fun requestCompletion(
+        apiKey: String,
+        baseUrl: String,
+        payload: JsonObject,
+        allowEmpty: Boolean,
+        streamToUi: Boolean = false
+    ): OpenRouterResponseParser.Completion {
         val model = payload.get("model")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
-        val payloadJson = gson.toJson(payload)
+        val requestPayload = payload.deepCopy().apply {
+            addProperty("stream", true)
+            add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+        }
+        val payloadJson = gson.toJson(requestPayload)
         val recoveryRecord = recoveryRecord(apiKey, baseUrl, model, payloadJson)
         recoveryRecord?.let { record ->
             recoveryStore.put(record)
@@ -429,7 +442,7 @@ class OpenRouterClient(
             .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
             .header("X-OpenRouter-Metadata", "enabled")
             // A short-lived response cache lets Umnik recover the exact already-paid
-            // completion after a mobile HTTP/2 interruption instead of blindly paying twice.
+            // completion after a mobile transport interruption instead of blindly paying twice.
             .header("X-OpenRouter-Cache", "true")
             .header("X-OpenRouter-Cache-TTL", "300")
             .post(payloadJson.toRequestBody("application/json".toMediaType()))
@@ -456,17 +469,57 @@ class OpenRouterClient(
                             clearRecovery(recoveryRecord)
                         }
                     }
+                    if (!response.isSuccessful) {
+                        val body = response.body?.string().orEmpty()
+                        clearRecovery(recoveryRecord)
+                        error(apiError(response.code, body))
+                    }
                     phaseCallback(
                         if (cacheStatus.equals("HIT", ignoreCase = true))
                             "Готовый ответ найден · загружаю…"
                         else
                             "Модель формирует ответ…"
                     )
-                    // Do not clear recovery state until the whole response body has arrived.
-                    val body = response.body?.string().orEmpty()
+                    // Do not clear recovery state until the whole SSE/body has arrived.
+                    val responseBody = response.body ?: error("OpenRouter вернул ответ без тела")
+                    val completion = if (
+                        response.header("Content-Type").orEmpty().contains("text/event-stream", ignoreCase = true)
+                    ) {
+                        var streamAnnounced = false
+                        val preview = StringBuilder()
+                        var lastPreviewAt = 0L
+                        var lastPreviewLength = 0
+                        OpenRouterStreamParser.parse(responseBody.source(), allowEmpty) { delta ->
+                            if (streamToUi && delta.isNotEmpty()) {
+                                preview.append(delta)
+                                val now = SystemClock.elapsedRealtime()
+                                val shouldPublish = lastPreviewLength == 0 ||
+                                    now - lastPreviewAt >= STREAM_PREVIEW_INTERVAL_MS ||
+                                    preview.length - lastPreviewLength >= STREAM_PREVIEW_MIN_CHARS
+                                if (shouldPublish) {
+                                    if (!streamAnnounced) {
+                                        streamAnnounced = true
+                                        phaseCallback("Получаю ответ…")
+                                    }
+                                    streamCallback(preview.toString())
+                                    lastPreviewAt = now
+                                    lastPreviewLength = preview.length
+                                }
+                            }
+                        }.also { parsed ->
+                            if (streamToUi) {
+                                val finalText = extractText(parsed.message.get("content"))
+                                if (finalText.isNotBlank() && finalText.length != lastPreviewLength) {
+                                    if (!streamAnnounced) phaseCallback("Получаю ответ…")
+                                    streamCallback(finalText)
+                                }
+                            }
+                        }
+                    } else {
+                        // Defensive compatibility path for an endpoint that ignores stream=true.
+                        OpenRouterResponseParser.parse(responseBody.string(), allowEmpty)
+                    }
                     clearRecovery(recoveryRecord)
-                    if (!response.isSuccessful) error(apiError(response.code, body))
-                    val completion = OpenRouterResponseParser.parse(body, allowEmpty)
                     DiagnosticLog.record(
                         context,
                         "COMPLETION",
@@ -860,6 +913,8 @@ class OpenRouterClient(
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
         private const val RECOVERY_WINDOW_MS = 120_000L
+        private const val STREAM_PREVIEW_INTERVAL_MS = 120L
+        private const val STREAM_PREVIEW_MIN_CHARS = 96
     }
 
 }
