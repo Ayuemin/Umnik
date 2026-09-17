@@ -1,5 +1,6 @@
 from pathlib import Path
 
+# One-off deterministic refactor for work/modernize-sdk37.
 path = Path("app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
 text = path.read_text(encoding="utf-8")
 
