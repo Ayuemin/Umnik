@@ -9,7 +9,13 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.IOException
 import java.util.concurrent.TimeUnit
+
+class UmnikServerHttpException(
+    val statusCode: Int,
+    message: String
+) : IOException(message)
 
 class UmnikServerClient {
     data class Capabilities(
@@ -60,7 +66,7 @@ class UmnikServerClient {
             .build()
         http.newCall(request).execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(serverError(response.code, body))
+            if (!response.isSuccessful) throw serverException(response.code, body)
             gson.fromJson(body, Capabilities::class.java)
         }
     }
@@ -83,7 +89,7 @@ class UmnikServerClient {
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(serverError(response.code, raw))
+            if (!response.isSuccessful) throw serverException(response.code, raw)
             gson.fromJson(raw, Job::class.java)
         }
     }
@@ -96,7 +102,7 @@ class UmnikServerClient {
             .build()
         http.newCall(request).execute().use { response ->
             val raw = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(serverError(response.code, raw))
+            if (!response.isSuccessful) throw serverException(response.code, raw)
             gson.fromJson(raw, Job::class.java)
         }
     }
@@ -126,7 +132,8 @@ class UmnikServerClient {
             refreshed.onSuccess {
                 transientFailures = 0
                 job = it
-            }.onFailure {
+            }.onFailure { error ->
+                if (error is UmnikServerHttpException && error.statusCode in setOf(401, 403)) throw error
                 transientFailures += 1
                 onStatus("reconnecting")
                 delay((1_000L * transientFailures.coerceAtMost(8)).coerceAtMost(8_000L))
@@ -137,11 +144,11 @@ class UmnikServerClient {
     private fun endpoint(baseUrl: String, path: String): String =
         baseUrl.trim().trimEnd('/') + "/" + path.trimStart('/')
 
-    private fun serverError(code: Int, body: String): String {
+    private fun serverException(code: Int, body: String): UmnikServerHttpException {
         val detail = runCatching {
             gson.fromJson(body, JsonObject::class.java).get("detail")?.asString
         }.getOrNull()?.takeIf { it.isNotBlank() }
-        return detail ?: "Umnik Server: HTTP $code"
+        return UmnikServerHttpException(code, detail ?: "Umnik Server: HTTP $code")
     }
 
     companion object {
