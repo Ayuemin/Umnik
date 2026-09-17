@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import android.os.Process
+import android.os.SystemClock
 import androidx.core.content.ContextCompat
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -19,8 +20,11 @@ import com.ayuemin.ymnik.network.OpenRouterStreamParser
 import com.google.gson.Gson
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
@@ -37,6 +41,8 @@ class RuntimeOpenRouterService : Service() {
     private lateinit var store: RuntimeTransportStore
     private val activeTransports = ConcurrentHashMap.newKeySet<String>()
     private val activeCalls = ConcurrentHashMap<String, Call>()
+    private val heartbeatJobs = ConcurrentHashMap<String, Job>()
+    private val transportStartedAt = ConcurrentHashMap<String, Long>()
     private val http by lazy {
         OkHttpClient.Builder()
             .retryOnConnectionFailure(true)
@@ -69,15 +75,14 @@ class RuntimeOpenRouterService : Service() {
                     maybeStop(startId)
                     return START_NOT_STICKY
                 }
-                // Claim the mailbox before launching the coroutine. The previous implementation only
-                // considered an OkHttp Call to be active, leaving a small window where Android could
-                // stop the service before credentials/request construction completed.
                 if (activeTransports.add(transportId)) {
                     acquireWakeLock()
+                    transportStartedAt[transportId] = SystemClock.elapsedRealtime()
+                    startHeartbeat(transportId)
                     DiagnosticLog.record(
                         applicationContext,
                         "RUNTIME_TRANSPORT",
-                        "claimed id=${transportId.take(8)} active=${activeTransports.size} pid=${Process.myPid()}"
+                        "claimed id=${transportId.take(8)} active=${activeTransports.size} heartbeat=${HEARTBEAT_INTERVAL_MS}ms pid=${Process.myPid()}"
                     )
                     scope.launch { executeTransport(transportId, startId) }
                 }
@@ -210,6 +215,8 @@ class RuntimeOpenRouterService : Service() {
                 activeCalls.remove(transportId)
             }
         } finally {
+            stopHeartbeat(transportId)
+            transportStartedAt.remove(transportId)
             activeTransports.remove(transportId)
             if (activeTransports.isEmpty()) releaseWakeLock()
             DiagnosticLog.record(
@@ -221,7 +228,51 @@ class RuntimeOpenRouterService : Service() {
         }
     }
 
+    private fun startHeartbeat(transportId: String) {
+        heartbeatJobs.remove(transportId)?.cancel()
+        heartbeatJobs[transportId] = scope.launch {
+            var beats = 0L
+            while (isActive && activeTransports.contains(transportId)) {
+                beats += 1L
+                val elapsedMs = SystemClock.elapsedRealtime() - (transportStartedAt[transportId] ?: SystemClock.elapsedRealtime())
+                val alive = store.update(transportId) { it }
+                if (alive == null) {
+                    DiagnosticLog.record(
+                        applicationContext,
+                        "RUNTIME_HEARTBEAT",
+                        "mailbox missing id=${transportId.take(8)} beat=$beats pid=${Process.myPid()}"
+                    )
+                    break
+                }
+                updateHeartbeatNotification(elapsedMs)
+                if (beats == 1L || beats % HEARTBEAT_LOG_EVERY == 0L) {
+                    DiagnosticLog.record(
+                        applicationContext,
+                        "RUNTIME_HEARTBEAT",
+                        "alive id=${transportId.take(8)} beat=$beats elapsed=${elapsedMs / 1000}s phase=${alive.phase} wake=${wakeLock?.isHeld == true} active=${activeTransports.size} pid=${Process.myPid()}"
+                    )
+                }
+                delay(HEARTBEAT_INTERVAL_MS)
+            }
+        }
+    }
+
+    private fun stopHeartbeat(transportId: String) {
+        heartbeatJobs.remove(transportId)?.cancel()
+    }
+
+    private fun updateHeartbeatNotification(elapsedMs: Long) {
+        val seconds = (elapsedMs / 1000L).coerceAtLeast(0L)
+        val text = "Запрос работает · ${seconds} с · активных: ${activeTransports.size}"
+        getSystemService(NotificationManager::class.java)?.notify(
+            NOTIFICATION_ID,
+            buildNotification(text)
+        )
+    }
+
     private fun cancelTransport(transportId: String) {
+        stopHeartbeat(transportId)
+        transportStartedAt.remove(transportId)
         activeTransports.remove(transportId)
         activeCalls.remove(transportId)?.cancel()
         store.update(transportId) { it.copy(phase = "cancelled", error = "Запрос отменён") }
@@ -229,7 +280,7 @@ class RuntimeOpenRouterService : Service() {
         DiagnosticLog.record(applicationContext, "RUNTIME_TRANSPORT", "cancel id=${transportId.take(8)} pid=${Process.myPid()}")
     }
 
-    private fun ensureForeground() {
+    private fun buildNotification(text: String): Notification {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -238,17 +289,22 @@ class RuntimeOpenRouterService : Service() {
         builder
             .setSmallIcon(R.drawable.ic_notification_umnik)
             .setContentTitle("Umnik · фоновый runtime")
-            .setContentText("OpenRouter отвечает в отдельном процессе")
+            .setContentText(text)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
+        return builder.build()
+    }
+
+    private fun ensureForeground() {
+        val notification = buildNotification("OpenRouter отвечает в отдельном процессе")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, builder.build(), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
         } else {
-            startForeground(NOTIFICATION_ID, builder.build())
+            startForeground(NOTIFICATION_ID, notification)
         }
     }
 
@@ -287,7 +343,7 @@ class RuntimeOpenRouterService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "RUNTIME_TRANSPORT",
-            "task removed; active=${activeTransports.size} calls=${activeCalls.size} pid=${Process.myPid()}"
+            "task removed; active=${activeTransports.size} calls=${activeCalls.size} heartbeat=${heartbeatJobs.size} pid=${Process.myPid()}"
         )
         super.onTaskRemoved(rootIntent)
     }
@@ -296,17 +352,17 @@ class RuntimeOpenRouterService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "RUNTIME_TRANSPORT",
-            "unexpected foreground timeout startId=$startId type=$fgsType active=${activeTransports.size} calls=${activeCalls.size} pid=${Process.myPid()}"
+            "unexpected foreground timeout startId=$startId type=$fgsType active=${activeTransports.size} calls=${activeCalls.size} heartbeat=${heartbeatJobs.size} pid=${Process.myPid()}"
         )
         activeTransports.toList().forEach(::cancelTransport)
         stopSelf(startId)
     }
 
     override fun onDestroy() {
-        // A normal stop only happens after activeTransports becomes empty. If Android destroys the
-        // service while work is still claimed, mark it explicitly so the main process/recovery path
-        // can distinguish a system interruption from a user cancellation.
         val interrupted = activeTransports.toList()
+        heartbeatJobs.values.forEach { it.cancel() }
+        heartbeatJobs.clear()
+        transportStartedAt.clear()
         activeCalls.values.forEach { runCatching { it.cancel() } }
         activeCalls.clear()
         interrupted.forEach { id ->
@@ -336,6 +392,8 @@ class RuntimeOpenRouterService : Service() {
         private const val ACTION_CANCEL = "com.ayuemin.ymnik.RUNTIME_TRANSPORT_CANCEL"
         private const val EXTRA_TRANSPORT_ID = "transport_id"
         private const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
+        private const val HEARTBEAT_INTERVAL_MS = 3_000L
+        private const val HEARTBEAT_LOG_EVERY = 10L
         private const val PARTIAL_WRITE_INTERVAL_MS = 160L
         private const val PARTIAL_WRITE_MIN_CHARS = 128
         private const val MAX_PARTIAL_CHARS = 120_000
