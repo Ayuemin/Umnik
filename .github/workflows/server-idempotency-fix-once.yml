@@ -1,0 +1,62 @@
+name: Harden server idempotency once
+
+on:
+  push:
+    branches:
+      - "test/server-mode-v1.18"
+    paths:
+      - ".github/workflows/server-idempotency-fix-once.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: test/server-mode-v1.18
+          fetch-depth: 0
+      - name: Patch stable request key
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path("app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt")
+          text = path.read_text()
+          old = '''private fun stableServerRequestId(payloadJson: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(payloadJson.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
+        .take(24)
+    val requestPart = requestId?.takeIf { it.isNotBlank() } ?: "local"
+    return "$requestPart-$digest"
+}
+'''
+          new = '''private fun stableServerRequestId(payloadJson: String): String {
+    val normalized = runCatching {
+        gson.fromJson(payloadJson, JsonObject::class.java).deepCopy().apply {
+            getAsJsonObject("metadata")?.remove("umnik_request_id")
+        }
+    }.getOrElse { JsonObject().apply { addProperty("payload", payloadJson) } }
+    val canonical = gson.toJson(normalized)
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(canonical.toByteArray(Charsets.UTF_8))
+        .joinToString("") { byte -> "%02x".format(byte) }
+        .take(32)
+    val chatPart = requestChatId?.takeIf { it.isNotBlank() } ?: "global"
+    return "$chatPart-$digest"
+}
+'''
+          assert old in text
+          path.write_text(text.replace(old, new, 1))
+          Path(".github/workflows/server-idempotency-fix-once.yml").unlink()
+          PY
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Keep server job idempotency across manual retries"
+          git push origin HEAD:test/server-mode-v1.18
