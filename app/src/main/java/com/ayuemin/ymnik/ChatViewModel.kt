@@ -361,6 +361,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     skillIds = emptySet()
                 )
             )
+
+            // Agent conversations never inherit the global chat memory/context settings.
+            // If no embedding model is configured yet, FULL mode keeps the full history
+            // without silently borrowing the ordinary-chat embedding model.
+            chatMemory.saveSettingsForChat(
+                chatId,
+                ChatMemoryGlobalSettings(
+                    embeddingModelId = profile.memoryEmbeddingModel?.modelId
+                        ?: ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL,
+                    summaryModelId = profile.contextModel?.modelId
+                        ?: profile.primaryModel?.modelId
+                        ?: ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL,
+                    defaultContextMode = if (profile.memoryEmbeddingModel == null)
+                        ChatContextMode.FULL
+                    else
+                        ChatContextMode.AUTO
+                )
+            )
+            chatMemory.saveMode(chatId, null)
             prefs.edit().putStringSet(chatSkillsKey(chatId), emptySet()).apply()
         }
         val current = chats.firstOrNull { it.id == _state.value.currentChatId }
