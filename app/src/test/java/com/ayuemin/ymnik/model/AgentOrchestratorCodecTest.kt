@@ -85,4 +85,98 @@ class AgentOrchestratorCodecTest {
         assertEquals("Готовый результат", parsed.finalResult)
         assertEquals(AgentOrchestratorActionType.COMPLETE_JOB, parsed.actions.first().type)
     }
+    @Test
+    fun rejectsEmptyActionDecisionThatIsNotComplete() {
+        val parsed = AgentOrchestratorCodec.parse(
+            """
+            {
+              "planSummary": "Нужно продолжить",
+              "userReply": "",
+              "completed": false,
+              "finalResult": null,
+              "actions": []
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(parsed))
+    }
+
+    @Test
+    fun rejectsMissingOrWrongActionsShapeAsNoNextAction() {
+        val missing = AgentOrchestratorCodec.parse(
+            """{"planSummary":"x","completed":false}"""
+        )
+        val wrongType = AgentOrchestratorCodec.parse(
+            """{"planSummary":"x","completed":false,"actions":"CALL_AGENT"}"""
+        )
+
+        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(missing))
+        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(wrongType))
+    }
+
+    @Test
+    fun rejectsCallAgentWithoutAgentId() {
+        val parsed = AgentOrchestratorCodec.parse(
+            """
+            {
+              "completed": false,
+              "actions": [
+                {"id":"a","type":"CALL_AGENT","objective":"Проверить"}
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("call_agent_without_agent_id", AgentOrchestratorCodec.validationProblem(parsed))
+    }
+
+    @Test
+    fun rejectsCompletionWithoutFinalText() {
+        val parsed = AgentOrchestratorCodec.parse(
+            """
+            {
+              "completed": true,
+              "finalResult": null,
+              "userReply": "",
+              "actions": [{"id":"done","type":"COMPLETE_JOB"}]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals("completion_without_result", AgentOrchestratorCodec.validationProblem(parsed))
+    }
+
+    @Test
+    fun acceptsAskUserWithMessage() {
+        val parsed = AgentOrchestratorCodec.parse(
+            """
+            {
+              "completed": false,
+              "userReply": "Уточните исполнителя",
+              "actions": [{"id":"ask","type":"ASK_USER"}]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(null, AgentOrchestratorCodec.validationProblem(parsed))
+    }
+
+    @Test
+    fun acceptsParallelCallGroupAsExecutableDecision() {
+        val parsed = AgentOrchestratorCodec.parse(
+            """
+            {
+              "completed": false,
+              "actions": [
+                {"id":"a","type":"CALL_AGENT","agentId":"agent-a","parallelGroup":"pair"},
+                {"id":"b","type":"CALL_AGENT","agentId":"agent-b","parallelGroup":"pair"}
+              ]
+            }
+            """.trimIndent()
+        )
+
+        assertEquals(null, AgentOrchestratorCodec.validationProblem(parsed))
+    }
+
 }

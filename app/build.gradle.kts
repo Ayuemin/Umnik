@@ -1,4 +1,4 @@
-// Umnik v1.18.0 — modernization and server-mode test line
+// Umnik v1.18.1 — orchestrator protocol hotfix
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 129
-        versionName = "1.18.0"
+        versionCode = 130
+        versionName = "1.18.1"
     }
 
     buildFeatures {
