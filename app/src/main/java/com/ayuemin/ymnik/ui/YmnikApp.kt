@@ -884,7 +884,7 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                if (!imagePromptMode) {
+                if (!imagePromptMode && currentAgentId == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -908,43 +908,45 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
-                ComposerSectionHeader(
-                    icon = Icons.Outlined.Storage,
-                    label = "Инструменты OpenRouter",
-                    expanded = openRouterToolsExpanded,
-                    onClick = { openRouterToolsExpanded = !openRouterToolsExpanded }
-                )
-                if (openRouterToolsExpanded) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
+                if (currentAgentId == null) {
+                    ComposerSectionHeader(
+                        icon = Icons.Outlined.Storage,
+                        label = "Инструменты OpenRouter",
+                        expanded = openRouterToolsExpanded,
+                        onClick = { openRouterToolsExpanded = !openRouterToolsExpanded }
+                    )
+                    if (openRouterToolsExpanded) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
+                            }
+                            CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
+                            }
+                            CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
+                            }
                         }
-                        CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                            }
+                            CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
+                            }
+                            Spacer(Modifier.weight(1f))
                         }
-                        CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
-                        }
-                        CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
-                        }
-                        Spacer(Modifier.weight(1f))
                     }
                 }
 
