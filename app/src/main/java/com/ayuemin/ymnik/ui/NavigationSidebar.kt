@@ -126,10 +126,11 @@ fun NavigationSidebar(
             modifier = Modifier
                 .align(Alignment.CenterStart)
                 .fillMaxHeight()
-                .fillMaxWidth(0.72f),
+                .fillMaxWidth(0.84f),
+            shape = RoundedCornerShape(topEnd = 28.dp, bottomEnd = 28.dp),
             color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 3.dp,
-            shadowElevation = 14.dp
+            tonalElevation = 0.dp,
+            shadowElevation = 10.dp
         ) {
             Column(Modifier.fillMaxSize()) {
                 Row(
@@ -142,12 +143,14 @@ fun NavigationSidebar(
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.SemiBold
                     )
-                    IconButton(onClick = {
-                        searchOpen = !searchOpen
-                        if (!searchOpen) query = ""
-                    }) {
-                        Icon(Icons.Outlined.Search, contentDescription = "Поиск по чатам")
-                    }
+                    UmnikCircleAction(
+                        icon = Icons.Outlined.Search,
+                        contentDescription = "Поиск по чатам",
+                        onClick = {
+                            searchOpen = !searchOpen
+                            if (!searchOpen) query = ""
+                        }
+                    )
                 }
 
                 if (searchOpen) {
@@ -157,7 +160,8 @@ fun NavigationSidebar(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                         singleLine = true,
                         leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                        placeholder = { Text("Поиск по чатам") }
+                        placeholder = { Text("Поиск по чатам") },
+                        shape = UmnikFieldShape
                     )
                 }
 
@@ -170,7 +174,8 @@ fun NavigationSidebar(
                     item {
                         FilledTonalButton(
                             onClick = onCreateProject,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                            shape = UmnikFieldShape
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(7.dp))
@@ -202,7 +207,8 @@ fun NavigationSidebar(
                                 onNewChat()
                             },
                             enabled = !state.isLoading || state.requestActive,
-                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp)
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
+                            shape = UmnikFieldShape
                         ) {
                             Icon(Icons.Outlined.AddComment, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(7.dp))
@@ -271,18 +277,23 @@ fun NavigationSidebar(
                     }
                 }
 
-                HorizontalDivider()
-                TextButton(
+                HorizontalDivider(color = umnikDividerColor())
+                UmnikPanel(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 10.dp),
                     onClick = {
                         focusManager.clearFocus(force = true)
                         keyboardController?.hide()
                         onOpenSettings()
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp)
+                    }
                 ) {
-                    Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
-                    Spacer(Modifier.width(7.dp))
-                    Text("Настройки", maxLines = 1)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text("Настройки", maxLines = 1, fontWeight = FontWeight.Medium)
+                    }
                 }
             }
         }
@@ -366,7 +377,7 @@ private fun SidebarSectionTitle(text: String) {
         modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
         style = MaterialTheme.typography.labelLarge,
         fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.primary
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 
@@ -378,35 +389,44 @@ private fun SidebarProjectRow(
     onOpen: () -> Unit
 ) {
     val count = state.chats.count { it.projectId == project.id }
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        TextButton(
-            onClick = onOpen,
-            modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-        ) {
-            Column(Modifier.fillMaxWidth()) {
-                Text(
-                    project.name,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    "$count чатов",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+    val activeProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+        shape = UmnikItemShape,
+        color = if (activeProjectId == project.id)
+            MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
+        else Color.Transparent
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            TextButton(
+                onClick = onOpen,
+                modifier = Modifier.weight(1f),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 9.dp)
+            ) {
+                Column(Modifier.fillMaxWidth()) {
+                    Text(
+                        project.name,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontWeight = if (activeProjectId == project.id) FontWeight.SemiBold else FontWeight.Medium
+                    )
+                    Text(
+                        "$count чатов",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            IconButton(
+                onClick = { vm.setProjectFavorite(project.id, !project.isFavorite) },
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    if (project.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                    contentDescription = if (project.isFavorite) "Открепить проект" else "Закрепить проект",
+                    modifier = Modifier.size(20.dp)
                 )
             }
-        }
-        IconButton(
-            onClick = { vm.setProjectFavorite(project.id, !project.isFavorite) },
-            modifier = Modifier.size(38.dp)
-        ) {
-            Icon(
-                if (project.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                contentDescription = if (project.isFavorite) "Открепить проект" else "Закрепить проект",
-                modifier = Modifier.size(20.dp)
-            )
         }
     }
 }
@@ -432,7 +452,7 @@ private fun SidebarChatRow(
                 onClick = onOpen,
                 onLongClick = { actionsOpen = true }
             ),
-        shape = RoundedCornerShape(10.dp),
+        shape = UmnikItemShape,
         color = if (chat.id == state.currentChatId)
             MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
         else Color.Transparent
@@ -528,38 +548,49 @@ private fun RegularChatSettingsDialog(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                OutlinedTextField(
-                    value = title,
-                    onValueChange = { title = it.take(100) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Название") },
-                    singleLine = true
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = role,
-                    onValueChange = { role = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Роль чата") },
-                    placeholder = { Text("Например: главный редактор") }
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = prompt,
-                    onValueChange = { prompt = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Инструкция чата") },
-                    placeholder = { Text("Постоянная инструкция только для этого чата") },
-                    minLines = 5,
-                    maxLines = 14
-                )
-            }
-            item {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Избранное", Modifier.weight(1f))
-                    Switch(checked = favorite, onCheckedChange = { favorite = it })
+                UmnikPanel {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = title,
+                            onValueChange = { title = it.take(100) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Название") },
+                            singleLine = true,
+                            shape = UmnikFieldShape
+                        )
+                        OutlinedTextField(
+                            value = role,
+                            onValueChange = { role = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Роль чата") },
+                            placeholder = { Text("Например: главный редактор") },
+                            shape = UmnikFieldShape
+                        )
+                        OutlinedTextField(
+                            value = prompt,
+                            onValueChange = { prompt = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Инструкция чата") },
+                            placeholder = { Text("Постоянная инструкция только для этого чата") },
+                            minLines = 5,
+                            maxLines = 14,
+                            shape = UmnikFieldShape
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Избранное", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "Показывать чат выше остальных",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = favorite, onCheckedChange = { favorite = it })
+                        }
+                    }
                 }
             }
             item {
@@ -569,7 +600,8 @@ private fun RegularChatSettingsDialog(
                         vm.setChatFavorite(chat.id, favorite)
                     },
                     enabled = title.isNotBlank() && !state.isLoading,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = UmnikFieldShape
                 ) {
                     Text("Сохранить основные настройки")
                 }

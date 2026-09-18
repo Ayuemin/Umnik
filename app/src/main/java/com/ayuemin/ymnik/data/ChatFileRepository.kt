@@ -11,6 +11,9 @@ class ChatFileRepository(private val context: Context) {
     private val root = File(context.filesDir, "chat_files").apply { mkdirs() }
 
     fun importFile(chatId: String, attachment: PendingAttachment): ChatFile {
+        require(attachment.size <= MAX_BYTES || attachment.size <= 0L) {
+            "Файл чата должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+        }
         val dir = File(root, safeSegment(chatId)).apply { mkdirs() }
         val id = UUID.randomUUID().toString()
         val target = File(dir, "${id}_${safeName(attachment.name)}")
@@ -25,12 +28,17 @@ class ChatFileRepository(private val context: Context) {
             target.delete()
             throw it
         }
+        val actualSize = target.length()
+        require(actualSize <= MAX_BYTES) {
+            target.delete()
+            "Файл чата должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+        }
         return ChatFile(
             id = id,
             name = attachment.name,
             mimeType = attachment.mimeType,
             localPath = target.absolutePath,
-            size = target.length()
+            size = actualSize
         )
     }
 
@@ -53,4 +61,8 @@ class ChatFileRepository(private val context: Context) {
         .replace(Regex("[^A-Za-zА-Яа-я0-9._ -]"), "_")
         .take(120)
         .ifBlank { "file" }
+
+    companion object {
+        private const val MAX_BYTES = 50L * 1024L * 1024L
+    }
 }

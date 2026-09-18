@@ -11,15 +11,7 @@ enum class UserProfileScope {
 }
 
 enum class ProviderType {
-    OPENROUTER,
-    NVIDIA,
-    OPENAI_COMPATIBLE
-}
-
-enum class ImageApiProtocol {
-    AUTO,
-    OPENAI_COMPATIBLE,
-    NVIDIA_NIM
+    OPENROUTER
 }
 
 enum class ModelCategory {
@@ -127,11 +119,6 @@ data class ConnectionProfile(
     val name: String,
     val type: ProviderType,
     val baseUrl: String,
-    val imageEnabled: Boolean? = null,
-    val imageBaseUrl: String? = null,
-    val imageProtocol: ImageApiProtocol? = null,
-    val useSameImageApiKey: Boolean? = null,
-    val useProviderDefaults: Boolean? = null,
     val contextLimitTokens: Int? = null
 )
 
@@ -301,34 +288,10 @@ data class GeneratedFile(
     val size: Long
 )
 
-data class ProjectFile(
-    val id: String,
-    val name: String,
-    val mimeType: String,
-    val localPath: String,
-    val size: Long,
-    val addedAt: Long = System.currentTimeMillis()
-)
-
-data class ProjectStage(
-    val id: String,
-    val title: String,
-    val instruction: String,
-    val modelId: String? = null,
-    // Nullable collections keep old Gson data fully backward-compatible.
-    val files: List<ProjectFile>? = null,
-    val sourceChatIds: Set<String>? = null
-)
-
 data class Project(
     val id: String,
     val name: String,
-    val role: String = "",
-    val masterPrompt: String = "",
     val isFavorite: Boolean = false,
-    val skillIds: Set<String> = emptySet(),
-    val files: List<ProjectFile> = emptyList(),
-    val stages: List<ProjectStage>? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
@@ -362,8 +325,6 @@ data class ChatSession(
     val isFavorite: Boolean = false,
     val assignedRole: String? = null,
     val masterPrompt: String? = null,
-    // Project chats may define their own stage sequence in addition to project stages.
-    val stages: List<ProjectStage>? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )

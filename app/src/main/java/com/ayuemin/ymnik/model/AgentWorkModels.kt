@@ -3,7 +3,7 @@ package com.ayuemin.ymnik.model
 /**
  * Runtime objects for the agent-first orchestrator architecture.
  *
- * These are deliberately separate from the obsolete ProjectStage/OrchestratorStep design so the
+ * These models define the current agent-office protocol so the
  * new execution engine can evolve without inheriting stage-based behavior.
  */
 enum class AgentTaskStatus {

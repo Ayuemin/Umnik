@@ -35,10 +35,8 @@ import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
@@ -434,10 +432,7 @@ private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit
 private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
     val context = LocalContext.current
     var menuOpen by remember(model.id) { mutableStateOf(false) }
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
+    UmnikPanel {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
                 Text(
@@ -780,7 +775,7 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tasks.forEachIndexed { index, task ->
-                    ElevatedCard(Modifier.fillMaxWidth()) {
+                    UmnikPanel {
                         Column(Modifier.padding(10.dp)) {
                             OutlinedTextField(
                                 value = task.text,
@@ -872,7 +867,7 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
         }
         if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(state.batches, key = { it.id }) { job ->
-            ElevatedCard(Modifier.fillMaxWidth()) {
+            UmnikPanel {
                 Column(Modifier.padding(12.dp)) {
                     Text(job.title, fontWeight = FontWeight.SemiBold)
                     Text("${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}", style = MaterialTheme.typography.bodySmall)
@@ -896,7 +891,7 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
         }
         if (state.videos.isEmpty()) item { Text("Пока нет фоновых видео", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(state.videos, key = { it.id }) { job ->
-            ElevatedCard(Modifier.fillMaxWidth()) {
+            UmnikPanel {
                 Column(Modifier.padding(12.dp)) {
                     Text(job.modelId, fontWeight = FontWeight.SemiBold)
                     Text(videoLabel(job.status), style = MaterialTheme.typography.bodySmall)
@@ -970,7 +965,7 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                 )
                 FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
                 if (state.transcription.isNotBlank()) {
-                    ElevatedCard(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                    UmnikPanel(modifier = Modifier.padding(top = 8.dp)) {
                         Column(Modifier.padding(12.dp)) {
                             Text(state.transcription)
                             TextButton(onClick = { copyToClipboard(context, state.transcription) }) { Text("Копировать") }
@@ -1195,7 +1190,7 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
         }
         if (state.shellResult.isNotBlank()) {
             item {
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                UmnikPanel {
                     Column(Modifier.padding(12.dp)) {
                         Text(state.shellResult)
                         TextButton(onClick = { copyToClipboard(context, state.shellResult) }) { Text("Копировать результат") }

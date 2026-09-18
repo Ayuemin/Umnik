@@ -50,19 +50,11 @@ import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeDocument
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
-import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.JobWorkspace
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelCategory
-import com.ayuemin.ymnik.model.OrchestratorStep
-import com.ayuemin.ymnik.model.OrchestratorStepType
-import com.ayuemin.ymnik.model.OrchestratorControlAction
-import com.ayuemin.ymnik.model.OrchestratorControlCodec
-import com.ayuemin.ymnik.model.OrchestratorControlPlan
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.Project
-import com.ayuemin.ymnik.model.ProjectFile
-import com.ayuemin.ymnik.model.ProjectStage
 import com.ayuemin.ymnik.model.ProjectChatRuntimeProfile
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ProviderUsage
@@ -76,10 +68,10 @@ import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
-import com.ayuemin.ymnik.network.ProviderRegistry
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -90,6 +82,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
 
@@ -121,7 +114,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
-    private val providerRegistry = ProviderRegistry(context)
     private val gson = Gson()
     private val recoveredRequest = RequestExecutionManager.recoverInterrupted(context)
     private val activeRequestPending = mutableMapOf<String, List<PendingAttachment>>()
@@ -143,19 +135,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (prefs.contains(key)) {
             prefs.getStringSet(key, emptySet())?.toSet().orEmpty()
         } else {
-            val projectDefaults = initialChat.projectId
-                ?.let { projectId -> initialProjects.firstOrNull { it.id == projectId }?.skillIds }
-                .orEmpty()
             val legacy = prefs.getStringSet("active_skills", emptySet())?.toSet().orEmpty()
             if (legacy.isNotEmpty()) {
-                (projectDefaults + legacy).also { selected ->
+                legacy.also { selected ->
                     prefs.edit()
                         .putStringSet(key, selected)
                         .remove("active_skills")
                         .apply()
                 }
             } else {
-                projectDefaults
+                emptySet()
             }
         }
     }
@@ -302,36 +291,50 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun addAgentFiles(agentId: String, uris: List<Uri>) {
         if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
         if (agent(agentId) == null) return
-        var added = 0
-        val errors = mutableListOf<String>()
-        uris.forEach { uri ->
-            runCatching {
-                val attachment = api.attachmentFromUri(uri)
-                val duplicate = agentFiles.list(agentId).any {
-                    it.name.equals(attachment.name, ignoreCase = true) &&
-                        (attachment.size <= 0L || it.size == attachment.size)
+        viewModelScope.launch {
+            val (added, errors) = withContext(Dispatchers.IO) {
+                var count = 0
+                val failures = mutableListOf<String>()
+                uris.forEach { uri ->
+                    runCatching {
+                        val attachment = api.attachmentFromUri(uri)
+                        val duplicate = agentFiles.list(agentId).any {
+                            it.name.equals(attachment.name, ignoreCase = true) &&
+                                (attachment.size <= 0L || it.size == attachment.size)
+                        }
+                        require(!duplicate) { "«${attachment.name}» уже добавлен агенту" }
+                        agentFiles.importFile(agentId, attachment)
+                    }.onSuccess {
+                        count++
+                    }.onFailure { error ->
+                        failures += error.message ?: "Не удалось добавить файл"
+                    }
                 }
-                require(!duplicate) { "«${attachment.name}» уже добавлен агенту" }
-                agentFiles.importFile(agentId, attachment)
-            }.onSuccess {
-                added++
-            }.onFailure { error ->
-                errors += error.message ?: "Не удалось добавить файл"
+                count to failures
             }
+            _state.value = _state.value.copy(
+                status = when {
+                    errors.isEmpty() -> "Файлы агента добавлены: $added"
+                    added > 0 -> "Добавлено $added. Ошибки: ${errors.take(2).joinToString("; ")}"
+                    else -> errors.take(2).joinToString("; ")
+                },
+                storedFiles = storageRepository.list(),
+                storageStats = storageRepository.stats()
+            )
         }
-        _state.value = _state.value.copy(
-            status = when {
-                errors.isEmpty() -> "Файлы агента добавлены: $added"
-                added > 0 -> "Добавлено $added. Ошибки: ${errors.take(2).joinToString("; ")}"
-                else -> errors.take(2).joinToString("; ")
-            }
-        )
     }
 
     fun deleteAgentFile(agentId: String, fileId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
-        if (agentFiles.delete(agentId, fileId)) {
-            _state.value = _state.value.copy(status = "Файл агента удалён")
+        viewModelScope.launch {
+            val deleted = withContext(Dispatchers.IO) { agentFiles.delete(agentId, fileId) }
+            if (deleted) {
+                _state.value = _state.value.copy(
+                    status = "Файл агента удалён",
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
+                )
+            }
         }
     }
 
@@ -344,23 +347,31 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(status = it.message ?: "Не удалось создать навык")
     }.getOrNull()
 
-    fun importAgentSkillFile(agentId: String, uri: Uri): String? = runCatching {
-        val skill = agentSkills.importFile(agentId, uri)
-        val profile = agent(agentId) ?: error("Агент не найден")
-        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
-        skill.id
-    }.onFailure {
-        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить навык")
-    }.getOrNull()
+    fun importAgentSkillFile(agentId: String, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { agentSkills.importFile(agentId, uri) }
+            }.onSuccess { skill ->
+                val profile = agent(agentId) ?: return@onSuccess
+                saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+            }.onFailure {
+                _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить навык")
+            }
+        }
+    }
 
-    fun importAgentSkillTree(agentId: String, uri: Uri): String? = runCatching {
-        val skill = agentSkills.importTree(agentId, uri)
-        val profile = agent(agentId) ?: error("Агент не найден")
-        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
-        skill.id
-    }.onFailure {
-        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить папку навыка")
-    }.getOrNull()
+    fun importAgentSkillTree(agentId: String, uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { agentSkills.importTree(agentId, uri) }
+            }.onSuccess { skill ->
+                val profile = agent(agentId) ?: return@onSuccess
+                saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+            }.onFailure {
+                _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить папку навыка")
+            }
+        }
+    }
 
     fun setAgentSkillEnabled(agentId: String, skillId: String, enabled: Boolean) {
         val profile = agent(agentId) ?: return
@@ -508,6 +519,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chatMemory.deleteChat(chatId)
             projectAutomation.deleteChat(chatId)
             prefs.edit().remove(chatSkillsKey(chatId)).apply()
+            agentConversations.unlinkConversation(chatId)
         }
         agentConversations.unlinkAgent(agentId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, agentId)
@@ -535,46 +547,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
-    private fun ensureProjectOrchestrators(projects: List<Project>, chats: List<ChatSession>): List<ChatSession> {
-        if (projects.isEmpty()) return chats
-        var next = chats
-        var changed = false
-        val activeProfileId = prefs.getString("active_connection_profile", "openrouter") ?: "openrouter"
-        projects.forEach { project ->
-            val registered = projectAutomation.orchestratorChatId(project.id)
-            val existing = registered?.let { id -> next.firstOrNull { it.id == id && it.projectId == project.id } }
-            if (existing == null) {
-                val orchestrator = ChatSession(
-                    id = UUID.randomUUID().toString(),
-                    title = "Оркестратор",
-                    projectId = project.id,
-                    mode = ChatMode.TEXT,
-                    connectionProfileId = activeProfileId,
-                    textModelOverride = prefs.getString(profilePrefKey("text_model", activeProfileId), null)
-                )
-                next = listOf(orchestrator) + next
-                projectAutomation.registerOrchestrator(project.id, orchestrator.id)
-                projectAutomation.saveProfile(
-                    orchestrator.id,
-                    ProjectChatRuntimeProfile(
-                        modelId = orchestrator.textModelOverride,
-                        reasoningEffort = ReasoningEffort.MEDIUM,
-                        tools = openRouterFeaturePrefs.tools(),
-                        skillIds = project.skillIds
-                    )
-                )
-                prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), project.skillIds).apply()
-                changed = true
-            }
-        }
-        if (changed) chatsRepository.save(next)
-        return next
-    }
-
-    private fun defaultSkillIdsForChat(chat: ChatSession): Set<String> =
-        chat.projectId
-            ?.let { projectId -> _state.value.projects.firstOrNull { it.id == projectId }?.skillIds }
-            .orEmpty()
+    private fun defaultSkillIdsForChat(chat: ChatSession): Set<String> = emptySet()
 
     private fun skillIdsForChat(chat: ChatSession): Set<String> {
         val key = chatSkillsKey(chat.id)
@@ -659,8 +632,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
     }
-    fun isOrchestratorChat(chatId: String): Boolean = projectAutomation.isOrchestrator(chatId)
-    fun orchestratorSteps(chatId: String): List<OrchestratorStep> = projectAutomation.steps(chatId)
+    fun isOrchestratorChat(chatId: String): Boolean =
+        agentConversations.agentIdForConversation(chatId)
+            ?.let { agentId -> _state.value.agents.firstOrNull { it.id == agentId }?.kind == AgentKind.ORCHESTRATOR }
+            ?: false
     fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
 
     private fun defaultRuntimeProfile(chat: ChatSession): ProjectChatRuntimeProfile = ProjectChatRuntimeProfile(
@@ -709,39 +684,58 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun addChatContextFile(chatId: String, uri: Uri) {
         if (_state.value.isLoading || _state.value.requestActive) return
         val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
-        runCatching { api.attachmentFromUri(uri) }
-            .onSuccess { attachment ->
+        viewModelScope.launch {
+            runCatching {
+                val attachment = withContext(Dispatchers.IO) { api.attachmentFromUri(uri) }
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
-                    _state.value = _state.value.copy(status = "Прямое вложение ограничено $MAX_ATTACHMENT_MB МБ. Большие документы лучше добавлять в «Базу знаний».")
-                    return@onSuccess
+                    error("Прямое вложение ограничено $MAX_ATTACHMENT_MB МБ. Большие документы лучше добавлять в «Базу знаний».")
                 }
-                if (chat.chatFiles.orEmpty().any { it.name.equals(attachment.name, true) && (attachment.size <= 0L || it.size == attachment.size) }) {
-                    _state.value = _state.value.copy(status = "Файл «${attachment.name}» уже есть в этом чате")
-                    return@onSuccess
+                if (chat.chatFiles.orEmpty().any {
+                        it.name.equals(attachment.name, true) &&
+                            (attachment.size <= 0L || it.size == attachment.size)
+                    }) {
+                    error("Файл «${attachment.name}» уже есть в этом чате")
                 }
-                runCatching { chatFilesRepository.importFile(chatId, attachment) }
-                    .onSuccess { file ->
-                        val chats = _state.value.chats.map { item ->
-                            if (item.id == chatId) item.copy(chatFiles = item.chatFiles.orEmpty() + file, updatedAt = System.currentTimeMillis()) else item
-                        }
-                        chatsRepository.save(chats)
-                        _state.value = _state.value.copy(chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
-                    }
-                    .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл") }
+                withContext(Dispatchers.IO) { chatFilesRepository.importFile(chatId, attachment) }
+            }.onSuccess { file ->
+                val chats = _state.value.chats.map { item ->
+                    if (item.id == chatId) item.copy(
+                        chatFiles = item.chatFiles.orEmpty() + file,
+                        updatedAt = System.currentTimeMillis()
+                    ) else item
+                }
+                chatsRepository.save(chats)
+                _state.value = _state.value.copy(
+                    chats = chats,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Файл «${file.name}» добавлен в чат"
+                )
+            }.onFailure {
+                _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл")
             }
-            .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось прочитать файл") }
+        }
     }
 
     fun removeChatContextFile(chatId: String, fileId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
         val file = chat.chatFiles.orEmpty().firstOrNull { it.id == fileId } ?: return
-        chatFilesRepository.delete(file)
-        val chats = _state.value.chats.map { item ->
-            if (item.id == chatId) item.copy(chatFiles = item.chatFiles.orEmpty().filterNot { it.id == fileId }, updatedAt = System.currentTimeMillis()) else item
+        viewModelScope.launch {
+            withContext(Dispatchers.IO) { chatFilesRepository.delete(file) }
+            val chats = _state.value.chats.map { item ->
+                if (item.id == chatId) item.copy(
+                    chatFiles = item.chatFiles.orEmpty().filterNot { it.id == fileId },
+                    updatedAt = System.currentTimeMillis()
+                ) else item
+            }
+            chatsRepository.save(chats)
+            _state.value = _state.value.copy(
+                chats = chats,
+                storedFiles = storageRepository.list(),
+                storageStats = storageRepository.stats()
+            )
         }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
     }
 
 
@@ -928,7 +922,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (agentId != null) {
                 add(KnowledgeOwnerKind.AGENT to agentId)
             } else {
-                project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
                 chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
             }
         }
@@ -988,9 +981,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
         }
         refreshProviderUsage()
-        viewModelScope.launch {
-            if (providerRegistry.refreshIfStale()) refreshModelCapabilities()
-        }
     }
 
     private fun replySpeechVoiceKey(modelId: String): String = "reply_speech_voice::${modelId.trim()}"
@@ -1083,148 +1073,39 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.apiKeyConfigured) refreshModelCapabilities()
     }
 
-    fun selectConnectionProfile(profileId: String) {
-        if (_state.value.isLoading) return
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
-            return
-        }
-        prefs.edit().putString("active_connection_profile", profile.id).apply()
-        val chats = _state.value.chats.map { chat ->
-            if (chat.id == _state.value.currentChatId) chat.copy(
-                connectionProfileId = profile.id,
-                textModelOverride = null,
-                mode = ChatMode.TEXT,
-                updatedAt = System.currentTimeMillis()
-            ) else chat
-        }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(
-            activeConnectionProfileId = profile.id,
-            chats = chats,
-            currentChatTextModel = null,
-            textModel = loadTextModelForProfile(profile),
-            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
-            imageModel = loadImageModelForProfile(_state.value.imageConnectionProfileId),
-            availableTextModels = emptyList(),
-            mode = ChatMode.TEXT,
-            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
-            reasoningEnabled = false,
-            apiKeyConfigured = isProfileConfigured(profile),
-            status = "Подключение «${profile.name}» выбрано для текущего чата"
-        )
-        if (isProfileConfigured(profile)) refreshModelCapabilities()
-    }
-
-    fun addCompatibleProfile(): String {
-        val id = UUID.randomUUID().toString()
-        val profile = ConnectionProfile(
-            id = id,
-            name = "Другой API",
-            type = ProviderType.OPENAI_COMPATIBLE,
-            baseUrl = "",
-            imageEnabled = false,
-            imageProtocol = ImageApiProtocol.AUTO,
-            useSameImageApiKey = true,
-            useProviderDefaults = false
-        )
-        val profiles = _state.value.connectionProfiles + profile
-        saveConnectionProfiles(profiles)
-        _state.value = _state.value.copy(
-            connectionProfiles = profiles,
-            quickTextModels = loadAllQuickTextModels(profiles, _state.value.disabledConnectionIds),
-            status = "Подключение добавлено. Укажите адрес API."
-        )
-        return id
-    }
-
-    fun saveConnectionProfile(
-        profileId: String,
-        name: String,
-        baseUrl: String,
-        apiKey: String?,
-        imageEnabled: Boolean,
-        imageBaseUrl: String?,
-        imageProtocol: ImageApiProtocol,
-        useSameImageApiKey: Boolean,
-        imageApiKey: String?,
-        useProviderDefaults: Boolean,
-        contextLimitTokens: Int? = null
-    ) {
-        val old = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        val cleanUrl = normalizeBaseUrl(baseUrl)
-        val builtIn = old.type == ProviderType.OPENROUTER || old.type == ProviderType.NVIDIA
-        if ((!builtIn || !useProviderDefaults) && cleanUrl.isBlank()) {
-            _state.value = _state.value.copy(status = "Укажите адрес API")
-            return
-        }
+    fun saveOpenRouterContextLimit(contextLimitTokens: Int?) {
         if (contextLimitTokens != null && contextLimitTokens !in 8_192..1_048_576) {
             _state.value = _state.value.copy(status = "Размер контекста должен быть от 8192 до 1048576 токенов")
             return
         }
-        val cleanImageUrl = imageBaseUrl?.let(::normalizeBaseUrl)?.takeIf { it.isNotBlank() }
-        val updated = old.copy(
-            name = when (old.type) {
-                ProviderType.OPENROUTER -> "OpenRouter"
-                ProviderType.NVIDIA -> "NVIDIA"
-                ProviderType.OPENAI_COMPATIBLE -> name.trim().ifBlank { "Другой API" }
-            },
-            baseUrl = cleanUrl,
-            imageEnabled = imageEnabled,
-            imageBaseUrl = cleanImageUrl,
-            imageProtocol = imageProtocol,
-            useSameImageApiKey = useSameImageApiKey,
-            useProviderDefaults = if (builtIn) useProviderDefaults else false,
+        val profile = openRouterProfile().copy(
+            name = "OpenRouter",
+            type = ProviderType.OPENROUTER,
+            baseUrl = OpenRouterClient.DEFAULT_BASE_URL,
             contextLimitTokens = contextLimitTokens
         )
-        val profiles = _state.value.connectionProfiles.map { if (it.id == profileId) updated else it }
+        val profiles = listOf(profile)
         saveConnectionProfiles(profiles)
-        if (!apiKey.isNullOrBlank()) secrets.saveProfileApiKey(profileId, apiKey)
-        if (useSameImageApiKey) {
-            secrets.deleteProfileImageApiKey(profileId)
-        } else if (!imageApiKey.isNullOrBlank()) {
-            secrets.saveProfileImageApiKey(profileId, imageApiKey)
-        }
-
-        var nextImageProfileId = _state.value.imageConnectionProfileId
-        if (profileId == nextImageProfileId && !imageGenerationEnabled(updated)) {
-            nextImageProfileId = profiles.firstOrNull {
-                it.id !in _state.value.disabledConnectionIds && imageGenerationEnabled(it) && isImageProfileConfigured(it)
-            }?.id ?: profiles.firstOrNull {
-                it.id !in _state.value.disabledConnectionIds && imageGenerationEnabled(it)
-            }?.id ?: nextImageProfileId
-            prefs.edit().putString("image_connection_profile", nextImageProfileId).apply()
-        }
-        val nextImageProfile = profiles.firstOrNull { it.id == nextImageProfileId } ?: updated
-        val nextImageModel = loadImageModelForProfile(nextImageProfile.id)
-        val active = _state.value.activeConnectionProfileId == profileId
         _state.value = _state.value.copy(
             connectionProfiles = profiles,
-            apiKeyConfigured = if (active) isProfileConfigured(updated) else _state.value.apiKeyConfigured,
-            imageConnectionProfileId = nextImageProfileId,
-            imageModel = nextImageModel,
-            imageAspectRatio = loadImageParameter("aspect_ratio", nextImageProfileId, nextImageModel),
-            imageResolution = loadImageParameter("resolution", nextImageProfileId, nextImageModel),
-            availableTextModels = if (active) emptyList() else _state.value.availableTextModels,
-            availableImageModels = if (profileId == _state.value.imageConnectionProfileId || nextImageProfileId != _state.value.imageConnectionProfileId) emptyList() else _state.value.availableImageModels,
+            activeConnectionProfileId = profile.id,
+            imageConnectionProfileId = profile.id,
+            apiKeyConfigured = isProfileConfigured(profile),
             modelCatalogConnectionId = null,
             modelCatalog = emptyList(),
-            status = "Подключение сохранено"
+            status = "Технические настройки OpenRouter сохранены"
         )
-        if ((active || profileId == nextImageProfileId) && profileId !in _state.value.disabledConnectionIds) refreshModelCapabilities()
-        if (updated.type == ProviderType.OPENROUTER) refreshProviderUsage()
+        if (_state.value.apiKeyConfigured) refreshModelCapabilities()
     }
 
     fun checkConnection(profileId: String) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
+            _state.value = _state.value.copy(status = "Сначала настройте OpenRouter")
             return
         }
         viewModelScope.launch {
             _state.value = _state.value.copy(isLoading = true, busyLabel = "Проверяю подключение…", status = null)
-            providerRegistry.refreshIfStale(force = true)
             val textCheck = runCatching { textModelsForProfile(profile) }
             val imageCheck = if (!imageGenerationEnabled(profile)) {
                 null
@@ -1243,10 +1124,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 imageCheck == null -> "Изображения: —"
                 imageCheck.isSuccess -> {
                     val count = imageCheck.getOrNull().orEmpty().size
-                    if (resolvedImageProtocol(profile) == ImageApiProtocol.NVIDIA_NIM)
-                        "Изображения: ✓ $count моделей (без пробной генерации)"
-                    else
-                        "Изображения: ✓ $count моделей"
+                    "Изображения: ✓ $count моделей"
                 }
                 else -> "Изображения: ✕ ${imageCheck.exceptionOrNull()?.message ?: "ошибка"}"
             }
@@ -1258,119 +1136,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun setConnectionEnabled(profileId: String, enabled: Boolean) {
-        if (_state.value.isLoading) return
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        val disabled = _state.value.disabledConnectionIds.toMutableSet().apply {
-            if (enabled) remove(profileId) else add(profileId)
-        }.toSet()
-        prefs.edit().putStringSet("disabled_connection_profiles", disabled).apply()
-        _state.value = _state.value.copy(
-            disabledConnectionIds = disabled,
-            quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, disabled),
-            modelCatalogConnectionId = null,
-            modelCatalog = emptyList(),
-            status = if (enabled) "Подключение «${profile.name}» включено" else "Подключение «${profile.name}» выключено"
-        )
-
-        if (!enabled && _state.value.imageConnectionProfileId == profileId) {
-            val fallbackImage = _state.value.connectionProfiles.firstOrNull {
-                it.id !in disabled && it.id != profileId && imageGenerationEnabled(it) && isImageProfileConfigured(it)
-            } ?: _state.value.connectionProfiles.firstOrNull {
-                it.id !in disabled && it.id != profileId && imageGenerationEnabled(it)
-            }
-            if (fallbackImage != null) {
-                prefs.edit().putString("image_connection_profile", fallbackImage.id).apply()
-                val fallbackImageModel = loadImageModelForProfile(fallbackImage.id)
-                _state.value = _state.value.copy(
-                    imageConnectionProfileId = fallbackImage.id,
-                    imageModel = fallbackImageModel,
-                    imageAspectRatio = loadImageParameter("aspect_ratio", fallbackImage.id, fallbackImageModel),
-                    imageResolution = loadImageParameter("resolution", fallbackImage.id, fallbackImageModel),
-                    availableImageModels = emptyList()
-                )
-                if (isProfileConfigured(fallbackImage)) refreshModelCapabilities()
-            } else {
-                _state.value = _state.value.copy(availableImageModels = emptyList())
-            }
-        }
-
-        if (!enabled && _state.value.activeConnectionProfileId == profileId) {
-            val fallback = _state.value.connectionProfiles.firstOrNull {
-                it.id !in disabled && isProfileConfigured(it)
-            } ?: _state.value.connectionProfiles.firstOrNull { it.id !in disabled }
-            if (fallback != null) {
-                selectConnectionProfile(fallback.id)
-            } else {
-                _state.value = _state.value.copy(
-                    mode = ChatMode.TEXT,
-                    availableTextModels = emptyList(),
-                    availableImageModels = emptyList(),
-                    reasoningEnabled = false,
-                    webSearchEnabled = false,
-                    status = "Все подключения выключены"
-                )
-            }
-        } else if (enabled && (profileId == _state.value.activeConnectionProfileId || profileId == _state.value.imageConnectionProfileId) && isProfileConfigured(profile)) {
-            refreshModelCapabilities()
-        }
-    }
-
-    fun deleteConnectionProfile(profileId: String) {
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        if (profile.type == ProviderType.OPENROUTER || profile.type == ProviderType.NVIDIA) return
-        secrets.deleteProfileApiKey(profileId)
-        prefs.edit()
-            .remove(profilePrefKey("text_model", profileId))
-            .remove(profilePrefKey("image_model", profileId))
-            .remove(profilePrefKey("quick_text_models_json", profileId))
-            .apply()
-        val profiles = _state.value.connectionProfiles.filterNot { it.id == profileId }
-        val disabled = _state.value.disabledConnectionIds - profileId
-        val fallback = profiles.firstOrNull { it.id !in disabled && isProfileConfigured(it) }
-            ?: profiles.firstOrNull { it.id !in disabled }
-            ?: profiles.first()
-        val imageFallback = profiles.firstOrNull {
-            it.id !in disabled && imageGenerationEnabled(it) && isImageProfileConfigured(it)
-        } ?: profiles.firstOrNull { it.id !in disabled && imageGenerationEnabled(it) }
-            ?: fallback
-        val nextImageProfileId = if (_state.value.imageConnectionProfileId == profileId) imageFallback.id else _state.value.imageConnectionProfileId
-        if (nextImageProfileId != _state.value.imageConnectionProfileId) {
-            prefs.edit().putString("image_connection_profile", nextImageProfileId).apply()
-        }
-        val chats = _state.value.chats.map { chat ->
-            if (chat.connectionProfileId == profileId) chat.copy(
-                connectionProfileId = fallback.id,
-                textModelOverride = null,
-                updatedAt = System.currentTimeMillis()
-            ) else chat
-        }
-        saveConnectionProfiles(profiles)
-        prefs.edit().putStringSet("disabled_connection_profiles", disabled).apply()
-        chatsRepository.save(chats)
-        val nextImageModel = loadImageModelForProfile(nextImageProfileId)
-        _state.value = _state.value.copy(
-            connectionProfiles = profiles,
-            disabledConnectionIds = disabled,
-            chats = chats,
-            quickTextModels = loadAllQuickTextModels(profiles, disabled),
-            imageConnectionProfileId = nextImageProfileId,
-            imageModel = nextImageModel,
-            imageAspectRatio = loadImageParameter("aspect_ratio", nextImageProfileId, nextImageModel),
-            imageResolution = loadImageParameter("resolution", nextImageProfileId, nextImageModel),
-            availableImageModels = if (nextImageProfileId != _state.value.imageConnectionProfileId) emptyList() else _state.value.availableImageModels,
-            modelCatalogConnectionId = null,
-            modelCatalog = emptyList(),
-            status = "Подключение «${profile.name}» удалено"
-        )
-        if (_state.value.activeConnectionProfileId == profileId) selectConnectionProfile(fallback.id)
-        else if (isImageProfileConfigured(imageConnectionProfile())) refreshModelCapabilities()
-    }
-
     fun loadConnectionModels(profileId: String) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
+            _state.value = _state.value.copy(status = "Сначала настройте OpenRouter")
             return
         }
         if (!isProfileConfigured(profile)) {
@@ -1401,7 +1170,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun loadImageConnectionModels(profileId: String) {
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Сначала включите подключение «${profile.name}»")
+            _state.value = _state.value.copy(status = "Сначала настройте OpenRouter")
             return
         }
         if (!imageGenerationEnabled(profile)) {
@@ -1532,16 +1301,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (mode == ChatMode.IMAGE) {
             val imageProfile = imageConnectionProfile()
             if (imageProfile.id in _state.value.disabledConnectionIds || !imageGenerationEnabled(imageProfile) || !isImageProfileConfigured(imageProfile)) {
-                _state.value = _state.value.copy(status = "Для создания изображений включите и настройте Image API выбранного подключения")
+                _state.value = _state.value.copy(status = "Для создания изображений сохраните API-ключ OpenRouter и выберите модель изображений")
                 return
             }
         }
-        prefs.edit().putString("chat_mode", mode.name).apply()
-        val chats = _state.value.chats.map { chat ->
-            if (chat.id == _state.value.currentChatId) chat.copy(mode = mode) else chat
-        }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(mode = mode, chats = chats)
+        // Composer mode is transient UI state. It deliberately does not persist per chat:
+        // opening/switching a chat always returns to normal text mode.
+        _state.value = _state.value.copy(mode = mode)
         if (mode == ChatMode.IMAGE && _state.value.availableImageModels.isEmpty()) refreshModels(ChatMode.IMAGE)
     }
 
@@ -1557,24 +1323,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ?.let(::effectiveTextBaseUrl)
         .orEmpty()
 
-    fun connectionImageEndpoint(profileId: String): String = _state.value.connectionProfiles
-        .firstOrNull { it.id == profileId }
-        ?.let(::effectiveImageBaseUrl)
-        .orEmpty()
-
     fun connectionImageEnabled(profileId: String): Boolean = _state.value.connectionProfiles
         .firstOrNull { it.id == profileId }
         ?.let(::imageGenerationEnabled)
-        ?: false
-
-    fun connectionUsesSameImageKey(profileId: String): Boolean = _state.value.connectionProfiles
-        .firstOrNull { it.id == profileId }
-        ?.let(::usesSameImageApiKey)
-        ?: true
-
-    fun connectionUsesProviderDefaults(profileId: String): Boolean = _state.value.connectionProfiles
-        .firstOrNull { it.id == profileId }
-        ?.let(::usesProviderDefaults)
         ?: false
 
     fun selectDefaultTextModel(profileId: String, model: String) {
@@ -1655,7 +1406,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val (profileId, modelId) = decodeQuickModelRef(modelRef, _state.value.activeConnectionProfileId)
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            _state.value = _state.value.copy(status = "Подключение OpenRouter недоступно")
             return
         }
         if (!isProfileConfigured(profile)) {
@@ -1784,7 +1535,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun setWebSearchEnabled(enabled: Boolean) {
         DiagnosticLog.action(context, "web_search_toggle", "enabled=$enabled; model=${currentTextModelId()}")
         if (enabled && (activeConnectionProfile().type != ProviderType.OPENROUTER || "openrouter" in _state.value.disabledConnectionIds)) {
-            _state.value = _state.value.copy(status = "Поиск в сети сейчас поддерживается подключением OpenRouter")
+            _state.value = _state.value.copy(status = "Поиск в сети доступен через OpenRouter")
             return
         }
         val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
@@ -2015,9 +1766,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
-        val newSkillIds = projectId
-            ?.let { id -> _state.value.projects.firstOrNull { it.id == id }?.skillIds }
-            .orEmpty()
+        val newSkillIds = emptySet<String>()
         chatsRepository.save(next)
         if (projectId != null) {
             val fixed = ProjectChatRuntimeProfile(
@@ -2081,7 +1830,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         prefs.edit()
             .putString("current_chat_id", chat.id)
             .putString("active_connection_profile", profile.id)
-            .putString("chat_mode", ChatMode.TEXT.name)
             .putBoolean("reasoning_enabled", false)
             .apply()
         _state.value = _state.value.copy(
@@ -2157,7 +1905,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         prefs.edit()
             .putString("current_chat_id", branch.id)
             .putStringSet(chatSkillsKey(branch.id), branchSkillIds)
-            .putString("chat_mode", ChatMode.TEXT.name)
             .putString("reasoning_effort", effort.name)
             .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
@@ -2207,7 +1954,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val linkedAgentId = agentConversations.agentIdForConversation(id)
         val switchPrefs = prefs.edit()
             .putString("current_chat_id", id)
-            .putString("chat_mode", ChatMode.TEXT.name)
         if (linkedAgentId == null) {
             switchPrefs
                 .putString("active_connection_profile", profile.id)
@@ -2258,14 +2004,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         cleanupTempAttachments(_state.value.pendingAttachments)
         val deletingChat = _state.value.chats.firstOrNull { it.id == id } ?: return
-        if (isOrchestratorChat(id)) {
-            _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
+        if (agentConversations.agentIdForConversation(id) != null) {
+            _state.value = _state.value.copy(status = "Чат агента удаляется только через настройки агента или проекта")
             return
         }
 
-        deletingChat.stages.orEmpty()
-            .flatMap { it.files.orEmpty() }
-            .forEach { projectsRepository.deleteFile(it) }
         prefs.edit().remove(chatSkillsKey(id)).apply()
         projectAutomation.deleteChat(id)
         chatFilesRepository.deleteChat(id)
@@ -2303,11 +2046,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         cleanupTempAttachments(_state.value.pendingAttachments)
 
-        val protectedOrchestrators = _state.value.chats.filter { isOrchestratorChat(it.id) }
-        _state.value.chats.filterNot { isOrchestratorChat(it.id) }.forEach { chat ->
-            chat.stages.orEmpty()
-                .flatMap { it.files.orEmpty() }
-                .forEach { projectsRepository.deleteFile(it) }
+        val protectedAgentChats = _state.value.chats.filter { chat ->
+            chat.projectId != null || agentConversations.agentIdForConversation(chat.id) != null
+        }
+        _state.value.chats.filterNot { it in protectedAgentChats }.forEach { chat ->
             chatFilesRepository.deleteChat(chat.id)
             knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chat.id)
             chatMemory.deleteChat(chat.id)
@@ -2326,11 +2068,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
 
-        val resetChats = listOf(chat) + protectedOrchestrators
+        val resetChats = listOf(chat) + protectedAgentChats
         chatsRepository.save(resetChats)
         prefs.edit()
             .putString("current_chat_id", chat.id)
-            .putString("chat_mode", ChatMode.TEXT.name)
             .putString("reasoning_effort", effort.name)
             .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
@@ -2376,16 +2117,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun createProject(
         name: String,
-        role: String = "",
-        masterPrompt: String = "",
         favorite: Boolean = false
     ): String {
         val project = Project(
             id = UUID.randomUUID().toString(),
             name = name.trim().ifBlank { "Новый проект" },
-            // Legacy fields remain serializable for now but are not part of the new project model.
-            role = "",
-            masterPrompt = "",
             isFavorite = favorite
         )
         agentsRepository.createOrchestrator(project.id)
@@ -2401,665 +2137,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return project.id
     }
 
-    fun updateProject(id: String, name: String, role: String, masterPrompt: String, favorite: Boolean) {
+    fun updateProject(id: String, name: String, favorite: Boolean) {
         val now = System.currentTimeMillis()
         val projects = _state.value.projects.map { project ->
             if (project.id == id) project.copy(
                 name = name.trim().ifBlank { "Проект" },
-                role = role.trim(),
-                masterPrompt = masterPrompt.trim(),
                 isFavorite = favorite,
                 updatedAt = now
             ) else project
         }
         projectsRepository.save(projects)
         _state.value = _state.value.copy(projects = projects, storageStats = storageRepository.stats())
-    }
-
-    fun upsertProjectStage(
-        projectId: String,
-        stageId: String?,
-        title: String,
-        instruction: String,
-        modelId: String?,
-        files: List<ProjectFile> = emptyList(),
-        sourceChatIds: Set<String> = emptySet()
-    ): String? {
-        if (_state.value.isLoading) return null
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
-        val cleanInstruction = instruction.trim()
-        if (cleanInstruction.isBlank()) {
-            _state.value = _state.value.copy(status = "Введите инструкцию этапа")
-            return null
-        }
-        val id = stageId ?: UUID.randomUUID().toString()
-        val current = project.stages.orEmpty()
-        current.firstOrNull { it.id == id }?.files.orEmpty()
-            .filterNot { old -> files.any { it.id == old.id } }
-            .forEach { projectsRepository.deleteFile(it) }
-        val stage = ProjectStage(
-            id = id,
-            title = title.trim().ifBlank { "Этап ${current.size + 1}" },
-            instruction = cleanInstruction,
-            modelId = modelId?.trim()?.takeIf { it.isNotBlank() },
-            files = files.ifEmpty { null },
-            sourceChatIds = sourceChatIds.ifEmpty { null }
-        )
-        val nextStages = if (current.any { it.id == id }) {
-            current.map { if (it.id == id) stage else it }
-        } else current + stage
-        val projects = _state.value.projects.map {
-            if (it.id == projectId) it.copy(stages = nextStages, updatedAt = System.currentTimeMillis()) else it
-        }
-        projectsRepository.save(projects)
-        _state.value = _state.value.copy(
-            projects = projects,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats(),
-            status = "Этап сохранён"
-        )
-        return id
-    }
-
-    fun deleteProjectStage(projectId: String, stageId: String) {
-        if (_state.value.isLoading) return
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
-        project.stages.orEmpty().firstOrNull { it.id == stageId }?.files.orEmpty()
-            .forEach { projectsRepository.deleteFile(it) }
-        val projects = _state.value.projects.map { item ->
-            if (item.id == projectId) item.copy(
-                stages = item.stages.orEmpty().filterNot { it.id == stageId },
-                updatedAt = System.currentTimeMillis()
-            ) else item
-        }
-        projectsRepository.save(projects)
-        _state.value = _state.value.copy(
-            projects = projects,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun moveProjectStage(projectId: String, stageId: String, delta: Int) {
-        if (_state.value.isLoading || delta == 0) return
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
-        val stages = project.stages.orEmpty().toMutableList()
-        val from = stages.indexOfFirst { it.id == stageId }
-        if (from < 0 || stages.isEmpty()) return
-        val to = (from + delta).coerceIn(0, stages.lastIndex)
-        if (to == from) return
-        val item = stages.removeAt(from)
-        stages.add(to, item)
-        val projects = _state.value.projects.map {
-            if (it.id == projectId) it.copy(stages = stages, updatedAt = System.currentTimeMillis()) else it
-        }
-        projectsRepository.save(projects)
-        _state.value = _state.value.copy(projects = projects)
-    }
-
-    fun upsertChatStage(
-        chatId: String,
-        stageId: String?,
-        title: String,
-        instruction: String,
-        modelId: String?,
-        files: List<ProjectFile> = emptyList(),
-        sourceChatIds: Set<String> = emptySet()
-    ): String? {
-        if (_state.value.isLoading) return null
-        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
-        if (chat.projectId == null) {
-            _state.value = _state.value.copy(status = "Индивидуальные этапы доступны для чатов проекта")
-            return null
-        }
-        val cleanInstruction = instruction.trim()
-        if (cleanInstruction.isBlank()) {
-            _state.value = _state.value.copy(status = "Введите инструкцию этапа")
-            return null
-        }
-        val id = stageId ?: UUID.randomUUID().toString()
-        val current = chat.stages.orEmpty()
-        current.firstOrNull { it.id == id }?.files.orEmpty()
-            .filterNot { old -> files.any { it.id == old.id } }
-            .forEach { projectsRepository.deleteFile(it) }
-        val stage = ProjectStage(
-            id = id,
-            title = title.trim().ifBlank { "Этап ${current.size + 1}" },
-            instruction = cleanInstruction,
-            modelId = modelId?.trim()?.takeIf { it.isNotBlank() },
-            files = files.ifEmpty { null },
-            sourceChatIds = sourceChatIds.ifEmpty { null }
-        )
-        val nextStages = if (current.any { it.id == id }) {
-            current.map { if (it.id == id) stage else it }
-        } else current + stage
-        val chats = _state.value.chats.map {
-            if (it.id == chatId) it.copy(stages = nextStages, updatedAt = System.currentTimeMillis()) else it
-        }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(
-            chats = chats,
-            messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats(),
-            status = "Этап чата сохранён"
-        )
-        return id
-    }
-
-    fun deleteChatStage(chatId: String, stageId: String) {
-        if (_state.value.isLoading) return
-        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
-        chat.stages.orEmpty().firstOrNull { it.id == stageId }?.files.orEmpty()
-            .forEach { projectsRepository.deleteFile(it) }
-        val chats = _state.value.chats.map { item ->
-            if (item.id == chatId) item.copy(
-                stages = item.stages.orEmpty().filterNot { it.id == stageId },
-                updatedAt = System.currentTimeMillis()
-            ) else item
-        }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(
-            chats = chats,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun moveChatStage(chatId: String, stageId: String, delta: Int) {
-        if (_state.value.isLoading || delta == 0) return
-        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
-        val stages = chat.stages.orEmpty().toMutableList()
-        val from = stages.indexOfFirst { it.id == stageId }
-        if (from < 0 || stages.isEmpty()) return
-        val to = (from + delta).coerceIn(0, stages.lastIndex)
-        if (to == from) return
-        val item = stages.removeAt(from)
-        stages.add(to, item)
-        val chats = _state.value.chats.map {
-            if (it.id == chatId) it.copy(stages = stages, updatedAt = System.currentTimeMillis()) else it
-        }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(chats = chats)
-    }
-
-    fun importStageDraftFile(projectId: String, uri: Uri): ProjectFile? =
-        runCatching { projectsRepository.importFile(projectId, uri) }
-            .onSuccess {
-                _state.value = _state.value.copy(
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats()
-                )
-            }
-            .onFailure {
-                _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить файл этапа")
-            }
-            .getOrNull()
-
-    fun deleteStageDraftFile(file: ProjectFile) {
-        projectsRepository.deleteFile(file)
-        _state.value = _state.value.copy(
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun cleanupStageDraftFiles(originalFileIds: Set<String>, draftFiles: List<ProjectFile>) {
-        draftFiles.filterNot { it.id in originalFileIds }.forEach { projectsRepository.deleteFile(it) }
-        _state.value = _state.value.copy(
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun upsertOrchestratorStep(
-        chatId: String,
-        stepId: String?,
-        title: String,
-        type: OrchestratorStepType,
-        targetChatId: String?,
-        prompt: String,
-        passPreviousResult: Boolean
-    ): String? {
-        if (_state.value.isLoading || _state.value.requestActive || !isOrchestratorChat(chatId)) return null
-        val current = projectAutomation.steps(chatId)
-        val id = stepId ?: UUID.randomUUID().toString()
-        val step = OrchestratorStep(
-            id = id,
-            title = title.trim().ifBlank { "Шаг ${current.size + 1}" },
-            type = type,
-            targetChatId = targetChatId,
-            prompt = prompt.trim(),
-            passPreviousResult = passPreviousResult
-        )
-        val next = if (current.any { it.id == id }) current.map { if (it.id == id) step else it } else current + step
-        projectAutomation.saveSteps(chatId, next)
-        touchChat(chatId)
-        return id
-    }
-
-    fun deleteOrchestratorStep(chatId: String, stepId: String) {
-        if (_state.value.isLoading || _state.value.requestActive || !isOrchestratorChat(chatId)) return
-        projectAutomation.saveSteps(chatId, projectAutomation.steps(chatId).filterNot { it.id == stepId })
-        touchChat(chatId)
-    }
-
-    fun moveOrchestratorStep(chatId: String, stepId: String, delta: Int) {
-        if (_state.value.isLoading || _state.value.requestActive || delta == 0 || !isOrchestratorChat(chatId)) return
-        val steps = projectAutomation.steps(chatId).toMutableList()
-        val from = steps.indexOfFirst { it.id == stepId }
-        if (from < 0) return
-        val to = (from + delta).coerceIn(0, steps.lastIndex)
-        if (to == from) return
-        val item = steps.removeAt(from)
-        steps.add(to, item)
-        projectAutomation.saveSteps(chatId, steps)
-        touchChat(chatId)
-    }
-
-    private fun touchChat(chatId: String) {
-        val chats = _state.value.chats.map { if (it.id == chatId) it.copy(updatedAt = System.currentTimeMillis()) else it }
-        chatsRepository.save(chats)
-        _state.value = _state.value.copy(chats = chats)
-    }
-
-
-    private fun orchestratorReasoningEffort(value: String?): ReasoningEffort? = when (value?.trim()?.lowercase()) {
-        "minimal" -> ReasoningEffort.MINIMAL
-        "low" -> ReasoningEffort.LOW
-        "medium" -> ReasoningEffort.MEDIUM
-        "high" -> ReasoningEffort.HIGH
-        "xhigh" -> ReasoningEffort.XHIGH
-        else -> null
-    }
-
-    private fun orchestratorControlSystemPrompt(project: Project, orchestrator: ChatSession): String {
-        val projectChats = _state.value.chats.filter { it.projectId == project.id && !isOrchestratorChat(it.id) }
-        val chatsDescription = projectChats.joinToString("\n") { chat ->
-            val runtime = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
-            val files = (chat.chatFiles.orEmpty().map { it.name } +
-                chat.messages.flatMap { message -> message.generatedFiles.map { it.name } }).distinct().takeLast(12)
-            val role = chat.assignedRole?.takeIf { it.isNotBlank() } ?: "не задана"
-            "- id=${chat.id}; name=${chat.title}; role=$role; stages=${chat.stages.orEmpty().size}; " +
-                "model=${runtime.modelId ?: chat.textModelOverride ?: "по умолчанию"}; web=${runtime.webSearchEnabled}; " +
-                "reasoning=${runtime.reasoningEnabled}/${runtime.reasoningEffort.apiValue}; files=${files.joinToString().ifBlank { "нет" }}"
-        }.ifBlank { "- В проекте пока нет рабочих чатов." }
-        val skillDescription = _state.value.skills.joinToString("\n") { "- id=${it.id}; name=${it.name}" }
-            .ifBlank { "- Библиотека навыков пуста." }
-        val orchestratorFiles = orchestrator.chatFiles.orEmpty().joinToString { it.name }.ifBlank { "нет" }
-        return """
-            Ты ◆ Оркестратор проекта «${project.name}». Ты не суперагент и не принимаешь скрытых автономных решений.
-            Твоя задача: понять обычную человеческую команду пользователя и либо ответить разговорно, либо составить безопасный линейный план действий Umnik.
-
-            ДОСТУПНЫЕ РАБОЧИЕ ЧАТЫ ПРОЕКТА:
-            $chatsDescription
-
-            НАВЫКИ:
-            $skillDescription
-
-            ФАЙЛЫ, ЗАКРЕПЛЁННЫЕ В ЧАТЕ ОРКЕСТРАТОРА: $orchestratorFiles
-            ОБЩИЕ ЭТАПЫ ПРОЕКТА: ${project.stages.orEmpty().size}
-
-            Разрешённые действия:
-            EXECUTE_CHAT — реально выполнить выбранный чат с указанным prompt.
-            RUN_CHAT_STAGES — реально выполнить индивидуальные этапы выбранного чата.
-            RUN_PROJECT_STAGES — выполнить общие этапы проекта.
-            SHOW_LAST_RESULT — показать последний ответ выбранного чата без нового запроса к модели.
-            TRANSFER_FILES — скопировать файлы из sourceChatId или из чата Оркестратора в targetChatId.
-            UPDATE_CHAT_SETTINGS — изменить постоянные настройки выбранного чата только если пользователь явно просит сохранить/изменить их постоянно.
-
-            Для EXECUTE_CHAT/RUN_CHAT_STAGES можно временно переопределить модель, поиск, reasoning, силу reasoning и навыки.
-            Временные параметры действуют только на этот запуск и НЕ меняют постоянные настройки, если persistSettings=false.
-            persistSettings=true ставь только при явных словах вроде «сохрани», «постоянно», «сделай настройкой чата».
-            useOrchestratorFiles=true означает передать файлы, которые пользователь приложил/закрепил в ◆ Оркестраторе.
-            includeSourceResult=true означает добавить последний ответ sourceChatId к заданию.
-            includeSourceFiles=true означает приложить файлы sourceChatId к заданию.
-            persistTransferredFiles=true означает закрепить передаваемые файлы в целевом чате, а не использовать их только один раз.
-            passPreviousResult=true передаёт текст результата предыдущего шага текущему шагу.
-
-            ВАЖНО:
-            - Не придумывай id. Используй только id из списка выше.
-            - Никогда не выбирай сам ◆ Оркестратор как targetChatId рабочего действия.
-            - Не ограничивай число действий искусственно: создай столько рабочих действий, сколько реально требуется поручением.
-            - Если действия независимы друг от друга, ставь passPreviousResult=false: Umnik сможет запустить разные чаты параллельно.
-            - Никаких циклов, скрытых повторов, if/else и автономных проверок. Если пользователь требует условие/цикл, объясни в reply, что это следующий уровень и сейчас нужен линейный вариант; execute=false.
-            - Если пользователь просто разговаривает, спрашивает совет или обсуждает проект, верни actions=[] и нормальный reply.
-            - Если пользователь просит «только покажи план», выставь execute=false, но actions заполни.
-            - Для доработки существующего результата используй sourceChatId самого чата, includeSourceResult=true и новый prompt.
-            - Если сказано «передай файл/файлы», предпочитай TRANSFER_FILES с persistTransferredFiles=true.
-            - Если сказано «передай результат», используй includeSourceResult=true; копировать текст вручную в prompt не нужно.
-
-            Верни ТОЛЬКО JSON без markdown и без пояснений вокруг него:
-            {
-              "reply": "короткое объяснение пользователю",
-              "execute": true,
-              "actions": [
-                {
-                  "type": "EXECUTE_CHAT",
-                  "title": "человеческое название шага",
-                  "targetChatId": "точный id",
-                  "sourceChatId": null,
-                  "prompt": "точный промпт исполнителю",
-                  "passPreviousResult": true,
-                  "includeSourceResult": false,
-                  "includeSourceFiles": false,
-                  "persistTransferredFiles": false,
-                  "useOrchestratorFiles": false,
-                  "fileNameContains": null,
-                  "temporaryModelId": null,
-                  "temporaryWebSearchEnabled": null,
-                  "temporaryReasoningEnabled": null,
-                  "temporaryReasoningEffort": null,
-                  "temporarySkillIds": null,
-                  "persistSettings": false
-                }
-              ]
-            }
-        """.trimIndent()
-    }
-
-    private suspend fun planOrchestratorControl(
-        project: Project,
-        orchestrator: ChatSession,
-        command: String,
-        history: List<ChatMessage>,
-        network: RequestNetworkSession
-    ): OrchestratorControlPlan {
-        val runtime = projectAutomation.profile(orchestrator.id) ?: defaultRuntimeProfile(orchestrator)
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == orchestrator.connectionProfileId } ?: openRouterProfile()
-        if (!isProfileConfigured(profile)) error("Подключение Оркестратора не настроено")
-        val apiKey = secrets.getProfileApiKey(profile.id).orEmpty()
-        if (apiKey.isBlank()) error("Для Оркестратора не сохранён API-ключ")
-        val modelId = runtime.modelId ?: orchestrator.textModelOverride ?: loadTextModelForProfile(profile)
-        val infos = runCatching { textModelsForProfile(profile) }.getOrDefault(emptyList())
-        val info = infos.firstOrNull { it.id == modelId }
-        val actualReasoning = runtime.reasoningEnabled && info?.supportsReasoning == true &&
-            (info.reasoningEfforts.isEmpty() || runtime.reasoningEffort.apiValue in info.reasoningEfforts)
-        val effort = if (actualReasoning && info?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
-        val requestInfo = (info ?: ModelInfo(modelId)).copy(
-            contextLength = listOfNotNull(info?.contextLength, profile.contextLimitTokens).minOrNull()
-        )
-        val knowledgeContext = knowledgeSystemContext(project, orchestrator, command)
-        val systemPrompt = orchestratorControlSystemPrompt(project, orchestrator) + knowledgeContext
-        val selectedHistory = history.takeLast(18)
-        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-        val result = network.call { requestApi ->
-            requestApi.chat(
-                apiKey,
-                modelId,
-                selectedHistory,
-                command,
-                emptyList(),
-                systemPrompt,
-                false,
-                actualReasoning,
-                effort,
-                false,
-                effectiveTextBaseUrl(profile),
-                requestInfo
-            )
-        }
-        return runCatching { OrchestratorControlCodec.parse(result.text) }
-            .getOrElse {
-                OrchestratorControlPlan(
-                    reply = "Я понял сообщение, но не смог надёжно превратить его в команды проекта. Переформулируйте поручение чуть конкретнее.\n\nОтвет модели: ${result.text.take(1200)}",
-                    execute = false
-                )
-            }
-    }
-
-    private fun orchestratorControlPlanText(project: Project, plan: OrchestratorControlPlan): String {
-        val names = _state.value.chats.associate { it.id to it.title }
-        fun actionLine(index: Int, action: OrchestratorControlAction): String {
-            val target = action.targetChatId?.let { names[it] ?: it } ?: "проект"
-            val source = action.sourceChatId?.let { names[it] ?: it }
-            val verb = when (action.type) {
-                "EXECUTE_CHAT" -> "Выполнить чат «$target»"
-                "RUN_CHAT_STAGES" -> "Выполнить этапы чата «$target»"
-                "RUN_PROJECT_STAGES" -> "Выполнить общие этапы проекта «${project.name}»"
-                "SHOW_LAST_RESULT" -> "Показать последний результат «$target»"
-                "TRANSFER_FILES" -> "Передать файлы${source?.let { " из «$it»" }.orEmpty()} → «$target»"
-                "UPDATE_CHAT_SETTINGS" -> "Изменить постоянные настройки чата «$target»"
-                else -> action.type
-            }
-            val flags = buildList {
-                if (action.temporaryWebSearchEnabled == true) add("поиск")
-                if (action.temporaryReasoningEnabled == true) add("размышление ${action.temporaryReasoningEffort ?: ""}".trim())
-                action.temporaryModelId?.let { add("модель $it") }
-                if (action.includeSourceResult) add("результат источника")
-                if (action.includeSourceFiles || action.useOrchestratorFiles) add("файлы")
-            }
-            return "${index + 1}. $verb" + if (flags.isEmpty()) "" else " · ${flags.joinToString(" · ")}"
-        }
-        val lines = plan.actions.mapIndexed(::actionLine)
-        return buildString {
-            if (plan.reply.isNotBlank()) appendLine(plan.reply)
-            if (lines.isNotEmpty()) {
-                if (isNotEmpty()) appendLine()
-                appendLine("### План")
-                lines.forEach(::appendLine)
-                appendLine()
-                append(if (plan.execute) "Запускаю линейный план." else "План показан без запуска.")
-            }
-        }.trim().ifBlank { "Готов помочь с проектом." }
-    }
-
-    private fun latestAssistantText(chat: ChatSession): String =
-        chat.messages.asReversed().firstOrNull { it.role == "assistant" && it.text.isNotBlank() }?.text.orEmpty()
-
-    private fun generatedFileAttachment(file: GeneratedFile): PendingAttachment = PendingAttachment(
-        uri = "generated://${file.id}",
-        name = file.name,
-        mimeType = file.mimeType,
-        size = file.size,
-        localPath = file.localPath
-    )
-
-    private fun filesFromProjectChat(chat: ChatSession, filter: String?): List<PendingAttachment> {
-        val generated = chat.messages.asReversed()
-            .filter { it.role == "assistant" && it.generatedFiles.isNotEmpty() }
-            .take(8)
-            .flatMap { it.generatedFiles }
-            .map(::generatedFileAttachment)
-        val persistent = chat.chatFiles.orEmpty().map(::chatFileAsAttachment)
-        val needle = filter?.trim()?.lowercase()?.takeIf { it.isNotBlank() }
-        return (persistent + generated)
-            .filter { needle == null || it.name.lowercase().contains(needle) }
-            .distinctBy { "${it.name.lowercase()}::${it.size}" }
-            .take(20)
-    }
-
-    private fun persistControlFiles(targetChatId: String, files: List<PendingAttachment>): List<PendingAttachment> {
-        if (files.isEmpty()) return emptyList()
-        val stored = chatsRepository.list()
-        val target = stored.firstOrNull { it.id == targetChatId } ?: return emptyList()
-        val existing = target.chatFiles.orEmpty().associateBy { "${it.name.lowercase()}::${it.size}" }
-        val imported = files.mapNotNull { attachment ->
-            val key = "${attachment.name.lowercase()}::${attachment.size}"
-            if (key in existing) return@mapNotNull null
-            runCatching { chatFilesRepository.importFile(targetChatId, attachment) }.getOrNull()
-        }
-        if (imported.isNotEmpty()) {
-            val latest = chatsRepository.list()
-            val updated = latest.map { chat ->
-                if (chat.id == targetChatId) chat.copy(
-                    chatFiles = (chat.chatFiles.orEmpty() + imported).distinctBy { "${it.name.lowercase()}::${it.size}" },
-                    updatedAt = System.currentTimeMillis()
-                ) else chat
-            }
-            chatsRepository.save(updated)
-            publishChats(updated)
-        }
-        return files
-    }
-
-    private fun runtimeForControlAction(chat: ChatSession, action: OrchestratorControlAction): ProjectChatRuntimeProfile {
-        val base = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
-        val knownSkillIds = _state.value.skills.map { it.id }.toSet()
-        val requestedSkills = action.temporarySkillIds?.filter { it in knownSkillIds }?.toSet()
-        return base.copy(
-            modelId = action.temporaryModelId ?: base.modelId,
-            webSearchEnabled = action.temporaryWebSearchEnabled ?: base.webSearchEnabled,
-            reasoningEnabled = action.temporaryReasoningEnabled ?: base.reasoningEnabled,
-            reasoningEffort = orchestratorReasoningEffort(action.temporaryReasoningEffort) ?: base.reasoningEffort,
-            skillIds = requestedSkills ?: base.skillIds
-        )
-    }
-
-    private fun persistRuntimeFromControl(chat: ChatSession, runtime: ProjectChatRuntimeProfile) {
-        projectAutomation.saveProfile(chat.id, runtime)
-        prefs.edit().putStringSet(chatSkillsKey(chat.id), runtime.skillIds).apply()
-        val latest = chatsRepository.list()
-        val updated = latest.map {
-            if (it.id == chat.id) it.copy(textModelOverride = runtime.modelId, updatedAt = System.currentTimeMillis()) else it
-        }
-        chatsRepository.save(updated)
-        publishChats(updated)
-        if (_state.value.currentChatId == chat.id) {
-            _state.value = _state.value.copy(
-                currentChatTextModel = runtime.modelId,
-                webSearchEnabled = runtime.webSearchEnabled,
-                reasoningEnabled = runtime.reasoningEnabled,
-                reasoningEffort = runtime.reasoningEffort,
-                activeSkillIds = runtime.skillIds
-            )
-        }
-    }
-
-    private fun actionExtraFiles(
-        project: Project,
-        orchestrator: ChatSession,
-        action: OrchestratorControlAction,
-        commandAttachments: List<PendingAttachment>
-    ): List<PendingAttachment> {
-        val latestChats = chatsRepository.list()
-        val fromSource = if (action.includeSourceFiles) {
-            action.sourceChatId?.let { id -> latestChats.firstOrNull { it.id == id && it.projectId == project.id } }
-                ?.let { filesFromProjectChat(it, action.fileNameContains) }.orEmpty()
-        } else emptyList()
-        val fromOrchestrator = if (action.useOrchestratorFiles) {
-            val refreshed = latestChats.firstOrNull { it.id == orchestrator.id } ?: orchestrator
-            (commandAttachments + filesFromProjectChat(refreshed, action.fileNameContains))
-        } else emptyList()
-        return (fromSource + fromOrchestrator)
-            .filter { action.fileNameContains.isNullOrBlank() || it.name.contains(action.fileNameContains!!, ignoreCase = true) }
-            .distinctBy { "${it.name.lowercase()}::${it.size}" }
-    }
-
-    private suspend fun executeOrchestratorControlAction(
-        project: Project,
-        orchestrator: ChatSession,
-        action: OrchestratorControlAction,
-        previous: String,
-        commandAttachments: List<PendingAttachment>,
-        network: RequestNetworkSession
-    ): String {
-        fun targetChat(): ChatSession {
-            val id = action.targetChatId ?: error("Не выбран целевой чат")
-            return chatsRepository.list().firstOrNull { it.id == id && it.projectId == project.id && !isOrchestratorChat(it.id) }
-                ?: error("Целевой чат для шага «${action.title.ifBlank { action.type }}» не найден")
-        }
-        val sourceText = if (action.includeSourceResult) {
-            action.sourceChatId?.let { id ->
-                chatsRepository.list().firstOrNull { it.id == id && it.projectId == project.id }?.let(::latestAssistantText)
-            }.orEmpty()
-        } else ""
-        val carried = buildString {
-            if (action.passPreviousResult && previous.isNotBlank()) append(previous)
-            if (sourceText.isNotBlank()) {
-                if (isNotEmpty()) appendLine().appendLine()
-                append("===== РЕЗУЛЬТАТ ВЫБРАННОГО ЧАТА =====\n").append(sourceText)
-            }
-        }
-        return when (action.type) {
-            "SHOW_LAST_RESULT" -> {
-                val chat = targetChat()
-                latestAssistantText(chat).ifBlank { "У чата «${chat.title}» пока нет ответа модели." }
-            }
-            "TRANSFER_FILES" -> {
-                val target = targetChat()
-                val latest = chatsRepository.list()
-                val sourceFiles = action.sourceChatId?.let { id -> latest.firstOrNull { it.id == id && it.projectId == project.id } }
-                    ?.let { filesFromProjectChat(it, action.fileNameContains) }.orEmpty()
-                val orchestratorFiles = if (action.useOrchestratorFiles) {
-                    (commandAttachments + filesFromProjectChat(latest.firstOrNull { it.id == orchestrator.id } ?: orchestrator, action.fileNameContains))
-                } else emptyList()
-                val files = (sourceFiles + orchestratorFiles).distinctBy { "${it.name.lowercase()}::${it.size}" }
-                if (files.isEmpty()) error("Не нашёл файлов для передачи")
-                persistControlFiles(target.id, files)
-                "Передано в чат «${target.title}»: ${files.joinToString { it.name }}"
-            }
-            "UPDATE_CHAT_SETTINGS" -> {
-                val target = targetChat()
-                val runtime = runtimeForControlAction(target, action)
-                persistRuntimeFromControl(target, runtime)
-                "Настройки чата «${target.title}» сохранены: модель ${runtime.modelId ?: "по умолчанию"}, " +
-                    "поиск ${if (runtime.webSearchEnabled) "включён" else "выключен"}, " +
-                    "размышление ${if (runtime.reasoningEnabled) runtime.reasoningEffort.apiValue else "выключено"}."
-            }
-            "EXECUTE_CHAT" -> {
-                var target = targetChat()
-                val runtime = runtimeForControlAction(target, action)
-                if (action.persistSettings) {
-                    persistRuntimeFromControl(target, runtime)
-                    target = chatsRepository.list().firstOrNull { it.id == target.id } ?: target
-                }
-                var extra = actionExtraFiles(project, orchestrator, action, commandAttachments)
-                if (action.persistTransferredFiles && extra.isNotEmpty()) {
-                    persistControlFiles(target.id, extra)
-                    target = chatsRepository.list().firstOrNull { it.id == target.id } ?: target
-                }
-                executeOrchestratorChatTask(
-                    project = project,
-                    requested = target,
-                    prompt = action.prompt,
-                    previous = carried,
-                    passPrevious = carried.isNotBlank(),
-                    runtimeOverride = runtime,
-                    extraAttachments = extra,
-                    network = network
-                )
-            }
-            "RUN_CHAT_STAGES" -> {
-                var target = targetChat()
-                if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет индивидуальных этапов")
-                val runtime = runtimeForControlAction(target, action)
-                if (action.persistSettings) {
-                    persistRuntimeFromControl(target, runtime)
-                    target = chatsRepository.list().firstOrNull { it.id == target.id } ?: target
-                }
-                val extra = actionExtraFiles(project, orchestrator, action, commandAttachments)
-                if (action.persistTransferredFiles && extra.isNotEmpty()) persistControlFiles(target.id, extra)
-                executeOrchestratorStageSequence(
-                    project = project,
-                    requested = target,
-                    stages = target.stages.orEmpty(),
-                    prompt = action.prompt,
-                    previous = carried,
-                    passPrevious = carried.isNotBlank(),
-                    runtimeOverride = runtime,
-                    extraAttachments = extra,
-                    network = network
-                )
-            }
-            "RUN_PROJECT_STAGES" -> {
-                if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
-                val runtime = runtimeForControlAction(orchestrator, action)
-                val extra = actionExtraFiles(project, orchestrator, action, commandAttachments)
-                executeOrchestratorStageSequence(
-                    project = project,
-                    requested = orchestrator,
-                    stages = project.stages.orEmpty(),
-                    prompt = action.prompt,
-                    previous = carried,
-                    passPrevious = carried.isNotBlank(),
-                    runtimeOverride = runtime,
-                    extraAttachments = extra,
-                    network = network
-                )
-            }
-            else -> error("Неизвестное действие Оркестратора: ${action.type}")
-        }
     }
 
     private val maxAgentOfficeRounds = 10
@@ -3212,7 +2300,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val specialistList = _state.value.agents.filter {
             it.projectId == project.id && it.kind == AgentKind.SPECIALIST
         }
-        val skillText = agentSkills.promptFor(orchestrator.id, orchestrator.skillIds)
+        val skillText = withContext(Dispatchers.IO) { agentSkills.promptFor(orchestrator.id, orchestrator.skillIds) }
         val knowledgeContext = knowledgeSystemContext(
             project = null,
             chat = null,
@@ -3440,7 +2528,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val requestInfo = modelInfo.copy(
                 contextLength = listOfNotNull(modelInfo.contextLength, profile.contextLimitTokens).minOrNull()
             )
-            val skillText = agentSkills.promptFor(worker.id, worker.skillIds)
+            val skillText = withContext(Dispatchers.IO) { agentSkills.promptFor(worker.id, worker.skillIds) }
             val ownAttachments = agentFiles.list(worker.id).map { file ->
                 PendingAttachment(
                     uri = "agent://" + file.id,
@@ -4120,799 +3208,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private fun sendOrchestratorControl(
-        command: String,
-        pending: List<PendingAttachment>,
-        persistentChatFiles: List<PendingAttachment>
-    ) {
-        val chatId = _state.value.currentChatId
-        if (_state.value.isLoading || RequestExecutionManager.hasActiveChat(chatId)) return
-        val orchestrator = _state.value.chats.firstOrNull { it.id == chatId && isOrchestratorChat(it.id) } ?: return
-        val project = orchestrator.projectId?.let { id -> _state.value.projects.firstOrNull { it.id == id } } ?: return
-        val clean = command.trim().ifBlank {
-            if (pending.isNotEmpty() || persistentChatFiles.isNotEmpty())
-                "Посмотри приложенные материалы и предложи, как лучше распределить работу между чатами проекта. Только покажи план, пока не запускай."
-            else return
-        }
-        val before = orchestrator.messages
-        val user = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = "user",
-            text = clean,
-            attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct(),
-            deliveryState = "pending"
-        )
-        val nextMessages = before + user
-        val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, null)
-        chatsRepository.save(nextChats)
-        _state.value = _state.value.copy(
-            messages = nextMessages,
-            chats = nextChats,
-            pendingAttachments = emptyList(),
-            requestActive = true,
-            busyLabel = "◆ Оркестратор · разбираю поручение…",
-            status = null
-        )
-        val requestId = nextRequestGeneration(chatId)
-        activeRequestPending[chatId] = pending
-        launchRequest(chatId, user.id, "◆ Оркестратор · ${project.name}") { network ->
-            var failed: Throwable? = null
-            try {
-                val plan = planOrchestratorControl(project, orchestrator, clean, before, network)
-                if (!isCurrentRequestGeneration(chatId, requestId)) return@launchRequest
-                val planMessage = ChatMessage(
-                    UUID.randomUUID().toString(),
-                    "assistant",
-                    orchestratorControlPlanText(project, plan),
-                    modelId = projectAutomation.profile(orchestrator.id)?.modelId ?: orchestrator.textModelOverride
-                )
-                val finished = chatsRepository.finishRequest(chatId, user.id, planMessage)
-                publishChats(finished)
-                if (!plan.execute || plan.actions.isEmpty()) {
-                    _state.value = _state.value.copy(
-                        status = null
-                    )
-                    playReadySound()
-                    return@launchRequest
-                }
-                executeOrchestratorControlActions(
-                    project = project,
-                    orchestrator = orchestrator,
-                    actions = plan.actions,
-                    pending = pending,
-                    network = network,
-                    logChatId = chatId
-                )
-                appendOrchestratorLog(chatId, 0, "Оркестратор", "Поручение выполнено. Шагов: ${plan.actions.size}.")
-                playReadySound()
-            } catch (error: Throwable) {
-                failed = error
-                val current = chatsRepository.list().firstOrNull { it.id == chatId }
-                val pendingStillExists = current?.messages?.any { it.id == user.id && it.deliveryState == "pending" } == true
-                if (pendingStillExists) {
-                    val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
-                    publishChats(failedChats)
-                }
-                appendOrchestratorLog(chatId, -1, "Поручение остановлено", error.message ?: "Ошибка выполнения")
-            } finally {
-                cleanupTempAttachments(pending)
-                if (isCurrentRequestGeneration(chatId, requestId)) {
-                    activeRequestPending.remove(chatId)
-                    _state.value = _state.value.copy(
-                        status = failed?.message
-                    )
-                }
-            }
-        }
-    }
-
-    private fun parallelControlCandidate(action: OrchestratorControlAction): Boolean =
-        action.type in setOf("EXECUTE_CHAT", "RUN_CHAT_STAGES") &&
-            !action.passPreviousResult &&
-            action.sourceChatId.isNullOrBlank() &&
-            !action.includeSourceResult &&
-            !action.includeSourceFiles &&
-            !action.persistSettings &&
-            !action.targetChatId.isNullOrBlank()
-
-    private suspend fun executeOrchestratorControlActions(
-        project: Project,
-        orchestrator: ChatSession,
-        actions: List<OrchestratorControlAction>,
-        pending: List<PendingAttachment>,
-        network: RequestNetworkSession,
-        logChatId: String
-    ): String {
-        var previous = ""
-        var index = 0
-        while (index < actions.size) {
-            val first = actions[index]
-            val batch = mutableListOf<Pair<Int, OrchestratorControlAction>>()
-            if (parallelControlCandidate(first)) {
-                val targets = mutableSetOf<String>()
-                var cursor = index
-                while (cursor < actions.size) {
-                    val candidate = actions[cursor]
-                    val target = candidate.targetChatId
-                    if (!parallelControlCandidate(candidate) || target == null || !targets.add(target)) break
-                    batch += cursor to candidate
-                    cursor += 1
-                }
-            }
-
-            if (batch.size > 1) {
-                network.updatePhase("◆ Оркестратор · параллельно ${batch.size} исполнителя…")
-                val completed = coroutineScope {
-                    batch.map { (actionIndex, action) ->
-                        async {
-                            val outcome = try {
-                                Result.success(
-                                    executeOrchestratorControlAction(
-                                        project, orchestrator, action, "", pending, network
-                                    )
-                                )
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Throwable) {
-                                Result.failure<String>(error)
-                            }
-                            Triple(actionIndex, action, outcome)
-                        }
-                    }.awaitAll()
-                }.sortedBy { it.first }
-
-                completed.forEach { (actionIndex, action, outcome) ->
-                    outcome.getOrNull()?.let { result ->
-                        appendOrchestratorLog(
-                            logChatId,
-                            actionIndex + 1,
-                            action.title.ifBlank { action.type },
-                            result
-                        )
-                    }
-                }
-                completed.firstOrNull { it.third.isFailure }
-                    ?.third?.exceptionOrNull()?.let { throw it }
-                previous = completed.last().third.getOrThrow()
-                index += batch.size
-            } else {
-                val action = first
-                network.updatePhase(
-                    "◆ Оркестратор · шаг ${index + 1} из ${actions.size}: ${action.title.ifBlank { action.type }}"
-                )
-                val result = executeOrchestratorControlAction(
-                    project, orchestrator, action, previous, pending, network
-                )
-                previous = result
-                appendOrchestratorLog(
-                    logChatId,
-                    index + 1,
-                    action.title.ifBlank { action.type },
-                    result
-                )
-                index += 1
-            }
-        }
-        return previous
-    }
-
-    fun runOrchestrator(projectId: String): String? {
-        if (_state.value.isLoading) return null
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
-        val orchestratorId = projectAutomation.orchestratorChatId(projectId) ?: return null
-        if (RequestExecutionManager.hasActiveChat(orchestratorId)) return null
-        val orchestrator = _state.value.chats.firstOrNull { it.id == orchestratorId } ?: return null
-        val steps = projectAutomation.steps(orchestratorId)
-        if (steps.isEmpty()) {
-            _state.value = _state.value.copy(status = "У оркестратора пока нет шагов")
-            return null
-        }
-        val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Выполнить сценарий оркестратора (${steps.size} шагов).")
-        val prepared = chatsRepository.list().map { chat ->
-            if (chat.id == orchestratorId) chat.copy(messages = chat.messages + launch, updatedAt = System.currentTimeMillis()) else chat
-        }
-        chatsRepository.save(prepared)
-        _state.value = _state.value.copy(
-            chats = prepared,
-            messages = prepared.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
-            requestActive = true,
-            busyLabel = "Оркестратор · шаг 1 из ${steps.size}",
-            status = null
-        )
-        launchRequest(orchestratorId, launch.id, "Оркестратор · ${project.name}") { network ->
-            var previous = ""
-            var failed: Throwable? = null
-            try {
-                executeFixedOrchestratorSteps(
-                    project = project,
-                    orchestrator = orchestrator,
-                    steps = steps,
-                    network = network,
-                    logChatId = orchestratorId
-                )
-            } catch (error: Throwable) {
-                failed = error
-                appendOrchestratorLog(orchestratorId, -1, "Сценарий остановлен", error.message ?: "Ошибка выполнения")
-            } finally {
-                appendOrchestratorLog(
-                    orchestratorId,
-                    0,
-                    "Оркестратор",
-                    if (failed == null) "Сценарий завершён. Выполнено шагов: ${steps.size}." else "Сценарий остановлен: ${failed?.message ?: "ошибка"}"
-                )
-                _state.value = _state.value.copy(
-                    status = if (failed == null) "Сценарий оркестратора выполнен" else "Оркестратор остановлен"
-                )
-            }
-        }
-        return orchestratorId
-    }
-
-    private fun parallelFixedStepCandidate(step: OrchestratorStep): Boolean =
-        step.type in setOf(OrchestratorStepType.EXECUTE_CHAT, OrchestratorStepType.RUN_CHAT_STAGES) &&
-            !step.passPreviousResult &&
-            !step.targetChatId.isNullOrBlank()
-
-    private suspend fun executeFixedOrchestratorStep(
-        project: Project,
-        orchestrator: ChatSession,
-        step: OrchestratorStep,
-        previous: String,
-        network: RequestNetworkSession
-    ): String = when (step.type) {
-        OrchestratorStepType.EXECUTE_CHAT -> {
-            val target = chatsRepository.list().firstOrNull {
-                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
-            } ?: error("Для шага «${step.title}» не выбран чат")
-            executeOrchestratorChatTask(
-                project, target, step.prompt, previous, step.passPreviousResult, network = network
-            )
-        }
-        OrchestratorStepType.RUN_CHAT_STAGES -> {
-            val target = chatsRepository.list().firstOrNull {
-                it.id == step.targetChatId && it.projectId == project.id && !isOrchestratorChat(it.id)
-            } ?: error("Для шага «${step.title}» не выбран чат")
-            if (target.stages.orEmpty().isEmpty()) error("У чата «${target.title}» нет этапов")
-            executeOrchestratorStageSequence(
-                project, target, target.stages.orEmpty(), step.prompt, previous,
-                step.passPreviousResult, network = network
-            )
-        }
-        OrchestratorStepType.RUN_PROJECT_STAGES -> {
-            if (project.stages.orEmpty().isEmpty()) error("У проекта нет общих этапов")
-            executeOrchestratorStageSequence(
-                project, orchestrator, project.stages.orEmpty(), step.prompt, previous,
-                step.passPreviousResult, network = network
-            )
-        }
-    }
-
-    private suspend fun executeFixedOrchestratorSteps(
-        project: Project,
-        orchestrator: ChatSession,
-        steps: List<OrchestratorStep>,
-        network: RequestNetworkSession,
-        logChatId: String
-    ): String {
-        var previous = ""
-        var index = 0
-        while (index < steps.size) {
-            val first = steps[index]
-            val batch = mutableListOf<Pair<Int, OrchestratorStep>>()
-            if (parallelFixedStepCandidate(first)) {
-                val targets = mutableSetOf<String>()
-                var cursor = index
-                while (cursor < steps.size) {
-                    val candidate = steps[cursor]
-                    val target = candidate.targetChatId
-                    if (!parallelFixedStepCandidate(candidate) || target == null || !targets.add(target)) break
-                    batch += cursor to candidate
-                    cursor += 1
-                }
-            }
-
-            if (batch.size > 1) {
-                network.updatePhase("Оркестратор · параллельно ${batch.size} исполнителя…")
-                val completed = coroutineScope {
-                    batch.map { (stepIndex, step) ->
-                        async {
-                            val outcome = try {
-                                Result.success(executeFixedOrchestratorStep(project, orchestrator, step, "", network))
-                            } catch (cancelled: CancellationException) {
-                                throw cancelled
-                            } catch (error: Throwable) {
-                                Result.failure<String>(error)
-                            }
-                            Triple(stepIndex, step, outcome)
-                        }
-                    }.awaitAll()
-                }.sortedBy { it.first }
-
-                completed.forEach { (stepIndex, step, outcome) ->
-                    outcome.getOrNull()?.let { result ->
-                        appendOrchestratorLog(logChatId, stepIndex + 1, step.title, result)
-                    }
-                }
-                completed.firstOrNull { it.third.isFailure }
-                    ?.third?.exceptionOrNull()?.let { throw it }
-                previous = completed.last().third.getOrThrow()
-                index += batch.size
-            } else {
-                val step = first
-                network.updatePhase("Оркестратор · шаг ${index + 1} из ${steps.size}: ${step.title}")
-                val result = executeFixedOrchestratorStep(project, orchestrator, step, previous, network)
-                previous = result
-                appendOrchestratorLog(logChatId, index + 1, step.title, result)
-                index += 1
-            }
-        }
-        return previous
-    }
-
-    private fun orchestratorPrompt(prompt: String, previous: String, passPrevious: Boolean): String = buildString {
-        append(prompt.trim().ifBlank { "Выполни свою заданную роль и инструкции, используя текущий контекст этого чата." })
-        if (passPrevious && previous.isNotBlank()) {
-            appendLine(); appendLine(); appendLine("===== РЕЗУЛЬТАТ ПРЕДЫДУЩЕГО ШАГА ОРКЕСТРАТОРА ====="); append(previous)
-        }
-    }
-
-    private suspend fun executeOrchestratorChatTask(
-        project: Project,
-        requested: ChatSession,
-        prompt: String,
-        previous: String,
-        passPrevious: Boolean,
-        runtimeOverride: ProjectChatRuntimeProfile? = null,
-        extraAttachments: List<PendingAttachment> = emptyList(),
-        network: RequestNetworkSession
-    ): String {
-        val all = chatsRepository.list()
-        val chat = all.firstOrNull { it.id == requested.id } ?: requested
-        val reservationRequired = !isOrchestratorChat(chat.id)
-        if (reservationRequired && !network.reserveChat(chat.id)) {
-            error("В чате «${chat.title}» уже выполняется другой запрос")
-        }
-        try {
-        val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
-        val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
-        if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
-        if (key.isBlank()) error("Нет API-ключа для чата «${chat.title}»")
-        val modelId = runtime.modelId ?: chat.textModelOverride ?: loadTextModelForProfile(profile)
-        val infos = runCatching { textModelsForProfile(profile) }.getOrDefault(emptyList())
-        val modelInfo = infos.firstOrNull { it.id == modelId }
-        val task = orchestratorPrompt(prompt, previous, passPrevious)
-        val history = chat.messages
-        val user = ChatMessage(UUID.randomUUID().toString(), "user", task)
-        var updated = chatsRepository.updateChat(chat.id) { current ->
-            current.copy(messages = current.messages + user, updatedAt = System.currentTimeMillis())
-        }
-        publishChats(updated)
-        val attachments = (orchestratorAttachments(project, chat, modelInfo) + extraAttachments).distinctBy { it.localPath ?: it.uri }
-        val skillText = skills.promptFor(runtime.skillIds)
-        val actualReasoning = runtime.reasoningEnabled && modelInfo?.supportsReasoning == true &&
-            (modelInfo.reasoningEfforts.isEmpty() || runtime.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
-        val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
-        val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(
-            contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
-        )
-        val knowledgeContext = knowledgeSystemContext(project, chat, task)
-        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-        val result = network.call(chat.id) { requestApi ->
-            requestApi.chat(
-                    key, modelId, history, task, attachments,
-                    buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
-                    runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
-                    effectiveTextBaseUrl(profile), requestInfo
-            )
-        }
-        val text = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
-        val assistant = ChatMessage(
-            UUID.randomUUID().toString(), "assistant", text,
-            generatedFiles = result.files,
-            modelId = result.modelId ?: modelId,
-            providerName = result.providerName,
-            costUsd = result.costUsd,
-            inputTokens = result.inputTokens,
-            outputTokens = result.outputTokens
-        )
-        updated = chatsRepository.updateChat(chat.id) { current ->
-            current.copy(messages = current.messages + assistant, updatedAt = System.currentTimeMillis())
-        }
-        publishChats(updated)
-        return text
-        } finally {
-            if (reservationRequired) network.releaseChat(chat.id)
-        }
-    }
-
-    private suspend fun executeOrchestratorStageSequence(
-        project: Project,
-        requested: ChatSession,
-        stages: List<ProjectStage>,
-        prompt: String,
-        previous: String,
-        passPrevious: Boolean,
-        runtimeOverride: ProjectChatRuntimeProfile? = null,
-        extraAttachments: List<PendingAttachment> = emptyList(),
-        network: RequestNetworkSession
-    ): String {
-        val initial = orchestratorPrompt(prompt, previous, passPrevious)
-        var all = chatsRepository.list()
-        val first = all.firstOrNull { it.id == requested.id } ?: requested
-        val reservationRequired = !isOrchestratorChat(first.id)
-        if (reservationRequired && !network.reserveChat(first.id)) {
-            error("В чате «${first.title}» уже выполняется другой запрос")
-        }
-        try {
-        val launch = ChatMessage(UUID.randomUUID().toString(), "user", "Оркестратор запускает этапы.\n\n$initial")
-        all = chatsRepository.updateChat(first.id) { current ->
-            current.copy(messages = current.messages + launch, updatedAt = System.currentTimeMillis())
-        }
-        publishChats(all)
-        val baseHistory = all.first { it.id == first.id }.messages
-        val results = mutableListOf<Pair<ProjectStage, String>>()
-        stages.forEachIndexed { index, stage ->
-            val currentChats = chatsRepository.list()
-            val chat = currentChats.firstOrNull { it.id == first.id } ?: first
-            val runtime = runtimeOverride ?: projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
-            val profile = _state.value.connectionProfiles.firstOrNull { it.id == chat.connectionProfileId } ?: openRouterProfile()
-            if (!isProfileConfigured(profile)) error("Подключение для чата «${chat.title}» не настроено")
-            val key = secrets.getProfileApiKey(profile.id).orEmpty()
-            val modelId = stage.modelId?.takeIf { it.isNotBlank() } ?: runtime.modelId ?: chat.textModelOverride ?: loadTextModelForProfile(profile)
-            val infos = runCatching { textModelsForProfile(profile) }.getOrDefault(emptyList())
-            val modelInfo = infos.firstOrNull { it.id == modelId }
-            val sourceChats = stage.sourceChatIds.orEmpty().mapNotNull { id -> currentChats.firstOrNull { it.id == id && it.projectId == project.id } }
-            val stagePrompt = buildString {
-                appendLine("Выполни только текущий этап. Не переходи к следующим этапам сам.")
-                appendLine(); appendLine("===== ИСХОДНАЯ ЗАДАЧА ====="); appendLine(initial)
-                if (sourceChats.isNotEmpty()) {
-                    appendLine(); appendLine("===== ВЫБРАННЫЕ ЧАТЫ ПРОЕКТА =====")
-                    sourceChats.forEach { source ->
-                        appendLine("### ${source.title}")
-                        source.messages.forEach { message -> appendLine("${message.role}: ${message.text}") }
-                    }
-                }
-                if (results.isNotEmpty()) {
-                    appendLine(); appendLine("===== РЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ЭТАПОВ =====")
-                    results.forEachIndexed { i, pair -> appendLine("--- Этап ${i + 1}: ${pair.first.title} ---\n${pair.second}") }
-                }
-                appendLine(); appendLine("===== ТЕКУЩИЙ ЭТАП ${index + 1}: ${stage.title} ====="); appendLine(stage.instruction)
-            }
-            val attachments = (
-                orchestratorAttachments(project, chat, modelInfo) +
-                    extraAttachments +
-                    stage.files.orEmpty().map { PendingAttachment("stage://${it.id}", it.name, it.mimeType, it.size, it.localPath) } +
-                    sourceChats.flatMap { it.chatFiles.orEmpty() }.map(::chatFileAsAttachment)
-            ).distinctBy { it.localPath ?: it.uri }
-            val skillText = skills.promptFor(runtime.skillIds)
-            val actualReasoning = runtime.reasoningEnabled && modelInfo?.supportsReasoning == true &&
-                (modelInfo.reasoningEfforts.isEmpty() || runtime.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
-            val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) runtime.reasoningEffort.apiValue else null
-            val requestInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull())
-            val knowledgeContext = knowledgeSystemContext(project, chat, stagePrompt)
-            require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-            val response = network.call(chat.id) { requestApi ->
-                requestApi.chat(
-                    key, modelId, baseHistory, stagePrompt, attachments,
-                    buildSystemPrompt(skillText, project, chat, modelInfo?.supportsTools == true) + knowledgeContext,
-                    runtime.webSearchEnabled, actualReasoning, effort, modelInfo?.supportsTools == true,
-                    effectiveTextBaseUrl(profile), requestInfo
-                )
-            }
-            val text = ProjectOutputPolicy.apply(response.text, project.masterPrompt).ifBlank { "Готово." }
-            results += stage to text
-            appendProjectStageMessage(chat.id, index + 1, stage.title, text, response.modelId ?: modelId, response)
-        }
-        return results.lastOrNull()?.second ?: "Этапы выполнены."
-        } finally {
-            if (reservationRequired) network.releaseChat(first.id)
-        }
-    }
-
-    private fun orchestratorAttachments(project: Project, chat: ChatSession, info: ModelInfo?): List<PendingAttachment> {
-        fun allowed(a: PendingAttachment): Boolean {
-            val mime = a.mimeType.lowercase(); val name = a.name.lowercase()
-            val text = mime.startsWith("text/") || listOf(".md", ".json", ".csv", ".yaml", ".yml", ".xml").any(name::endsWith)
-            return text || mime == "application/pdf" || name.endsWith(".pdf") ||
-                (mime.startsWith("image/") && info?.accepts("image") == true) ||
-                (mime.startsWith("audio/") && info?.accepts("audio") == true) ||
-                (mime.startsWith("video/") && info?.accepts("video") == true)
-        }
-        val projectFiles = project.files.map { PendingAttachment("project://${it.id}", it.name, it.mimeType, it.size, it.localPath) }
-        return (chat.chatFiles.orEmpty().map(::chatFileAsAttachment) + projectFiles).filter(::allowed).distinctBy { it.localPath ?: it.uri }
-    }
-
-    private fun appendOrchestratorLog(chatId: String, number: Int, title: String, text: String) {
-        val latest = chatsRepository.list()
-        val message = ChatMessage(
-            UUID.randomUUID().toString(),
-            "assistant",
-            if (number > 0) "## Шаг $number: $title\n\n$text" else "## $title\n\n$text",
-            providerName = "Оркестратор"
-        )
-        val updated = latest.map { if (it.id == chatId) it.copy(messages = it.messages + message, updatedAt = System.currentTimeMillis()) else it }
-        chatsRepository.save(updated)
-        publishChats(updated)
-    }
-
     private fun publishChats(chats: List<ChatSession>) {
         _state.value = _state.value.copy(
             chats = chats,
             messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages ?: _state.value.messages,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun runProjectStages(projectId: String, initialTask: String): String? {
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
-        return runStageSequence(project, project.stages.orEmpty(), initialTask, "проекта")
-    }
-
-    fun runCurrentChatStages(initialTask: String): String? {
-        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return null
-        val projectId = chat.projectId ?: return null
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return null
-        return runStageSequence(project, chat.stages.orEmpty(), initialTask, "чата")
-    }
-
-    private fun runStageSequence(
-        project: Project,
-        configuredStages: List<ProjectStage>,
-        initialTask: String,
-        sequenceName: String
-    ): String? {
-        if (_state.value.isLoading) return null
-        val stages = configuredStages.filter { it.instruction.isNotBlank() }
-        if (stages.isEmpty()) {
-            _state.value = _state.value.copy(status = "Сначала добавьте хотя бы один этап работы")
-            return null
-        }
-        val profile = openRouterProfile()
-        if (!isProfileConfigured(profile)) {
-            _state.value = _state.value.copy(status = "Сначала сохраните API-ключ OpenRouter")
-            return null
-        }
-        val apiKey = secrets.getProfileApiKey(profile.id).orEmpty()
-        if (apiKey.isBlank()) return null
-
-        val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-        val chatId = if (activeChat?.projectId == project.id) activeChat.id else createChat(project.id)
-        if (RequestExecutionManager.hasActiveChat(chatId)) {
-            _state.value = _state.value.copy(status = "В этом чате уже выполняется запрос")
-            return null
-        }
-        val currentChat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
-        // Freeze the originating chat runtime. Navigation may change global UI state while stages run.
-        val launchState = _state.value
-        val baseHistory = currentChat.messages
-        val chatAttachments = currentChat.chatFiles.orEmpty().map(::chatFileAsAttachment)
-        val startText = initialTask.trim().ifBlank {
-            "Используй текущий диалог, его вложения, инструкции и материалы проекта."
-        }
-        val now = System.currentTimeMillis()
-        val user = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = "user",
-            text = "Запустить этапы $sequenceName.\n\nИсходная задача:\n$startText",
-            timestamp = now
-        )
-        val stageChat = currentChat.copy(
-            title = if (currentChat.title == "Новый чат") "Этапы · ${project.name}".take(80) else currentChat.title,
-            messages = currentChat.messages + user,
-            updatedAt = now
-        )
-        val preparedChats = _state.value.chats.map { if (it.id == chatId) stageChat else it }
-        chatsRepository.save(preparedChats)
-        _state.value = _state.value.copy(
-            chats = preparedChats,
-            currentChatId = chatId,
-            messages = stageChat.messages,
-            pendingAttachments = emptyList(),
-            requestActive = true,
-            busyLabel = "Этап 1 из ${stages.size}…",
-            status = null
-        )
-        val generation = nextRequestGeneration(chatId)
-        DiagnosticLog.action(
-            context,
-            "stage_sequence_start",
-            "project=${project.id.take(8)}; chat=${chatId.take(8)}; sequence=$sequenceName; stages=${stages.size}"
-        )
-
-        launchRequest(chatId, user.id, "Этапы $sequenceName · ${project.name}") { network ->
-            val results = mutableListOf<Pair<ProjectStage, String>>()
-            try {
-                stages.forEachIndexed { index, stage ->
-                    if (!isCurrentRequestGeneration(chatId, generation)) return@launchRequest
-                    val currentState = launchState
-                    val requestedModel = stage.modelId?.takeIf { it.isNotBlank() }
-                        ?: currentState.currentChatTextModel
-                        ?: currentState.textModel
-                    val known = currentState.availableTextModels.firstOrNull { it.id == requestedModel }
-                    val modelId = when {
-                        requestedModel == "openrouter/auto" -> requestedModel
-                        known != null && !known.isBatch && ModelCategory.TEXT in known.categories -> requestedModel
-                        else -> currentState.textModel.takeUnless { it.endsWith(":batch", true) } ?: "openrouter/auto"
-                    }
-                    val modelInfo = currentState.availableTextModels.firstOrNull { it.id == modelId }
-                    val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
-                    val requestModelInfo = (modelInfo ?: ModelInfo(modelId)).copy(contextLength = chosenWindow)
-                    val actualReasoning = currentState.reasoningEnabled && modelInfo?.supportsReasoning == true &&
-                        (modelInfo.reasoningEfforts.isEmpty() || currentState.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
-                    val effort = if (actualReasoning && modelInfo?.supportsReasoningEffort == true) currentState.reasoningEffort.apiValue else null
-
-                    fun projectFileAttachment(prefix: String, file: ProjectFile) = PendingAttachment(
-                        uri = "$prefix://${file.id}",
-                        name = file.name,
-                        mimeType = file.mimeType,
-                        size = file.size,
-                        localPath = file.localPath
-                    )
-
-                    val latestChats = chatsRepository.list().ifEmpty { currentState.chats }
-                    val sourceChats = stage.sourceChatIds.orEmpty()
-                        .mapNotNull { sourceId -> latestChats.firstOrNull { it.id == sourceId } }
-                        .filter { it.projectId == project.id && it.id != chatId }
-                    val sourceChatText = buildString {
-                        sourceChats.forEach { source ->
-                            appendLine("--- Чат проекта: ${source.title} ---")
-                            source.messages.forEach { message ->
-                                val role = if (message.role == "assistant") "Модель" else "Пользователь"
-                                if (message.text.isNotBlank()) appendLine("$role: ${message.text}")
-                                if (message.generatedFiles.isNotEmpty()) {
-                                    appendLine("Файлы результата: ${message.generatedFiles.joinToString { it.name }}")
-                                }
-                            }
-                            appendLine()
-                        }
-                    }.trim()
-
-                    val sourceAttachments = sourceChats.flatMap { source ->
-                        source.chatFiles.orEmpty().map(::chatFileAsAttachment) +
-                            source.messages.flatMap { message -> message.generatedFiles }.map { file ->
-                                PendingAttachment(
-                                    uri = "generated://${file.id}",
-                                    name = file.name,
-                                    mimeType = file.mimeType,
-                                    size = file.size,
-                                    localPath = file.localPath
-                                )
-                            }
-                    }
-                    val projectAttachments = project.files.map { projectFileAttachment("project", it) }
-                    val stageAttachments = stage.files.orEmpty().map { projectFileAttachment("stage", it) }
-
-                    fun allowedForStage(attachment: PendingAttachment): Boolean {
-                        val mime = attachment.mimeType.lowercase()
-                        val name = attachment.name.lowercase()
-                        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
-                            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
-                        return textLike || mime == "application/pdf" || name.endsWith(".pdf") ||
-                            (mime.startsWith("image/") && modelInfo?.accepts("image") == true) ||
-                            (mime.startsWith("audio/") && modelInfo?.accepts("audio") == true) ||
-                            (mime.startsWith("video/") && modelInfo?.accepts("video") == true)
-                    }
-                    val attachments = (projectAttachments + chatAttachments + stageAttachments + sourceAttachments)
-                        .filter(::allowedForStage)
-                        .distinctBy { it.localPath ?: it.uri }
-                    val skillsText = skills.promptFor(currentState.activeSkillIds)
-                    val knowledgeContext = knowledgeSystemContext(project, stageChat, "$startText\n${stage.instruction}")
-                    val systemPrompt = buildSystemPrompt(skillsText, project, stageChat, modelInfo?.supportsTools == true) + knowledgeContext
-                    val prompt = buildString {
-                        appendLine("Выполни только текущий этап сценария. Не переходи к следующим этапам сам.")
-                        appendLine()
-                        appendLine("===== ИСХОДНАЯ ЗАДАЧА =====")
-                        appendLine(startText)
-                        if (sourceChatText.isNotBlank()) {
-                            appendLine()
-                            appendLine("===== ВЫБРАННЫЕ ЧАТЫ ПРОЕКТА =====")
-                            appendLine(sourceChatText)
-                        }
-                        if (results.isNotEmpty()) {
-                            appendLine()
-                            appendLine("===== РЕЗУЛЬТАТЫ ПРЕДЫДУЩИХ ЭТАПОВ =====")
-                            results.forEachIndexed { resultIndex, (previousStage, previousText) ->
-                                appendLine("--- Этап ${resultIndex + 1}: ${previousStage.title} ---")
-                                appendLine(previousText)
-                            }
-                        }
-                        appendLine()
-                        appendLine("===== ТЕКУЩИЙ ЭТАП ${index + 1}: ${stage.title} =====")
-                        appendLine(stage.instruction)
-                        appendLine()
-                        appendLine("Верни законченный результат только этого этапа. Он будет передан следующему этапу автоматически.")
-                    }
-                    val phaseLabel = "Этап ${index + 1} из ${stages.size}: ${stage.title}"
-                    network.updatePhase(phaseLabel)
-                    _state.value = _state.value.copy(busyLabel = phaseLabel)
-                    DiagnosticLog.record(
-                        context,
-                        "PROJECT_STAGE",
-                        "start project=${project.id.take(8)}; stage=${index + 1}/${stages.size}; model=$modelId; history=${baseHistory.size}; sources=${sourceChats.size}; stageFiles=${stage.files.orEmpty().size}"
-                    )
-
-                    val result = try {
-                        network.call { requestApi ->
-                            requestApi.chat(
-                                apiKey,
-                                modelId,
-                                baseHistory,
-                                prompt,
-                                attachments,
-                                systemPrompt,
-                                currentState.webSearchEnabled,
-                                actualReasoning,
-                                effort,
-                                modelInfo?.supportsTools == true,
-                                effectiveTextBaseUrl(profile),
-                                requestModelInfo
-                            )
-                        }
-                    } catch (cancelled: CancellationException) {
-                        throw cancelled
-                    } catch (error: Throwable) {
-                        val raw = error.message.orEmpty()
-                        val friendly = when {
-                            raw.contains("429") || raw.contains("rate limit", true) -> "Провайдер временно ограничил запросы. Попробуйте другую модель или повторите позже."
-                            error is java.net.SocketException -> "Соединение оборвалось во время этого этапа."
-                            error is java.net.SocketTimeoutException -> "Модель не ответила вовремя."
-                            else -> raw.ifBlank { "Не удалось выполнить этап" }
-                        }
-                        appendProjectStageMessage(chatId, index + 1, stage.title, "Ошибка: $friendly", modelId, null)
-                        DiagnosticLog.record(context, "PROJECT_STAGE", "failed project=${project.id.take(8)}; stage=${index + 1}; model=$modelId", error)
-                        _state.value = _state.value.copy(status = "Этап ${index + 1} остановлен: $friendly")
-                        return@launchRequest
-                    }
-
-                    val stageText = ProjectOutputPolicy.apply(result.text, project.masterPrompt).ifBlank { "Готово." }
-                    results += stage to stageText
-                    appendProjectStageMessage(chatId, index + 1, stage.title, stageText, result.modelId ?: modelId, result)
-                    DiagnosticLog.record(context, "PROJECT_STAGE", "success project=${project.id.take(8)}; stage=${index + 1}/${stages.size}; model=${result.modelId ?: modelId}; chars=${stageText.length}")
-                }
-                if (isCurrentRequestGeneration(chatId, generation)) {
-                    _state.value = _state.value.copy(status = "Все этапы $sequenceName выполнены: ${stages.size}")
-                    playReadySound()
-                }
-            } finally {
-                if (isCurrentRequestGeneration(chatId, generation)) {
-                    _state.value = _state.value.copy(
-                        storedFiles = storageRepository.list(),
-                        storageStats = storageRepository.stats()
-                    )
-                }
-            }
-        }
-        return chatId
-    }
-
-    private fun appendProjectStageMessage(
-        chatId: String,
-        number: Int,
-        title: String,
-        text: String,
-        modelId: String?,
-        result: OpenRouterClient.Result?
-    ) {
-        val message = ChatMessage(
-            id = UUID.randomUUID().toString(),
-            role = "assistant",
-            text = "## Этап $number: $title\n\n$text",
-            generatedFiles = result?.files.orEmpty(),
-            modelId = modelId,
-            providerName = result?.providerName,
-            costUsd = result?.costUsd,
-            inputTokens = result?.inputTokens,
-            outputTokens = result?.outputTokens
-        )
-        val updated = chatsRepository.updateChat(chatId) { chat ->
-            chat.copy(messages = chat.messages + message, updatedAt = System.currentTimeMillis())
-        }
-        val updatedChat = updated.firstOrNull { it.id == chatId } ?: return
-        _state.value = _state.value.copy(
-            chats = updated,
-            messages = if (_state.value.currentChatId == chatId) updatedChat.messages else _state.value.messages,
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats()
         )
@@ -4926,116 +3225,51 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(projects = projects)
     }
 
-    fun toggleProjectSkill(projectId: String, skillId: String) {
-        var updatedSkillIds: Set<String>? = null
-        val projects = _state.value.projects.map { project ->
-            if (project.id != projectId) project else {
-                val next = project.skillIds.toMutableSet().apply { if (!add(skillId)) remove(skillId) }.toSet()
-                updatedSkillIds = next
-                project.copy(skillIds = next, updatedAt = System.currentTimeMillis())
-            }
-        }
-        projectsRepository.save(projects)
-        val currentChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-        val followsProjectDefaults = currentChat?.projectId == projectId && !prefs.contains(chatSkillsKey(currentChat.id))
-        _state.value = _state.value.copy(
-            projects = projects,
-            activeSkillIds = if (followsProjectDefaults) updatedSkillIds.orEmpty() else _state.value.activeSkillIds
-        )
-    }
-
-    fun addProjectFile(projectId: String, uri: Uri) {
-        runCatching { projectsRepository.importFile(projectId, uri) }
-            .onSuccess { file ->
-                val projects = _state.value.projects.map { project ->
-                    if (project.id == projectId) project.copy(
-                        files = project.files + file,
-                        updatedAt = System.currentTimeMillis()
-                    ) else project
-                }
-                projectsRepository.save(projects)
-                _state.value = _state.value.copy(
-                    projects = projects,
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats(),
-                    status = "Файл «${file.name}» добавлен в проект"
-                )
-            }
-            .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось добавить файл") }
-    }
-
-    fun deleteProjectFile(projectId: String, fileId: String) {
-        val project = _state.value.projects.firstOrNull { it.id == projectId } ?: return
-        val file = project.files.firstOrNull { it.id == fileId } ?: return
-        projectsRepository.deleteFile(file)
-        val projects = _state.value.projects.map {
-            if (it.id == projectId) it.copy(
-                files = it.files.filterNot { f -> f.id == fileId },
-                updatedAt = System.currentTimeMillis()
-            ) else it
-        }
-        projectsRepository.save(projects)
-        _state.value = _state.value.copy(
-            projects = projects,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun importProjectPromptFile(projectId: String, uri: Uri) {
-        runCatching {
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                input.bufferedReader().readText()
-            } ?: error("Не удалось прочитать файл")
-        }.onSuccess { text ->
-            val current = _state.value.projects.firstOrNull { it.id == projectId } ?: return@onSuccess
-            updateProject(current.id, current.name, current.role, text, current.isFavorite)
-            _state.value = _state.value.copy(status = "Мастер-промпт загружен из файла")
-        }.onFailure {
-            _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить мастер-промпт")
-        }
-    }
-
     fun deleteProject(projectId: String) {
         if (_state.value.isLoading) return
 
         val projectAgents = _state.value.agents.filter { it.projectId == projectId }
-        val conversationIds = projectAgents
+        val linkedConversationIds = projectAgents
             .flatMap { agentConversations.conversationsForAgent(it.id) }
             .toSet()
+        // Include legacy project chats that predate explicit agent-conversation links.
+        // They must be cleaned up as well, otherwise files/memory/settings remain orphaned.
+        val projectChatIds = (
+            linkedConversationIds + _state.value.chats
+                .filter { it.projectId == projectId }
+                .map { it.id }
+        ).toSet()
 
         val active = _state.value.chats.firstOrNull {
-            it.id in conversationIds && RequestExecutionManager.hasActiveChat(it.id)
+            it.id in projectChatIds && RequestExecutionManager.hasActiveChat(it.id)
         }
         if (active != null) {
             _state.value = _state.value.copy(status = "Нельзя удалить проект: «${active.title}» сейчас выполняет работу")
             return
         }
 
-        conversationIds.forEach { chatId ->
+        projectChatIds.forEach { chatId ->
             chatFilesRepository.deleteChat(chatId)
             knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chatId)
             chatMemory.deleteChat(chatId)
             projectAutomation.deleteChat(chatId)
             prefs.edit().remove(chatSkillsKey(chatId)).apply()
+            agentConversations.unlinkConversation(chatId)
         }
         projectAgents.forEach { profile ->
             agentConversations.unlinkAgent(profile.id)
             knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, profile.id)
         }
 
-        projectsRepository.deleteProjectFiles(projectId)
+        projectsRepository.deleteLegacyProjectFiles(projectId)
         agentsRepository.deleteProjectAgents(projectId)
         agentWork.deleteProject(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
-        projectAutomation.deleteProject(projectId)
 
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
 
-        var chats = _state.value.chats.filterNot {
-            it.id in conversationIds || it.projectId == projectId
-        }
+        var chats = _state.value.chats.filterNot { it.id in projectChatIds }
         if (chats.isEmpty()) {
             chats = listOf(
                 ChatSession(
@@ -5065,7 +3299,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun refreshModels(mode: ChatMode) {
         val profile = if (mode == ChatMode.IMAGE) imageConnectionProfile() else activeConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            _state.value = _state.value.copy(status = "Подключение OpenRouter недоступно")
             return
         }
         if (mode == ChatMode.IMAGE) {
@@ -5266,12 +3500,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return false to "Для генерации изображения можно добавить только изображение-референс"
         }
         val profile = imageConnectionProfile()
-        if (profile.type != ProviderType.OPENROUTER) {
-            return false to when (resolvedImageProtocol(profile)) {
-                ImageApiProtocol.NVIDIA_NIM -> "Облачный NVIDIA NIM сейчас принимает в Umnik текстовый промпт; произвольные референсы для этого API не отправляются"
-                else -> "Формат image edit у этого API не стандартизирован; используйте текстовый промпт без референса"
-            }
-        }
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
         val info = currentImageModelInfo()
         return if (info == null || info.accepts("image")) true to null
         else false to "Выбранная модель изображений не принимает изображения-референсы"
@@ -5291,12 +3520,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
             name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
         if (textLike) return true to null
-        if (mime == "application/pdf" || name.endsWith(".pdf")) {
-            return if (activeConnectionProfile().type == ProviderType.OPENROUTER) true to null
-            else false to "PDF через произвольный совместимый API пока не включён: его формат передачи зависит от сервера"
-        }
+        if (mime == "application/pdf" || name.endsWith(".pdf")) return true to null
         if (mime.startsWith("image/")) return if (info?.accepts("image") == true) true to null else false to "Выбранная модель не принимает изображения"
-        if (mime.startsWith("audio/")) return if (activeConnectionProfile().type == ProviderType.OPENROUTER && info?.accepts("audio") == true) true to null else false to "Выбранная модель не принимает аудио"
+        if (mime.startsWith("audio/")) return if (info?.accepts("audio") == true) true to null else false to "Выбранная модель не принимает аудио"
         if (mime.startsWith("video/")) return if (info?.accepts("video") == true) true to null else false to "Выбранная модель не принимает видео"
         return if (info?.accepts("file") == true) true to null else false to "Выбранная модель не принимает этот тип файла"
     }
@@ -5473,29 +3699,33 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun importSkillFile(uri: Uri) {
-        runCatching { skills.importFile(uri) }
-            .onSuccess { skill ->
-                _state.value = _state.value.copy(
-                    skills = skills.list(),
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats(),
-                    status = "Навык «${skill.name}» импортирован"
-                )
-            }
-            .onFailure { _state.value = _state.value.copy(status = it.message) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { skills.importFile(uri) } }
+                .onSuccess { skill ->
+                    _state.value = _state.value.copy(
+                        skills = skills.list(),
+                        storedFiles = storageRepository.list(),
+                        storageStats = storageRepository.stats(),
+                        status = "Навык «${skill.name}» импортирован"
+                    )
+                }
+                .onFailure { _state.value = _state.value.copy(status = it.message) }
+        }
     }
 
     fun importSkillTree(uri: Uri) {
-        runCatching { skills.importTree(uri) }
-            .onSuccess { skill ->
-                _state.value = _state.value.copy(
-                    skills = skills.list(),
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats(),
-                    status = "Папка навыка «${skill.name}» импортирована"
-                )
-            }
-            .onFailure { _state.value = _state.value.copy(status = it.message) }
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { skills.importTree(uri) } }
+                .onSuccess { skill ->
+                    _state.value = _state.value.copy(
+                        skills = skills.list(),
+                        storedFiles = storageRepository.list(),
+                        storageStats = storageRepository.stats(),
+                        status = "Папка навыка «${skill.name}» импортирована"
+                    )
+                }
+                .onFailure { _state.value = _state.value.copy(status = it.message) }
+        }
     }
 
     fun toggleSkill(id: String) {
@@ -5590,7 +3820,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return false
         val profile = imageConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Для генерации изображений включите выбранное подключение")
+            _state.value = _state.value.copy(status = "Для генерации изображений настройте OpenRouter")
             return false
         }
         if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
@@ -5608,7 +3838,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun send(text: String) {
         val profile = if (_state.value.mode == ChatMode.IMAGE) imageConnectionProfile() else activeConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Подключение «${profile.name}» выключено")
+            _state.value = _state.value.copy(status = "Подключение OpenRouter недоступно")
             return
         }
         if (_state.value.mode == ChatMode.IMAGE) {
@@ -5664,10 +3894,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
 
-        if (mode == ChatMode.TEXT && currentChat != null && isOrchestratorChat(currentChat.id)) {
-            sendOrchestratorControl(clean, pending, persistentChatFiles)
-            return
-        }
 
         val currentProject = currentChat?.projectId?.let { id -> _state.value.projects.firstOrNull { it.id == id } }
         val before = _state.value.messages
@@ -5738,17 +3964,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
         val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
             ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
-        val requestProjectTextAttachments = if (mode == ChatMode.TEXT && requestAgent == null) {
-            currentProject?.files.orEmpty().map { file ->
-                PendingAttachment(
-                    uri = "project://${file.id}",
-                    name = file.name,
-                    mimeType = file.mimeType,
-                    size = file.size,
-                    localPath = file.localPath
-                )
-            }.filter { attachmentAllowed(it).first }
-        } else emptyList()
+        // Projects are rooms only. Persistent work files belong to the selected agent
+        // or to the current ordinary chat, never to the project itself.
+        val requestProjectTextAttachments = emptyList<PendingAttachment>()
         val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
             if (requestAgent != null) {
                 agentFiles.list(requestAgent.id).map { file ->
@@ -5764,17 +3982,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 persistentChatFiles.filter { attachmentAllowed(it).first }
             }
         } else emptyList()
-        val requestProjectImages = if (mode == ChatMode.IMAGE && requestAgent == null) {
-            currentProject?.files.orEmpty()
-                .filter { it.mimeType.startsWith("image/") && imageInfo?.accepts("image") == true }
-                .map { file -> PendingAttachment(
-                    uri = "project://${file.id}",
-                    name = file.name,
-                    mimeType = file.mimeType,
-                    size = file.size,
-                    localPath = file.localPath
-                ) }
-        } else emptyList()
+        val requestProjectImages = emptyList<PendingAttachment>()
         val requestId = nextRequestGeneration(chatId)
         activeRequestPending[chatId] = pending
         DiagnosticLog.record(
@@ -5787,10 +3995,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillText = if (requestAgent != null) {
-                            agentSkills.promptFor(requestAgent.id, requestSkillIds)
-                        } else {
-                            skills.promptFor(requestSkillIds)
+                        val skillText = withContext(Dispatchers.IO) {
+                            if (requestAgent != null) {
+                                agentSkills.promptFor(requestAgent.id, requestSkillIds)
+                            } else {
+                                skills.promptFor(requestSkillIds)
+                            }
                         }
                         val projectFiles = requestProjectTextAttachments
                         val modelInfo = requestTextModelInfo
@@ -5875,7 +4085,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
 
             operation.onSuccess { result ->
-                val finalText = ProjectOutputPolicy.apply(result.text, currentProject?.masterPrompt)
+                val finalText = result.text
                 DiagnosticLog.record(
                     context,
                     "REQUEST",
@@ -5944,13 +4154,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         status = friendlyError
                     )
                 }
-                if (
-                    profile.type == ProviderType.NVIDIA &&
-                    mode == ChatMode.TEXT &&
-                    friendlyError.contains("временно скроет модель")
-                ) {
-                    refreshModelCapabilities()
-                }
             }
             cleanupTempAttachments(pending)
             if (isCurrentRequestGeneration(chatId, requestId)) {
@@ -5963,7 +4166,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (_state.value.isLoading) return false
         val profile = imageConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
-            _state.value = _state.value.copy(status = "Для генерации изображений включите выбранное подключение")
+            _state.value = _state.value.copy(status = "Для генерации изображений настройте OpenRouter")
             return false
         }
         if (!imageGenerationEnabled(profile) || !isImageProfileConfigured(profile)) {
@@ -6283,9 +4486,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun saveGeneratedFile(file: GeneratedFile, destination: Uri) {
         viewModelScope.launch {
             runCatching {
-                context.contentResolver.openOutputStream(destination)?.use { output ->
-                    File(file.localPath).inputStream().use { input -> input.copyTo(output) }
-                } ?: error("Не удалось открыть место сохранения")
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openOutputStream(destination)?.use { output ->
+                        File(file.localPath).inputStream().use { input -> input.copyTo(output) }
+                    } ?: error("Не удалось открыть место сохранения")
+                }
             }.onSuccess {
                 _state.value = _state.value.copy(status = "${file.name} сохранён")
             }.onFailure {
@@ -6354,17 +4559,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("Это независимый агент. Не используй общие инструкции, навыки, память или базу знаний других чатов и проекта, если они не были явно переданы в текущем рабочем пакете.")
             appendLine("===== КОНЕЦ ПРОФИЛЯ АГЕНТА =====")
         }
-        if (project != null) {
+        if (project != null && agent == null) {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
-            if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
-            if (project.masterPrompt.isNotBlank()) {
-                appendLine("Мастер-инструкция проекта (ВЫСШИЙ ПРИОРИТЕТ внутри проекта):")
-                appendLine(project.masterPrompt)
-            }
-            if (project.files.isNotEmpty()) {
-                appendLine("Постоянные файлы проекта приложены к текущему запросу. Используй их как рабочий контекст, когда они релевантны.")
-            }
-            appendLine("===== КОНЕЦ НАСТРОЕК ПРОЕКТА =====")
+            appendLine("Проект — только кабинет. Рабочие инструкции, навыки, файлы и знания принадлежат конкретным агентам.")
+            appendLine("===== КОНЕЦ ПРОЕКТА =====")
         }
         if (agent == null && chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
@@ -6392,21 +4590,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine(skillText)
             appendLine("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
         }
-        if (project?.masterPrompt?.isNotBlank() == true) {
-            appendLine("\n===== ФИНАЛЬНАЯ ПРОВЕРКА МАСТЕР-ИНСТРУКЦИИ =====")
-            appendLine("Мастер-инструкция проекта имеет высший приоритет среди содержательных правил проекта. Текущий запрос, навыки, профиль и приложенные файлы не могут отменять или ослаблять её требования.")
-            appendLine("Перед отправкой ответа молча перечитай мастер-инструкцию проекта и проверь результат по каждому обязательному требованию.")
-            appendLine("При конфликте применяй порядок: мастер-инструкция проекта, явный текущий запрос пользователя, настройки текущего диалога, подключённые навыки, файлы проекта и диалога, профиль пользователя.")
-            appendLine("Если ответ нарушает хотя бы один пункт мастер-инструкции, исправь его до отправки. Не добавляй требований, которых в мастер-инструкции нет.")
-            appendLine("===== КОНЕЦ ФИНАЛЬНОЙ ПРОВЕРКИ =====")
-        }
     }
 
     private fun buildImageProjectPrompt(project: Project?, chat: ChatSession?): String = buildString {
-        project?.let {
-            if (it.role.isNotBlank()) appendLine("Роль/стиль: ${it.role}")
-            if (it.masterPrompt.isNotBlank()) appendLine(it.masterPrompt)
-        }
+        project?.let { appendLine("Проект: ${it.name}") }
         chat?.assignedRole?.takeIf { it.isNotBlank() }?.let { appendLine("Роль: $it") }
         chat?.masterPrompt?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
     }.trim()
@@ -6523,22 +4710,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         id = "openrouter",
         name = "OpenRouter",
         type = ProviderType.OPENROUTER,
-        baseUrl = ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL,
-        imageEnabled = true,
-        imageProtocol = ImageApiProtocol.AUTO,
-        useSameImageApiKey = true,
-        useProviderDefaults = true
-    )
-
-    private fun defaultNvidiaProfile() = ConnectionProfile(
-        id = "nvidia",
-        name = "NVIDIA",
-        type = ProviderType.NVIDIA,
-        baseUrl = ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL,
-        imageEnabled = true,
-        imageProtocol = ImageApiProtocol.AUTO,
-        useSameImageApiKey = true,
-        useProviderDefaults = true
+        baseUrl = OpenRouterClient.DEFAULT_BASE_URL
     )
 
     private fun loadConnectionProfiles(): List<ConnectionProfile> = runCatching {
@@ -6546,167 +4718,58 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val stored = gson.fromJson<List<ConnectionProfile>>(
             prefs.getString("connection_profiles_json", "[]") ?: "[]",
             type
-        ).orEmpty().filter { it.id.isNotBlank() }
-
-        val storedOpenRouter = stored.firstOrNull { it.id == "openrouter" }
-        val openRouter = storedOpenRouter?.copy(
-            name = "OpenRouter",
-            type = ProviderType.OPENROUTER,
-            baseUrl = normalizeBaseUrl(storedOpenRouter.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL },
-            imageEnabled = storedOpenRouter.imageEnabled ?: true,
-            imageProtocol = storedOpenRouter.imageProtocol ?: ImageApiProtocol.AUTO,
-            useSameImageApiKey = storedOpenRouter.useSameImageApiKey ?: true,
-            useProviderDefaults = storedOpenRouter.useProviderDefaults ?: (
-                normalizeBaseUrl(storedOpenRouter.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL } == ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL
+        ).orEmpty()
+        val previous = stored.firstOrNull { it.id == "openrouter" }
+        listOf(
+            defaultOpenRouterProfile().copy(
+                contextLimitTokens = previous?.contextLimitTokens
             )
-        ) ?: defaultOpenRouterProfile()
-
-        val nvidiaSource = stored.firstOrNull { profile ->
-            profile.id != "openrouter" && (
-                profile.type == ProviderType.NVIDIA ||
-                    profile.id.equals("nvidia", true) ||
-                    profile.name.equals("nvidia", true) ||
-                    normalizeBaseUrl(profile.baseUrl).contains("integrate.api.nvidia.com", ignoreCase = true)
-                )
-        }
-        val nvidia = nvidiaSource?.copy(
-            name = "NVIDIA",
-            type = ProviderType.NVIDIA,
-            baseUrl = normalizeBaseUrl(nvidiaSource.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL },
-            imageEnabled = nvidiaSource.imageEnabled ?: true,
-            imageProtocol = nvidiaSource.imageProtocol ?: ImageApiProtocol.AUTO,
-            useSameImageApiKey = nvidiaSource.useSameImageApiKey ?: true,
-            useProviderDefaults = nvidiaSource.useProviderDefaults ?: (
-                normalizeBaseUrl(nvidiaSource.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL } == ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL
-            )
-        ) ?: defaultNvidiaProfile()
-
-        val remaining = stored.filterNot { it.id == "openrouter" || it.id == nvidiaSource?.id }
-            .map { profile ->
-                profile.copy(
-                    imageEnabled = profile.imageEnabled ?: !prefs.getString(profilePrefKey("image_model", profile.id), null).isNullOrBlank(),
-                    imageProtocol = profile.imageProtocol ?: ImageApiProtocol.AUTO,
-                    useSameImageApiKey = profile.useSameImageApiKey ?: true,
-                    useProviderDefaults = false
-                )
-            }
-        listOf(openRouter)
+        )
     }.getOrElse { listOf(defaultOpenRouterProfile()) }
 
     private fun saveConnectionProfiles(profiles: List<ConnectionProfile>) {
-        prefs.edit().putString("connection_profiles_json", gson.toJson(profiles)).apply()
+        prefs.edit().putString("connection_profiles_json", gson.toJson(profiles.take(1))).apply()
     }
 
     private fun openRouterProfile(): ConnectionProfile =
-        _state.value.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER } ?: defaultOpenRouterProfile()
+        _state.value.connectionProfiles.firstOrNull() ?: defaultOpenRouterProfile()
 
-    private fun activeConnectionProfile(): ConnectionProfile =
-        _state.value.connectionProfiles.firstOrNull { it.id == _state.value.activeConnectionProfileId }
-            ?: openRouterProfile()
+    private fun activeConnectionProfile(): ConnectionProfile = openRouterProfile()
 
-    private fun imageConnectionProfile(): ConnectionProfile =
-        _state.value.connectionProfiles.firstOrNull { it.id == _state.value.imageConnectionProfileId }
-            ?: openRouterProfile()
+    private fun imageConnectionProfile(): ConnectionProfile = openRouterProfile()
 
     private fun normalizeBaseUrl(value: String): String = value.trim().trimEnd('/')
 
-    private fun usesProviderDefaults(profile: ConnectionProfile): Boolean = profile.useProviderDefaults ?: when (profile.type) {
-        ProviderType.OPENROUTER -> normalizeBaseUrl(profile.baseUrl).ifBlank { ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL } == ProviderRegistry.DEFAULT_OPENROUTER_BASE_URL
-        ProviderType.NVIDIA -> normalizeBaseUrl(profile.baseUrl).ifBlank { ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL } == ProviderRegistry.DEFAULT_NVIDIA_TEXT_BASE_URL
-        ProviderType.OPENAI_COMPATIBLE -> false
-    }
+    private fun effectiveTextBaseUrl(profile: ConnectionProfile): String = OpenRouterClient.DEFAULT_BASE_URL
 
-    private fun effectiveTextBaseUrl(profile: ConnectionProfile): String {
-        if (usesProviderDefaults(profile)) {
-            providerRegistry.textBaseUrl(profile.type)?.let { return normalizeBaseUrl(it) }
-        }
-        return normalizeBaseUrl(profile.baseUrl)
-    }
+    private fun effectiveImageBaseUrl(profile: ConnectionProfile): String = OpenRouterClient.DEFAULT_BASE_URL
 
-    private fun effectiveImageBaseUrl(profile: ConnectionProfile): String {
-        if (usesProviderDefaults(profile)) {
-            providerRegistry.imageBaseUrl(profile.type)?.let { return normalizeBaseUrl(it) }
-        }
-        profile.imageBaseUrl?.let(::normalizeBaseUrl)?.takeIf { it.isNotBlank() }?.let { return it }
-        return when (profile.type) {
-            ProviderType.NVIDIA -> ProviderRegistry.DEFAULT_NVIDIA_IMAGE_BASE_URL
-            else -> effectiveTextBaseUrl(profile)
-        }
-    }
+    private fun imageGenerationEnabled(profile: ConnectionProfile): Boolean = profile.type == ProviderType.OPENROUTER
 
-    private fun imageGenerationEnabled(profile: ConnectionProfile): Boolean = profile.imageEnabled ?: when (profile.type) {
-        ProviderType.OPENROUTER, ProviderType.NVIDIA -> true
-        ProviderType.OPENAI_COMPATIBLE -> false
-    }
+    private fun imageApiKey(profile: ConnectionProfile): String = secrets.getProfileApiKey("openrouter").orEmpty()
 
-    private fun usesSameImageApiKey(profile: ConnectionProfile): Boolean = profile.useSameImageApiKey ?: true
+    private fun isProfileConfigured(profile: ConnectionProfile): Boolean =
+        profile.type == ProviderType.OPENROUTER && !secrets.getProfileApiKey("openrouter").isNullOrBlank()
 
-    private fun imageApiKey(profile: ConnectionProfile): String = if (usesSameImageApiKey(profile)) {
-        secrets.getProfileApiKey(profile.id).orEmpty()
-    } else {
-        secrets.getProfileImageApiKey(profile.id).orEmpty()
-    }
+    private fun isImageProfileConfigured(profile: ConnectionProfile): Boolean = isProfileConfigured(profile)
 
-    private fun resolvedImageProtocol(profile: ConnectionProfile): ImageApiProtocol {
-        val explicit = profile.imageProtocol ?: ImageApiProtocol.AUTO
-        if (explicit != ImageApiProtocol.AUTO) return explicit
-        return if (profile.type == ProviderType.NVIDIA) ImageApiProtocol.NVIDIA_NIM else ImageApiProtocol.OPENAI_COMPATIBLE
-    }
+    private fun connectionSetupMessage(profile: ConnectionProfile): String =
+        "Откройте «Подключение» и сохраните API-ключ OpenRouter"
 
-    private fun isProfileConfigured(profile: ConnectionProfile): Boolean = when (profile.type) {
-        ProviderType.OPENROUTER, ProviderType.NVIDIA -> effectiveTextBaseUrl(profile).isNotBlank() && !secrets.getProfileApiKey(profile.id).isNullOrBlank()
-        ProviderType.OPENAI_COMPATIBLE -> effectiveTextBaseUrl(profile).isNotBlank()
-    }
-
-    private fun isImageProfileConfigured(profile: ConnectionProfile): Boolean {
-        if (!imageGenerationEnabled(profile) || effectiveImageBaseUrl(profile).isBlank()) return false
-        return when (profile.type) {
-            ProviderType.OPENROUTER, ProviderType.NVIDIA -> imageApiKey(profile).isNotBlank()
-            ProviderType.OPENAI_COMPATIBLE -> true
-        }
-    }
-
-    private fun connectionSetupMessage(profile: ConnectionProfile): String = when (profile.type) {
-        ProviderType.OPENROUTER -> "Откройте «Подключения» и сохраните API-ключ OpenRouter"
-        ProviderType.NVIDIA -> "Откройте «Подключения» и сохраните API-ключ NVIDIA"
-        ProviderType.OPENAI_COMPATIBLE -> "Откройте «Подключения» и укажите адрес совместимого API"
-    }
-
-    private fun imageConnectionSetupMessage(profile: ConnectionProfile): String = when {
-        !imageGenerationEnabled(profile) -> "В «Подключениях» включите генерацию изображений для «${profile.name}»"
-        effectiveImageBaseUrl(profile).isBlank() -> "Укажите адрес API изображений для «${profile.name}»"
-        !usesSameImageApiKey(profile) && imageApiKey(profile).isBlank() -> "Укажите отдельный API-ключ изображений для «${profile.name}»"
-        profile.type == ProviderType.OPENROUTER && imageApiKey(profile).isBlank() -> "Сохраните API-ключ OpenRouter"
-        profile.type == ProviderType.NVIDIA && imageApiKey(profile).isBlank() -> "Сохраните API-ключ NVIDIA"
-        else -> "Проверьте настройки Image API для «${profile.name}»"
-    }
+    private fun imageConnectionSetupMessage(profile: ConnectionProfile): String =
+        "Сохраните API-ключ OpenRouter"
 
     private suspend fun textModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
-        val key = secrets.getProfileApiKey(profile.id).orEmpty()
-        return api.models(key, effectiveTextBaseUrl(profile))
+        val key = secrets.getProfileApiKey("openrouter").orEmpty()
+        return api.models(key, OpenRouterClient.DEFAULT_BASE_URL)
             .filter { ModelCategory.TEXT in it.categories && !it.isBatch }
     }
 
     private suspend fun imageModelsForProfile(profile: ConnectionProfile): List<ModelInfo> {
-        if (!imageGenerationEnabled(profile)) return emptyList()
-        val key = imageApiKey(profile)
-        if (profile.type == ProviderType.OPENROUTER) {
-            return api.imageModels(key, effectiveImageBaseUrl(profile))
-        }
-        return when (resolvedImageProtocol(profile)) {
-            ImageApiProtocol.NVIDIA_NIM -> {
-                val registryModels = providerRegistry.imageModels(ProviderType.NVIDIA)
-                val saved = loadImageModelForProfile(profile.id)
-                if (profile.type == ProviderType.OPENAI_COMPATIBLE && saved.isNotBlank() && registryModels.none { it.id == saved }) {
-                    listOf(ModelInfo(saved)) + registryModels
-                } else registryModels
-            }
-            ImageApiProtocol.OPENAI_COMPATIBLE, ImageApiProtocol.AUTO -> {
-                val saved = loadImageModelForProfile(profile.id)
-                if (saved.isBlank()) emptyList() else listOf(ModelInfo(saved))
-            }
-        }
+        require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
+        val key = secrets.getProfileApiKey("openrouter").orEmpty()
+        return api.imageModels(key, OpenRouterClient.DEFAULT_BASE_URL)
     }
 
     private fun chooseImageModel(profile: ConnectionProfile, infos: List<ModelInfo>): String {
@@ -6720,34 +4783,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return selected
     }
 
-    private fun profilePrefKey(base: String, profileId: String): String =
-        if (profileId == "openrouter") base else "${base}_profile_$profileId"
+    private fun profilePrefKey(base: String, profileId: String): String = base
 
     private fun loadTextModelForProfile(profile: ConnectionProfile): String {
-        val fallback = if (profile.type == ProviderType.OPENROUTER) "openrouter/auto" else ""
-        val stored = prefs.getString(profilePrefKey("text_model", profile.id), fallback)?.trim().orEmpty()
+        val fallback = "openrouter/auto"
+        val stored = prefs.getString("text_model", fallback)?.trim().orEmpty()
         val safe = if (stored.endsWith(":batch", ignoreCase = true)) stored.removeSuffix(":batch") else stored
         return safe.ifBlank { fallback }
     }
 
     private fun loadImageModelForProfile(profileId: String): String {
-        val profile = initialProfiles.firstOrNull { it.id == profileId }
-            ?: runCatching { _state.value.connectionProfiles.firstOrNull { it.id == profileId } }.getOrNull()
-        val registryModels = if (profile?.type == ProviderType.NVIDIA) {
-            providerRegistry.imageModels(ProviderType.NVIDIA)
-        } else emptyList()
-        val fallback = when (profile?.type) {
-            ProviderType.OPENROUTER -> "bytedance-seed/seedream-4.5"
-            ProviderType.NVIDIA -> registryModels.firstOrNull()?.id.orEmpty()
-            else -> ""
-        }
-        val key = profilePrefKey("image_model", profileId)
-        val stored = prefs.getString(key, fallback)?.trim().orEmpty()
-
-        if (profile?.type == ProviderType.NVIDIA && registryModels.isNotEmpty() && registryModels.none { it.id == stored }) {
-            prefs.edit().putString(key, fallback).apply()
-            return fallback
-        }
+        val fallback = "bytedance-seed/seedream-4.5"
+        val stored = prefs.getString("image_model", fallback)?.trim().orEmpty()
         return stored.ifBlank { fallback }
     }
 

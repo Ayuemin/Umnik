@@ -50,6 +50,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -70,10 +71,12 @@ import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Menu
+import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -91,27 +94,21 @@ import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
-import androidx.compose.material3.Slider
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
@@ -129,16 +126,20 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -158,26 +159,18 @@ import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
-import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
-import com.ayuemin.ymnik.model.ChatSession
-import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
-import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.Skill
 import com.ayuemin.ymnik.model.StoredFile
-import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
-import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
 import java.io.File
-import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
 private const val QUICK_MODEL_SEPARATOR = "\u001F"
@@ -299,6 +292,9 @@ private fun ChatScreen(
     var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
+    var chatSearchOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
+    var chatSearchResultPosition by remember(state.currentChatId) { mutableIntStateOf(-1) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
     var projectToolsExpanded by remember { mutableStateOf(false) }
@@ -336,11 +332,30 @@ private fun ChatScreen(
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
+    val chatSearchMatches = remember(state.messages, chatSearchQuery) {
+        chatSearchMatchIndices(state.messages, chatSearchQuery)
+    }
+    val selectedSearchMessageIndex = chatSearchMatches.getOrNull(chatSearchResultPosition)
+    val selectedSearchMessageId = selectedSearchMessageIndex?.let { state.messages.getOrNull(it)?.id }
+
+    LaunchedEffect(chatSearchQuery, chatSearchMatches) {
+        chatSearchResultPosition = if (chatSearchMatches.isEmpty()) -1 else 0
+    }
+    LaunchedEffect(chatSearchOpen, chatSearchResultPosition, chatSearchMatches) {
+        if (!chatSearchOpen) return@LaunchedEffect
+        val messageIndex = chatSearchMatches.getOrNull(chatSearchResultPosition) ?: return@LaunchedEffect
+        listState.animateScrollToItem(messageIndex)
+    }
+    BackHandler(enabled = chatSearchOpen) {
+        chatSearchOpen = false
+        chatSearchQuery = ""
+    }
     BackHandler(
         enabled = currentAgentId != null &&
             agentChatReturnProjectId != null &&
             !sidebarOpen &&
-            !projectsOpen
+            !projectsOpen &&
+            !chatSearchOpen
     ) {
         selectedProjectId = agentChatReturnProjectId
         agentChatReturnProjectId = null
@@ -358,17 +373,15 @@ private fun ChatScreen(
         listState.animateScrollToItem(target)
         guideScrollTarget = null
     }
-    BackHandler(enabled = isUsageGuide && listState.firstVisibleItemIndex > 0) {
+    BackHandler(enabled = isUsageGuide && listState.firstVisibleItemIndex > 0 && !chatSearchOpen) {
         guideScrollTarget = 0
     }
     val currentChatFiles = currentChat?.chatFiles.orEmpty()
     val currentProject = currentChat?.projectId
         ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
     val activeSkillCount = state.activeSkillIds.size
-    val projectAvailableSkills = currentProject?.let { project ->
-        state.skills.filter { it.id in project.skillIds }
-    }.orEmpty()
-    val activeProjectSkillCount = projectAvailableSkills.count { it.id in state.activeSkillIds }
+    val projectAvailableSkills = emptyList<com.ayuemin.ymnik.model.Skill>()
+    val activeProjectSkillCount = 0
 
     fun startVoiceRecording() {
         if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode) return
@@ -433,6 +446,7 @@ private fun ChatScreen(
     }
 
     LaunchedEffect(state.currentChatId, state.messages.lastOrNull()?.id) {
+        if (chatSearchOpen) return@LaunchedEffect
         if (state.messages.isNotEmpty()) {
             delay(180)
             if (isUsageGuide) listState.scrollToItem(0) else listState.scrollToItem(state.messages.size)
@@ -441,7 +455,7 @@ private fun ChatScreen(
 
     val streamFollowThresholdPx = with(LocalDensity.current) { 180.dp.roundToPx() }
     LaunchedEffect(streamingText.length) {
-        if (streamingText.isBlank() || isUsageGuide) return@LaunchedEffect
+        if (streamingText.isBlank() || isUsageGuide || chatSearchOpen) return@LaunchedEffect
         val layout = listState.layoutInfo
         val total = layout.totalItemsCount
         val lastVisible = layout.visibleItemsInfo.lastOrNull() ?: return@LaunchedEffect
@@ -499,12 +513,44 @@ private fun ChatScreen(
             }
     ) {
         ChatHeader(
-    state = state,
-    vm = vm,
-    onOpenSidebar = { sidebarOpen = true }
-)
+            state = state,
+            vm = vm,
+            onOpenSidebar = { sidebarOpen = true },
+            onSearchChat = { chatSearchOpen = true }
+        )
 
-LazyColumn(
+        if (chatSearchOpen) {
+            ChatSearchBar(
+                query = chatSearchQuery,
+                onQueryChange = { chatSearchQuery = it },
+                currentResult = chatSearchResultPosition,
+                resultCount = chatSearchMatches.size,
+                onPrevious = {
+                    if (chatSearchMatches.isNotEmpty()) {
+                        chatSearchResultPosition = if (chatSearchResultPosition <= 0) {
+                            chatSearchMatches.lastIndex
+                        } else {
+                            chatSearchResultPosition - 1
+                        }
+                    }
+                },
+                onNext = {
+                    if (chatSearchMatches.isNotEmpty()) {
+                        chatSearchResultPosition = if (chatSearchResultPosition >= chatSearchMatches.lastIndex) {
+                            0
+                        } else {
+                            chatSearchResultPosition + 1
+                        }
+                    }
+                },
+                onClose = {
+                    chatSearchOpen = false
+                    chatSearchQuery = ""
+                }
+            )
+        }
+
+        LazyColumn(
             state = listState,
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
@@ -516,6 +562,8 @@ LazyColumn(
             items(state.messages, key = { it.id }) { message ->
                 MessageCard(
                     message = message,
+                    searchMatch = chatSearchOpen && chatSearchQuery.isNotBlank() && message.text.contains(chatSearchQuery.trim(), ignoreCase = true),
+                    searchSelected = chatSearchOpen && selectedSearchMessageId == message.id,
                     pendingLabel = if (message.deliveryState == "pending") {
                         if (requestActiveHere && state.messages.lastOrNull { it.deliveryState == "pending" }?.id == message.id) {
                             state.busyLabel ?: "Модель работает…"
@@ -817,7 +865,7 @@ onBranch = if (message.role == "assistant") {
                             currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
                         }
                     },
-                    shape = RoundedCornerShape(28.dp),
+                    shape = UmnikFieldShape,
                     maxLines = 6
                 )
             }
@@ -1366,9 +1414,11 @@ private fun AttachmentListRow(
 private fun ChatHeader(
     state: UiState,
     vm: ChatViewModel,
-    onOpenSidebar: () -> Unit
+    onOpenSidebar: () -> Unit,
+    onSearchChat: () -> Unit
 ) {
-    var quickModelsOpen by remember { mutableStateOf(false) }
+    var overflowOpen by remember { mutableStateOf(false) }
+    var modelMenuOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
     var clearAgentChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
@@ -1395,195 +1445,323 @@ private fun ChatHeader(
             .filter { quickModelId(it).isNotBlank() }
             .distinct()
     }
-    val currentProjectId = currentChat?.projectId
+    val chatTitle = currentChat?.title
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: currentAgent?.name
+        ?: "Новый чат"
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         Row(
-  modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
-  verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-  IconButton(onClick = onOpenSidebar, modifier = Modifier.size(42.dp)) {
-      Icon(
-Icons.Outlined.Menu,
-contentDescription = "Открыть проекты и историю",
-modifier = Modifier.size(25.dp),
-tint = if (currentProjectId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-      )
-  }
+            UmnikCircleAction(
+                icon = Icons.Outlined.Menu,
+                contentDescription = "Открыть проекты и историю",
+                onClick = onOpenSidebar
+            )
 
-  activeUsage?.let { usage ->
-      Spacer(Modifier.width(2.dp))
-      Surface(
-onClick = {
-    usageOpen = true
-    vm.refreshProviderUsage()
-},
-shape = RoundedCornerShape(10.dp),
-color = MaterialTheme.colorScheme.surfaceContainerHigh
-      ) {
-Text(
-    formatUsd(usage.daily),
-    modifier = Modifier.padding(horizontal = 7.dp, vertical = 5.dp),
-    style = MaterialTheme.typography.labelSmall,
-    color = MaterialTheme.colorScheme.onSurfaceVariant,
-    maxLines = 1
-)
-      }
-      Spacer(Modifier.width(4.dp))
-  }
+            Box(
+                modifier = Modifier.weight(1f).padding(horizontal = 10.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    chatTitle,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    textAlign = TextAlign.Center
+                )
+            }
 
-  Box(modifier = Modifier.weight(1f)) {
-      TextButton(
-onClick = { quickModelsOpen = true },
-enabled = !state.isLoading,
-modifier = Modifier.fillMaxWidth(),
-contentPadding = PaddingValues(horizontal = 5.dp, vertical = 2.dp)
-      ) {
-Text(
-    shortModelName,
-    style = MaterialTheme.typography.titleSmall,
-    fontWeight = FontWeight.SemiBold,
-    maxLines = 1,
-    overflow = TextOverflow.Ellipsis
-)
-Spacer(Modifier.width(3.dp))
-Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Выбрать модель", modifier = Modifier.size(20.dp))
-      }
+            Box {
+                UmnikCircleAction(
+                    icon = Icons.Outlined.MoreVert,
+                    contentDescription = "Действия чата",
+                    enabled = !state.isLoading || state.requestActive,
+                    onClick = { overflowOpen = true }
+                )
 
-      DropdownMenu(expanded = quickModelsOpen, onDismissRequest = { quickModelsOpen = false }) {
-quickCandidates.forEach { ref ->
-    val id = quickModelId(ref)
-    val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
-    val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
-    val current = ref == currentRef
-    DropdownMenuItem(
-        text = {
-  Column {
-      Text(
-id.substringAfter('/').ifBlank { id },
-fontWeight = if (current) FontWeight.Bold else FontWeight.Normal,
-maxLines = 1,
-overflow = TextOverflow.Ellipsis
-      )
-      Text(
-when {
-    current -> "Текущая модель"
-    currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
-    currentAgent != null -> "Быстрая модель агента"
-    ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
-    else -> connection?.name ?: id
-},
-style = MaterialTheme.typography.bodySmall,
-color = MaterialTheme.colorScheme.onSurfaceVariant,
-maxLines = 1,
-overflow = TextOverflow.Ellipsis
-      )
-  }
-        },
-        onClick = {
-  if (currentAgent != null) {
-      vm.selectAgentQuickModel(currentAgent.id, ref)
-  } else if (ref == defaultRef) {
-      vm.useDefaultTextModelForChat()
-  } else {
-      vm.selectQuickTextModel(ref)
-  }
-  quickModelsOpen = false
-        }
-    )
-}
-      }
-  }
+                DropdownMenu(
+                    expanded = overflowOpen,
+                    onDismissRequest = { overflowOpen = false }
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Поиск по чату") },
+                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
+                        enabled = state.messages.isNotEmpty(),
+                        onClick = {
+                            overflowOpen = false
+                            onSearchChat()
+                        }
+                    )
+                    HorizontalDivider(color = umnikDividerColor())
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("Баланс OpenRouter", fontWeight = FontWeight.Medium)
+                                Text(
+                                    activeUsage?.let { "Сегодня ${formatUsd(it.daily)} · всего ${formatUsd(it.total)}" }
+                                        ?: "Нажмите, чтобы обновить",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        },
+                        onClick = {
+                            overflowOpen = false
+                            usageOpen = true
+                            vm.refreshProviderUsage()
+                        }
+                    )
+                    HorizontalDivider(color = umnikDividerColor())
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text("Модель", fontWeight = FontWeight.Medium)
+                                Text(
+                                    shortModelName,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        },
+                        trailingIcon = { Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null) },
+                        enabled = !state.isLoading,
+                        onClick = {
+                            overflowOpen = false
+                            modelMenuOpen = true
+                        }
+                    )
+                    HorizontalDivider(color = umnikDividerColor())
+                    DropdownMenuItem(
+                        text = { Text("Очистить чат") },
+                        leadingIcon = { Icon(Icons.Outlined.DeleteSweep, contentDescription = null) },
+                        enabled = currentChat != null && !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
+                        onClick = {
+                            overflowOpen = false
+                            clearAgentChatConfirm = true
+                        }
+                    )
+                }
 
-  val locationName = currentAgent?.name ?: currentChat?.title.orEmpty()
-  if (locationName.isNotBlank()) {
-      Spacer(Modifier.width(4.dp))
-      Text(
-          locationName,
-          modifier = Modifier.widthIn(max = 88.dp),
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
-          maxLines = 1,
-          overflow = TextOverflow.Ellipsis
-      )
-      Spacer(Modifier.width(2.dp))
-  }
-
-  if (currentChat != null) {
-      IconButton(
-onClick = { clearAgentChatConfirm = true },
-enabled = !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
-modifier = Modifier.size(42.dp)
-      ) {
-Icon(
-    Icons.Outlined.DeleteSweep,
-    contentDescription = "Очистить переписку",
-    tint = MaterialTheme.colorScheme.onSurfaceVariant
-)
-      }
-  }
+                DropdownMenu(
+                    expanded = modelMenuOpen,
+                    onDismissRequest = { modelMenuOpen = false }
+                ) {
+                    Text(
+                        "Выбрать модель",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    quickCandidates.forEach { ref ->
+                        val id = quickModelId(ref)
+                        val current = ref == currentRef
+                        val connectionId = quickModelConnectionId(ref, state.activeConnectionProfileId)
+                        val connection = state.connectionProfiles.firstOrNull { it.id == connectionId }
+                        DropdownMenuItem(
+                            text = {
+                                Column {
+                                    Text(
+                                        id.substringAfter('/').ifBlank { id },
+                                        fontWeight = if (current) FontWeight.SemiBold else FontWeight.Normal,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        when {
+                                            current -> "Текущая модель"
+                                            currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
+                                            currentAgent != null -> "Быстрая модель агента"
+                                            ref == defaultRef -> "Модель по умолчанию"
+                                            else -> connection?.name ?: "OpenRouter"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            },
+                            leadingIcon = {
+                                if (current) Icon(Icons.Outlined.Check, contentDescription = null)
+                                else Spacer(Modifier.size(24.dp))
+                            },
+                            onClick = {
+                                if (currentAgent != null) {
+                                    vm.selectAgentQuickModel(currentAgent.id, ref)
+                                } else if (ref == defaultRef) {
+                                    vm.useDefaultTextModelForChat()
+                                } else {
+                                    vm.selectQuickTextModel(ref)
+                                }
+                                modelMenuOpen = false
+                            }
+                        )
+                    }
+                }
+            }
         }
     }
 
     if (clearAgentChatConfirm && currentChat != null) {
         AlertDialog(
-  onDismissRequest = { clearAgentChatConfirm = false },
-  title = { Text("Очистить переписку?") },
-  text = {
-      Text(
-if (currentAgent != null) {
-    "История разговора и временный контекст будут удалены. " +
-        "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
-} else {
-    "История разговора и временные файлы контекста текущего чата будут удалены."
-}
-      )
-  },
-  confirmButton = {
-      TextButton(onClick = {
-clearAgentChatConfirm = false
-vm.clearChat()
-      }) { Text("Очистить") }
-  },
-  dismissButton = {
-      TextButton(onClick = { clearAgentChatConfirm = false }) { Text("Отмена") }
-  }
+            onDismissRequest = { clearAgentChatConfirm = false },
+            title = { Text("Очистить переписку?") },
+            text = {
+                Text(
+                    if (currentAgent != null) {
+                        "История разговора и временный контекст будут удалены. " +
+                            "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+                    } else {
+                        "История разговора и временные файлы контекста текущего чата будут удалены."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    clearAgentChatConfirm = false
+                    vm.clearChat()
+                }) { Text("Очистить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { clearAgentChatConfirm = false }) { Text("Отмена") }
+            }
         )
     }
 
-    if (usageOpen && activeUsage != null) {
+    if (usageOpen) {
         AlertDialog(
-  onDismissRequest = { usageOpen = false },
-  title = { Text(activeUsage.providerName) },
-  text = {
-      Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-listOf(
-    "Сегодня" to activeUsage.daily,
-    "Неделя" to activeUsage.weekly,
-    "Месяц" to activeUsage.monthly,
-    "Всего этим ключом" to activeUsage.total
-).forEach { (label, value) ->
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
+            onDismissRequest = { usageOpen = false },
+            title = { Text(activeUsage?.providerName ?: "OpenRouter") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    if (activeUsage == null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            if (state.isLoading) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            }
+                            Text(
+                                if (state.isLoading) "Обновляю баланс…" else "Баланс пока не загружен.",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        listOf(
+                            "Сегодня" to activeUsage.daily,
+                            "Неделя" to activeUsage.weekly,
+                            "Месяц" to activeUsage.monthly,
+                            "Всего этим ключом" to activeUsage.total
+                        ).forEach { (label, value) ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                                Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(formatUsd(value), fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                    Text(
+                        "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = { TextButton(onClick = { usageOpen = false }) { Text("Закрыть") } },
+            dismissButton = {
+                TextButton(onClick = { vm.refreshProviderUsage() }, enabled = !state.isLoading) {
+                    Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(5.dp))
+                    Text("Обновить")
+                }
+            }
+        )
     }
 }
-Text(
-    "Периоды OpenRouter считаются по UTC. Данные берутся напрямую для текущего API-ключа.",
-    style = MaterialTheme.typography.bodySmall,
-    color = MaterialTheme.colorScheme.onSurfaceVariant
-)
-      }
-  },
-  confirmButton = { TextButton(onClick = { usageOpen = false }) { Text("Закрыть") } },
-  dismissButton = {
-      TextButton(onClick = { vm.refreshProviderUsage() }) {
-Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
-Spacer(Modifier.width(5.dp))
-Text("Обновить")
-      }
-  }
-        )
+
+@Composable
+private fun ChatSearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit,
+    currentResult: Int,
+    resultCount: Int,
+    onPrevious: () -> Unit,
+    onNext: () -> Unit,
+    onClose: () -> Unit
+) {
+    val focusRequester = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(Unit) {
+        focusRequester.requestFocus()
+        keyboard?.show()
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = UmnikPanelShape,
+        color = MaterialTheme.colorScheme.surfaceContainerLow,
+        tonalElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Outlined.Search,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Box(
+                modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 13.dp)
+            ) {
+                if (query.isBlank()) {
+                    Text(
+                        "Найти в чате",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+                    )
+                }
+                BasicTextField(
+                    value = query,
+                    onValueChange = onQueryChange,
+                    modifier = Modifier.fillMaxWidth().focusRequester(focusRequester),
+                    singleLine = true,
+                    textStyle = MaterialTheme.typography.bodyMedium.copy(
+                        color = MaterialTheme.colorScheme.onSurface
+                    ),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                )
+            }
+            Text(
+                when {
+                    query.isBlank() -> ""
+                    resultCount == 0 -> "0"
+                    else -> "${currentResult + 1}/$resultCount"
+                },
+                modifier = Modifier.padding(horizontal = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            IconButton(onClick = onPrevious, enabled = resultCount > 0) {
+                Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Предыдущее совпадение")
+            }
+            IconButton(onClick = onNext, enabled = resultCount > 0) {
+                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Следующее совпадение")
+            }
+            IconButton(onClick = onClose) {
+                Icon(Icons.Outlined.Close, contentDescription = "Закрыть поиск")
+            }
+        }
     }
 }
 
@@ -1625,449 +1803,6 @@ private fun ComposerActionTile(
 }
 
 @Composable
-private fun ComposerToolRow(
-    icon: ImageVector,
-    title: String,
-    subtitle: String,
-    checked: Boolean,
-    enabled: Boolean,
-    onCheckedChange: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Icon(
-            icon,
-            contentDescription = null,
-            modifier = Modifier.size(25.dp),
-            tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
-        )
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-        }
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-            enabled = enabled
-        )
-    }
-}
-
-@Composable
-private fun CompactModeIcon(
-    selected: Boolean,
-    icon: ImageVector,
-    description: String,
-    onClick: () -> Unit
-) {
-    if (selected) {
-        FilledTonalIconButton(
-            onClick = onClick,
-            modifier = Modifier.size(36.dp),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
-        }
-    } else {
-        IconButton(
-            onClick = onClick,
-            modifier = Modifier.size(36.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-@Composable
-private fun InlineComposerToggleIcon(
-    selected: Boolean,
-    icon: ImageVector,
-    description: String,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    if (selected) {
-        FilledTonalIconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.size(32.dp),
-            shape = RoundedCornerShape(9.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(17.dp))
-        }
-    } else {
-        IconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.size(32.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(17.dp))
-        }
-    }
-}
-
-@Composable
-private fun ComposerToggleIcon(
-    selected: Boolean,
-    icon: ImageVector,
-    description: String,
-    enabled: Boolean = true,
-    onClick: () -> Unit
-) {
-    if (selected) {
-        FilledTonalIconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.size(38.dp),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
-        }
-    } else {
-        IconButton(
-            onClick = onClick,
-            enabled = enabled,
-            modifier = Modifier.size(38.dp)
-        ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.size(19.dp))
-        }
-    }
-}
-
-@Composable
-private fun ChatsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
-    var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
-    val chats = state.chats.filter { it.projectId == null }.sortedByDescending { it.updatedAt }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Диалоги") },
-        text = {
-            Column {
-                FilledTonalButton(
-                    onClick = {
-                        vm.createChat()
-                        onDismiss()
-                    },
-                    enabled = !state.isLoading,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Icon(Icons.Outlined.Add, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Новый чат")
-                }
-                Spacer(Modifier.height(10.dp))
-                LazyColumn(Modifier.heightIn(max = 430.dp)) {
-                    items(chats, key = { it.id }) { chat ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            TextButton(
-                                onClick = {
-                                    vm.switchChat(chat.id)
-                                    onDismiss()
-                                },
-                                enabled = !state.isLoading,
-                                modifier = Modifier.weight(1f),
-                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 8.dp)
-                            ) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(
-                                        chat.title,
-                                        fontWeight = if (chat.id == state.currentChatId) FontWeight.Bold else FontWeight.Medium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        "${chat.messages.size} сообщ. · ${formatDate(chat.updatedAt)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = { deleteTarget = chat },
-                                enabled = !state.isLoading
-                            ) {
-                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить диалог")
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                }
-            }
-        },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Закрыть") } }
-    )
-
-    deleteTarget?.let { chat ->
-        AlertDialog(
-            onDismissRequest = { deleteTarget = null },
-            title = { Text("Удалить диалог?") },
-            text = { Text("«${chat.title}» будет удалён. Сгенерированные файлы останутся в хранилище Umnik.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    vm.deleteChat(chat.id)
-                    deleteTarget = null
-                }) { Text("Удалить") }
-            },
-            dismissButton = {
-                TextButton(onClick = { deleteTarget = null }) { Text("Отмена") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun ModelPickerDialog(
-    mode: ChatMode,
-    state: UiState,
-    vm: ChatViewModel,
-    onDismiss: () -> Unit
-) {
-    var query by remember(mode) { mutableStateOf("") }
-    val enabledConnections = state.connectionProfiles.filter { profile ->
-        profile.id !in state.disabledConnectionIds && (mode == ChatMode.TEXT || vm.connectionImageEnabled(profile.id))
-    }
-    var selectedTextConnectionId by remember(mode, enabledConnections.map { it.id }) {
-        mutableStateOf(
-            state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
-                ?: enabledConnections.firstOrNull()?.id
-        )
-    }
-    var selectedImageConnectionId by remember(mode, enabledConnections.map { it.id }) {
-        mutableStateOf(
-            state.imageConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
-                ?: enabledConnections.firstOrNull()?.id
-        )
-    }
-    val selectedTextConnection = enabledConnections.firstOrNull { it.id == selectedTextConnectionId }
-    val selectedImageConnection = enabledConnections.firstOrNull { it.id == selectedImageConnectionId }
-    val selectedConnectionId = if (mode == ChatMode.TEXT) selectedTextConnectionId else selectedImageConnectionId
-    val selectedConnection = if (mode == ChatMode.TEXT) selectedTextConnection else selectedImageConnection
-    val models = when {
-        state.modelCatalogConnectionId == selectedConnectionId -> state.modelCatalog
-        mode == ChatMode.TEXT && selectedConnectionId == state.activeConnectionProfileId -> state.availableTextModels
-        mode == ChatMode.IMAGE && selectedConnectionId == state.imageConnectionProfileId -> state.availableImageModels
-        else -> emptyList()
-    }
-    val current = if (mode == ChatMode.TEXT) {
-        selectedTextConnectionId?.let(vm::defaultTextModelForConnection).orEmpty()
-    } else {
-        selectedImageConnectionId?.let(vm::defaultImageModelForConnection).orEmpty()
-    }
-    var manualImageModel by remember(selectedImageConnectionId, current) { mutableStateOf(current) }
-    var pendingModel by remember(mode, selectedConnectionId, current) { mutableStateOf(current) }
-
-    LaunchedEffect(mode, selectedTextConnectionId, selectedImageConnectionId) {
-        if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
-        else selectedImageConnectionId?.let(vm::loadImageConnectionModels)
-    }
-
-    val filtered = remember(models, query) {
-        models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(300)
-    }
-    val customImageConnection = mode == ChatMode.IMAGE && selectedConnection?.type == ProviderType.OPENAI_COMPATIBLE
-
-    FullScreenPanel(
-        title = if (mode == ChatMode.TEXT) "Текстовая модель" else "Модель изображений",
-        onBack = onDismiss
-    ) {
-        Text(
-            "Сейчас: ${selectedConnection?.name ?: "Подключение"} · ${current.ifBlank { "не выбрана" }}",
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-        if (enabledConnections.isEmpty()) {
-            Text(
-                if (mode == ChatMode.IMAGE) "Нет подключений с включённой генерацией изображений." else "Нет включённых подключений.",
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                items(enabledConnections, key = { it.id }) { connection ->
-                    FilterChip(
-                        selected = selectedConnectionId == connection.id,
-                        onClick = {
-                            if (mode == ChatMode.TEXT) selectedTextConnectionId = connection.id
-                            else selectedImageConnectionId = connection.id
-                            query = ""
-                        },
-                        label = { Text(connection.name, maxLines = 1) }
-                    )
-                }
-            }
-            if (mode == ChatMode.IMAGE) {
-                Text(
-                    when (selectedConnection?.type) {
-                        ProviderType.OPENROUTER -> "Показаны только модели OpenRouter Image API."
-                        ProviderType.NVIDIA -> "Показаны только проверенные генераторы NVIDIA NIM. Модели с нестабильным hosted endpoint временно скрываются реестром Umnik."
-                        ProviderType.OPENAI_COMPATIBLE -> "У произвольного API нет универсального каталога генераторов. Укажите ID image-модели вручную; Umnik не будет выдавать общий /models за список генераторов."
-                        null -> ""
-                    },
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                Text(
-                    "Выберите поставщика и модель, затем нажмите «Сохранить выбор». Выбранный поставщик и модель сразу применятся к текущему чату и станут значениями по умолчанию для новых чатов.",
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        if (customImageConnection) {
-            OutlinedTextField(
-                value = manualImageModel,
-                onValueChange = { manualImageModel = it.trim().take(180) },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
-                label = { Text("ID модели изображений") },
-                placeholder = { Text("provider/image-model") },
-                singleLine = true
-            )
-            FilledTonalButton(
-                onClick = {
-                    selectedImageConnectionId?.let { vm.selectImageModel(it, manualImageModel) }
-                    onDismiss()
-                },
-                enabled = manualImageModel.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)
-            ) { Text("Сохранить модель") }
-        }
-
-        if (!customImageConnection) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Поиск модели") }
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.End
-        ) {
-            TextButton(onClick = {
-                if (mode == ChatMode.TEXT) selectedTextConnectionId?.let(vm::loadConnectionModels)
-                else selectedImageConnectionId?.let(vm::loadImageConnectionModels)
-            }) {
-                Icon(Icons.Outlined.Refresh, contentDescription = null)
-                Spacer(Modifier.width(5.dp))
-                Text("Обновить")
-            }
-        }
-        if (!customImageConnection) {
-            FilledTonalButton(
-                onClick = {
-                    val chosen = pendingModel.trim()
-                    if (chosen.isNotBlank()) {
-                        if (mode == ChatMode.TEXT) {
-                            selectedTextConnectionId?.let { vm.selectDefaultTextModel(it, chosen) }
-                        } else {
-                            selectedImageConnectionId?.let { vm.selectImageModel(it, chosen) }
-                        }
-                        onDismiss()
-                    }
-                },
-                enabled = pendingModel.isNotBlank(),
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 2.dp)
-            ) {
-                Icon(Icons.Outlined.Check, contentDescription = null)
-                Spacer(Modifier.width(7.dp))
-                Text("Сохранить выбор")
-            }
-        }
-        if (filtered.isEmpty()) {
-            if (!customImageConnection) {
-                Text(
-                    if (state.isLoading) "Загрузка списка…" else "Модели не найдены",
-                    modifier = Modifier.padding(20.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        } else {
-            LazyColumn(
-                modifier = Modifier.weight(1f).fillMaxWidth(),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                items(filtered, key = { it.id }) { modelInfo ->
-                    val selected = pendingModel == modelInfo.id
-                    TextButton(
-                        onClick = { pendingModel = modelInfo.id },
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 12.dp)
-                    ) {
-                        Text(
-                            modelInfo.id,
-                            modifier = Modifier.weight(1f),
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        if (selected) {
-                            Spacer(Modifier.width(8.dp))
-                            Icon(
-                                Icons.Outlined.Check,
-                                contentDescription = "Выбрано",
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                    }
-                    HorizontalDivider()
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyChatCard(mode: ChatMode) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow),
-        shape = RoundedCornerShape(22.dp)
-    ) {
-        Column(Modifier.padding(18.dp)) {
-            Text(
-                if (mode == ChatMode.TEXT) "Готов к работе" else "Режим изображений",
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(Modifier.height(6.dp))
-            Text(
-                if (mode == ChatMode.TEXT)
-                    "Напишите сообщение, приложите файл или подключите навык."
-                else
-                    "Опишите изображение. При необходимости приложите изображение-референс.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
 private fun StreamingAssistantMessage(text: String) {
     Column(
         modifier = Modifier
@@ -2097,6 +1832,8 @@ private fun StreamingAssistantMessage(text: String) {
 @Composable
 private fun MessageCard(
     message: ChatMessage,
+    searchMatch: Boolean = false,
+    searchSelected: Boolean = false,
     pendingLabel: String? = null,
     tts: TtsController,
     openRouterSpeechEnabled: Boolean,
@@ -2112,8 +1849,19 @@ private fun MessageCard(
     val user = message.role == "user"
     val content = MaterialTheme.colorScheme.onSurface
 
+    val searchShape = RoundedCornerShape(20.dp)
+    val searchModifier = when {
+        searchSelected -> Modifier
+            .border(2.dp, MaterialTheme.colorScheme.primary, searchShape)
+            .padding(4.dp)
+        searchMatch -> Modifier
+            .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), searchShape)
+            .padding(4.dp)
+        else -> Modifier
+    }
+
     Column(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(searchModifier),
         horizontalAlignment = if (user) Alignment.End else Alignment.Start
     ) {
         if (user) {
@@ -2791,31 +2539,6 @@ private fun createCameraTarget(context: Context): CameraTarget {
     return CameraTarget(uri, file)
 }
 
-private fun providerTypeLabel(type: ProviderType): String = when (type) {
-    ProviderType.OPENROUTER -> "OpenRouter"
-    ProviderType.NVIDIA -> "NVIDIA NIM"
-    ProviderType.OPENAI_COMPATIBLE -> "OpenAI-совместимое"
-}
-
-private fun imageProtocolLabel(protocol: ImageApiProtocol): String = when (protocol) {
-    ImageApiProtocol.AUTO -> "Авто"
-    ImageApiProtocol.OPENAI_COMPATIBLE -> "OpenAI-compatible"
-    ImageApiProtocol.NVIDIA_NIM -> "NVIDIA NIM"
-}
-
-private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
-    UserProfileScope.OFF -> "Выкл"
-    UserProfileScope.CHATS -> "Вкл"
-}
-
-private fun themeLabel(choice: ThemeChoice): String = when (choice) {
-    ThemeChoice.DYNAMIC -> "Material You"
-    ThemeChoice.CUSTOM -> "Свой цвет"
-    ThemeChoice.GRAPHITE -> "Графит"
-    ThemeChoice.OCEAN -> "Синяя"
-    ThemeChoice.FOREST -> "Зелёная"
-    ThemeChoice.AMBER -> "Янтарная"
-}
 
 private fun copyText(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -2930,21 +2653,4 @@ private fun shareGeneratedFile(context: Context, file: GeneratedFile) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, "Поделиться файлом"))
-}
-
-private fun answerSoundLabel(choice: AnswerSoundChoice): String = when (choice) {
-    AnswerSoundChoice.DEFAULT -> "Основной"
-    AnswerSoundChoice.CUSTOM -> "Свой звук"
-    AnswerSoundChoice.SOFT -> "Мягкий"
-    AnswerSoundChoice.BRIGHT -> "Ясный"
-    AnswerSoundChoice.DOUBLE -> "Двойной"
-}
-
-private fun formatDate(timestamp: Long): String =
-    SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(timestamp))
-
-private fun humanSize(bytes: Long): String = when {
-    bytes < 1024 -> "$bytes Б"
-    bytes < 1024 * 1024 -> "${bytes / 1024} КБ"
-    else -> String.format(Locale.getDefault(), "%.1f МБ", bytes / 1024.0 / 1024.0)
 }
