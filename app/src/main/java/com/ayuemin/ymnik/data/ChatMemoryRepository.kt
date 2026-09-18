@@ -36,6 +36,25 @@ class ChatMemoryRepository(private val context: Context) {
         prefs.edit().putString(KEY_SETTINGS, gson.toJson(sanitize(value))).apply()
     }
 
+    /**
+     * Agent conversations may have a fully isolated memory/context profile.
+     * Ordinary chats without an override continue to use the global chat defaults.
+     */
+    fun settingsForChat(chatId: String): ChatMemoryGlobalSettings = runCatching {
+        prefs.getString(settingsKey(chatId), null)
+            ?.let { gson.fromJson(it, ChatMemoryGlobalSettings::class.java) }
+    }.getOrNull()?.let(::sanitize) ?: settings()
+
+    fun saveSettingsForChat(chatId: String, value: ChatMemoryGlobalSettings?) {
+        val editor = prefs.edit()
+        if (value == null) {
+            editor.remove(settingsKey(chatId))
+        } else {
+            editor.putString(settingsKey(chatId), gson.toJson(sanitize(value)))
+        }
+        editor.apply()
+    }
+
     /** Null means that this chat follows the global default context mode. */
     fun modeOverride(chatId: String): ChatContextMode? {
         val key = modeKey(chatId)
@@ -46,7 +65,7 @@ class ChatMemoryRepository(private val context: Context) {
     }
 
     /** Effective mode after applying the global default to chats without an override. */
-    fun mode(chatId: String): ChatContextMode = modeOverride(chatId) ?: settings().defaultContextMode
+    fun mode(chatId: String): ChatContextMode = modeOverride(chatId) ?: settingsForChat(chatId).defaultContextMode
 
     fun saveMode(chatId: String, mode: ChatContextMode?) {
         val editor = prefs.edit()
@@ -199,7 +218,10 @@ class ChatMemoryRepository(private val context: Context) {
     @Synchronized
     fun deleteChat(chatId: String) {
         clearMemory(chatId)
-        prefs.edit().remove(modeKey(chatId)).apply()
+        prefs.edit()
+            .remove(modeKey(chatId))
+            .remove(settingsKey(chatId))
+            .apply()
     }
 
     private fun saveSnapshot(value: ChatMemorySnapshot) {
@@ -286,6 +308,7 @@ class ChatMemoryRepository(private val context: Context) {
 
     private fun safe(value: String): String = value.replace(Regex("[^A-Za-z0-9._-]"), "_").take(160)
     private fun modeKey(chatId: String): String = "mode::$chatId"
+    private fun settingsKey(chatId: String): String = "settings::$chatId"
 
     companion object {
         private const val KEY_SETTINGS = "global_settings"
