@@ -219,9 +219,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 occupation = prefs.getString("profile_occupation", "").orEmpty(),
                 note = prefs.getString("profile_note", "").orEmpty()
             ),
-            userProfileScope = runCatching {
-                UserProfileScope.valueOf(prefs.getString("profile_scope", UserProfileScope.OFF.name) ?: UserProfileScope.OFF.name)
-            }.getOrDefault(UserProfileScope.OFF),
+            userProfileScope = when (prefs.getString("profile_scope", UserProfileScope.OFF.name)) {
+                UserProfileScope.CHATS.name, "EVERYWHERE" -> UserProfileScope.CHATS
+                else -> UserProfileScope.OFF
+            },
             apiKeyConfigured = isProfileConfigured(initialProfile),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             answerSoundChoice = runCatching {
