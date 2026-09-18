@@ -3353,13 +3353,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 text = delegatedText,
                 deliveryState = "pending"
             )
-            val withTask = replaceChatMessages(
-                chatsRepository.list(),
-                chat.id,
-                before + taskMessage,
-                null
-            )
-            chatsRepository.save(withTask)
+            val withTask = chatsRepository.updateChat(chat.id) { stored ->
+                stored.copy(
+                    messages = stored.messages + taskMessage,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
             _state.value = _state.value.copy(chats = withTask)
 
             val modelInfo = _state.value.modelCatalog.firstOrNull { it.id == modelRef.modelId }
@@ -3446,8 +3445,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 inputTokens = modelResult.inputTokens,
                 outputTokens = modelResult.outputTokens
             )
-            val finished = chatsRepository.finishRequest(chat.id, taskMessage.id, assistant)
-            publishChats(finished)
+            chatsRepository.finishRequest(chat.id, taskMessage.id, assistant)
+            publishChats(chatsRepository.list())
 
             val result = AgentResult(
                 id = UUID.randomUUID().toString(),
