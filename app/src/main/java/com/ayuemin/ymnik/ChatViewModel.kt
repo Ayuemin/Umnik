@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.ayuemin.ymnik.data.AgentRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
@@ -20,6 +21,8 @@ import com.ayuemin.ymnik.data.StorageRepository
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
+import com.ayuemin.ymnik.model.AgentKind
+import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
@@ -89,6 +92,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val knowledgeBase = KnowledgeBaseRepository(context)
     private val embeddingApi = OpenRouterEmbeddingClient(context)
     private val projectsRepository = ProjectRepository(context)
+    private val agentsRepository = AgentRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
@@ -106,6 +110,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialProfiles = loadConnectionProfiles()
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialProjects = projectsRepository.list()
+    private val initialAgents = ensureProjectAgents(initialProjects)
     private val initialChats = ensureProjectOrchestrators(initialProjects, loadInitialChats())
     private val initialChatId = prefs.getString("current_chat_id", null)
         ?.takeIf { id -> initialChats.any { it.id == id } }
@@ -153,6 +158,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val _state = MutableStateFlow(
         UiState(
             messages = initialChat.messages,
+            agents = initialAgents,
             chats = initialChats,
             projects = initialProjects,
             currentChatId = initialChatId,
@@ -213,7 +219,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = chatsRepository.loadError ?: projectsRepository.loadError ?: skills.loadError ?: recoveredRequest
+            status = chatsRepository.loadError ?: projectsRepository.loadError ?: agentsRepository.loadError ?: skills.loadError ?: recoveredRequest
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -247,6 +253,55 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun invalidateRequestGeneration(chatId: String) {
         requestGenerations[chatId] = (requestGenerations[chatId] ?: 0L) + 1L
+    }
+
+    private fun ensureProjectAgents(projects: List<Project>): List<AgentProfile> {
+        var agents = agentsRepository.list()
+        projects.forEach { project ->
+            if (agents.none { it.projectId == project.id && it.kind == AgentKind.ORCHESTRATOR }) {
+                agentsRepository.createOrchestrator(project.id)
+                agents = agentsRepository.list()
+            }
+        }
+        return agents
+    }
+
+    fun agentsForProject(projectId: String): List<AgentProfile> =
+        _state.value.agents.filter { it.projectId == projectId }
+
+    fun agent(agentId: String): AgentProfile? =
+        _state.value.agents.firstOrNull { it.id == agentId }
+
+    fun createAgent(projectId: String, name: String = "Новый агент"): String {
+        require(_state.value.projects.any { it.id == projectId }) { "Проект не найден" }
+        val agent = agentsRepository.createSpecialist(projectId, name)
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            status = "Агент создан. Настройте его рабочую среду."
+        )
+        return agent.id
+    }
+
+    fun saveAgent(profile: AgentProfile) {
+        require(_state.value.projects.any { it.id == profile.projectId }) { "Проект не найден" }
+        agentsRepository.upsert(profile)
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            status = if (profile.kind == AgentKind.ORCHESTRATOR) "Настройки Оркестратора сохранены" else "Настройки агента сохранены"
+        )
+    }
+
+    fun deleteAgent(agentId: String) {
+        val target = agent(agentId) ?: return
+        if (target.kind == AgentKind.ORCHESTRATOR) {
+            _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
+            return
+        }
+        agentsRepository.delete(agentId)
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            status = "Агент и его локальное хранилище удалены"
+        )
     }
 
     private fun ensureProjectOrchestrators(projects: List<Project>, chats: List<ChatSession>): List<ChatSession> {
@@ -2033,7 +2088,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         projectAutomation.saveProfile(orchestrator.id, runtime)
         prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), runtime.skillIds).apply()
-        _state.value = _state.value.copy(projects = projects, chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
+        _state.value = _state.value.copy(agents = agentsRepository.list(), projects = projects, chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
         return project.id
     }
 
@@ -3584,6 +3639,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
         projectsRepository.deleteProjectFiles(projectId)
+        agentsRepository.deleteProjectAgents(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
         _state.value.chats.filter { it.projectId == projectId }.forEach { chatMemory.deleteChat(it.id) }
         val projects = _state.value.projects.filterNot { it.id == projectId }
@@ -3608,6 +3664,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatsRepository.save(chats)
         val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.firstOrNull()
         _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
             projects = projects,
             chats = chats,
             currentChatId = current?.id ?: _state.value.currentChatId,
