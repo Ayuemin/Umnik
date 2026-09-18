@@ -331,6 +331,7 @@ private fun ChatScreen(
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
+    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
     val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
@@ -947,26 +948,28 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
-                ComposerSectionHeader(
-                    icon = Icons.Outlined.Extension,
-                    label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
-                    expanded = skillsExpanded,
-                    onClick = { skillsExpanded = !skillsExpanded }
-                )
-                if (skillsExpanded) {
-                    Text(
-                        "Выберите навыки для текущего чата. Включённые навыки добавляются к следующим запросам этого чата.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                if (currentAgentId == null) {
+                    ComposerSectionHeader(
+                        icon = Icons.Outlined.Extension,
+                        label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
+                        expanded = skillsExpanded,
+                        onClick = { skillsExpanded = !skillsExpanded }
                     )
-                    if (state.skills.isEmpty()) {
-                        Text("Навыков пока нет. Добавьте их в Настройки → Навыки.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        ComposerSkillList(
-                            skills = state.skills,
-                            selectedIds = state.activeSkillIds,
-                            onToggle = vm::toggleSkill
+                    if (skillsExpanded) {
+                        Text(
+                            "Выберите навыки для текущего обычного чата.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        if (state.skills.isEmpty()) {
+                            Text("Навыков пока нет.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        } else {
+                            ComposerSkillList(
+                                skills = state.skills,
+                                selectedIds = state.activeSkillIds,
+                                onToggle = vm::toggleSkill
+                            )
+                        }
                     }
                 }
 
