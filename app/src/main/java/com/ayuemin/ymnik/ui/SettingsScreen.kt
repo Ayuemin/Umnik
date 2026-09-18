@@ -91,12 +91,6 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
     }
     var quickSkillText by remember { mutableStateOf("") }
 
-    Text(
-        "Здесь хранится общая библиотека навыков. Включение навыка выполняется отдельно в каждом чате через + → Навыки.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
-    Spacer(Modifier.height(9.dp))
     OutlinedTextField(
         value = quickSkillText,
         onValueChange = { quickSkillText = it.take(12_000) },
@@ -286,14 +280,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = "API-ключ и соединение",
                         icon = Icons.Outlined.Language,
                         expanded = connectionsExpanded,
-                        onToggle = { connectionsExpanded = !connectionsExpanded }
+                        onToggle = { connectionsExpanded = !connectionsExpanded },
+                        info = "Единственное сетевое подключение Umnik. Здесь хранится API-ключ OpenRouter и проверяется связь. Выбор моделей находится в отдельном разделе «Модели»."
                     ) {
-                        Text(
-                            "Umnik работает через OpenRouter. Здесь настраивается единственное подключение приложения; выбор моделей находится в разделе «Модели».",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(10.dp))
                         OutlinedTextField(
                             value = connectionKey,
                             onValueChange = { connectionKey = it },
@@ -301,6 +290,12 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             label = { Text("API-ключ OpenRouter") },
                             placeholder = { Text("Оставьте пустым, чтобы не менять сохранённый ключ") },
                             visualTransformation = PasswordVisualTransformation(),
+                            trailingIcon = {
+                                UmnikInfoHint(
+                                    title = "API-ключ OpenRouter",
+                                    text = "Личный API-ключ OpenRouter. Он хранится локально на устройстве и шифруется через Android Keystore. Пустое поле не заменяет уже сохранённый ключ."
+                                )
+                            },
                             singleLine = true
                         )
                         Spacer(Modifier.height(8.dp))
@@ -350,13 +345,13 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                 modifier = Modifier.fillMaxWidth(),
                                 label = { Text("Ручной предел контекста, токенов") },
                                 placeholder = { Text("Необязательно · обычно определяется по модели") },
+                                trailingIcon = {
+                                    UmnikInfoHint(
+                                        title = "Ручной предел контекста",
+                                        text = "Обычно Umnik получает размер контекста из данных модели. Укажите число только если конкретную модель нужно ограничить вручную. В остальных случаях оставьте поле пустым."
+                                    )
+                                },
                                 singleLine = true
-                            )
-                            Text(
-                                "Оставьте поле пустым, если не требуется вручную ограничивать контекст.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.padding(top = 5.dp)
                             )
                             Spacer(Modifier.height(9.dp))
                             FilledTonalButton(
@@ -381,7 +376,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = state.textModel.substringAfterLast('/'),
                         icon = Icons.Outlined.TextFields,
                         expanded = modelsExpanded,
-                        onToggle = { modelsExpanded = !modelsExpanded }
+                        onToggle = { modelsExpanded = !modelsExpanded },
+                        info = "Здесь задаются модели приложения: основная модель чата, быстрые модели, генерация изображений и параметры размышления. Настройки отдельных агентов находятся внутри самих агентов."
                     ) {
                         FilledTonalButton(
                             onClick = { defaultChatModelExpanded = !defaultChatModelExpanded },
@@ -495,7 +491,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = "${state.imageModel.substringAfterLast('/').ifBlank { "не выбрана" }} · $imageConnectionName",
                         icon = Icons.Outlined.Image,
                         expanded = imageModelsExpanded,
-                        onToggle = { imageModelsExpanded = !imageModelsExpanded }
+                        onToggle = { imageModelsExpanded = !imageModelsExpanded },
+                        info = "Модель и параметры, которые используются режимом генерации изображений. Эти настройки не меняют обычную текстовую модель чата."
                     ) {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
@@ -561,14 +558,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         },
                         icon = Icons.Outlined.VolumeUp,
                         expanded = openRouterSpeechExpanded,
-                        onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded }
+                        onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded },
+                        info = "Эта модель озвучивает уже готовые ответы нейросети по кнопке OR под сообщением. Она не используется для режима «+ → Озвучить»."
                     ) {
-                        Text(
-                            "Используется только кнопкой OR под ответами.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
                         FilledTonalButton(
                             onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
                             modifier = Modifier.fillMaxWidth()
@@ -586,14 +578,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = "Отдельная модель и параметры",
                         icon = Icons.Outlined.Description,
                         expanded = openRouterDocumentSpeechExpanded,
-                        onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded }
+                        onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded },
+                        info = "Отдельная настройка для режима «+ → Озвучить»: чтение введённого текста или документа. Не влияет на кнопку озвучивания готовых ответов."
                     ) {
-                        Text(
-                            "Используется режимом «+ → Озвучить» и не меняет озвучивание ответов.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(8.dp))
                         FilledTonalButton(
                             onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
                             modifier = Modifier.fillMaxWidth()
@@ -615,7 +602,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = if (state.skills.isEmpty()) "Библиотека пуста" else "${state.skills.size} навыков",
                         icon = Icons.Outlined.Extension,
                         expanded = skillsLibraryExpanded,
-                        onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded }
+                        onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded },
+                        info = "Общая библиотека навыков. Импортированный навык сам по себе не влияет на ответы: его нужно отдельно включить в нужном обычном чате. У агентов есть собственные навыки."
                     ) {
                         SkillLibrarySettings(state, vm)
                     }
@@ -627,14 +615,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = if (state.userProfile.isEmpty()) "Не задано" else "Профиль заполнен · ${profileScopeLabel(state.userProfileScope)}",
                         icon = Icons.Outlined.Description,
                         expanded = profileExpanded,
-                        onToggle = { profileExpanded = !profileExpanded }
+                        onToggle = { profileExpanded = !profileExpanded },
+                        info = "Необязательный краткий профиль пользователя. Он передаётся модели только в выбранной области. Проекты и агенты могут быть исключены, чтобы личный контекст не попадал туда автоматически."
                     ) {
-                        Text(
-                            "Необязательно. Передаётся модели только в выбранной области.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(9.dp))
                         OutlinedTextField(profileName, { profileName = it }, Modifier.fillMaxWidth(), label = { Text("Имя") }, singleLine = true)
                         Spacer(Modifier.height(7.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -906,7 +889,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             diagnosticsExpanded = !diagnosticsExpanded
                             diagnosticLoggingEnabled = vm.isDiagnosticLoggingEnabled()
                             diagnosticLogBytes = vm.diagnosticLogSize()
-                        }
+                        },
+                        info = "Диагностический журнал нужен только для поиска ошибок. Он фиксирует технические стадии запросов, действия, модели и фоновые задачи, но не должен записывать тексты сообщений, содержимое файлов и API-ключи."
                     ) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -1091,6 +1075,7 @@ private fun ExpandableSettingsCard(
     icon: ImageVector,
     expanded: Boolean,
     onToggle: () -> Unit,
+    info: String? = null,
     content: @Composable () -> Unit
 ) {
     UmnikPanel {
@@ -1119,6 +1104,11 @@ private fun ExpandableSettingsCard(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+            }
+            if (info != null) {
+                Spacer(Modifier.width(6.dp))
+                UmnikInfoHint(title = title, text = info)
+                Spacer(Modifier.width(4.dp))
             }
             Icon(
                 if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
@@ -1168,6 +1158,11 @@ private fun ReasoningSettingsCard(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            UmnikInfoHint(
+                title = "Сила размышления",
+                text = "Уровень reasoning задаётся отдельно для каждой модели. Более высокий уровень может улучшать сложные ответы, но обычно увеличивает время работы и стоимость. Если модель не поддерживает управление уровнем, она выберет режим сама."
+            )
+            Spacer(Modifier.width(4.dp))
             Icon(
                 if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                 contentDescription = if (expanded) "Свернуть" else "Развернуть"
