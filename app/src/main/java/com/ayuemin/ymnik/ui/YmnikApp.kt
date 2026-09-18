@@ -1277,12 +1277,27 @@ private fun ChatHeader(
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
+    val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
+    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
+    val currentAgent = state.agents.firstOrNull { it.id == currentAgentId }
     val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
     val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
-    val quickCandidates = (listOf(currentRef, defaultRef) + state.quickTextModels)
-        .filter { quickModelId(it).isNotBlank() }
-        .distinct()
-    val currentProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+    val agentRefs = currentAgent?.let { agent ->
+        buildList {
+            agent.primaryModel?.let { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+            agent.quickModels.forEach { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+        }
+    }.orEmpty()
+    val quickCandidates = if (currentAgent != null) {
+        (listOf(currentRef) + agentRefs)
+            .filter { quickModelId(it).isNotBlank() }
+            .distinct()
+    } else {
+        (listOf(currentRef, defaultRef) + state.quickTextModels)
+            .filter { quickModelId(it).isNotBlank() }
+            .distinct()
+    }
+    val currentProjectId = currentChat?.projectId
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
         Row(
@@ -1355,6 +1370,8 @@ overflow = TextOverflow.Ellipsis
       Text(
 when {
     current -> "Текущая модель"
+    currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
+    currentAgent != null -> "Быстрая модель агента"
     ref == defaultRef -> "По умолчанию · ${connection?.name ?: "Подключение"}"
     else -> connection?.name ?: id
 },
@@ -1366,7 +1383,13 @@ overflow = TextOverflow.Ellipsis
   }
         },
         onClick = {
-  if (ref == defaultRef) vm.useDefaultTextModelForChat() else vm.selectQuickTextModel(ref)
+  if (currentAgent != null) {
+      vm.selectAgentQuickModel(currentAgent.id, ref)
+  } else if (ref == defaultRef) {
+      vm.useDefaultTextModelForChat()
+  } else {
+      vm.selectQuickTextModel(ref)
+  }
   quickModelsOpen = false
         }
     )
