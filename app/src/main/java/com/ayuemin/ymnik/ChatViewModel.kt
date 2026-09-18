@@ -24,6 +24,7 @@ import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
 import com.ayuemin.ymnik.model.AgentKind
+import com.ayuemin.ymnik.model.AgentModelRef
 import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
@@ -449,6 +450,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             prefs.edit().remove(chatSkillsKey(chatId)).apply()
         }
         agentConversations.unlinkAgent(agentId)
+        knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, agentId)
         agentsRepository.delete(agentId)
 
         var chats = _state.value.chats.filterNot { it.id in conversationIds }
@@ -692,6 +694,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
         knowledgeBase.saveSettings(kind, ownerId, settings)
+        if (kind == KnowledgeOwnerKind.AGENT) {
+            agent(ownerId)?.let { profile ->
+                saveAgent(
+                    profile.copy(
+                        knowledgeBase = profile.knowledgeBase.copy(
+                            enabled = settings.enabled,
+                            embeddingModel = settings.embeddingModelId
+                                .trim()
+                                .takeIf { it.isNotBlank() }
+                                ?.let { AgentModelRef("openrouter", it) },
+                            topK = settings.topK
+                        )
+                    )
+                )
+            }
+        }
         touchKnowledgeOwner(kind, ownerId, "Настройки базы знаний сохранены")
     }
 
@@ -817,6 +835,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 projectsRepository.save(projects)
                 _state.value = _state.value.copy(projects = projects, status = status ?: _state.value.status)
             }
+            KnowledgeOwnerKind.AGENT -> {
+                agent(ownerId)?.let { agentsRepository.upsert(it.copy(updatedAt = now)) }
+                _state.value = _state.value.copy(
+                    agents = agentsRepository.list(),
+                    status = status ?: _state.value.status
+                )
+            }
         }
     }
 
@@ -832,11 +857,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return apiKey to effectiveTextBaseUrl(profile)
     }
 
-    private suspend fun knowledgeSystemContext(project: Project?, chat: ChatSession?, query: String): String {
+    private suspend fun knowledgeSystemContext(
+        project: Project?,
+        chat: ChatSession?,
+        query: String,
+        agentId: String? = null
+    ): String {
         if (query.isBlank()) return ""
         val owners = buildList {
-            project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
-            chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
+            if (agentId != null) {
+                add(KnowledgeOwnerKind.AGENT to agentId)
+            } else {
+                project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
+                chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
+            }
         }
         if (owners.isEmpty() || !knowledgeBase.hasEnabledKnowledge(owners)) return ""
         return runCatching {
@@ -3867,7 +3901,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             projectAutomation.deleteChat(chatId)
             prefs.edit().remove(chatSkillsKey(chatId)).apply()
         }
-        projectAgents.forEach { agentConversations.unlinkAgent(it.id) }
+        projectAgents.forEach { profile ->
+            agentConversations.unlinkAgent(profile.id)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, profile.id)
+        }
 
         projectsRepository.deleteProjectFiles(projectId)
         agentsRepository.deleteProjectAgents(projectId)
@@ -4612,7 +4649,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val knowledgeContext = if (requestAgent == null) {
                             knowledgeSystemContext(currentProject, currentChat, clean)
                         } else {
-                            ""
+                            knowledgeSystemContext(
+                                project = null,
+                                chat = null,
+                                query = clean,
+                                agentId = requestAgent.id
+                            )
                         }
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
