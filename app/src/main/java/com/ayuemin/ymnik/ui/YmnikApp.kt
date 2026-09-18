@@ -294,6 +294,9 @@ private fun ChatScreen(
     var projectsOpen by remember { mutableStateOf(false) }
     var selectedProjectId by remember { mutableStateOf<String?>(null) }
     var createProjectDirect by remember { mutableStateOf(false) }
+    var projectNavigationOriginChatId by remember { mutableStateOf<String?>(null) }
+    var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
+    var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
@@ -332,6 +335,17 @@ private fun ChatScreen(
         (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
+    BackHandler(
+        enabled = currentAgentId != null &&
+            agentChatReturnProjectId != null &&
+            !sidebarOpen &&
+            !projectsOpen
+    ) {
+        selectedProjectId = agentChatReturnProjectId
+        agentChatReturnProjectId = null
+        createProjectDirect = false
+        projectsOpen = true
+    }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
     val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
@@ -799,18 +813,24 @@ onBranch = if (message.role == "assistant") {
           sidebarOpen = false
       },
       onOpenProjects = {
+          projectNavigationOriginChatId = state.currentChatId
+          projectsOpenedFromSidebar = true
           selectedProjectId = null
           createProjectDirect = false
           projectsOpen = true
           sidebarOpen = false
       },
       onCreateProject = {
+          projectNavigationOriginChatId = state.currentChatId
+          projectsOpenedFromSidebar = true
           selectedProjectId = null
           createProjectDirect = true
           projectsOpen = true
           sidebarOpen = false
       },
       onOpenProject = { projectId ->
+          projectNavigationOriginChatId = state.currentChatId
+          projectsOpenedFromSidebar = true
           createProjectDirect = false
           selectedProjectId = projectId
           projectsOpen = true
@@ -986,12 +1006,28 @@ onBranch = if (message.role == "assistant") {
             state = state,
             vm = vm,
             onDismiss = {
-      projectsOpen = false
-      selectedProjectId = null
-      createProjectDirect = false
+                projectsOpen = false
+                selectedProjectId = null
+                createProjectDirect = false
+                agentChatReturnProjectId = null
+                if (projectsOpenedFromSidebar) {
+                    val origin = projectNavigationOriginChatId
+                    if (origin != null && state.chats.any { it.id == origin }) {
+                        vm.switchChat(origin)
+                    }
+                    projectsOpenedFromSidebar = false
+                    projectNavigationOriginChatId = null
+                    sidebarOpen = true
+                }
             },
             initialProjectId = selectedProjectId,
-            startCreate = createProjectDirect
+            startCreate = createProjectDirect,
+            onAgentConversationOpened = { projectId, _ ->
+                agentChatReturnProjectId = projectId
+                projectsOpen = false
+                selectedProjectId = null
+                createProjectDirect = false
+            }
         )
     }
 }
