@@ -1009,7 +1009,6 @@ onBranch = if (message.role == "assistant") {
                 projectsOpen = false
                 selectedProjectId = null
                 createProjectDirect = false
-                agentChatReturnProjectId = null
                 if (projectsOpenedFromSidebar) {
                     val origin = projectNavigationOriginChatId
                     if (origin != null && state.chats.any { it.id == origin }) {
