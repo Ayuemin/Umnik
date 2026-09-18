@@ -45,6 +45,27 @@ class AgentOrchestratorCodecTest {
     }
 
     @Test
+    fun parsesParallelGroup() {
+        val raw = """
+            {
+              "planSummary": "Два независимых исследования",
+              "userReply": "",
+              "completed": false,
+              "actions": [
+                {"id":"a","type":"CALL_AGENT","agentId":"agent-a","parallelGroup":"research"},
+                {"id":"b","type":"CALL_AGENT","agentId":"agent-b","parallelGroup":"research"}
+              ]
+            }
+        """.trimIndent()
+
+        val parsed = AgentOrchestratorCodec.parse(raw)
+
+        assertEquals(2, parsed.actions.size)
+        assertEquals("research", parsed.actions[0].parallelGroup)
+        assertEquals("research", parsed.actions[1].parallelGroup)
+    }
+
+    @Test
     fun parsesCompletionWithFinalResult() {
         val raw = """
             {
