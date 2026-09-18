@@ -3138,6 +3138,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Допустимые type: CALL_AGENT, REQUEST_REVISION, ASK_USER, CANCEL_TASK, COMPLETE_JOB.")
         appendLine("Чтобы передать все исходные вложения пользователя агенту, добавь строку USER в inputFileIds.")
         appendLine("Для ASK_USER заполни userReply и не ставь completed=true.")
+        appendLine("Если completed=false, обязательно верни хотя бы одно допустимое действие; пустой actions недопустим.")
         appendLine("Для COMPLETE_JOB поставь completed=true и помести готовый ответ пользователю в finalResult.")
     }
 
