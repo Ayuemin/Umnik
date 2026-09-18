@@ -113,7 +113,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialProjects = projectsRepository.list()
     private val initialAgents = ensureProjectAgents(initialProjects)
-    private val initialChats = ensureProjectOrchestrators(initialProjects, loadInitialChats())
+    private val initialChats = loadInitialChats()
     private val initialChatId = prefs.getString("current_chat_id", null)
         ?.takeIf { id -> initialChats.any { it.id == id } }
         ?: initialChats.first().id
@@ -2169,33 +2169,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val project = Project(
             id = UUID.randomUUID().toString(),
             name = name.trim().ifBlank { "Новый проект" },
-            role = role.trim(),
-            masterPrompt = masterPrompt.trim(),
+            // Legacy fields remain serializable for now but are not part of the new project model.
+            role = "",
+            masterPrompt = "",
             isFavorite = favorite
         )
         agentsRepository.createOrchestrator(project.id)
-        val orchestrator = ChatSession(
-            id = UUID.randomUUID().toString(),
-            title = "Оркестратор",
-            projectId = project.id,
-            mode = ChatMode.TEXT,
-            connectionProfileId = _state.value.activeConnectionProfileId,
-            textModelOverride = _state.value.currentChatTextModel ?: _state.value.textModel
-        )
         val projects = listOf(project) + _state.value.projects
-        val chats = listOf(orchestrator) + _state.value.chats
         projectsRepository.save(projects)
-        chatsRepository.save(chats)
-        projectAutomation.registerOrchestrator(project.id, orchestrator.id)
-        val runtime = ProjectChatRuntimeProfile(
-            modelId = orchestrator.textModelOverride,
-            reasoningEffort = _state.value.reasoningEffort,
-            tools = openRouterFeaturePrefs.tools(),
-            skillIds = project.skillIds
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Проект создан. Настройте Оркестратора и добавьте агентов."
         )
-        projectAutomation.saveProfile(orchestrator.id, runtime)
-        prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), runtime.skillIds).apply()
-        _state.value = _state.value.copy(agents = agentsRepository.list(), projects = projects, chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
         return project.id
     }
 
@@ -3738,47 +3726,63 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun deleteProject(projectId: String) {
         if (_state.value.isLoading) return
+
+        val projectAgents = _state.value.agents.filter { it.projectId == projectId }
+        val conversationIds = projectAgents
+            .flatMap { agentConversations.conversationsForAgent(it.id) }
+            .toSet()
+
         val active = _state.value.chats.firstOrNull {
-            it.projectId == projectId && RequestExecutionManager.hasActiveChat(it.id)
+            it.id in conversationIds && RequestExecutionManager.hasActiveChat(it.id)
         }
         if (active != null) {
             _state.value = _state.value.copy(status = "Нельзя удалить проект: «${active.title}» сейчас выполняет работу")
             return
         }
+
+        conversationIds.forEach { chatId ->
+            chatFilesRepository.deleteChat(chatId)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chatId)
+            chatMemory.deleteChat(chatId)
+            projectAutomation.deleteChat(chatId)
+            prefs.edit().remove(chatSkillsKey(chatId)).apply()
+        }
+        projectAgents.forEach { agentConversations.unlinkAgent(it.id) }
+
         projectsRepository.deleteProjectFiles(projectId)
         agentsRepository.deleteProjectAgents(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
-        _state.value.chats.filter { it.projectId == projectId }.forEach { chatMemory.deleteChat(it.id) }
+        projectAutomation.deleteProject(projectId)
+
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
-        val orchestratorId = projectAutomation.orchestratorChatId(projectId)
-        if (orchestratorId != null) {
-            chatFilesRepository.deleteChat(orchestratorId)
-            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, orchestratorId)
-            prefs.edit().remove(chatSkillsKey(orchestratorId)).apply()
+
+        var chats = _state.value.chats.filterNot {
+            it.id in conversationIds || it.projectId == projectId
         }
-        projectAutomation.deleteProject(projectId)
-        val chats = _state.value.chats.mapNotNull { chat ->
-            when {
-                chat.id == orchestratorId -> null
-                chat.projectId == projectId -> {
-                    projectAutomation.deleteChat(chat.id)
-                    chat.copy(projectId = null, stages = null)
-                }
-                else -> chat
-            }
+        if (chats.isEmpty()) {
+            chats = listOf(
+                ChatSession(
+                    id = UUID.randomUUID().toString(),
+                    title = "Новый чат",
+                    mode = ChatMode.TEXT,
+                    connectionProfileId = _state.value.activeConnectionProfileId
+                )
+            )
         }
         chatsRepository.save(chats)
-        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.firstOrNull()
+
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.first()
+        prefs.edit().putString("current_chat_id", current.id).apply()
         _state.value = _state.value.copy(
             agents = agentsRepository.list(),
             projects = projects,
             chats = chats,
-            currentChatId = current?.id ?: _state.value.currentChatId,
-            messages = current?.messages ?: emptyList(),
+            currentChatId = current.id,
+            messages = current.messages,
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Проект удалён. Оркестратор удалён вместе с ним; остальные чаты сохранены как обычные."
+            status = "Проект, Оркестратор, агенты и их рабочие данные удалены."
         )
     }
 
