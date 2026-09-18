@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -104,7 +105,6 @@ internal fun UmnikPanel(
                 content()
             }
         }
-        )
     } else {
         Surface(
             modifier = modifier.fillMaxWidth(),
@@ -118,7 +118,6 @@ internal fun UmnikPanel(
                 content()
             }
         }
-        )
     }
 }
 
@@ -162,7 +161,7 @@ internal fun UmnikInfoHint(
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.SemiBold
                 )
-                Spacer(Modifier.width(1.dp))
+                Spacer(Modifier.height(6.dp))
                 Text(
                     text,
                     style = MaterialTheme.typography.bodySmall,
