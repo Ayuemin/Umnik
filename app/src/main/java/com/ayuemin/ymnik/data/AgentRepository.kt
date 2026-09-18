@@ -10,11 +10,11 @@ import java.io.File
 import java.util.UUID
 
 /**
- * Persistent store for the new agent-first project architecture.
+ * Persistent store for isolated project agents.
  *
- * This repository intentionally does not read ChatSession settings and never clones
- * another agent implicitly. A new agent starts with neutral settings supplied by the
- * caller (connection/model may be provided only as technical defaults).
+ * Ordinary-chat defaults never enter this repository. A newly created agent is bare:
+ * its model slots, skills, knowledge base and memory are empty until configured from
+ * that agent's own settings.
  */
 class AgentRepository(private val context: Context) {
     private val gson = Gson()
@@ -39,36 +39,26 @@ class AgentRepository(private val context: Context) {
 
     fun createSpecialist(
         projectId: String,
-        name: String = "Новый агент",
-        connectionProfileId: String? = null,
-        modelId: String? = null
+        name: String = "Новый агент"
     ): AgentProfile = create(
         projectId = projectId,
         kind = AgentKind.SPECIALIST,
-        name = name,
-        connectionProfileId = connectionProfileId,
-        modelId = modelId
+        name = name
     )
 
     fun createOrchestrator(
         projectId: String,
-        name: String = "Оркестратор",
-        connectionProfileId: String? = null,
-        modelId: String? = null
+        name: String = "Оркестратор"
     ): AgentProfile = create(
         projectId = projectId,
         kind = AgentKind.ORCHESTRATOR,
-        name = name,
-        connectionProfileId = connectionProfileId,
-        modelId = modelId
+        name = name
     )
 
     private fun create(
         projectId: String,
         kind: AgentKind,
-        name: String,
-        connectionProfileId: String?,
-        modelId: String?
+        name: String
     ): AgentProfile {
         check(loadError == null) { loadError ?: "Хранилище агентов недоступно" }
         require(projectId.isNotBlank()) { "projectId обязателен" }
@@ -78,9 +68,9 @@ class AgentRepository(private val context: Context) {
             id = UUID.randomUUID().toString(),
             projectId = projectId,
             kind = kind,
-            name = name.trim().ifBlank { if (kind == AgentKind.ORCHESTRATOR) "Оркестратор" else "Новый агент" },
-            connectionProfileId = connectionProfileId?.trim()?.takeIf { it.isNotBlank() },
-            modelId = modelId?.trim()?.takeIf { it.isNotBlank() },
+            name = name.trim().ifBlank {
+                if (kind == AgentKind.ORCHESTRATOR) "Оркестратор" else "Новый агент"
+            },
             reasoningEnabled = false,
             reasoningEffort = ReasoningEffort.MEDIUM,
             webSearchEnabled = false,
@@ -89,7 +79,7 @@ class AgentRepository(private val context: Context) {
             updatedAt = now
         )
         save(list() + agent)
-        agentRoot(agent.id).mkdirs()
+        ensureAgentLayout(agent.id)
         return agent
     }
 
@@ -101,8 +91,6 @@ class AgentRepository(private val context: Context) {
             },
             role = profile.role.trim(),
             instruction = profile.instruction.trim(),
-            connectionProfileId = profile.connectionProfileId?.trim()?.takeIf { it.isNotBlank() },
-            modelId = profile.modelId?.trim()?.takeIf { it.isNotBlank() },
             updatedAt = System.currentTimeMillis()
         )
         val current = list()
@@ -112,7 +100,7 @@ class AgentRepository(private val context: Context) {
             current + clean
         }
         save(next)
-        agentRoot(clean.id).mkdirs()
+        ensureAgentLayout(clean.id)
         return clean
     }
 
@@ -130,6 +118,23 @@ class AgentRepository(private val context: Context) {
     }
 
     fun agentRoot(agentId: String): File = File(root, safeId(agentId))
+
+    fun conversationsRoot(agentId: String): File = File(agentRoot(agentId), "conversations")
+    fun skillsRoot(agentId: String): File = File(agentRoot(agentId), "skills")
+    fun filesRoot(agentId: String): File = File(agentRoot(agentId), "files")
+    fun knowledgeRoot(agentId: String): File = File(agentRoot(agentId), "knowledge")
+    fun memoryRoot(agentId: String): File = File(agentRoot(agentId), "memory")
+    fun generatedRoot(agentId: String): File = File(agentRoot(agentId), "generated")
+
+    private fun ensureAgentLayout(agentId: String) {
+        agentRoot(agentId).mkdirs()
+        conversationsRoot(agentId).mkdirs()
+        skillsRoot(agentId).mkdirs()
+        filesRoot(agentId).mkdirs()
+        knowledgeRoot(agentId).mkdirs()
+        memoryRoot(agentId).mkdirs()
+        generatedRoot(agentId).mkdirs()
+    }
 
     private fun save(agents: List<AgentProfile>) {
         check(loadError == null) { loadError ?: "Хранилище агентов недоступно" }
