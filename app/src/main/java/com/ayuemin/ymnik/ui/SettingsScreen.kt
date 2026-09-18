@@ -272,7 +272,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var profileOccupation by remember(state.userProfile.occupation) { mutableStateOf(state.userProfile.occupation) }
     var profileNote by remember(state.userProfile.note) { mutableStateOf(state.userProfile.note) }
     val themes = ThemeChoice.entries
-    val profileScopes = UserProfileScope.entries
     val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::importAnswerSound)
@@ -720,14 +719,24 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             maxLines = 3
                         )
                         Spacer(Modifier.height(9.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            items(profileScopes) { scope ->
-                                FilterChip(
-                                    selected = state.userProfileScope == scope,
-                                    onClick = { vm.setUserProfileScope(scope) },
-                                    label = { Text(profileScopeLabel(scope)) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Использовать в обычных чатах", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "В проекты и агентам этот профиль не передаётся.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            Switch(
+                                checked = state.userProfileScope == UserProfileScope.CHATS,
+                                onCheckedChange = { enabled ->
+                                    vm.setUserProfileScope(if (enabled) UserProfileScope.CHATS else UserProfileScope.OFF)
+                                }
+                            )
                         }
                         Spacer(Modifier.height(8.dp))
                         FilledTonalButton(
@@ -1627,10 +1636,8 @@ private fun imageParameterSummary(state: UiState): String =
         .joinToString(" · ")
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
-    UserProfileScope.OFF -> "Выкл"
-    UserProfileScope.CHATS -> "Только чаты"
-    UserProfileScope.PROJECTS -> "Только проекты"
-    UserProfileScope.EVERYWHERE -> "Везде"
+    UserProfileScope.OFF -> "выкл"
+    UserProfileScope.CHATS -> "для чатов"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {
