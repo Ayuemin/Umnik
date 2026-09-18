@@ -1273,6 +1273,7 @@ private fun ChatHeader(
 ) {
     var quickModelsOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
+    var clearAgentChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
@@ -1396,7 +1397,43 @@ overflow = TextOverflow.Ellipsis
 }
       }
   }
+
+  if (currentAgent != null) {
+      IconButton(
+onClick = { clearAgentChatConfirm = true },
+enabled = !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
+modifier = Modifier.size(42.dp)
+      ) {
+Icon(
+    Icons.Outlined.DeleteSweep,
+    contentDescription = "Очистить переписку",
+    tint = MaterialTheme.colorScheme.onSurfaceVariant
+)
+      }
+  }
         }
+    }
+
+    if (clearAgentChatConfirm && currentAgent != null) {
+        AlertDialog(
+  onDismissRequest = { clearAgentChatConfirm = false },
+  title = { Text("Очистить переписку?") },
+  text = {
+      Text(
+"История разговора и временный контекст будут удалены. " +
+    "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+      )
+  },
+  confirmButton = {
+      TextButton(onClick = {
+clearAgentChatConfirm = false
+vm.clearChat()
+      }) { Text("Очистить") }
+  },
+  dismissButton = {
+      TextButton(onClick = { clearAgentChatConfirm = false }) { Text("Отмена") }
+  }
+        )
     }
 
     if (usageOpen && activeUsage != null) {
