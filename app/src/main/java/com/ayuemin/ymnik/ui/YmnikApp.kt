@@ -2805,8 +2805,7 @@ private fun imageProtocolLabel(protocol: ImageApiProtocol): String = when (proto
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
     UserProfileScope.OFF -> "Выкл"
-    UserProfileScope.PROJECTS -> "Только проекты"
-    UserProfileScope.EVERYWHERE -> "Везде"
+    UserProfileScope.CHATS -> "Вкл"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {
