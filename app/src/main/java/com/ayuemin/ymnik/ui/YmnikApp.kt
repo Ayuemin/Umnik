@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -88,7 +89,6 @@ import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -298,6 +298,7 @@ private fun ChatScreen(
     var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
     var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
+    var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
     var projectToolsExpanded by remember { mutableStateOf(false) }
@@ -569,37 +570,57 @@ onBranch = if (message.role == "assistant") {
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
 
-        if ((!imagePromptMode && currentChatFiles.isNotEmpty()) || state.pendingAttachments.isNotEmpty()) {
+        val visibleChatFiles = if (imagePromptMode) emptyList() else currentChatFiles
+        val attachmentCount = visibleChatFiles.size + state.pendingAttachments.size
+        if (attachmentCount > 0) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (!imagePromptMode) {
-                        items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
-                            AssistChip(
-                                onClick = { vm.removeChatFile(file.id) },
-                                label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
-                                },
-                                trailingIcon = {
-                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл из контекста чата", modifier = Modifier.size(18.dp))
-                                }
+                Column(Modifier.fillMaxWidth()) {
+                    Surface(
+                        onClick = { attachmentsExpanded = !attachmentsExpanded },
+                        color = Color.Transparent
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.AttachFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(7.dp))
+                            Text(
+                                "Вложения · $attachmentCount",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                if (attachmentsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = if (attachmentsExpanded) "Свернуть вложения" else "Показать вложения",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    items(state.pendingAttachments, key = { "pending-${it.uri}" }) { attachment ->
-                        AssistChip(
-                            onClick = { vm.removeAttachment(attachment.uri) },
-                            label = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = {
-                                Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            trailingIcon = {
-                                Icon(Icons.Outlined.Close, contentDescription = "Убрать", modifier = Modifier.size(18.dp))
-                            }
-                        )
+                    if (attachmentsExpanded) {
+                        visibleChatFiles.forEach { file ->
+                            AttachmentListRow(
+                                name = file.name,
+                                subtitle = "В контексте чата",
+                                icon = Icons.Outlined.Description,
+                                onRemove = { vm.removeChatFile(file.id) }
+                            )
+                        }
+                        state.pendingAttachments.forEach { attachment ->
+                            AttachmentListRow(
+                                name = attachment.name,
+                                subtitle = "К отправке",
+                                icon = Icons.Outlined.AttachFile,
+                                onRemove = { vm.removeAttachment(attachment.uri) }
+                            )
+                        }
                     }
                 }
             }
@@ -1301,6 +1322,47 @@ private fun formatRequestDuration(seconds: Int): String {
 }
 
 @Composable
+private fun AttachmentListRow(
+    name: String,
+    subtitle: String,
+    icon: ImageVector,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+            )
+        }
+        IconButton(onClick = onRemove, modifier = Modifier.size(34.dp)) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Убрать $name",
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun ChatHeader(
     state: UiState,
     vm: ChatViewModel,
@@ -1431,6 +1493,20 @@ overflow = TextOverflow.Ellipsis
     )
 }
       }
+  }
+
+  val locationName = currentAgent?.name ?: currentChat?.title.orEmpty()
+  if (locationName.isNotBlank()) {
+      Spacer(Modifier.width(4.dp))
+      Text(
+          locationName,
+          modifier = Modifier.widthIn(max = 88.dp),
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+      )
+      Spacer(Modifier.width(2.dp))
   }
 
   if (currentChat != null) {
@@ -2106,7 +2182,7 @@ private fun MessageCard(
                 }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
-                    GeneratedFileCard(file)
+                    GeneratedFileCard(file, onSave = { onSaveGenerated(file) })
                 }
                 val usageMeta = listOfNotNull(
                     message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
@@ -2177,11 +2253,9 @@ private fun MessageCard(
                         onClick = onOpenRouterSpeech
                     )
                     CompactMessageAction(
-                        icon = Icons.Outlined.Download,
-                        description = if (message.generatedFiles.size == 1) "Скачать файл" else "Сохранить ответ файлом",
-                        onClick = {
-                            message.generatedFiles.singleOrNull()?.let(onSaveGenerated) ?: onExportText()
-                        }
+                        icon = Icons.Outlined.Description,
+                        description = "Сохранить текст ответа файлом",
+                        onClick = onExportText
                     )
                 }
                 if (onBranch != null) {
@@ -2534,7 +2608,10 @@ private fun splitRichBlocks(text: String): List<MessagePart> {
 }
 
 @Composable
-private fun GeneratedFileCard(file: GeneratedFile) {
+private fun GeneratedFileCard(
+    file: GeneratedFile,
+    onSave: () -> Unit
+) {
     val context = LocalContext.current
     val isImage = file.mimeType.startsWith("image/")
     val isAudio = file.mimeType.startsWith("audio/")
@@ -2555,41 +2632,52 @@ private fun GeneratedFileCard(file: GeneratedFile) {
                 .clip(RoundedCornerShape(14.dp)),
             contentScale = ContentScale.Fit
         )
-    } else {
-        val rowContent: @Composable () -> Unit = {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Outlined.Description,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    file.name,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+        Spacer(Modifier.height(6.dp))
+    }
+
+    Surface(
+        onClick = onSave,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (isImage) Icons.Outlined.Image else Icons.Outlined.Description,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                file.name,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Icon(
+                Icons.Outlined.Download,
+                contentDescription = "Скачать файл",
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isVideo) {
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    onClick = { openGeneratedFile(context, file) },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.PlayArrow,
+                        contentDescription = "Открыть видео",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
-        }
-        if (isVideo) {
-            Surface(
-                onClick = { openGeneratedFile(context, file) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) { rowContent() }
-        } else {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) { rowContent() }
         }
     }
 

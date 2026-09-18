@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 130
-        versionName = "1.18.1"
+        versionCode = 131
+        versionName = "1.18.2"
     }
 
     buildFeatures {
