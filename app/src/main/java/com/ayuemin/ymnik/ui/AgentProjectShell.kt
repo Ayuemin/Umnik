@@ -822,8 +822,10 @@ private fun ModelField(
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text(label) },
-            trailingIcon = info?.let { hint ->
-                { UmnikInfoHint(title = label, text = hint) }
+            trailingIcon = if (info != null) {
+                { UmnikInfoHint(title = label, text = info) }
+            } else {
+                null
             },
             singleLine = true
         )
