@@ -1398,7 +1398,7 @@ overflow = TextOverflow.Ellipsis
       }
   }
 
-  if (currentAgent != null) {
+  if (currentChat != null) {
       IconButton(
 onClick = { clearAgentChatConfirm = true },
 enabled = !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
@@ -1414,14 +1414,18 @@ Icon(
         }
     }
 
-    if (clearAgentChatConfirm && currentAgent != null) {
+    if (clearAgentChatConfirm && currentChat != null) {
         AlertDialog(
   onDismissRequest = { clearAgentChatConfirm = false },
   title = { Text("Очистить переписку?") },
   text = {
       Text(
-"История разговора и временный контекст будут удалены. " +
-    "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+if (currentAgent != null) {
+    "История разговора и временный контекст будут удалены. " +
+        "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+} else {
+    "История разговора и временные файлы контекста текущего чата будут удалены."
+}
       )
   },
   confirmButton = {
