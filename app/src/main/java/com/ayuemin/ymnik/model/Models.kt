@@ -7,6 +7,7 @@ enum class ChatMode {
 
 enum class UserProfileScope {
     OFF,
+    CHATS,
     PROJECTS,
     EVERYWHERE
 }
