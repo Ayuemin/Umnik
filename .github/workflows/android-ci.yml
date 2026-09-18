@@ -34,85 +34,10 @@ jobs:
           packages: platform-tools
 
       - name: Install Android 17 platform
-        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v6
 
-      - name: Unit tests and debug APK
-        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:assembleDebug --stacktrace
-
-      - name: Restore permanent signing key
-        if: github.event_name == 'push' && github.ref_name == 'work/modernize-sdk37'
-        shell: bash
-        env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
-            if [ -z "${!value:-}" ]; then
-              echo "Missing GitHub Actions secret: $value"
-              exit 1
-            fi
-          done
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
-          keytool -list \
-            -keystore "$RUNNER_TEMP/umnik-release.jks" \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" >/dev/null
-
-      - name: Build signed 1.18.0 test release APK
-        if: github.event_name == 'push' && github.ref_name == 'work/modernize-sdk37'
-        env:
-          UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-release.jks
-          UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
-
-      - name: Verify package and permanent signature
-        if: github.event_name == 'push' && github.ref_name == 'work/modernize-sdk37'
-        shell: bash
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-        run: |
-          set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
-          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
-          AAPT="$ANDROID_HOME/build-tools/37.0.0/aapt"
-
-          "$APKSIGNER" verify --verbose --print-certs "$APK"
-          "$AAPT" dump badging "$APK" | grep -q "package: name='com.ayuemin.umnik' versionCode='129' versionName='1.18.0'"
-
-          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" \
-            | sed -n 's/^.*certificate SHA-256 digest: //p' \
-            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
-          KEY_CERT=$(keytool -list -v \
-            -keystore "$RUNNER_TEMP/umnik-release.jks" \
-            -storepass "$KEYSTORE_PASSWORD" \
-            -alias "$KEY_ALIAS" \
-            | sed -n 's/^[[:space:]]*SHA256: //p' \
-            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
-
-          test -n "$APK_CERT"
-          test -n "$KEY_CERT"
-          test "$APK_CERT" = "$KEY_CERT"
-
-          mkdir -p dist
-          cp "$APK" dist/Umnik-v1.18.0-test-signed.apk
-          sha256sum dist/Umnik-v1.18.0-test-signed.apk > dist/Umnik-v1.18.0-test-signed.apk.sha256
-
-      - name: Upload signed 1.18.0 test APK
-        if: github.event_name == 'push' && github.ref_name == 'work/modernize-sdk37'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Umnik-v1.18.0-signed-test
-          path: |
-            dist/Umnik-v1.18.0-test-signed.apk
-            dist/Umnik-v1.18.0-test-signed.apk.sha256
-          if-no-files-found: error
-          retention-days: 14
+      - name: Lint, unit tests and debug APK
+        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug --stacktrace

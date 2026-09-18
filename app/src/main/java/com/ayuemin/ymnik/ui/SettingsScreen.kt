@@ -11,7 +11,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Check
@@ -37,9 +36,7 @@ import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -73,9 +70,7 @@ import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
-import com.ayuemin.ymnik.model.ImageApiProtocol
 import com.ayuemin.ymnik.model.ModelInfo
-import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
@@ -142,11 +137,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
         Text("Пока навыков нет. Импортируйте SKILL.md или папку навыка.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     } else {
         state.skills.forEach { skill ->
-            ElevatedCard(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-            ) {
+            UmnikPanel(modifier = Modifier.padding(vertical = 4.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(start = 13.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
@@ -165,7 +156,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
 }
 
 private enum class SettingsCategory(val title: String, val subtitle: String) {
-    CONNECTION("Подключение", "OpenRouter и личный сервер"),
+    CONNECTION("Подключение", "API-ключ OpenRouter"),
     MODELS("Модели", "Чат, изображения, reasoning и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
@@ -184,19 +175,22 @@ private fun settingsCategoryIcon(category: SettingsCategory): ImageVector = when
 
 @Composable
 private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
-        TextButton(
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
+    UmnikPanel(onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(UmnikPanelPadding),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(settingsCategoryIcon(category), contentDescription = null)
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(settingsCategoryIcon(category), contentDescription = null, modifier = Modifier.size(21.dp))
+                }
+            }
             Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+            Column(Modifier.weight(1f)) {
                 Text(category.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(2.dp))
                 Text(
@@ -205,6 +199,7 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -236,32 +231,10 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var diagnosticLoggingEnabled by remember { mutableStateOf(vm.isDiagnosticLoggingEnabled()) }
     var diagnosticLogBytes by remember { mutableStateOf(vm.diagnosticLogSize()) }
     var diagnosticFileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
-    var editingProfileId by remember { mutableStateOf("openrouter") }
-    val editingProfile = state.connectionProfiles.firstOrNull { it.id == editingProfileId }
-        ?: state.connectionProfiles.first()
-    var connectionName by remember(editingProfile.id, editingProfile.name) { mutableStateOf(editingProfile.name) }
-    var connectionUrl by remember(editingProfile.id, editingProfile.baseUrl, editingProfile.useProviderDefaults) {
-        mutableStateOf(vm.connectionTextEndpoint(editingProfile.id))
-    }
-    var connectionKey by remember(editingProfile.id) { mutableStateOf("") }
-    var connectionAdvancedExpanded by remember(editingProfile.id) { mutableStateOf(false) }
-    var connectionImageEnabled by remember(editingProfile.id, editingProfile.imageEnabled) {
-        mutableStateOf(vm.connectionImageEnabled(editingProfile.id))
-    }
-    var connectionImageUrl by remember(editingProfile.id, editingProfile.imageBaseUrl, editingProfile.useProviderDefaults) {
-        mutableStateOf(vm.connectionImageEndpoint(editingProfile.id))
-    }
-    var connectionImageProtocol by remember(editingProfile.id, editingProfile.imageProtocol) {
-        mutableStateOf(editingProfile.imageProtocol ?: ImageApiProtocol.AUTO)
-    }
-    var connectionSameImageKey by remember(editingProfile.id, editingProfile.useSameImageApiKey) {
-        mutableStateOf(vm.connectionUsesSameImageKey(editingProfile.id))
-    }
-    var connectionImageKey by remember(editingProfile.id) { mutableStateOf("") }
-    var connectionUseProviderDefaults by remember(editingProfile.id, editingProfile.useProviderDefaults, editingProfile.baseUrl) {
-        mutableStateOf(vm.connectionUsesProviderDefaults(editingProfile.id))
-    }
-    var connectionContextWindow by remember(editingProfile.id, editingProfile.contextLimitTokens) {
+    val editingProfile = state.connectionProfiles.first()
+    var connectionKey by remember { mutableStateOf("") }
+    var connectionAdvancedExpanded by remember { mutableStateOf(false) }
+    var connectionContextWindow by remember(editingProfile.contextLimitTokens) {
         mutableStateOf(editingProfile.contextLimitTokens?.toString().orEmpty())
     }
     var customColorText by remember(state.customThemeColor) {
@@ -307,8 +280,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                 when (settingsCategory) {
                     SettingsCategory.CONNECTION -> {
                 item {
-                    val openRouterSettingsProfile = state.connectionProfiles.firstOrNull { it.type == ProviderType.OPENROUTER }
-                        ?: state.connectionProfiles.first()
+                    val openRouterSettingsProfile = state.connectionProfiles.first()
                     ExpandableSettingsCard(
                         title = "OpenRouter",
                         subtitle = "API-ключ и соединение",
@@ -322,10 +294,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
-                        ServerConnectionSettings()
-                        Spacer(Modifier.height(12.dp))
-                        HorizontalDivider()
-                        Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
                             value = connectionKey,
                             onValueChange = { connectionKey = it },
@@ -370,31 +338,11 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Text("Технические настройки OpenRouter")
                         }
                         if (connectionAdvancedExpanded) {
-                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Автоматический адрес API")
-                                    Text(
-                                        "Рекомендуется. Umnik использует актуальный стандартный адрес OpenRouter.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Switch(
-                                    checked = connectionUseProviderDefaults,
-                                    onCheckedChange = { connectionUseProviderDefaults = it }
-                                )
-                            }
-                            if (!connectionUseProviderDefaults) {
-                                Spacer(Modifier.height(8.dp))
-                                OutlinedTextField(
-                                    value = connectionUrl,
-                                    onValueChange = { connectionUrl = it.trim().take(300) },
-                                    modifier = Modifier.fillMaxWidth(),
-                                    label = { Text("Адрес API OpenRouter") },
-                                    placeholder = { Text("https://openrouter.ai/api/v1") },
-                                    singleLine = true
-                                )
-                            }
+                            Text(
+                                "Адрес API фиксирован на официальном OpenRouter. Здесь можно только вручную ограничить размер контекста для моделей, где это необходимо.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                             Spacer(Modifier.height(8.dp))
                             OutlinedTextField(
                                 value = connectionContextWindow,
@@ -412,22 +360,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             )
                             Spacer(Modifier.height(9.dp))
                             FilledTonalButton(
-                                onClick = {
-                                    vm.saveConnectionProfile(
-                                        profileId = openRouterSettingsProfile.id,
-                                        name = "OpenRouter",
-                                        baseUrl = connectionUrl,
-                                        apiKey = connectionKey.takeIf { it.isNotBlank() },
-                                        imageEnabled = true,
-                                        imageBaseUrl = null,
-                                        imageProtocol = ImageApiProtocol.AUTO,
-                                        useSameImageApiKey = true,
-                                        imageApiKey = null,
-                                        useProviderDefaults = connectionUseProviderDefaults,
-                                        contextLimitTokens = connectionContextWindow.toIntOrNull()
-                                    )
-                                    connectionKey = ""
-                                },
+                                onClick = { vm.saveOpenRouterContextLimit(connectionContextWindow.toIntOrNull()) },
                                 modifier = Modifier.fillMaxWidth()
                             ) { Text("Сохранить технические настройки") }
                         }
@@ -566,7 +499,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     ) {
                         Surface(
                             modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = UmnikItemShape,
                             color = MaterialTheme.colorScheme.surfaceContainerHigh
                         ) {
                             Row(
@@ -914,11 +847,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                 item {
                     val userFiles = state.storedFiles.filter { it.deletable }
                     val userBytes = userFiles.sumOf { it.size }
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(22.dp),
-                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-                    ) {
+                    UmnikPanel {
                         TextButton(
                             onClick = {
                                 vm.refreshStorage()
@@ -945,11 +874,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     }
                     SettingsCategory.ABOUT -> {
                 item {
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(18.dp),
-                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-                    ) {
+                    UmnikPanel {
                         TextButton(
                             onClick = {
                                 vm.openUsageGuide()
@@ -1138,10 +1063,7 @@ private fun ImageParametersDialog(
                 if (aspectRatios.isEmpty() && resolutions.isEmpty()) {
                     Spacer(Modifier.height(10.dp))
                     Text(
-                        if (imageProfile?.type == ProviderType.OPENROUTER)
-                            "Модель не сообщила доступные параметры размера. Umnik оставит режим «Авто»."
-                        else
-                            "Совместимый API не сообщает Umnik единый список параметров размера. Для него используется режим «Авто».",
+                        "Модель не сообщила доступные параметры размера. Umnik оставит режим «Авто».",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1171,20 +1093,24 @@ private fun ExpandableSettingsCard(
     onToggle: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
+    UmnikPanel {
         TextButton(
             onClick = onToggle,
             modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
+            contentPadding = UmnikPanelPadding
         ) {
-            Icon(icon, contentDescription = null)
-            Spacer(Modifier.width(10.dp))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                }
+            }
+            Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text(title, modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.Bold)
+                Text(title, modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
                 Text(
                     subtitle,
                     modifier = Modifier.fillMaxWidth(),
@@ -1196,11 +1122,12 @@ private fun ExpandableSettingsCard(
             }
             Icon(
                 if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = if (expanded) "Свернуть" else "Развернуть"
+                contentDescription = if (expanded) "Свернуть" else "Развернуть",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         if (expanded) {
-            HorizontalDivider()
+            HorizontalDivider(color = umnikDividerColor())
             Column(Modifier.padding(16.dp)) { content() }
         }
     }
@@ -1222,11 +1149,7 @@ private fun ReasoningSettingsCard(
         .distinct()
     val imageInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
 
-    ElevatedCard(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-    ) {
+    UmnikPanel {
         TextButton(
             onClick = onToggle,
             modifier = Modifier.fillMaxWidth(),

@@ -6,7 +6,7 @@ import com.google.gson.JsonObject
 import okio.BufferedSource
 import java.io.IOException
 
-/** Collects OpenRouter/OpenAI-compatible SSE chat-completion deltas into the same
+/** Collects OpenRouter SSE chat-completion deltas into the same
  * Completion shape used by the non-streaming parser. Tool calls are assembled by
  * index and are executed only after the stream is complete. */
 internal object OpenRouterStreamParser {

@@ -4,12 +4,15 @@ import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import com.ayuemin.ymnik.model.ThemeChoice
@@ -33,8 +36,20 @@ fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () ->
         ThemeChoice.AMBER -> if (dark) amberDark() else amberLight()
     }
 
-    MaterialTheme(colorScheme = colors, content = content)
+    MaterialTheme(
+        colorScheme = colors,
+        shapes = UmnikShapes,
+        content = content
+    )
 }
+
+private val UmnikShapes = Shapes(
+    extraSmall = RoundedCornerShape(12.dp),
+    small = RoundedCornerShape(16.dp),
+    medium = RoundedCornerShape(20.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp)
+)
 
 private fun baseLight(
     primary: Color,

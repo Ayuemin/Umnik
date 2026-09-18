@@ -1,4 +1,4 @@
-// Umnik v1.18.1 — orchestrator protocol hotfix
+// Umnik v1.19.0 — Android-only OpenRouter architecture
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 132
-        versionName = "1.18.3"
+        versionCode = 133
+        versionName = "1.19.0"
     }
 
     buildFeatures {
@@ -59,12 +59,10 @@ android {
                 "proguard-rules.pro"
             )
             // Official GitHub Releases are signed with the permanent project key.
-            // Local release builds without signing variables remain debug-signed
-            // for development/testing only and must not be published.
-            signingConfig = if (releaseSigningConfigured) {
-                signingConfigs.getByName("release")
-            } else {
-                signingConfigs.getByName("debug")
+            // Without all signing variables, a local release build stays unsigned;
+            // it must never silently fall back to the debug certificate.
+            if (releaseSigningConfigured) {
+                signingConfig = signingConfigs.getByName("release")
             }
         }
     }

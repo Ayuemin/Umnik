@@ -23,7 +23,6 @@ import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -81,22 +80,27 @@ fun AgentProjectDetailDialog(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     FilledTonalButton(
                         onClick = {
                             editingAgentId = vm.createAgent(project.id)
                         },
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier.weight(1f),
+                        shape = UmnikFieldShape
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Новый агент")
                     }
-                    OutlinedButton(
+                    UmnikCircleAction(
+                        icon = Icons.Outlined.Settings,
+                        contentDescription = "Настройки проекта",
                         onClick = { projectSettingsOpen = true }
-                    ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = "Настройки проекта")
-                    }
+                    )
                 }
             }
 
@@ -215,16 +219,8 @@ private fun AgentCard(
         ?.ifBlank { primaryModelId }
         ?: "Основная модель не выбрана"
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = if (agent.kind == AgentKind.ORCHESTRATOR)
-                MaterialTheme.colorScheme.primaryContainer
-            else
-                MaterialTheme.colorScheme.surfaceContainer
-        )
-    ) {
-        Column(Modifier.fillMaxWidth().padding(14.dp)) {
+    UmnikPanel(selected = agent.kind == AgentKind.ORCHESTRATOR) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -247,12 +243,14 @@ private fun AgentCard(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
-                IconButton(onClick = onSettings) {
-                    Icon(Icons.Outlined.Edit, contentDescription = "Настройки агента")
-                }
+                UmnikCircleAction(
+                    icon = Icons.Outlined.Edit,
+                    contentDescription = "Настройки агента",
+                    onClick = onSettings
+                )
             }
 
-            Spacer(Modifier.height(8.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
                 primaryModelLabel,
                 style = MaterialTheme.typography.labelMedium,
@@ -262,10 +260,11 @@ private fun AgentCard(
                     MaterialTheme.colorScheme.onSurfaceVariant
             )
 
-            Spacer(Modifier.height(10.dp))
+            Spacer(Modifier.height(12.dp))
             FilledTonalButton(
                 onClick = onOpenChat,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                shape = UmnikFieldShape
             ) {
                 Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
@@ -815,30 +814,33 @@ private fun ToggleSettingRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit
 ) {
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(Modifier.weight(1f)) {
-            Text(title, fontWeight = FontWeight.Medium)
-            Text(
-                subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+    UmnikPanel {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Medium)
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Switch(checked = checked, onCheckedChange = onCheckedChange)
         }
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
 @Composable
 private fun AgentSettingsSectionTitle(text: String) {
-    Column {
-        Spacer(Modifier.height(4.dp))
-        Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(2.dp))
-        HorizontalDivider()
-    }
+    Text(
+        text,
+        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 @Composable
@@ -895,44 +897,65 @@ private fun SimpleProjectSettingsDialog(
     var favorite by remember(project.id) { mutableStateOf(project.isFavorite) }
     var deleteConfirm by remember(project.id) { mutableStateOf(false) }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Кабинет") },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it.take(120) },
+    FullScreenPanel(title = "Настройки проекта", onBack = onDismiss) {
+        LazyColumn(
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            item {
+                UmnikPanel {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        OutlinedTextField(
+                            value = name,
+                            onValueChange = { name = it.take(120) },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Название") },
+                            singleLine = true,
+                            shape = UmnikFieldShape
+                        )
+                        ToggleSettingRow(
+                            title = "Закрепить",
+                            subtitle = "Показывать проект выше остальных",
+                            checked = favorite,
+                            onCheckedChange = { favorite = it }
+                        )
+                        Text(
+                            "У проекта нет общей инструкции, навыков или базы знаний. Это кабинет для Оркестратора и агентов.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            item {
+                Button(
+                    onClick = {
+                        vm.updateProject(project.id, name, favorite)
+                        onDismiss()
+                    },
+                    enabled = name.isNotBlank(),
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Название") },
-                    singleLine = true
-                )
-                ToggleSettingRow(
-                    title = "Закрепить",
-                    subtitle = "Показывать проект выше остальных",
-                    checked = favorite,
-                    onCheckedChange = { favorite = it }
-                )
-                Text(
-                    "У проекта нет общей инструкции, навыков или базы знаний. Это только кабинет для Оркестратора и агентов.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                TextButton(onClick = { deleteConfirm = true }) {
+                    shape = UmnikFieldShape
+                ) {
+                    Text("Сохранить")
+                }
+            }
+            item {
+                TextButton(
+                    onClick = { deleteConfirm = true },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
                     Text("Удалить проект")
                 }
             }
-        },
-        confirmButton = {
-            TextButton(onClick = {
-                vm.updateProject(project.id, name, "", "", favorite)
-                onDismiss()
-            }) { Text("Сохранить") }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
-    )
+        }
+    }
 
     if (deleteConfirm) {
         AlertDialog(

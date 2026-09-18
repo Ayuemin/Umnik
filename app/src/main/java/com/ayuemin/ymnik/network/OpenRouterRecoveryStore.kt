@@ -12,7 +12,6 @@ internal data class OpenRouterRecoveryRecord(
     val apiKeyFingerprint: String,
     val baseUrl: String,
     val modelId: String,
-    val payloadJson: String,
     val generationId: String? = null,
     val cacheStatus: String? = null,
     val generationSeenAt: Long? = null,
@@ -47,10 +46,6 @@ internal class OpenRouterRecoveryStore(context: Context) {
         )
     }
 
-    fun updatePayload(requestId: String, payloadJson: String) = synchronized(lock) {
-        val current = get(requestId) ?: return@synchronized
-        writeAtomic(current.copy(payloadJson = payloadJson, updatedAt = System.currentTimeMillis()))
-    }
 
     fun remove(requestId: String) = synchronized(lock) {
         val file = fileFor(requestId)

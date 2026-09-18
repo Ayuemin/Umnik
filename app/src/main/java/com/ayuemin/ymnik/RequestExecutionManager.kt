@@ -12,8 +12,6 @@ import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
-import com.ayuemin.ymnik.network.ServerJobRecoveryRecord
-import com.ayuemin.ymnik.network.ServerJobRecoveryStore
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -29,8 +27,7 @@ import kotlinx.coroutines.launch
  *
  * Android 14+ runs top-level requests as User-Initiated Data Transfer jobs. Older Android
  * versions keep the foreground-service fallback. Billing safety is independent from the
- * transport: an interrupted direct OpenRouter POST is never replayed blindly, while a
- * personal-server request is recovered through its idempotent server job ID.
+ * transport: an interrupted direct OpenRouter POST is never replayed blindly.
  */
 internal object RequestExecutionManager {
     data class Snapshot(
@@ -54,7 +51,6 @@ internal object RequestExecutionManager {
         var transport: Transport = Transport.FOREGROUND_SERVICE,
         var started: Boolean = false,
         var systemStopRecovery: OpenRouterRecoveryRecord? = null,
-        var systemStopServerRecovery: ServerJobRecoveryRecord? = null,
         var lastPartialUpdateAt: Long = 0L
     )
 
@@ -164,10 +160,8 @@ internal object RequestExecutionManager {
         val chatRepository = ChatRepository(app)
         val chats = runCatching { chatRepository.list() }.getOrDefault(emptyList())
         val recoveryStore = OpenRouterRecoveryStore(app)
-        val serverRecoveryStore = ServerJobRecoveryStore(app)
         var batchCount = 0
         var recoveryCount = 0
-        var serverRecoveryCount = 0
         var interruptedCount = 0
 
         persisted.distinctBy { it.requestId }.forEach { saved ->
@@ -189,15 +183,9 @@ internal object RequestExecutionManager {
             } == true
             if (completed) {
                 recoveryStore.remove(saved.requestId)
-                serverRecoveryStore.remove(saved.requestId)
                 return@forEach
             }
 
-            if (messageId != null && serverRecoveryStore.get(saved.requestId) != null) {
-                serverRecoveryCount += 1
-                ServerJobRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replace = true)
-                return@forEach
-            }
 
             if (messageId != null && recoveryStore.get(saved.requestId) != null) {
                 recoveryCount += 1
@@ -220,7 +208,6 @@ internal object RequestExecutionManager {
 
         return buildList {
             if (recoveryCount > 0) add("$recoveryCount запрос(а) восстанавливаются в фоне после перезапуска приложения.")
-            if (serverRecoveryCount > 0) add("$serverRecoveryCount серверных запрос(а) продолжаются на VPS и будут получены автоматически.")
             if (batchCount > 0) add("$batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически.")
             if (interruptedCount > 0) add("$interruptedCount запрос(а) были прерваны системой до безопасной точки восстановления; при необходимости повторите их вручную.")
         }.joinToString(" ").takeIf { it.isNotBlank() }
@@ -256,12 +243,11 @@ internal object RequestExecutionManager {
                 execute()
             } catch (error: Throwable) {
                 val directRecoveryPending = ensureOpenRouterRecoveryRecord(app, requestId)
-                val serverRecoveryPending = ensureServerRecoveryRecord(app, requestId)
-                if (directRecoveryPending || serverRecoveryPending) {
+                if (directRecoveryPending) {
                     DiagnosticLog.record(
                         app,
                         "REQUEST_RECOVERY",
-                        "Active transport interrupted; preserving pending request=${requestId.take(8)} chat=${chatId.take(8)} server=$serverRecoveryPending",
+                        "Active transport interrupted; preserving pending request=${requestId.take(8)} chat=${chatId.take(8)}",
                         error
                     )
                     updatePhase(app, requestId, "Восстанавливаю ответ в фоне…")
@@ -327,29 +313,25 @@ internal object RequestExecutionManager {
 
     /**
      * System/OEM stop of a UIDT job is not a user retry request. Cancel the live socket while
-     * preserving either the read-only OpenRouter recovery record or the idempotent VPS job.
+     * preserving the read-only OpenRouter recovery record when one already exists.
      */
     fun stopUidtFromSystem(requestId: String, stopReason: Int) {
         val runtime = synchronized(lock) { runtimes[requestId] } ?: return
         if (runtime.transport != Transport.UIDT) return
 
         val directStore = OpenRouterRecoveryStore(runtime.appContext)
-        val serverStore = ServerJobRecoveryStore(runtime.appContext)
         val preservedDirect = directStore.get(requestId)
-        val preservedServer = serverStore.get(requestId)
         synchronized(lock) {
             runtimes[requestId]?.systemStopRecovery = preservedDirect
-            runtimes[requestId]?.systemStopServerRecovery = preservedServer
         }
 
         runCatching { runtime.cancelNetworkCall.invoke() }
         if (preservedDirect != null) directStore.put(preservedDirect)
-        if (preservedServer != null) serverStore.put(preservedServer)
 
         DiagnosticLog.record(
             runtime.appContext,
             "UIDT",
-            "System stopped UIDT request=${requestId.take(8)} reason=$stopReason directRecovery=${preservedDirect != null} serverRecovery=${preservedServer != null}"
+            "System stopped UIDT request=${requestId.take(8)} reason=$stopReason directRecovery=${preservedDirect != null}"
         )
         runtime.job.cancel(CancellationException("UIDT stopped by system: $stopReason"))
     }
@@ -395,15 +377,12 @@ internal object RequestExecutionManager {
         val runtime = synchronized(lock) {
             val current = runtimes[requestId] ?: return@synchronized null
             current.systemStopRecovery = null
-            current.systemStopServerRecovery = null
             current
         } ?: return
 
-        // Manual Stop is final: neither direct nor personal-server recovery may resurrect it.
+        // Manual Stop is final: read-only recovery must not resurrect it.
         OpenRouterRecoveryStore(runtime.appContext).remove(requestId)
         OpenRouterRecoveryWorker.cancel(runtime.appContext, requestId)
-        ServerJobRecoveryStore(runtime.appContext).remove(requestId)
-        ServerJobRecoveryWorker.cancel(runtime.appContext, requestId)
         runCatching { runtime.cancelNetworkCall.invoke() }
 
         val neverStartedUidt = runtime.transport == Transport.UIDT && !runtime.started
@@ -498,13 +477,6 @@ internal object RequestExecutionManager {
         return true
     }
 
-    private fun ensureServerRecoveryRecord(app: Context, requestId: String): Boolean {
-        val store = ServerJobRecoveryStore(app)
-        if (store.get(requestId) != null) return true
-        val preserved = synchronized(lock) { runtimes[requestId]?.systemStopServerRecovery } ?: return false
-        store.put(preserved)
-        return true
-    }
 
     private fun finishRuntime(
         app: Context,
@@ -513,9 +485,8 @@ internal object RequestExecutionManager {
         messageId: String,
         prefs: android.content.SharedPreferences
     ) {
-        val serverRecoveryPending = ensureServerRecoveryRecord(app, requestId)
-        val directRecoveryPending = if (serverRecoveryPending) false else ensureOpenRouterRecoveryRecord(app, requestId)
-        val recoveryPending = serverRecoveryPending || directRecoveryPending
+        val directRecoveryPending = ensureOpenRouterRecoveryRecord(app, requestId)
+        val recoveryPending = directRecoveryPending
         if (!recoveryPending) {
             runCatching {
                 ChatRepository(app).updateMessage(chatId, messageId) {
@@ -531,15 +502,9 @@ internal object RequestExecutionManager {
             removed?.transport == Transport.FOREGROUND_SERVICE
         }
 
-        when {
-            serverRecoveryPending -> {
-                ServerJobRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replace = true)
-                DiagnosticLog.record(app, "SERVER_RECOVERY", "Interrupted request handed to personal-server recovery request=${requestId.take(8)} chat=${chatId.take(8)}")
-            }
-            directRecoveryPending -> {
-                OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
-                DiagnosticLog.record(app, "REQUEST_RECOVERY", "Interrupted request handed to read-only recovery request=${requestId.take(8)} chat=${chatId.take(8)}")
-            }
+        if (directRecoveryPending) {
+            OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+            DiagnosticLog.record(app, "REQUEST_RECOVERY", "Interrupted request handed to read-only recovery request=${requestId.take(8)} chat=${chatId.take(8)}")
         }
 
         if (hadForeground) updateForegroundTransportState(app)

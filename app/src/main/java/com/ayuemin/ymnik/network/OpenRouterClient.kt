@@ -9,9 +9,6 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
 import com.ayuemin.ymnik.RequestExecutionManager
-import com.ayuemin.ymnik.ServerJobRecoveryWorker
-import com.ayuemin.ymnik.data.RequestRouteMode
-import com.ayuemin.ymnik.data.ServerConnectionStore
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -31,8 +28,9 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okio.Buffer
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.io.IOException
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -47,15 +45,8 @@ class OpenRouterClient(
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
-    private val serverConnection = ServerConnectionStore(context.applicationContext)
-    private val serverApi = UmnikServerClient()
-    private val serverRecoveryStore = ServerJobRecoveryStore(context.applicationContext)
     private val http = OkHttpClient.Builder()
-        .addInterceptor(
-            DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId) { prepared ->
-                captureFinalRecoveryPayload(prepared)
-            }
-        )
+        .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
         .retryOnConnectionFailure(true)
         // Keep OkHttp defaults: negotiate HTTP/2 when available and fall back to HTTP/1.1.
@@ -94,26 +85,11 @@ class OpenRouterClient(
         requestId?.takeIf { it.isNotBlank() }?.let { id ->
             recoveryStore.remove(id)
             OpenRouterRecoveryWorker.cancel(context, id)
-            serverRecoveryStore.remove(id)
-            ServerJobRecoveryWorker.cancel(context, id)
         }
         synchronized(activeCallLock) { activeCall?.cancel() }
         http.dispatcher.cancelAll()
     }
 
-    private fun captureFinalRecoveryPayload(request: Request) {
-        if (!recoveryEnabled || request.method != "POST" || !request.url.encodedPath.endsWith("/chat/completions")) return
-        val id = requestId?.takeIf { it.isNotBlank() } ?: return
-        if (recoveryStore.get(id) == null) return
-        val body = request.body ?: return
-        val payload = runCatching {
-            val buffer = Buffer()
-            body.writeTo(buffer)
-            buffer.readUtf8()
-        }.getOrNull()?.takeIf { it.isNotBlank() } ?: return
-        recoveryStore.updatePayload(id, payload)
-        DiagnosticLog.record(context, "REQUEST_RECOVERY", "Persisted final enhanced payload request=${id.take(8)} bytes=${payload.toByteArray().size}")
-    }
 
     private fun executeActive(request: Request): okhttp3.Response {
         val call = http.newCall(request)
@@ -376,8 +352,12 @@ class OpenRouterClient(
             resolution?.takeIf { it.isNotBlank() }?.let { addProperty("resolution", it) }
 
             val references = JsonArray()
+            var attachmentBytes = 0L
             attachments.filter { it.mimeType.startsWith("image/") }.forEach { attachment ->
-                val bytes = readAttachment(attachment)
+                val remaining = MAX_TOTAL_ATTACHMENT_BYTES - attachmentBytes
+                require(remaining > 0L) { ATTACHMENT_LIMIT_MESSAGE }
+                val bytes = readAttachment(attachment, remaining)
+                attachmentBytes += bytes.size
                 val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
                 references.add(JsonObject().apply {
                     addProperty("type", "image_url")
@@ -430,15 +410,12 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
-        if (serverConnection.config().mode == RequestRouteMode.SERVER) {
-            return requestCompletionViaServer(payload, allowEmpty, streamToUi)
-        }
         val requestPayload = payload.deepCopy().apply {
             addProperty("stream", true)
             add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
         }
         val payloadJson = gson.toJson(requestPayload)
-        val recoveryRecord = recoveryRecord(apiKey, baseUrl, model, payloadJson)
+        val recoveryRecord = recoveryRecord(apiKey, baseUrl, model)
         recoveryRecord?.let { record ->
             recoveryStore.put(record)
             // Persist the fallback before network I/O. If Android kills the process before
@@ -605,78 +582,7 @@ class OpenRouterClient(
         }
     }
 
-    private suspend fun requestCompletionViaServer(
-    payload: JsonObject,
-    allowEmpty: Boolean,
-    streamToUi: Boolean
-): OpenRouterResponseParser.Completion {
-    val config = serverConnection.config()
-    val serverBaseUrl = config.baseUrl.takeIf { it.isNotBlank() }
-        ?: error("Не указан адрес личного сервера Umnik")
-    val serverToken = serverConnection.token()
-        ?: error("Не указан токен личного сервера Umnik")
-    val requestPayload = payload.deepCopy().apply {
-        addProperty("stream", false)
-        remove("stream_options")
-    }
-    val payloadJson = gson.toJson(requestPayload)
-    val clientRequestId = stableServerRequestId(payloadJson)
-    val recoverySnapshot = requestId?.takeIf { it.isNotBlank() }
-        ?.let(RequestExecutionManager::snapshotForRequest)
-        ?.takeIf { recoveryEnabled && requestChatId == it.chatId }
-    recoverySnapshot?.let { snapshot ->
-        val record = ServerJobRecoveryRecord(
-            requestId = snapshot.requestId,
-            chatId = snapshot.chatId,
-            messageId = snapshot.messageId,
-            clientRequestId = clientRequestId,
-            serverBaseUrl = serverBaseUrl,
-            payloadJson = payloadJson,
-            modelId = payload.get("model")?.asString.orEmpty()
-        )
-        serverRecoveryStore.put(record)
-        ServerJobRecoveryWorker.schedule(context, snapshot.requestId)
-    }
-    phaseCallback("Передаю задачу личному серверу…")
-    val initial = serverApi.createChatJob(
-        baseUrl = serverBaseUrl,
-        token = serverToken,
-        clientRequestId = clientRequestId,
-        payload = requestPayload
-    )
-    phaseCallback("Личный сервер выполняет запрос…")
-    val response = serverApi.awaitChatJob(
-        baseUrl = serverBaseUrl,
-        token = serverToken,
-        initial = initial,
-        onStatus = { status ->
-            when (status) {
-                "queued" -> phaseCallback("Задача принята сервером…")
-                "running" -> phaseCallback("Сервер ждёт ответ модели…")
-            }
-        }
-    )
-    val completion = OpenRouterResponseParser.parse(gson.toJson(response), allowEmpty)
-    if (streamToUi) {
-        val finalText = extractText(completion.message.get("content"))
-        if (finalText.isNotBlank()) streamCallback(finalText)
-    }
-    DiagnosticLog.record(
-        context,
-        "SERVER_COMPLETION",
-        "Umnik server job=${initial.id.take(12)} model=${payload.get("model")?.asString.orEmpty()} finish=${completion.finishReason}"
-    )
-    recoverySnapshot?.let { snapshot ->
-        serverRecoveryStore.remove(snapshot.requestId)
-        ServerJobRecoveryWorker.cancel(context, snapshot.requestId)
-    }
-    return completion
-}
-
-private fun stableServerRequestId(payloadJson: String): String =
-    ServerRequestIdentity.build(requestId, payloadJson)
-
-    private fun recoveryRecord(apiKey: String, baseUrl: String, model: String, payloadJson: String): OpenRouterRecoveryRecord? {
+    private fun recoveryRecord(apiKey: String, baseUrl: String, model: String): OpenRouterRecoveryRecord? {
         if (!recoveryEnabled) return null
         val id = requestId?.takeIf { it.isNotBlank() } ?: return null
         val snapshot = RequestExecutionManager.snapshotForRequest(id) ?: return null
@@ -692,8 +598,7 @@ private fun stableServerRequestId(payloadJson: String): String =
             connectionProfileId = profileId,
             apiKeyFingerprint = openRouterApiKeyFingerprint(apiKey),
             baseUrl = baseUrl,
-            modelId = model,
-            payloadJson = payloadJson
+            modelId = model
         )
     }
 
@@ -786,8 +691,12 @@ private fun stableServerRequestId(payloadJson: String): String =
             addProperty("type", "text")
             addProperty("text", text.ifBlank { fallbackText })
         })
+        var attachmentBytes = 0L
         attachments.forEach { attachment ->
-            val bytes = readAttachment(attachment)
+            val remaining = MAX_TOTAL_ATTACHMENT_BYTES - attachmentBytes
+            require(remaining > 0L) { ATTACHMENT_LIMIT_MESSAGE }
+            val bytes = readAttachment(attachment, remaining)
+            attachmentBytes += bytes.size
             when {
                 attachment.mimeType.startsWith("image/") -> {
                     val b64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
@@ -900,16 +809,38 @@ private fun stableServerRequestId(payloadJson: String): String =
         return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
     }
 
-    private fun readAttachment(attachment: PendingAttachment): ByteArray {
+    private fun readAttachment(
+        attachment: PendingAttachment,
+        maxBytes: Long = MAX_TOTAL_ATTACHMENT_BYTES
+    ): ByteArray {
+        require(maxBytes > 0L) { ATTACHMENT_LIMIT_MESSAGE }
         attachment.localPath?.takeIf { it.isNotBlank() }?.let { path ->
             val file = File(path)
-            if (!file.exists()) error("Файл проекта не найден: ${attachment.name}")
-            return file.readBytes()
+            if (!file.exists()) error("Файл не найден: ${attachment.name}")
+            require(file.length() <= maxBytes) { ATTACHMENT_LIMIT_MESSAGE }
+            return file.inputStream().use { readLimited(it, maxBytes, attachment.name) }
         }
         val uri = Uri.parse(attachment.uri)
-        return context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
-            ?: error("Не удалось прочитать ${attachment.name}")
+        return context.contentResolver.openInputStream(uri)?.use {
+            readLimited(it, maxBytes, attachment.name)
+        } ?: error("Не удалось прочитать ${attachment.name}")
     }
+
+    private fun readLimited(input: InputStream, maxBytes: Long, name: String): ByteArray {
+        val initialCapacity = minOf(maxBytes, 1024L * 1024L).toInt().coerceAtLeast(32)
+        val output = ByteArrayOutputStream(initialCapacity)
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var total = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) break
+            total += read
+            require(total <= maxBytes) { "$ATTACHMENT_LIMIT_MESSAGE Файл: $name" }
+            output.write(buffer, 0, read)
+        }
+        return output.toByteArray()
+    }
+
 
     private fun audioFormat(attachment: PendingAttachment): String {
         val ext = attachment.name.substringAfterLast('.', "").lowercase()
@@ -987,6 +918,9 @@ private fun stableServerRequestId(payloadJson: String): String =
 
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+        private const val MAX_TOTAL_ATTACHMENT_BYTES = 50L * 1024L * 1024L
+        private const val ATTACHMENT_LIMIT_MESSAGE =
+            "Суммарный размер прямых вложений в одном запросе ограничен 50 МБ. Большие документы добавьте в базу знаний."
         private const val RECOVERY_WINDOW_MS = 120_000L
         private const val STREAM_PREVIEW_INTERVAL_MS = 120L
         private const val STREAM_PREVIEW_MIN_CHARS = 96

@@ -12,7 +12,6 @@ import android.os.Handler
 import android.os.Looper
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
-import com.ayuemin.ymnik.network.ServerJobRecoveryStore
 import java.util.concurrent.ConcurrentHashMap
 
 /** Android 14+ execution host for requests explicitly started by the user. */
@@ -41,18 +40,11 @@ class RequestUidtJobService : JobService() {
         val requestId = params.extras.getString(EXTRA_REQUEST_ID)?.takeIf { it.isNotBlank() } ?: return false
         val snapshot = RequestExecutionManager.snapshotForRequest(requestId)
         if (snapshot == null) {
-            // The process may have been recreated after a request reached OpenRouter or the
-            // personal server. Recover only existing work; never recreate a paid direct POST.
-            val serverRecovery = ServerJobRecoveryStore(applicationContext).get(requestId) != null
+            // The process may have been recreated after a request reached OpenRouter.
+            // Recover only existing work; never recreate a paid POST.
             val directRecovery = OpenRouterRecoveryStore(applicationContext).get(requestId) != null
-            when {
-                serverRecovery -> ServerJobRecoveryWorker.schedule(
-                    applicationContext,
-                    requestId,
-                    initialDelaySeconds = 0L,
-                    replace = true
-                )
-                directRecovery -> OpenRouterRecoveryWorker.schedule(
+            if (directRecovery) {
+                OpenRouterRecoveryWorker.schedule(
                     applicationContext,
                     requestId,
                     initialDelaySeconds = 0L,
@@ -63,7 +55,7 @@ class RequestUidtJobService : JobService() {
             DiagnosticLog.record(
                 applicationContext,
                 "UIDT",
-                "Job started without live runtime request=${requestId.take(8)}; serverRecovery=$serverRecovery directRecovery=$directRecovery"
+                "Job started without live runtime request=${requestId.take(8)}; directRecovery=$directRecovery"
             )
             return false
         }

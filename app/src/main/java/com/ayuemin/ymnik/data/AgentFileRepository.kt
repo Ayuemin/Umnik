@@ -20,12 +20,15 @@ class AgentFileRepository(private val context: Context) {
     private val gson = Gson()
     private val agentsRoot = File(context.filesDir, "agents").apply { mkdirs() }
     private val type = object : TypeToken<List<ChatFile>>() {}.type
+    private val loadErrors = mutableMapOf<String, String>()
 
     fun list(agentId: String): List<ChatFile> = runCatching {
         AtomicJsonFile(metadata(agentId)).read(::validJson)
             ?.let { gson.fromJson<List<ChatFile>>(it, type) }
             .orEmpty()
-    }.getOrDefault(emptyList())
+    }.onSuccess { loadErrors.remove(agentId) }
+        .onFailure { loadErrors[agentId] = "Данные файлов агента повреждены и защищены от перезаписи." }
+        .getOrDefault(emptyList())
 
     fun importFile(agentId: String, attachment: PendingAttachment): ChatFile {
         require(agentId.isNotBlank()) { "agentId обязателен" }
@@ -59,8 +62,13 @@ class AgentFileRepository(private val context: Context) {
             localPath = target.absolutePath,
             size = target.length()
         )
-        save(agentId, list(agentId) + file)
-        return file
+        return try {
+            save(agentId, list(agentId) + file)
+            file
+        } catch (error: Throwable) {
+            target.delete()
+            throw error
+        }
     }
 
     fun delete(agentId: String, fileId: String): Boolean {
@@ -73,6 +81,7 @@ class AgentFileRepository(private val context: Context) {
     }
 
     private fun save(agentId: String, files: List<ChatFile>) {
+        check(loadErrors[agentId] == null) { loadErrors[agentId] ?: "Хранилище файлов агента недоступно" }
         val meta = metadata(agentId)
         meta.parentFile?.mkdirs()
         AtomicJsonFile(meta).write(gson.toJson(files), ::validJson)

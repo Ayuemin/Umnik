@@ -649,24 +649,6 @@ class OpenRouterHubController(
         it.type == ProviderType.OPENROUTER && it.id !in viewModel.state.value.disabledConnectionIds
     }
 
-    private fun buildPersistentAttachments(
-        chatFiles: List<com.ayuemin.ymnik.model.ChatFile>,
-        projectFiles: List<com.ayuemin.ymnik.model.ProjectFile>,
-        model: ModelInfo?
-    ): List<PendingAttachment> = (chatFiles.map {
-        PendingAttachment("chat://${it.id}", it.name, it.mimeType, it.size, it.localPath)
-    } + projectFiles.map {
-        PendingAttachment("project://${it.id}", it.name, it.mimeType, it.size, it.localPath)
-    }).filter { item ->
-        val mime = item.mimeType.lowercase()
-        when {
-            mime.startsWith("image/") -> model?.accepts("image") == true
-            mime.startsWith("audio/") -> model?.accepts("audio") == true
-            mime.startsWith("video/") -> model?.accepts("video") == true
-            else -> true
-        }
-    }.distinctBy { it.localPath ?: it.uri }
-
     private fun buildSystemPrompt(
         chat: com.ayuemin.ymnik.model.ChatSession?,
         project: com.ayuemin.ymnik.model.Project?
@@ -689,12 +671,8 @@ class OpenRouterHubController(
         }
         if (project != null) {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
-            if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
-            if (project.masterPrompt.isNotBlank()) {
-                appendLine("Мастер-инструкция проекта (ВЫСШИЙ ПРИОРИТЕТ внутри проекта):")
-                appendLine(project.masterPrompt)
-            }
-            appendLine("===== КОНЕЦ НАСТРОЕК ПРОЕКТА =====")
+            appendLine("Проект — только кабинет; рабочие настройки принадлежат агентам.")
+            appendLine("===== КОНЕЦ ПРОЕКТА =====")
         }
         if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
@@ -702,15 +680,11 @@ class OpenRouterHubController(
             chat.masterPrompt?.takeIf { it.isNotBlank() }?.let { appendLine(it) }
             appendLine("===== КОНЕЦ НАСТРОЕК ДИАЛОГА =====")
         }
-        val skillIds = appState.activeSkillIds + project?.skillIds.orEmpty()
-        val skillText = skills.promptFor(skillIds)
+        val skillText = skills.promptFor(appState.activeSkillIds)
         if (skillText.isNotBlank()) {
             appendLine("\n===== ПОДКЛЮЧЁННЫЕ НАВЫКИ =====")
             appendLine(skillText)
             appendLine("===== КОНЕЦ НАВЫКОВ =====")
-        }
-        if (project?.masterPrompt?.isNotBlank() == true) {
-            appendLine("\nПеред отправкой ответа молча проверь результат по мастер-инструкции проекта. При конфликте: мастер-инструкция проекта, явный текущий запрос, настройки диалога, навыки, файлы, профиль.")
         }
     }
 

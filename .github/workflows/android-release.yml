@@ -90,7 +90,7 @@ jobs:
           packages: platform-tools
 
       - name: Install Android 17 platform
-        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+        run: sdkmanager "platforms;android-37" "build-tools;37.0.0"
 
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v6
@@ -116,8 +116,8 @@ jobs:
             -storepass "$KEYSTORE_PASSWORD" \
             -alias "$KEY_ALIAS" >/dev/null
 
-      - name: Run unit tests
-        run: ./gradlew --no-daemon :app:testDebugUnitTest --stacktrace
+      - name: Run lint and unit tests
+        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest --stacktrace
 
       - name: Build signed release APK
         env:
