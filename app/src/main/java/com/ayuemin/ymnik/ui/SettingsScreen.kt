@@ -1539,8 +1539,8 @@ private fun imageParameterSummary(state: UiState): String =
         .joinToString(" · ")
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
-    UserProfileScope.OFF -> "выкл"
-    UserProfileScope.CHATS -> "для чатов"
+    UserProfileScope.OFF -> "выключен"
+    UserProfileScope.CHATS -> "включён"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {
