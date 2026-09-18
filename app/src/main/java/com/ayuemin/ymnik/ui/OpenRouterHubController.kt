@@ -674,11 +674,9 @@ class OpenRouterHubController(
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         val appState = viewModel.state.value
         val profile = appState.userProfile
-        val useProfile = !profile.isEmpty() && when (appState.userProfileScope) {
-            UserProfileScope.OFF -> false
-            UserProfileScope.PROJECTS -> project != null
-            UserProfileScope.EVERYWHERE -> true
-        }
+        val useProfile = !profile.isEmpty() &&
+            appState.userProfileScope == UserProfileScope.CHATS &&
+            project == null
         if (useProfile) {
             appendLine("\n===== КРАТКО О ПОЛЬЗОВАТЕЛЕ =====")
             if (profile.name.isNotBlank()) appendLine("Имя: ${profile.name}")
