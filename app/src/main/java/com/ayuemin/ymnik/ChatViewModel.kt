@@ -8,6 +8,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.AgentConversationRepository
 import com.ayuemin.ymnik.data.AgentRepository
+import com.ayuemin.ymnik.data.AgentSkillRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
@@ -95,6 +96,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val projectsRepository = ProjectRepository(context)
     private val agentsRepository = AgentRepository(context)
     private val agentConversations = AgentConversationRepository(context)
+    private val agentSkills = AgentSkillRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
@@ -273,6 +275,48 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun agent(agentId: String): AgentProfile? =
         _state.value.agents.firstOrNull { it.id == agentId }
+
+    fun agentSkills(agentId: String) = agentSkills.list(agentId)
+
+    fun createAgentSkill(agentId: String, name: String, body: String): String? = runCatching {
+        val skill = agentSkills.createInline(agentId, name, body)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось создать навык")
+    }.getOrNull()
+
+    fun importAgentSkillFile(agentId: String, uri: Uri): String? = runCatching {
+        val skill = agentSkills.importFile(agentId, uri)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить навык")
+    }.getOrNull()
+
+    fun importAgentSkillTree(agentId: String, uri: Uri): String? = runCatching {
+        val skill = agentSkills.importTree(agentId, uri)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить папку навыка")
+    }.getOrNull()
+
+    fun setAgentSkillEnabled(agentId: String, skillId: String, enabled: Boolean) {
+        val profile = agent(agentId) ?: return
+        if (agentSkills.list(agentId).none { it.id == skillId }) return
+        val ids = if (enabled) profile.skillIds + skillId else profile.skillIds - skillId
+        saveAgent(profile.copy(skillIds = ids))
+    }
+
+    fun deleteAgentSkill(agentId: String, skillId: String) {
+        val profile = agent(agentId) ?: return
+        agentSkills.delete(agentId, skillId)
+        saveAgent(profile.copy(skillIds = profile.skillIds - skillId))
+    }
 
     fun createAgent(projectId: String, name: String = "Новый агент"): String {
         require(_state.value.projects.any { it.id == projectId }) { "Проект не найден" }
@@ -4508,10 +4552,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
         // mutable current-chat state from inside the background job after navigation.
-        val requestSkillIds = _state.value.activeSkillIds
+        val requestAgent = currentChat
+            ?.let { agentConversations.agentIdForConversation(it.id) }
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+        val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
         val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
             ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
-        val requestProjectTextAttachments = if (mode == ChatMode.TEXT) {
+        val requestProjectTextAttachments = if (mode == ChatMode.TEXT && requestAgent == null) {
             currentProject?.files.orEmpty().map { file ->
                 PendingAttachment(
                     uri = "project://${file.id}",
@@ -4525,7 +4572,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
             persistentChatFiles.filter { attachmentAllowed(it).first }
         } else emptyList()
-        val requestProjectImages = if (mode == ChatMode.IMAGE) {
+        val requestProjectImages = if (mode == ChatMode.IMAGE && requestAgent == null) {
             currentProject?.files.orEmpty()
                 .filter { it.mimeType.startsWith("image/") && imageInfo?.accepts("image") == true }
                 .map { file -> PendingAttachment(
@@ -4548,7 +4595,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillText = skills.promptFor(requestSkillIds)
+                        val skillText = if (requestAgent != null) {
+                            agentSkills.promptFor(requestAgent.id, requestSkillIds)
+                        } else {
+                            skills.promptFor(requestSkillIds)
+                        }
                         val projectFiles = requestProjectTextAttachments
                         val modelInfo = requestTextModelInfo
                         val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
@@ -4558,7 +4609,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
                         val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
-                        val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
+                        val knowledgeContext = if (requestAgent == null) {
+                            knowledgeSystemContext(currentProject, currentChat, clean)
+                        } else {
+                            ""
+                        }
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
                         network.call(profileId = profile.id, recoverable = true) { requestApi ->
@@ -4577,7 +4632,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 preparedContext.history,
                                 clean,
                                 allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true) +
+                                buildSystemPrompt(
+                                    skillText = skillText,
+                                    project = if (requestAgent == null) currentProject else null,
+                                    chat = currentChat,
+                                    toolsEnabled = modelInfo?.supportsTools == true,
+                                    agent = requestAgent
+                                ) +
                                     preparedContext.systemContext + knowledgeContext,
                                 webSearchEnabled,
                                 actualReasoning,
@@ -5046,13 +5107,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         answerSoundPlayer.play(_state.value)
     }
 
-    private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
+    private fun buildSystemPrompt(
+        skillText: String,
+        project: Project?,
+        chat: ChatSession?,
+        toolsEnabled: Boolean,
+        agent: AgentProfile? = null
+    ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
         appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
         val profile = _state.value.userProfile
-        val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
+        val useProfile = agent == null && !profile.isEmpty() && when (_state.value.userProfileScope) {
             UserProfileScope.OFF -> false
             UserProfileScope.PROJECTS -> project != null
             UserProfileScope.EVERYWHERE -> true
@@ -5067,6 +5134,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("Используй эти сведения только когда они полезны. Не пересказывай профиль пользователю без необходимости. Явный запрос и инструкции проекта важнее этого краткого профиля.")
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
+        if (agent != null) {
+            appendLine("\n===== АГЕНТ: ${agent.name} =====")
+            if (agent.role.isNotBlank()) appendLine("Роль: ${agent.role}")
+            if (agent.instruction.isNotBlank()) {
+                appendLine("Личная инструкция агента:")
+                appendLine(agent.instruction)
+            }
+            appendLine("Это независимый агент. Не используй общие инструкции, навыки, память или базу знаний других чатов и проекта, если они не были явно переданы в текущем рабочем пакете.")
+            appendLine("===== КОНЕЦ ПРОФИЛЯ АГЕНТА =====")
+        }
         if (project != null) {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
             if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
@@ -5079,7 +5156,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
             appendLine("===== КОНЕЦ НАСТРОЕК ПРОЕКТА =====")
         }
-        if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
+        if (agent == null && chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
             chat.assignedRole?.takeIf { it.isNotBlank() }?.let { appendLine("Роль диалога: $it") }
             chat.masterPrompt?.takeIf { it.isNotBlank() }?.let {
@@ -5098,7 +5175,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine(":::")
         appendLine("Umnik распознаёт :::copy как отдельную карточку с кнопкой копирования. Не утверждай, что показал отдельный блок, если не использовал этот синтаксис.")
         appendLine("Для кода используй обычные fenced Markdown-блоки с тройными обратными кавычками.")
-        appendLine("Подключённые навыки ниже выбраны пользователем. Следуй их инструкциям как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
+        appendLine("Подключённые ниже навыки принадлежат текущему чату или текущему агенту. Следуй им как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
         appendLine("Не утверждай, что исполнил код из папки навыка: Umnik передаёт навыкам только разрешённые текстовые материалы.")
         if (skillText.isNotBlank()) {
             appendLine("\n===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")
