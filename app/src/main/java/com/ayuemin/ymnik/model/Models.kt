@@ -394,6 +394,7 @@ data class StorageStats(
 
 data class UiState(
     val messages: List<ChatMessage> = emptyList(),
+    val agents: List<AgentProfile> = emptyList(),
     val chats: List<ChatSession> = emptyList(),
     val projects: List<Project> = emptyList(),
     val currentChatId: String = "",
