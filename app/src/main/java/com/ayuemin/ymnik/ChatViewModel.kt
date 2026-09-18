@@ -3058,10 +3058,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private companion object AgentOfficeLimits {
-        const val MAX_AGENT_OFFICE_ROUNDS = 10
-        const val MAX_AGENT_OFFICE_TASKS = 14
-    }
+    private val maxAgentOfficeRounds = 10
+    private val maxAgentOfficeTasks = 14
 
     private fun agentOfficeSystemPrompt(
         project: Project,
@@ -3462,7 +3460,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         userAttachments: List<PendingAttachment>,
         network: RequestNetworkSession
     ): JobWorkspace {
-        if (workspace.tasks.size >= MAX_AGENT_OFFICE_TASKS) {
+        if (workspace.tasks.size >= maxAgentOfficeTasks) {
             error("Оркестратор превысил лимит поручений за один запуск")
         }
 
@@ -3622,7 +3620,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 var finalText: String? = null
                 var round = 0
 
-                while (round < MAX_AGENT_OFFICE_ROUNDS && finalText == null) {
+                while (round < maxAgentOfficeRounds && finalText == null) {
                     round += 1
                     network.updatePhase("Оркестратор · решение " + round)
                     val latestChat = chatsRepository.list().firstOrNull { it.id == chatId } ?: chat
