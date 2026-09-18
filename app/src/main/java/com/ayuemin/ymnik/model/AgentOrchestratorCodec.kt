@@ -48,6 +48,62 @@ object AgentOrchestratorCodec {
         )
     }
 
+
+    /**
+     * Returns a stable, content-free reason code when a parsed decision cannot make
+     * safe progress. The caller may ask the model to regenerate the management plan.
+     */
+    fun validationProblem(decision: AgentOrchestratorDecision): String? {
+        val actions = decision.actions
+        val asksUser = actions.any { it.type == AgentOrchestratorActionType.ASK_USER }
+        val completes = decision.completed ||
+            actions.any { it.type == AgentOrchestratorActionType.COMPLETE_JOB }
+        val executable = actions.any {
+            it.type == AgentOrchestratorActionType.CALL_AGENT ||
+                it.type == AgentOrchestratorActionType.REQUEST_REVISION
+        }
+
+        actions.forEach { action ->
+            when (action.type) {
+                AgentOrchestratorActionType.CALL_AGENT -> {
+                    if (action.agentId.isNullOrBlank()) return "call_agent_without_agent_id"
+                }
+                AgentOrchestratorActionType.REQUEST_REVISION -> {
+                    if (action.taskId.isNullOrBlank() && action.agentId.isNullOrBlank()) {
+                        return "request_revision_without_target"
+                    }
+                }
+                AgentOrchestratorActionType.CANCEL_TASK -> {
+                    if (action.taskId.isNullOrBlank()) return "cancel_task_without_task_id"
+                }
+                AgentOrchestratorActionType.ASK_USER -> {
+                    if (decision.userReply.isBlank() && action.note.isBlank()) {
+                        return "ask_user_without_message"
+                    }
+                }
+                AgentOrchestratorActionType.COMPLETE_JOB -> Unit
+                AgentOrchestratorActionType.TRANSFER_WORK -> {
+                    return "unsupported_transfer_work"
+                }
+            }
+        }
+
+        if (asksUser && (executable || completes)) return "mixed_ask_user_with_work"
+        if (completes && executable) return "mixed_completion_with_work"
+
+        if (completes) {
+            if (decision.finalResult.isNullOrBlank() && decision.userReply.isBlank()) {
+                return "completion_without_result"
+            }
+            return null
+        }
+
+        if (asksUser) return null
+        if (executable) return null
+
+        return "no_next_action"
+    }
+
     private fun extractObject(raw: String): String {
         val text = raw.trim().removePrefix("\uFEFF")
         val start = text.indexOf('{')
