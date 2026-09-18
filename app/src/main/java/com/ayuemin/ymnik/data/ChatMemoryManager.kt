@@ -45,7 +45,7 @@ class ChatMemoryManager(
             return PreparedContext(fullHistory, description = "full")
         }
 
-        val settings = withKnownEmbeddingLimit(repository.settings())
+        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
         val chunkPlan = ChatMemoryChunking.plan(settings)
         val completed = ConversationContext.completedTextTurns(fullHistory)
         val totalTokens = estimateHistoryTokens(completed)
@@ -140,7 +140,7 @@ class ChatMemoryManager(
         mode: ChatContextMode = repository.mode(chat.id)
     ) {
         repository.clearMemory(chat.id)
-        val settings = withKnownEmbeddingLimit(repository.settings())
+        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
         val recent = evenRecentCount(
             if (mode == ChatContextMode.ECONOMY) settings.economyRecentMessages else settings.autoRecentMessages
         )

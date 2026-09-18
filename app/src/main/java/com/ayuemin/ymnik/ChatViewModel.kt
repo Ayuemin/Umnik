@@ -1,17 +1,16 @@
 package com.ayuemin.ymnik
 
 import android.content.Context
-import android.media.AudioAttributes
-import android.media.AudioManager
-import android.media.MediaPlayer
-import android.media.ToneGenerator
 import android.net.Uri
 import android.provider.OpenableColumns
-import android.os.Handler
-import android.os.Looper
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.ayuemin.ymnik.data.AgentConversationRepository
+import com.ayuemin.ymnik.data.AgentFileRepository
+import com.ayuemin.ymnik.data.AgentRepository
+import com.ayuemin.ymnik.data.AgentSkillRepository
+import com.ayuemin.ymnik.data.AgentWorkRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
@@ -23,8 +22,21 @@ import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
+import com.ayuemin.ymnik.model.AgentKind
+import com.ayuemin.ymnik.model.AgentModelRef
+import com.ayuemin.ymnik.model.AgentOrchestratorAction
+import com.ayuemin.ymnik.model.AgentOrchestratorActionType
+import com.ayuemin.ymnik.model.AgentOrchestratorCodec
+import com.ayuemin.ymnik.model.AgentOrchestratorDecision
+import com.ayuemin.ymnik.model.AgentResult
+import com.ayuemin.ymnik.model.AgentTaskPackage
+import com.ayuemin.ymnik.model.AgentTaskState
+import com.ayuemin.ymnik.model.AgentTaskStatus
+import com.ayuemin.ymnik.model.AgentTransferLogEntry
+import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
 import com.ayuemin.ymnik.model.ChatMessage
@@ -39,6 +51,7 @@ import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeDocument
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.ImageApiProtocol
+import com.ayuemin.ymnik.model.JobWorkspace
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.OrchestratorStep
@@ -94,9 +107,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val knowledgeBase = KnowledgeBaseRepository(context)
     private val embeddingApi = OpenRouterEmbeddingClient(context)
     private val projectsRepository = ProjectRepository(context)
+    private val agentsRepository = AgentRepository(context)
+    private val agentConversations = AgentConversationRepository(context)
+    private val agentFiles = AgentFileRepository(context)
+    private val agentSkills = AgentSkillRepository(context)
+    private val agentWork = AgentWorkRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
+    private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
     private val providerRegistry = ProviderRegistry(context)
@@ -110,7 +129,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialProfiles = loadConnectionProfiles()
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialProjects = projectsRepository.list()
-    private val initialChats = ensureProjectOrchestrators(initialProjects, loadInitialChats())
+    private val initialAgents = ensureProjectAgents(initialProjects)
+    private val initialChats = loadInitialChats()
     private val initialChatId = prefs.getString("current_chat_id", null)
         ?.takeIf { id -> initialChats.any { it.id == id } }
         ?: initialChats.first().id
@@ -157,6 +177,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val _state = MutableStateFlow(
         UiState(
             messages = initialChat.messages,
+            agents = initialAgents,
             chats = initialChats,
             projects = initialProjects,
             currentChatId = initialChatId,
@@ -217,7 +238,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = chatsRepository.loadError ?: projectsRepository.loadError ?: skills.loadError ?: recoveredRequest
+            status = chatsRepository.loadError ?: projectsRepository.loadError ?: agentsRepository.loadError ?: agentConversations.loadError ?: skills.loadError ?: recoveredRequest
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -251,6 +272,263 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun invalidateRequestGeneration(chatId: String) {
         requestGenerations[chatId] = (requestGenerations[chatId] ?: 0L) + 1L
+    }
+
+    private fun ensureProjectAgents(projects: List<Project>): List<AgentProfile> {
+        var agents = agentsRepository.list()
+        projects.forEach { project ->
+            if (agents.none { it.projectId == project.id && it.kind == AgentKind.ORCHESTRATOR }) {
+                agentsRepository.createOrchestrator(project.id)
+                agents = agentsRepository.list()
+            }
+        }
+        return agents
+    }
+
+    fun agentsForProject(projectId: String): List<AgentProfile> =
+        _state.value.agents.filter { it.projectId == projectId }
+
+    fun agent(agentId: String): AgentProfile? =
+        _state.value.agents.firstOrNull { it.id == agentId }
+
+    fun agentSkills(agentId: String) = agentSkills.list(agentId)
+
+    fun agentFiles(agentId: String): List<ChatFile> = agentFiles.list(agentId)
+
+    fun addAgentFiles(agentId: String, uris: List<Uri>) {
+        if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
+        if (agent(agentId) == null) return
+        var added = 0
+        val errors = mutableListOf<String>()
+        uris.forEach { uri ->
+            runCatching {
+                val attachment = api.attachmentFromUri(uri)
+                val duplicate = agentFiles.list(agentId).any {
+                    it.name.equals(attachment.name, ignoreCase = true) &&
+                        (attachment.size <= 0L || it.size == attachment.size)
+                }
+                require(!duplicate) { "«${attachment.name}» уже добавлен агенту" }
+                agentFiles.importFile(agentId, attachment)
+            }.onSuccess {
+                added++
+            }.onFailure { error ->
+                errors += error.message ?: "Не удалось добавить файл"
+            }
+        }
+        _state.value = _state.value.copy(
+            status = when {
+                errors.isEmpty() -> "Файлы агента добавлены: $added"
+                added > 0 -> "Добавлено $added. Ошибки: ${errors.take(2).joinToString("; ")}"
+                else -> errors.take(2).joinToString("; ")
+            }
+        )
+    }
+
+    fun deleteAgentFile(agentId: String, fileId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        if (agentFiles.delete(agentId, fileId)) {
+            _state.value = _state.value.copy(status = "Файл агента удалён")
+        }
+    }
+
+    fun createAgentSkill(agentId: String, name: String, body: String): String? = runCatching {
+        val skill = agentSkills.createInline(agentId, name, body)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось создать навык")
+    }.getOrNull()
+
+    fun importAgentSkillFile(agentId: String, uri: Uri): String? = runCatching {
+        val skill = agentSkills.importFile(agentId, uri)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить навык")
+    }.getOrNull()
+
+    fun importAgentSkillTree(agentId: String, uri: Uri): String? = runCatching {
+        val skill = agentSkills.importTree(agentId, uri)
+        val profile = agent(agentId) ?: error("Агент не найден")
+        saveAgent(profile.copy(skillIds = profile.skillIds + skill.id))
+        skill.id
+    }.onFailure {
+        _state.value = _state.value.copy(status = it.message ?: "Не удалось загрузить папку навыка")
+    }.getOrNull()
+
+    fun setAgentSkillEnabled(agentId: String, skillId: String, enabled: Boolean) {
+        val profile = agent(agentId) ?: return
+        if (agentSkills.list(agentId).none { it.id == skillId }) return
+        val ids = if (enabled) profile.skillIds + skillId else profile.skillIds - skillId
+        saveAgent(profile.copy(skillIds = ids))
+    }
+
+    fun deleteAgentSkill(agentId: String, skillId: String) {
+        val profile = agent(agentId) ?: return
+        agentSkills.delete(agentId, skillId)
+        saveAgent(profile.copy(skillIds = profile.skillIds - skillId))
+    }
+
+    fun createAgent(projectId: String, name: String = "Новый агент"): String {
+        require(_state.value.projects.any { it.id == projectId }) { "Проект не найден" }
+        val agent = agentsRepository.createSpecialist(projectId, name)
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            status = "Агент создан. Настройте его рабочую среду."
+        )
+        return agent.id
+    }
+
+    fun saveAgent(profile: AgentProfile) {
+        require(_state.value.projects.any { it.id == profile.projectId }) { "Проект не найден" }
+        val saved = agentsRepository.upsert(profile)
+        syncAgentConversationSnapshots(saved)
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            status = if (profile.kind == AgentKind.ORCHESTRATOR) "Настройки Оркестратора сохранены" else "Настройки агента сохранены"
+        )
+    }
+
+    /**
+     * Opens the primary conversation of an agent.
+     *
+     * ChatSession is only a temporary message-store adapter here. AgentProfile remains
+     * the source of truth for personality and runtime settings.
+     */
+    private fun ensureAgentConversation(profile: AgentProfile): ChatSession {
+        val existingId = agentConversations.conversationsForAgent(profile.id)
+            .firstOrNull { id -> _state.value.chats.any { it.id == id } }
+        if (existingId != null) {
+            return _state.value.chats.first { it.id == existingId }
+        }
+
+        val chat = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = profile.name,
+            projectId = profile.projectId,
+            mode = ChatMode.TEXT,
+            connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
+            textModelOverride = profile.primaryModel?.modelId,
+            assignedRole = profile.role.takeIf { it.isNotBlank() },
+            masterPrompt = profile.instruction.takeIf { it.isNotBlank() }
+        )
+        val chats = listOf(chat) + _state.value.chats
+        chatsRepository.save(chats)
+        agentConversations.link(chat.id, profile.id)
+        _state.value = _state.value.copy(chats = chats)
+        syncAgentConversationSnapshots(profile)
+        return chatsRepository.list().firstOrNull { it.id == chat.id } ?: chat
+    }
+
+    fun openAgentChat(agentId: String): String? {
+        val profile = agent(agentId) ?: return null
+        val chat = ensureAgentConversation(profile)
+        syncAgentConversationSnapshots(profile)
+        switchChat(chat.id)
+        return chat.id
+    }
+
+    fun agentIdForChat(chatId: String): String? =
+        agentConversations.agentIdForConversation(chatId)
+
+    private fun syncAgentConversationSnapshots(profile: AgentProfile) {
+        val ids = agentConversations.conversationsForAgent(profile.id).toSet()
+        if (ids.isEmpty()) return
+
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id !in ids) chat else chat.copy(
+                title = profile.name,
+                assignedRole = profile.role.takeIf { it.isNotBlank() },
+                masterPrompt = profile.instruction.takeIf { it.isNotBlank() },
+                connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
+                textModelOverride = profile.primaryModel?.modelId,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+        chatsRepository.save(chats)
+        ids.forEach { chatId ->
+            projectAutomation.saveProfile(
+                chatId,
+                ProjectChatRuntimeProfile(
+                    modelId = profile.primaryModel?.modelId,
+                    webSearchEnabled = profile.webSearchEnabled,
+                    reasoningEnabled = profile.reasoningEnabled,
+                    reasoningEffort = profile.reasoningEffort,
+                    tools = profile.tools,
+                    // Agent-owned skills are connected to execution separately; do not
+                    // fall back to the old global/project skill library.
+                    skillIds = emptySet()
+                )
+            )
+
+            // Agent conversations never inherit the global chat memory/context settings.
+            // If no embedding model is configured yet, FULL mode keeps the full history
+            // without silently borrowing the ordinary-chat embedding model.
+            chatMemory.saveSettingsForChat(
+                chatId,
+                ChatMemoryGlobalSettings(
+                    embeddingModelId = profile.memoryEmbeddingModel?.modelId
+                        ?: ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL,
+                    summaryModelId = profile.contextModel?.modelId
+                        ?: profile.primaryModel?.modelId
+                        ?: ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL,
+                    defaultContextMode = if (profile.memoryEmbeddingModel == null)
+                        ChatContextMode.FULL
+                    else
+                        ChatContextMode.AUTO
+                )
+            )
+            chatMemory.saveMode(chatId, null)
+            prefs.edit().putStringSet(chatSkillsKey(chatId), emptySet()).apply()
+        }
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = current?.messages ?: _state.value.messages
+        )
+    }
+
+    fun deleteAgent(agentId: String) {
+        val target = agent(agentId) ?: return
+        if (target.kind == AgentKind.ORCHESTRATOR) {
+            _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
+            return
+        }
+
+        val conversationIds = agentConversations.conversationsForAgent(agentId).toSet()
+        conversationIds.forEach { chatId ->
+            chatFilesRepository.deleteChat(chatId)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chatId)
+            chatMemory.deleteChat(chatId)
+            projectAutomation.deleteChat(chatId)
+            prefs.edit().remove(chatSkillsKey(chatId)).apply()
+        }
+        agentConversations.unlinkAgent(agentId)
+        knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, agentId)
+        agentsRepository.delete(agentId)
+
+        var chats = _state.value.chats.filterNot { it.id in conversationIds }
+        if (chats.isEmpty()) {
+            val fallback = ChatSession(
+                id = UUID.randomUUID().toString(),
+                title = "Новый чат",
+                mode = ChatMode.TEXT,
+                connectionProfileId = _state.value.activeConnectionProfileId
+            )
+            chats = listOf(fallback)
+        }
+        chatsRepository.save(chats)
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.first()
+        prefs.edit().putString("current_chat_id", current.id).apply()
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            chats = chats,
+            currentChatId = current.id,
+            messages = current.messages,
+            status = "Агент и его локальное хранилище удалены"
+        )
     }
 
     private fun ensureProjectOrchestrators(projects: List<Project>, chats: List<ChatSession>): List<ChatSession> {
@@ -472,6 +750,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
         knowledgeBase.saveSettings(kind, ownerId, settings)
+        if (kind == KnowledgeOwnerKind.AGENT) {
+            agent(ownerId)?.let { profile ->
+                saveAgent(
+                    profile.copy(
+                        knowledgeBase = profile.knowledgeBase.copy(
+                            enabled = settings.enabled,
+                            embeddingModel = settings.embeddingModelId
+                                .trim()
+                                .takeIf { it.isNotBlank() }
+                                ?.let { AgentModelRef("openrouter", it) },
+                            topK = settings.topK
+                        )
+                    )
+                )
+            }
+        }
         touchKnowledgeOwner(kind, ownerId, "Настройки базы знаний сохранены")
     }
 
@@ -597,6 +891,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 projectsRepository.save(projects)
                 _state.value = _state.value.copy(projects = projects, status = status ?: _state.value.status)
             }
+            KnowledgeOwnerKind.AGENT -> {
+                agent(ownerId)?.let { agentsRepository.upsert(it.copy(updatedAt = now)) }
+                _state.value = _state.value.copy(
+                    agents = agentsRepository.list(),
+                    status = status ?: _state.value.status
+                )
+            }
         }
     }
 
@@ -612,11 +913,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return apiKey to effectiveTextBaseUrl(profile)
     }
 
-    private suspend fun knowledgeSystemContext(project: Project?, chat: ChatSession?, query: String): String {
+    private suspend fun knowledgeSystemContext(
+        project: Project?,
+        chat: ChatSession?,
+        query: String,
+        agentId: String? = null
+    ): String {
         if (query.isBlank()) return ""
         val owners = buildList {
-            project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
-            chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
+            if (agentId != null) {
+                add(KnowledgeOwnerKind.AGENT to agentId)
+            } else {
+                project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
+                chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
+            }
         }
         if (owners.isEmpty() || !knowledgeBase.hasEnabledKnowledge(owners)) return ""
         return runCatching {
@@ -1385,6 +1695,59 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         refreshModelCapabilities()
     }
 
+    fun selectAgentQuickModel(agentId: String, modelRef: String) {
+        if (_state.value.isLoading) return
+        val profileAgent = agent(agentId) ?: return
+        val allowed = buildSet {
+            profileAgent.primaryModel?.let { add(it.connectionProfileId to it.modelId) }
+            profileAgent.quickModels.forEach { add(it.connectionProfileId to it.modelId) }
+        }
+        if (allowed.isEmpty()) return
+
+        val fallbackConnection = profileAgent.primaryModel?.connectionProfileId ?: "openrouter"
+        val (profileId, modelId) = decodeQuickModelRef(modelRef, fallbackConnection)
+        if ((profileId to modelId) !in allowed) return
+
+        val connection = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
+        if (connection.id in _state.value.disabledConnectionIds || !isProfileConfigured(connection)) return
+
+        val chatId = _state.value.currentChatId
+        if (agentConversations.agentIdForConversation(chatId) != agentId) return
+
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id == chatId) chat.copy(
+                connectionProfileId = connection.id,
+                textModelOverride = modelId,
+                mode = ChatMode.TEXT,
+                updatedAt = System.currentTimeMillis()
+            ) else chat
+        }
+        chatsRepository.save(chats)
+
+        val runtime = projectAutomation.profile(chatId) ?: ProjectChatRuntimeProfile(
+            modelId = profileAgent.primaryModel?.modelId,
+            webSearchEnabled = profileAgent.webSearchEnabled,
+            reasoningEnabled = profileAgent.reasoningEnabled,
+            reasoningEffort = profileAgent.reasoningEffort,
+            tools = profileAgent.tools,
+            skillIds = emptySet()
+        )
+        projectAutomation.saveProfile(chatId, runtime.copy(modelId = modelId))
+
+        _state.value = _state.value.copy(
+            chats = chats,
+            activeConnectionProfileId = connection.id,
+            currentChatTextModel = modelId,
+            mode = ChatMode.TEXT,
+            webSearchEnabled = profileAgent.webSearchEnabled,
+            reasoningEnabled = profileAgent.reasoningEnabled,
+            reasoningEffort = profileAgent.reasoningEffort,
+            apiKeyConfigured = isProfileConfigured(connection),
+            status = null
+        )
+        refreshModelCapabilities()
+    }
+
     fun useDefaultTextModelForChat() {
         if (_state.value.isLoading) return
         val profile = activeConnectionProfile()
@@ -1837,12 +2200,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val modelId = fixed?.modelId ?: chat.textModelOverride ?: defaultModel
         val effort = fixed?.reasoningEffort ?: preferredReasoningEffort(modelId, null)
         val chatSkillIds = fixed?.skillIds ?: skillIdsForChat(chat)
-        prefs.edit()
+        val linkedAgentId = agentConversations.agentIdForConversation(id)
+        val switchPrefs = prefs.edit()
             .putString("current_chat_id", id)
-            .putString("active_connection_profile", profile.id)
             .putString("chat_mode", ChatMode.TEXT.name)
-            .putString("reasoning_effort", effort.name)
-            .apply()
+        if (linkedAgentId == null) {
+            switchPrefs
+                .putString("active_connection_profile", profile.id)
+                .putString("reasoning_effort", effort.name)
+        }
+        switchPrefs.apply()
         _state.value = _state.value.copy(
             chats = chats,
             currentChatId = id,
@@ -2012,32 +2379,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val project = Project(
             id = UUID.randomUUID().toString(),
             name = name.trim().ifBlank { "Новый проект" },
-            role = role.trim(),
-            masterPrompt = masterPrompt.trim(),
+            // Legacy fields remain serializable for now but are not part of the new project model.
+            role = "",
+            masterPrompt = "",
             isFavorite = favorite
         )
-        val orchestrator = ChatSession(
-            id = UUID.randomUUID().toString(),
-            title = "Оркестратор",
-            projectId = project.id,
-            mode = ChatMode.TEXT,
-            connectionProfileId = _state.value.activeConnectionProfileId,
-            textModelOverride = _state.value.currentChatTextModel ?: _state.value.textModel
-        )
+        agentsRepository.createOrchestrator(project.id)
         val projects = listOf(project) + _state.value.projects
-        val chats = listOf(orchestrator) + _state.value.chats
         projectsRepository.save(projects)
-        chatsRepository.save(chats)
-        projectAutomation.registerOrchestrator(project.id, orchestrator.id)
-        val runtime = ProjectChatRuntimeProfile(
-            modelId = orchestrator.textModelOverride,
-            reasoningEffort = _state.value.reasoningEffort,
-            tools = openRouterFeaturePrefs.tools(),
-            skillIds = project.skillIds
+        _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
+            projects = projects,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats(),
+            status = "Проект создан. Настройте Оркестратора и добавьте агентов."
         )
-        projectAutomation.saveProfile(orchestrator.id, runtime)
-        prefs.edit().putStringSet(chatSkillsKey(orchestrator.id), runtime.skillIds).apply()
-        _state.value = _state.value.copy(projects = projects, chats = chats, storedFiles = storageRepository.list(), storageStats = storageRepository.stats())
         return project.id
     }
 
@@ -2699,6 +3055,993 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 )
             }
             else -> error("Неизвестное действие Оркестратора: ${action.type}")
+        }
+    }
+
+    private val maxAgentOfficeRounds = 10
+    private val maxAgentOfficeTasks = 14
+
+    private fun agentAttachmentAllowed(
+        attachment: PendingAttachment,
+        profile: ConnectionProfile,
+        modelInfo: ModelInfo?
+    ): Boolean {
+        val mime = attachment.mimeType.lowercase()
+        val name = attachment.name.lowercase()
+        val textLike = mime.startsWith("text/") ||
+            name.endsWith(".md") || name.endsWith(".json") || name.endsWith(".csv") ||
+            name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+        if (textLike) return true
+        if (mime == "application/pdf" || name.endsWith(".pdf")) {
+            return profile.type == ProviderType.OPENROUTER
+        }
+        if (mime.startsWith("image/")) return modelInfo?.accepts("image") == true
+        if (mime.startsWith("audio/")) return profile.type == ProviderType.OPENROUTER && modelInfo?.accepts("audio") == true
+        if (mime.startsWith("video/")) return modelInfo?.accepts("video") == true
+        return modelInfo?.accepts("file") == true
+    }
+
+    private fun agentOfficeSystemPrompt(
+        project: Project,
+        orchestrator: AgentProfile,
+        specialists: List<AgentProfile>
+    ): String = buildString {
+        appendLine("Ты Оркестратор проекта «" + project.name + "».")
+        appendLine("Твоя работа — руководить ИИ-специалистами. Не выполняй содержательную работу специалиста сам, если в кабинете есть подходящий агент.")
+        appendLine("Ты выбираешь исполнителя, формулируешь поручение, передаёшь ему только нужные результаты и после ответа решаешь следующий шаг.")
+        appendLine("Ты НЕ МОЖЕШЬ менять постоянную модель, навыки, память, базу знаний, reasoning или личную инструкцию другого агента.")
+        appendLine("Если специалист уже сделал работу, используй его результат по resultId. Не выдумывай, что он сделал то, чего нет в результате.")
+        appendLine("Для обычной передачи результата следующему агенту укажи его ID в inputResultIds. TRANSFER_WORK для этого не нужен.")
+        appendLine("Если несколько поручений НЕ зависят друг от друга, можешь запустить их одновременно: верни подряд несколько CALL_AGENT с одинаковым непустым parallelGroup, например \"research-1\".")
+        appendLine("Действия с одинаковым parallelGroup должны идти рядом. Не помещай в одну параллельную группу два поручения одному и тому же агенту.")
+        appendLine("Если результат одного агента нужен другому, не запускай их параллельно: дождись результата и выбери следующего агента в следующем решении.")
+        appendLine("Если результат слабый, используй REQUEST_REVISION и укажи taskId предыдущего поручения.")
+        appendLine("FAILED-поручение не означает потерю всей работы: сохраняй и используй уже полученные COMPLETED-результаты.")
+        appendLine("Не запускай повторно COMPLETED-поручение. FAILED повторяй только если есть разумная причина; при ошибке настройки лучше попроси пользователя исправить её через ASK_USER.")
+        appendLine("Если следующему агенту поручено проверить, сравнить или подтвердить вывод относительно нескольких предыдущих результатов, передай ему все нужные inputResultIds, а не только последний промежуточный результат.")
+        appendLine("Завершай работу только когда получены необходимые результаты специалистов. Финальный ответ синтезируй из их результатов, не добавляя новые факты от себя.")
+        appendLine()
+        appendLine("ДОСТУПНЫЕ СПЕЦИАЛИСТЫ:")
+        if (specialists.isEmpty()) {
+            appendLine("- нет специалистов")
+        } else {
+            specialists.forEach { item ->
+                appendLine("- agentId=" + item.id + "; имя=" + item.name + "; роль=" + item.role.ifBlank { "не указана" })
+            }
+        }
+        appendLine()
+        appendLine("Верни ТОЛЬКО один JSON-объект без markdown и пояснений.")
+        appendLine("Схема:")
+        appendLine("{")
+        appendLine("  \"planSummary\": \"кратко что решено\",")
+        appendLine("  \"userReply\": \"текст пользователю только если нужно задать вопрос\",")
+        appendLine("  \"completed\": false,")
+        appendLine("  \"finalResult\": null,")
+        appendLine("  \"actions\": [")
+        appendLine("    {")
+        appendLine("      \"id\": \"любая уникальная строка\",")
+        appendLine("      \"type\": \"CALL_AGENT\",")
+        appendLine("      \"agentId\": \"точный agentId\",")
+        appendLine("      \"taskId\": null,")
+        appendLine("      \"objective\": \"цель поручения\",")
+        appendLine("      \"assignmentInstruction\": \"что именно сделать\",")
+        appendLine("      \"inputResultIds\": [],")
+        appendLine("      \"inputFileIds\": [],")
+        appendLine("      \"expectedOutput\": \"ожидаемый результат\",")
+        appendLine("      \"parallelGroup\": null,")
+        appendLine("      \"note\": \"\"")
+        appendLine("    }")
+        appendLine("  ]")
+        appendLine("}")
+        appendLine("Допустимые type: CALL_AGENT, REQUEST_REVISION, ASK_USER, CANCEL_TASK, COMPLETE_JOB.")
+        appendLine("Чтобы передать все исходные вложения пользователя агенту, добавь строку USER в inputFileIds.")
+        appendLine("Для ASK_USER заполни userReply и не ставь completed=true.")
+        appendLine("Для COMPLETE_JOB поставь completed=true и помести готовый ответ пользователю в finalResult.")
+    }
+
+    private fun agentOfficeStatePrompt(workspace: JobWorkspace): String = buildString {
+        appendLine("ИСХОДНАЯ ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:")
+        appendLine(workspace.userRequest)
+        appendLine()
+        if (workspace.results.isEmpty()) {
+            appendLine("РЕЗУЛЬТАТОВ СПЕЦИАЛИСТОВ ПОКА НЕТ.")
+        } else {
+            appendLine("РЕЗУЛЬТАТЫ СПЕЦИАЛИСТОВ:")
+            workspace.results.takeLast(10).forEach { result ->
+                val worker = agent(result.agentId)
+                appendLine()
+                appendLine("RESULT_ID=" + result.id)
+                appendLine("TASK_ID=" + result.taskId)
+                appendLine("АГЕНТ=" + (worker?.name ?: result.agentId))
+                appendLine("ТЕКСТ:")
+                appendLine(result.outputText.take(18000))
+            }
+        }
+        appendLine()
+        appendLine("СОСТОЯНИЕ ПОРУЧЕНИЙ:")
+        if (workspace.tasks.isEmpty()) {
+            appendLine("- поручений ещё нет")
+        } else {
+            workspace.tasks.takeLast(14).forEach { state ->
+                val worker = agent(state.packageData.agentId)
+                appendLine(
+                    "- taskId=" + state.packageData.id +
+                        "; агент=" + (worker?.name ?: state.packageData.agentId) +
+                        "; статус=" + state.status.name +
+                        (state.resultId?.let { "; resultId=" + it } ?: "") +
+                        (state.error?.takeIf { it.isNotBlank() }?.let {
+                            "; ошибка=" + it.replace("\n", " ").take(700)
+                        } ?: "")
+                )
+            }
+        }
+        appendLine()
+        appendLine("Прими следующее управленческое решение. Не повторяй уже выполненное поручение без причины.")
+    }
+
+    private suspend fun planAgentOfficeTurn(
+        project: Project,
+        orchestrator: AgentProfile,
+        orchestratorChat: ChatSession,
+        history: List<ChatMessage>,
+        workspace: JobWorkspace,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): AgentOrchestratorDecision {
+        val modelRef = orchestrator.primaryModel ?: error("У Оркестратора не выбрана основная модель")
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == modelRef.connectionProfileId }
+            ?: error("Подключение Оркестратора не найдено")
+        require(profile.type == ProviderType.OPENROUTER) { "В текущем тестовом контуре поддерживается OpenRouter" }
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        require(key.isNotBlank()) { "Не сохранён API-ключ OpenRouter" }
+
+        val modelInfo = _state.value.modelCatalog.firstOrNull { it.id == modelRef.modelId }
+            ?: _state.value.availableTextModels.firstOrNull { it.id == modelRef.modelId }
+            ?: ModelInfo(modelRef.modelId)
+        val actualReasoning = orchestrator.reasoningEnabled && modelInfo.supportsReasoning &&
+            (modelInfo.reasoningEfforts.isEmpty() || orchestrator.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+        val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) orchestrator.reasoningEffort.apiValue else null
+        val requestInfo = modelInfo.copy(
+            contextLength = listOfNotNull(modelInfo.contextLength, profile.contextLimitTokens).minOrNull()
+        )
+        val specialistList = _state.value.agents.filter {
+            it.projectId == project.id && it.kind == AgentKind.SPECIALIST
+        }
+        val skillText = agentSkills.promptFor(orchestrator.id, orchestrator.skillIds)
+        val knowledgeContext = knowledgeSystemContext(
+            project = null,
+            chat = null,
+            query = workspace.userRequest,
+            agentId = orchestrator.id
+        )
+        val system = buildSystemPrompt(
+            skillText = skillText,
+            project = null,
+            chat = orchestratorChat,
+            toolsEnabled = false,
+            agent = orchestrator
+        ) + "\n\n" + agentOfficeSystemPrompt(project, orchestrator, specialistList) + knowledgeContext
+
+        val ownFiles = agentFiles.list(orchestrator.id).map { file ->
+            PendingAttachment(
+                uri = "agent://" + file.id,
+                name = file.name,
+                mimeType = file.mimeType,
+                size = file.size,
+                localPath = file.localPath
+            )
+        }
+        val attachments = (userAttachments + ownFiles)
+            .filter { agentAttachmentAllowed(it, profile, modelInfo) }
+            .distinctBy { it.localPath ?: it.uri }
+
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "DECIDE project=" + project.id.take(8) +
+                "; workspace=" + workspace.id.take(8) +
+                "; roundTasks=" + workspace.tasks.size +
+                "; results=" + workspace.results.size
+        )
+        val result = network.call(
+            chatId = orchestratorChat.id,
+            profileId = profile.id,
+            recoverable = true
+        ) { requestApi ->
+            requestApi.chat(
+                key,
+                modelRef.modelId,
+                history.takeLast(14),
+                agentOfficeStatePrompt(workspace),
+                attachments,
+                system,
+                orchestrator.webSearchEnabled,
+                actualReasoning,
+                effort,
+                false,
+                effectiveTextBaseUrl(profile),
+                requestInfo,
+                streamToUi = false
+            )
+        }
+        val decision = AgentOrchestratorCodec.parse(result.text)
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "DECISION workspace=" + workspace.id.take(8) +
+                "; actions=" + decision.actions.joinToString { it.type.name } +
+                "; completed=" + decision.completed
+        )
+        return decision
+    }
+
+    private fun updateTaskState(
+        workspace: JobWorkspace,
+        taskId: String,
+        status: AgentTaskStatus,
+        resultId: String? = null,
+        error: String? = null
+    ): JobWorkspace = workspace.copy(
+        tasks = workspace.tasks.map { state ->
+            if (state.packageData.id == taskId) {
+                state.copy(
+                    status = status,
+                    resultId = resultId ?: state.resultId,
+                    error = error,
+                    updatedAt = System.currentTimeMillis()
+                )
+            } else state
+        }
+    )
+
+    private suspend fun dispatchAgentTask(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        packageData: AgentTaskPackage,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): AgentResult {
+        val worker = agent(packageData.agentId) ?: error("Агент не найден")
+        require(worker.projectId == workspace.projectId) { "Агент находится в другом проекте" }
+        require(worker.kind == AgentKind.SPECIALIST) { "Оркестратор не может поручить задачу самому себе" }
+        val modelRef = worker.primaryModel ?: error("У агента «" + worker.name + "» не выбрана основная модель")
+        val profile = _state.value.connectionProfiles.firstOrNull { it.id == modelRef.connectionProfileId }
+            ?: error("Подключение агента «" + worker.name + "» не найдено")
+        require(profile.type == ProviderType.OPENROUTER) { "В текущем тестовом контуре поддерживается OpenRouter" }
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        require(key.isNotBlank()) { "Не сохранён API-ключ OpenRouter" }
+
+        val chat = ensureAgentConversation(worker)
+        if (!network.reserveChat(chat.id)) {
+            error("Агент «" + worker.name + "» уже выполняет другую задачу")
+        }
+
+        DiagnosticLog.record(
+            context,
+            "DISPATCHER",
+            "START agent=" + worker.name +
+                "; agentId=" + worker.id.take(8) +
+                "; task=" + packageData.id.take(8) +
+                "; model=" + modelRef.modelId
+        )
+
+        try {
+            val selectedResults = packageData.inputResultIds.map { id ->
+                workspace.results.firstOrNull { it.id == id }
+                    ?: error("Оркестратор сослался на неизвестный resultId: " + id)
+            }
+            val delegatedText = buildString {
+                appendLine("ПОРУЧЕНИЕ ОРКЕСТРАТОРА")
+                appendLine("Цель: " + packageData.objective.ifBlank { packageData.assignmentInstruction })
+                if (packageData.assignmentInstruction.isNotBlank()) {
+                    appendLine()
+                    appendLine("Рабочая инструкция:")
+                    appendLine(packageData.assignmentInstruction)
+                }
+                if (packageData.expectedOutput.isNotBlank()) {
+                    appendLine()
+                    appendLine("Ожидаемый результат: " + packageData.expectedOutput)
+                }
+                if (selectedResults.isNotEmpty()) {
+                    appendLine()
+                    appendLine("МАТЕРИАЛЫ ОТ ПРЕДЫДУЩИХ СПЕЦИАЛИСТОВ:")
+                    selectedResults.forEach { previous ->
+                        val source = agent(previous.agentId)
+                        appendLine()
+                        appendLine("От: " + (source?.name ?: previous.agentId))
+                        appendLine(previous.outputText)
+                    }
+                }
+            }.trim()
+
+            val latestChat = chatsRepository.list().firstOrNull { it.id == chat.id } ?: chat
+            val before = latestChat.messages
+            val taskMessage = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = "user",
+                text = delegatedText,
+                deliveryState = "pending"
+            )
+            val withTask = chatsRepository.updateChat(chat.id) { stored ->
+                stored.copy(
+                    messages = stored.messages + taskMessage,
+                    updatedAt = System.currentTimeMillis()
+                )
+            }
+            _state.value = _state.value.copy(chats = withTask)
+
+            val modelInfo = _state.value.modelCatalog.firstOrNull { it.id == modelRef.modelId }
+                ?: _state.value.availableTextModels.firstOrNull { it.id == modelRef.modelId }
+                ?: ModelInfo(modelRef.modelId)
+            val actualReasoning = worker.reasoningEnabled && modelInfo.supportsReasoning &&
+                (modelInfo.reasoningEfforts.isEmpty() || worker.reasoningEffort.apiValue in modelInfo.reasoningEfforts)
+            val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) worker.reasoningEffort.apiValue else null
+            val requestInfo = modelInfo.copy(
+                contextLength = listOfNotNull(modelInfo.contextLength, profile.contextLimitTokens).minOrNull()
+            )
+            val skillText = agentSkills.promptFor(worker.id, worker.skillIds)
+            val ownAttachments = agentFiles.list(worker.id).map { file ->
+                PendingAttachment(
+                    uri = "agent://" + file.id,
+                    name = file.name,
+                    mimeType = file.mimeType,
+                    size = file.size,
+                    localPath = file.localPath
+                )
+            }
+            val delegatedAttachments = if (packageData.inputFileIds.any { it.equals("USER", ignoreCase = true) }) {
+                userAttachments
+            } else emptyList()
+            val attachments = (ownAttachments + delegatedAttachments)
+                .filter { agentAttachmentAllowed(it, profile, modelInfo) }
+                .distinctBy { it.localPath ?: it.uri }
+            val knowledgeContext = knowledgeSystemContext(
+                project = null,
+                chat = null,
+                query = delegatedText,
+                agentId = worker.id
+            )
+            val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
+
+            network.updatePhase("Курьер → " + worker.name)
+            val modelResult = network.call(
+                chatId = chat.id,
+                profileId = profile.id,
+                recoverable = true
+            ) { requestApi ->
+                val preparedContext = chatMemoryManager.prepare(
+                    chat = latestChat,
+                    fullHistory = before,
+                    query = delegatedText,
+                    apiKey = memoryCredentials?.first,
+                    baseUrl = memoryCredentials?.second,
+                    apiOverride = requestApi
+                )
+                requestApi.chat(
+                    key,
+                    modelRef.modelId,
+                    preparedContext.history,
+                    delegatedText,
+                    attachments,
+                    buildSystemPrompt(
+                        skillText = skillText,
+                        project = null,
+                        chat = latestChat,
+                        toolsEnabled = modelInfo.supportsTools,
+                        agent = worker
+                    ) + preparedContext.systemContext + knowledgeContext,
+                    worker.webSearchEnabled,
+                    actualReasoning,
+                    effort,
+                    modelInfo.supportsTools,
+                    effectiveTextBaseUrl(profile),
+                    requestInfo,
+                    streamToUi = false
+                )
+            }
+            require(modelResult.text.isNotBlank() || modelResult.files.isNotEmpty()) {
+                "Агент «" + worker.name + "» вернул пустой ответ"
+            }
+
+            val assistant = ChatMessage(
+                id = UUID.randomUUID().toString(),
+                role = "assistant",
+                text = modelResult.text.ifBlank { "Готово." },
+                generatedFiles = modelResult.files,
+                modelId = modelResult.modelId ?: modelRef.modelId,
+                providerName = modelResult.providerName,
+                costUsd = modelResult.costUsd,
+                inputTokens = modelResult.inputTokens,
+                outputTokens = modelResult.outputTokens
+            )
+            chatsRepository.finishRequest(chat.id, taskMessage.id, assistant)
+            publishChats(chatsRepository.list())
+
+            val result = AgentResult(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                taskId = packageData.id,
+                agentId = worker.id,
+                outputText = modelResult.text.ifBlank { "Готово." },
+                fileIds = modelResult.files.map { it.id },
+                summary = modelResult.text.take(500)
+            )
+            DiagnosticLog.record(
+                context,
+                "AGENT",
+                "COMPLETE agent=" + worker.name +
+                    "; task=" + packageData.id.take(8) +
+                    "; result=" + result.id.take(8) +
+                    "; chars=" + result.outputText.length +
+                    "; files=" + result.fileIds.size
+            )
+            return result
+        } finally {
+            network.releaseChat(chat.id)
+        }
+    }
+
+    private fun agentTaskPackageForAction(
+        workspace: JobWorkspace,
+        action: AgentOrchestratorAction
+    ): AgentTaskPackage = when (action.type) {
+        AgentOrchestratorActionType.CALL_AGENT -> {
+            val targetId = action.agentId ?: error("CALL_AGENT без agentId")
+            AgentTaskPackage(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                agentId = targetId,
+                objective = action.objective.ifBlank { action.assignmentInstruction },
+                assignmentInstruction = action.assignmentInstruction,
+                inputResultIds = action.inputResultIds,
+                inputFileIds = action.inputFileIds,
+                expectedOutput = action.expectedOutput
+            )
+        }
+
+        AgentOrchestratorActionType.REQUEST_REVISION -> {
+            val original = action.taskId?.let { id ->
+                workspace.tasks.firstOrNull { it.packageData.id == id }
+            } ?: action.agentId?.let { id ->
+                workspace.tasks.asReversed().firstOrNull { it.packageData.agentId == id }
+            } ?: error("REQUEST_REVISION без taskId или agentId")
+            val previousResultId = original.resultId
+                ?: error("Нельзя отправить на доработку незавершённое поручение")
+            AgentTaskPackage(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                agentId = original.packageData.agentId,
+                objective = action.objective.ifBlank { original.packageData.objective },
+                assignmentInstruction = action.assignmentInstruction.ifBlank {
+                    action.note.ifBlank { "Доработай предыдущий результат по замечаниям Оркестратора." }
+                },
+                inputResultIds = (listOf(previousResultId) + action.inputResultIds).distinct(),
+                inputFileIds = action.inputFileIds,
+                expectedOutput = action.expectedOutput.ifBlank { original.packageData.expectedOutput }
+            )
+        }
+
+        else -> error("Действие " + action.type + " не является поручением агенту")
+    }
+
+    private suspend fun executeAgentOfficeAction(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        action: AgentOrchestratorAction,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): JobWorkspace {
+        if (workspace.tasks.size >= maxAgentOfficeTasks) {
+            error("Оркестратор превысил лимит поручений за один запуск")
+        }
+
+        val packageData = agentTaskPackageForAction(workspace, action)
+        val target = agent(packageData.agentId) ?: error("Агент для поручения не найден")
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            action.type.name + " -> " + target.name +
+                "; task=" + packageData.id.take(8) +
+                "; inputs=" + packageData.inputResultIds.size
+        )
+        var next = workspace.copy(
+            tasks = workspace.tasks + AgentTaskState(
+                packageData = packageData,
+                status = AgentTaskStatus.QUEUED
+            ),
+            transfers = workspace.transfers + AgentTransferLogEntry(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                fromAgentId = orchestrator.id,
+                toAgentId = target.id,
+                taskId = packageData.id,
+                resultIds = packageData.inputResultIds,
+                note = packageData.objective
+            )
+        )
+        next = agentWork.upsert(next)
+        next = agentWork.upsert(updateTaskState(next, packageData.id, AgentTaskStatus.RUNNING))
+
+        return try {
+            val result = dispatchAgentTask(orchestrator, next, packageData, userAttachments, network)
+            next = updateTaskState(next, packageData.id, AgentTaskStatus.COMPLETED, result.id)
+                .copy(
+                    results = next.results + result,
+                    transfers = next.transfers + AgentTransferLogEntry(
+                        id = UUID.randomUUID().toString(),
+                        workspaceId = next.id,
+                        fromAgentId = target.id,
+                        toAgentId = orchestrator.id,
+                        taskId = packageData.id,
+                        resultIds = listOf(result.id),
+                        fileIds = result.fileIds,
+                        note = "Результат возвращён Оркестратору"
+                    )
+                )
+            DiagnosticLog.record(
+                context,
+                "TRANSFER",
+                target.name + " -> Оркестратор; result=" + result.id.take(8)
+            )
+            agentWork.upsert(next)
+        } catch (error: Throwable) {
+            val failedWorkspace = agentWork.upsert(
+                updateTaskState(
+                    next,
+                    packageData.id,
+                    AgentTaskStatus.FAILED,
+                    error = error.message ?: "Ошибка агента"
+                )
+            )
+            DiagnosticLog.record(
+                context,
+                "AGENT",
+                "FAILED agent=" + target.name +
+                    "; task=" + packageData.id.take(8) +
+                    "; reason=" + (error.message ?: error::class.java.simpleName)
+            )
+            failedWorkspace
+        }
+    }
+
+    private suspend fun executeAgentOfficeParallelGroup(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        actions: List<AgentOrchestratorAction>,
+        groupId: String,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): JobWorkspace {
+        if (actions.size < 2) {
+            return executeAgentOfficeAction(orchestrator, workspace, actions.first(), userAttachments, network)
+        }
+        if (workspace.tasks.size + actions.size > maxAgentOfficeTasks) {
+            error("Оркестратор превысил лимит поручений за один запуск")
+        }
+
+        val packages = actions.map { agentTaskPackageForAction(workspace, it) }
+        val targetIds = packages.map { it.agentId }
+        if (targetIds.distinct().size != targetIds.size) {
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "PARALLEL_FALLBACK group=" + groupId + "; reason=same_agent"
+            )
+            var next = workspace
+            actions.forEach { action ->
+                next = executeAgentOfficeAction(orchestrator, next, action, userAttachments, network)
+            }
+            return next
+        }
+
+        val targets = packages.map { packageData ->
+            agent(packageData.agentId) ?: error("Агент для параллельного поручения не найден")
+        }
+        targets.forEach { target ->
+            require(target.projectId == workspace.projectId) { "Агент находится в другом проекте" }
+            require(target.kind == AgentKind.SPECIALIST) { "Оркестратор не может поручить задачу самому себе" }
+            ensureAgentConversation(target)
+        }
+
+        val queuedStates = packages.map { packageData ->
+            AgentTaskState(packageData = packageData, status = AgentTaskStatus.QUEUED)
+        }
+        val outboundTransfers = packages.map { packageData ->
+            AgentTransferLogEntry(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                fromAgentId = orchestrator.id,
+                toAgentId = packageData.agentId,
+                taskId = packageData.id,
+                resultIds = packageData.inputResultIds,
+                note = packageData.objective
+            )
+        }
+
+        var next = agentWork.upsert(
+            workspace.copy(
+                tasks = workspace.tasks + queuedStates,
+                transfers = workspace.transfers + outboundTransfers
+            )
+        )
+        val packageIds = packages.map { it.id }.toSet()
+        next = agentWork.upsert(
+            next.copy(
+                tasks = next.tasks.map { state ->
+                    if (state.packageData.id in packageIds) {
+                        state.copy(status = AgentTaskStatus.RUNNING, updatedAt = System.currentTimeMillis())
+                    } else state
+                }
+            )
+        )
+
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "PARALLEL_START group=" + groupId + "; agents=" + targets.joinToString { it.name }
+        )
+        network.updatePhase("Оркестратор · параллельно: " + targets.joinToString { it.name })
+
+        val runningWorkspace = next
+        val outcomes = coroutineScope {
+            packages.map { packageData ->
+                async {
+                    val outcome = try {
+                        Result.success(
+                            dispatchAgentTask(
+                                orchestrator = orchestrator,
+                                workspace = runningWorkspace,
+                                packageData = packageData,
+                                userAttachments = userAttachments,
+                                network = network
+                            )
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        Result.failure<AgentResult>(error)
+                    }
+                    packageData to outcome
+                }
+            }.awaitAll()
+        }
+
+        outcomes.forEach { (packageData, outcome) ->
+            val target = agent(packageData.agentId)
+            outcome.onSuccess { result ->
+                next = updateTaskState(next, packageData.id, AgentTaskStatus.COMPLETED, result.id)
+                    .copy(
+                        results = next.results + result,
+                        transfers = next.transfers + AgentTransferLogEntry(
+                            id = UUID.randomUUID().toString(),
+                            workspaceId = next.id,
+                            fromAgentId = packageData.agentId,
+                            toAgentId = orchestrator.id,
+                            taskId = packageData.id,
+                            resultIds = listOf(result.id),
+                            fileIds = result.fileIds,
+                            note = "Параллельный результат возвращён Оркестратору"
+                        )
+                    )
+                DiagnosticLog.record(
+                    context,
+                    "TRANSFER",
+                    (target?.name ?: packageData.agentId) +
+                        " -> Оркестратор; result=" + result.id.take(8) +
+                        "; parallelGroup=" + groupId
+                )
+            }.onFailure { error ->
+                next = updateTaskState(
+                    next,
+                    packageData.id,
+                    AgentTaskStatus.FAILED,
+                    error = error.message ?: "Ошибка агента"
+                )
+            }
+        }
+        next = agentWork.upsert(next)
+
+        val failedCount = outcomes.count { it.second.isFailure }
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "PARALLEL_COMPLETE group=" + groupId +
+                "; completed=" + outcomes.count { it.second.isSuccess } +
+                "; failed=" + failedCount
+        )
+        if (failedCount > 0) {
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "PARALLEL_PARTIAL group=" + groupId +
+                    "; successfulResultsPreserved=true; continuing=true"
+            )
+        }
+        return next
+    }
+
+    private suspend fun executeAgentOfficeActions(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        actions: List<AgentOrchestratorAction>,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): JobWorkspace {
+        var next = workspace
+        var index = 0
+        while (index < actions.size) {
+            val first = actions[index]
+            val group = first.parallelGroup?.trim()?.takeIf { it.isNotBlank() }
+            if (group == null) {
+                next = executeAgentOfficeAction(orchestrator, next, first, userAttachments, network)
+                index += 1
+                continue
+            }
+
+            val batch = mutableListOf<AgentOrchestratorAction>()
+            var cursor = index
+            while (cursor < actions.size) {
+                val candidate = actions[cursor]
+                if (candidate.parallelGroup?.trim() != group) break
+                batch += candidate
+                cursor += 1
+            }
+            next = if (batch.size > 1) {
+                executeAgentOfficeParallelGroup(
+                    orchestrator = orchestrator,
+                    workspace = next,
+                    actions = batch,
+                    groupId = group,
+                    userAttachments = userAttachments,
+                    network = network
+                )
+            } else {
+                executeAgentOfficeAction(orchestrator, next, first, userAttachments, network)
+            }
+            index += batch.size
+        }
+        return next
+    }
+
+    private fun projectPreflightReport(
+        project: Project,
+        orchestrator: AgentProfile
+    ): ProjectPreflightReport {
+        val specialists = _state.value.agents.filter {
+            it.projectId == project.id && it.kind == AgentKind.SPECIALIST
+        }
+        return ProjectPreflight.inspect(
+            project = project,
+            orchestrator = orchestrator,
+            specialists = specialists,
+            profiles = _state.value.connectionProfiles,
+            disabledConnectionIds = _state.value.disabledConnectionIds,
+            hasApiKey = { profileId -> secrets.getProfileApiKey(profileId).orEmpty().isNotBlank() },
+            filesForAgent = { agentId -> agentFiles.list(agentId) },
+            skillIdsForAgent = { agentId -> agentSkills.list(agentId).map { it.id }.toSet() },
+            knowledgeForAgent = { agentId ->
+                knowledgeBase.documents(KnowledgeOwnerKind.AGENT, agentId)
+            },
+            fileExists = { path -> path.isNotBlank() && File(path).isFile }
+        )
+    }
+
+    private fun preflightFingerprintKey(projectId: String): String =
+        "agent_project_preflight_fingerprint::" + projectId
+
+    private fun appendPreflightBlockedMessage(
+        chat: ChatSession,
+        clean: String,
+        pending: List<PendingAttachment>,
+        report: ProjectPreflightReport
+    ) {
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = clean,
+            attachmentNames = pending.map { it.name }.distinct()
+        )
+        val diagnostic = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "assistant",
+            text = report.blockedMessage(),
+            providerName = "Диагностика проекта"
+        )
+        val messages = chat.messages + user + diagnostic
+        val chats = replaceChatMessages(_state.value.chats, chat.id, messages, null)
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = messages,
+            status = "⛔ Диагностика проекта: требуется настройка"
+        )
+        DiagnosticLog.record(
+            context,
+            "PREFLIGHT",
+            "BLOCKED project=" + (chat.projectId ?: "unknown").take(8) +
+                "; blockers=" + report.blockers.size +
+                "; warnings=" + report.warnings.size
+        )
+    }
+
+    private fun sendAgentOfficeCommand(
+        orchestrator: AgentProfile,
+        command: String,
+        pending: List<PendingAttachment>
+    ) {
+        val chatId = _state.value.currentChatId
+        if (_state.value.isLoading || RequestExecutionManager.hasActiveChat(chatId)) return
+        val project = _state.value.projects.firstOrNull { it.id == orchestrator.projectId } ?: return
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
+        val clean = command.trim().ifBlank {
+            if (pending.isNotEmpty()) "Организуй работу команды по приложенным материалам." else return
+        }
+        val preflight = projectPreflightReport(project, orchestrator)
+        if (!preflight.ready) {
+            appendPreflightBlockedMessage(chat, clean, pending, preflight)
+            return
+        }
+
+        val preflightKey = preflightFingerprintKey(project.id)
+        val previousPreflight = prefs.getString(preflightKey, null)
+        val preflightNotice = if (previousPreflight != preflight.fingerprint) {
+            prefs.edit().putString(preflightKey, preflight.fingerprint).apply()
+            DiagnosticLog.record(
+                context,
+                "PREFLIGHT",
+                "PASSED project=" + project.id.take(8) +
+                    "; warnings=" + preflight.warnings.size
+            )
+            preflight.readyNotice()
+        } else {
+            null
+        }
+
+        val before = chat.messages
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = clean,
+            attachmentNames = pending.map { it.name }.distinct(),
+            deliveryState = "pending"
+        )
+        val withUser = replaceChatMessages(_state.value.chats, chatId, before + user, null)
+        chatsRepository.save(withUser)
+        _state.value = _state.value.copy(
+            chats = withUser,
+            messages = before + user,
+            pendingAttachments = emptyList(),
+            requestActive = true,
+            busyLabel = "Оркестратор · распределяю работу…",
+            status = preflightNotice
+        )
+
+        val requestId = nextRequestGeneration(chatId)
+        activeRequestPending[chatId] = pending
+        var workspace = agentWork.upsert(
+            JobWorkspace(
+                id = UUID.randomUUID().toString(),
+                projectId = project.id,
+                orchestratorAgentId = orchestrator.id,
+                userRequest = clean
+            )
+        )
+
+        launchRequest(chatId, user.id, "Оркестратор · " + project.name) { network ->
+            var failure: Throwable? = null
+            try {
+                var finalText: String? = null
+                var round = 0
+
+                while (round < maxAgentOfficeRounds && finalText == null) {
+                    round += 1
+                    network.updatePhase("Оркестратор · решение " + round)
+                    val latestChat = chatsRepository.list().firstOrNull { it.id == chatId } ?: chat
+                    val decision = planAgentOfficeTurn(
+                        project = project,
+                        orchestrator = orchestrator,
+                        orchestratorChat = latestChat,
+                        history = before,
+                        workspace = workspace,
+                        userAttachments = pending,
+                        network = network
+                    )
+                    workspace = agentWork.upsert(
+                        workspace.copy(plan = decision.planSummary.ifBlank { workspace.plan })
+                    )
+
+                    val ask = decision.actions.firstOrNull { it.type == AgentOrchestratorActionType.ASK_USER }
+                    if (ask != null) {
+                        finalText = decision.userReply.ifBlank {
+                            ask.note.ifBlank { "Нужно уточнение пользователя, прежде чем продолжить работу." }
+                        }
+                        break
+                    }
+
+                    val executable = decision.actions.filter {
+                        it.type == AgentOrchestratorActionType.CALL_AGENT ||
+                            it.type == AgentOrchestratorActionType.REQUEST_REVISION
+                    }
+                    workspace = executeAgentOfficeActions(
+                        orchestrator = orchestrator,
+                        workspace = workspace,
+                        actions = executable,
+                        userAttachments = pending,
+                        network = network
+                    )
+
+                    decision.actions
+                        .filter { it.type == AgentOrchestratorActionType.CANCEL_TASK }
+                        .forEach { action ->
+                            val taskId = action.taskId ?: return@forEach
+                            val state = workspace.tasks.firstOrNull { it.packageData.id == taskId } ?: return@forEach
+                            if (state.status == AgentTaskStatus.CREATED || state.status == AgentTaskStatus.QUEUED) {
+                                workspace = agentWork.upsert(
+                                    updateTaskState(workspace, taskId, AgentTaskStatus.CANCELLED)
+                                )
+                            }
+                        }
+
+                    val completeRequested = decision.completed ||
+                        decision.actions.any { it.type == AgentOrchestratorActionType.COMPLETE_JOB }
+                    if (completeRequested) {
+                        finalText = decision.finalResult
+                            ?.takeIf { it.isNotBlank() }
+                            ?: decision.userReply.takeIf { it.isNotBlank() }
+                            ?: error("Оркестратор завершил работу без финального результата")
+                    } else if (executable.isEmpty()) {
+                        error("Оркестратор не выбрал ни одного следующего действия")
+                    }
+                }
+
+                if (finalText == null) {
+                    error("Оркестратор превысил лимит управленческих циклов")
+                }
+
+                workspace = agentWork.upsert(
+                    workspace.copy(finalResult = finalText)
+                )
+                DiagnosticLog.record(
+                    context,
+                    "ORCHESTRATOR",
+                    "COMPLETE workspace=" + workspace.id.take(8) +
+                        "; tasks=" + workspace.tasks.size +
+                        "; results=" + workspace.results.size +
+                        "; finalChars=" + finalText.length
+                )
+
+                val assistant = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "assistant",
+                    text = finalText,
+                    modelId = orchestrator.primaryModel?.modelId,
+                    providerName = "Оркестратор"
+                )
+                val finished = chatsRepository.finishRequest(chatId, user.id, assistant)
+                publishChats(finished)
+                playReadySound()
+                refreshProviderUsage()
+            } catch (error: Throwable) {
+                failure = error
+                DiagnosticLog.record(
+                    context,
+                    "ORCHESTRATOR",
+                    "FAILED workspace=" + workspace.id.take(8),
+                    error
+                )
+                val current = chatsRepository.list().firstOrNull { it.id == chatId }
+                val pendingStillExists = current?.messages?.any {
+                    it.id == user.id && it.deliveryState == "pending"
+                } == true
+                if (pendingStillExists) {
+                    val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                    publishChats(failedChats)
+                }
+            } finally {
+                cleanupTempAttachments(pending)
+                activeRequestPending.remove(chatId)
+                _state.value = _state.value.copy(status = failure?.message)
+            }
         }
     }
 
@@ -3580,45 +4923,67 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun deleteProject(projectId: String) {
         if (_state.value.isLoading) return
+
+        val projectAgents = _state.value.agents.filter { it.projectId == projectId }
+        val conversationIds = projectAgents
+            .flatMap { agentConversations.conversationsForAgent(it.id) }
+            .toSet()
+
         val active = _state.value.chats.firstOrNull {
-            it.projectId == projectId && RequestExecutionManager.hasActiveChat(it.id)
+            it.id in conversationIds && RequestExecutionManager.hasActiveChat(it.id)
         }
         if (active != null) {
             _state.value = _state.value.copy(status = "Нельзя удалить проект: «${active.title}» сейчас выполняет работу")
             return
         }
+
+        conversationIds.forEach { chatId ->
+            chatFilesRepository.deleteChat(chatId)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chatId)
+            chatMemory.deleteChat(chatId)
+            projectAutomation.deleteChat(chatId)
+            prefs.edit().remove(chatSkillsKey(chatId)).apply()
+        }
+        projectAgents.forEach { profile ->
+            agentConversations.unlinkAgent(profile.id)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.AGENT, profile.id)
+        }
+
         projectsRepository.deleteProjectFiles(projectId)
+        agentsRepository.deleteProjectAgents(projectId)
+        agentWork.deleteProject(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
-        _state.value.chats.filter { it.projectId == projectId }.forEach { chatMemory.deleteChat(it.id) }
+        projectAutomation.deleteProject(projectId)
+
         val projects = _state.value.projects.filterNot { it.id == projectId }
         projectsRepository.save(projects)
-        val orchestratorId = projectAutomation.orchestratorChatId(projectId)
-        if (orchestratorId != null) {
-            chatFilesRepository.deleteChat(orchestratorId)
-            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, orchestratorId)
-            prefs.edit().remove(chatSkillsKey(orchestratorId)).apply()
+
+        var chats = _state.value.chats.filterNot {
+            it.id in conversationIds || it.projectId == projectId
         }
-        projectAutomation.deleteProject(projectId)
-        val chats = _state.value.chats.mapNotNull { chat ->
-            when {
-                chat.id == orchestratorId -> null
-                chat.projectId == projectId -> {
-                    projectAutomation.deleteChat(chat.id)
-                    chat.copy(projectId = null, stages = null)
-                }
-                else -> chat
-            }
+        if (chats.isEmpty()) {
+            chats = listOf(
+                ChatSession(
+                    id = UUID.randomUUID().toString(),
+                    title = "Новый чат",
+                    mode = ChatMode.TEXT,
+                    connectionProfileId = _state.value.activeConnectionProfileId
+                )
+            )
         }
         chatsRepository.save(chats)
-        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.firstOrNull()
+
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.first()
+        prefs.edit().putString("current_chat_id", current.id).apply()
         _state.value = _state.value.copy(
+            agents = agentsRepository.list(),
             projects = projects,
             chats = chats,
-            currentChatId = current?.id ?: _state.value.currentChatId,
-            messages = current?.messages ?: emptyList(),
+            currentChatId = current.id,
+            messages = current.messages,
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Проект удалён. Оркестратор удалён вместе с ним; остальные чаты сохранены как обычные."
+            status = "Проект, Оркестратор, агенты и их рабочие данные удалены."
         )
     }
 
@@ -4200,6 +5565,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
 
+        val currentAgent = currentChat
+            ?.let { agentConversations.agentIdForConversation(it.id) }
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+
+        if (mode == ChatMode.TEXT && currentAgent?.kind == AgentKind.ORCHESTRATOR) {
+            sendAgentOfficeCommand(currentAgent, clean, pending)
+            return
+        }
+
         if (mode == ChatMode.TEXT && currentChat != null && isOrchestratorChat(currentChat.id)) {
             sendOrchestratorControl(clean, pending, persistentChatFiles)
             return
@@ -4268,10 +5642,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
         // mutable current-chat state from inside the background job after navigation.
-        val requestSkillIds = _state.value.activeSkillIds
+        val requestAgent = currentChat
+            ?.let { agentConversations.agentIdForConversation(it.id) }
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+        val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
         val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
             ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
-        val requestProjectTextAttachments = if (mode == ChatMode.TEXT) {
+        val requestProjectTextAttachments = if (mode == ChatMode.TEXT && requestAgent == null) {
             currentProject?.files.orEmpty().map { file ->
                 PendingAttachment(
                     uri = "project://${file.id}",
@@ -4283,9 +5660,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.filter { attachmentAllowed(it).first }
         } else emptyList()
         val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
-            persistentChatFiles.filter { attachmentAllowed(it).first }
+            if (requestAgent != null) {
+                agentFiles.list(requestAgent.id).map { file ->
+                    PendingAttachment(
+                        uri = "agent://${file.id}",
+                        name = file.name,
+                        mimeType = file.mimeType,
+                        size = file.size,
+                        localPath = file.localPath
+                    )
+                }.filter { attachmentAllowed(it).first }
+            } else {
+                persistentChatFiles.filter { attachmentAllowed(it).first }
+            }
         } else emptyList()
-        val requestProjectImages = if (mode == ChatMode.IMAGE) {
+        val requestProjectImages = if (mode == ChatMode.IMAGE && requestAgent == null) {
             currentProject?.files.orEmpty()
                 .filter { it.mimeType.startsWith("image/") && imageInfo?.accepts("image") == true }
                 .map { file -> PendingAttachment(
@@ -4308,7 +5697,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val operation = runCatching {
                 when (mode) {
                     ChatMode.TEXT -> {
-                        val skillText = skills.promptFor(requestSkillIds)
+                        val skillText = if (requestAgent != null) {
+                            agentSkills.promptFor(requestAgent.id, requestSkillIds)
+                        } else {
+                            skills.promptFor(requestSkillIds)
+                        }
                         val projectFiles = requestProjectTextAttachments
                         val modelInfo = requestTextModelInfo
                         val chosenWindow = listOfNotNull(modelInfo?.contextLength, profile.contextLimitTokens).minOrNull()
@@ -4318,7 +5711,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
                         val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
-                        val knowledgeContext = knowledgeSystemContext(currentProject, currentChat, clean)
+                        val knowledgeContext = if (requestAgent == null) {
+                            knowledgeSystemContext(currentProject, currentChat, clean)
+                        } else {
+                            knowledgeSystemContext(
+                                project = null,
+                                chat = null,
+                                query = clean,
+                                agentId = requestAgent.id
+                            )
+                        }
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
                         network.call(profileId = profile.id, recoverable = true) { requestApi ->
@@ -4337,7 +5739,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 preparedContext.history,
                                 clean,
                                 allAttachments,
-                                buildSystemPrompt(skillText, currentProject, currentChat, modelInfo?.supportsTools == true) +
+                                buildSystemPrompt(
+                                    skillText = skillText,
+                                    project = if (requestAgent == null) currentProject else null,
+                                    chat = currentChat,
+                                    toolsEnabled = modelInfo?.supportsTools == true,
+                                    agent = requestAgent
+                                ) +
                                     preparedContext.systemContext + knowledgeContext,
                                 webSearchEnabled,
                                 actualReasoning,
@@ -4688,12 +6096,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val chatId = _state.value.currentChatId
+        val linkedAgent = agentConversations.agentIdForConversation(chatId)
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+
         chatFilesRepository.deleteChat(chatId)
         chatMemory.clearMemory(chatId)
+
         val now = System.currentTimeMillis()
         val chats = _state.value.chats.map { chat ->
             if (chat.id == chatId) chat.copy(
-                title = "Новый чат",
+                // Agent identity belongs to AgentProfile and must survive clearing its conversation.
+                title = linkedAgent?.name ?: "Новый чат",
                 messages = emptyList(),
                 chatFiles = emptyList(),
                 updatedAt = now
@@ -4706,7 +6119,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Чат очищен вместе с его временными файлами"
+            status = if (linkedAgent != null)
+                "Переписка «${linkedAgent.name}» очищена. Настройки и рабочая среда агента сохранены."
+            else
+                "Чат очищен вместе с его временными файлами"
+        )
+        DiagnosticLog.action(
+            context,
+            "clear_chat",
+            "chat=${chatId.take(8)}; agent=${linkedAgent?.id?.take(8) ?: "none"}"
         )
     }
 
@@ -4803,50 +6224,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun playReadySound() {
-        val state = _state.value
-        if (!state.answerSoundEnabled) return
-
-        if (state.answerSoundChoice == AnswerSoundChoice.CUSTOM) {
-            val custom = state.answerSoundCustomPath?.let(::File)
-            if (custom?.isFile == true) {
-                runCatching {
-                    val volume = state.answerSoundVolume.coerceIn(0, 100) / 100f
-                    MediaPlayer().apply {
-                        setAudioAttributes(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build()
-                        )
-                        setDataSource(custom.absolutePath)
-                        setVolume(volume, volume)
-                        setOnPreparedListener { it.start() }
-                        setOnCompletionListener { it.release() }
-                        setOnErrorListener { mp, _, _ -> mp.release(); true }
-                        prepareAsync()
-                    }
-                    return
-                }
-            }
-        }
-
-        runCatching {
-            val tone = ToneGenerator(
-                AudioManager.STREAM_MUSIC,
-                state.answerSoundVolume.coerceIn(0, 100)
-            )
-            tone.startTone(ToneGenerator.TONE_PROP_ACK, 90)
-            Handler(Looper.getMainLooper()).postDelayed({ runCatching { tone.release() } }, 180)
-        }
+        answerSoundPlayer.play(_state.value)
     }
 
-    private fun buildSystemPrompt(skillText: String, project: Project?, chat: ChatSession?, toolsEnabled: Boolean): String = buildString {
+    private fun buildSystemPrompt(
+        skillText: String,
+        project: Project?,
+        chat: ChatSession?,
+        toolsEnabled: Boolean,
+        agent: AgentProfile? = null
+    ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
         appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
         val profile = _state.value.userProfile
-        val useProfile = !profile.isEmpty() && when (_state.value.userProfileScope) {
+        val useProfile = agent == null && !profile.isEmpty() && when (_state.value.userProfileScope) {
             UserProfileScope.OFF -> false
             UserProfileScope.PROJECTS -> project != null
             UserProfileScope.EVERYWHERE -> true
@@ -4861,6 +6254,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("Используй эти сведения только когда они полезны. Не пересказывай профиль пользователю без необходимости. Явный запрос и инструкции проекта важнее этого краткого профиля.")
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
+        if (agent != null) {
+            appendLine("\n===== АГЕНТ: ${agent.name} =====")
+            if (agent.role.isNotBlank()) appendLine("Роль: ${agent.role}")
+            if (agent.instruction.isNotBlank()) {
+                appendLine("Личная инструкция агента:")
+                appendLine(agent.instruction)
+            }
+            appendLine("Это независимый агент. Не используй общие инструкции, навыки, память или базу знаний других чатов и проекта, если они не были явно переданы в текущем рабочем пакете.")
+            appendLine("===== КОНЕЦ ПРОФИЛЯ АГЕНТА =====")
+        }
         if (project != null) {
             appendLine("\n===== ПРОЕКТ: ${project.name} =====")
             if (project.role.isNotBlank()) appendLine("Роль в проекте: ${project.role}")
@@ -4873,7 +6276,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
             appendLine("===== КОНЕЦ НАСТРОЕК ПРОЕКТА =====")
         }
-        if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
+        if (agent == null && chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
             chat.assignedRole?.takeIf { it.isNotBlank() }?.let { appendLine("Роль диалога: $it") }
             chat.masterPrompt?.takeIf { it.isNotBlank() }?.let {
@@ -4892,7 +6295,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine(":::")
         appendLine("Umnik распознаёт :::copy как отдельную карточку с кнопкой копирования. Не утверждай, что показал отдельный блок, если не использовал этот синтаксис.")
         appendLine("Для кода используй обычные fenced Markdown-блоки с тройными обратными кавычками.")
-        appendLine("Подключённые навыки ниже выбраны пользователем. Следуй их инструкциям как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
+        appendLine("Подключённые ниже навыки принадлежат текущему чату или текущему агенту. Следуй им как рабочим правилам, если они не противоречат явному текущему запросу пользователя.")
         appendLine("Не утверждай, что исполнил код из папки навыка: Umnik передаёт навыкам только разрешённые текстовые материалы.")
         if (skillText.isNotBlank()) {
             appendLine("\n===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====")

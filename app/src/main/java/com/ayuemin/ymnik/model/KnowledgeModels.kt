@@ -2,7 +2,8 @@ package com.ayuemin.ymnik.model
 
 enum class KnowledgeOwnerKind {
     CHAT,
-    PROJECT
+    PROJECT,
+    AGENT
 }
 
 data class KnowledgeBaseSettings(

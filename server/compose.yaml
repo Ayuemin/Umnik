@@ -1,0 +1,15 @@
+services:
+  umnik-server:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${UMNIK_LOCAL_PORT:-8787}:8787"
+    environment:
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      UMNIK_SERVER_TOKEN: ${UMNIK_SERVER_TOKEN}
+      UMNIK_DATA_DIR: /var/lib/umnik-server
+    volumes:
+      - umnik-data:/var/lib/umnik-server
+
+volumes:
+  umnik-data:

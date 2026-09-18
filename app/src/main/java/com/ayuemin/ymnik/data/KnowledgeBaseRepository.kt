@@ -67,7 +67,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         }
 
         val id = UUID.randomUUID().toString()
-        val dir = File(root, id).apply { mkdirs() }
+        val dir = documentDir(kind, ownerId, id).apply { mkdirs() }
         try {
             val source = File(dir, "source${extensionFor(attachment.name)}")
             copyAttachment(attachment, source)
@@ -324,6 +324,16 @@ class KnowledgeBaseRepository(private val context: Context) {
 
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =
         "settings::${kind.name.lowercase()}::$ownerId"
+
+    private fun documentDir(kind: KnowledgeOwnerKind, ownerId: String, documentId: String): File =
+        if (kind == KnowledgeOwnerKind.AGENT) {
+            File(context.filesDir, "agents/${safe(ownerId)}/knowledge/${safe(documentId)}")
+        } else {
+            File(root, safe(documentId))
+        }
+
+    private fun safe(value: String): String =
+        value.replace(Regex("[^A-Za-z0-9._-]"), "_").take(160)
 
     private fun extensionFor(name: String): String {
         val suffix = name.substringAfterLast('.', "").lowercase().replace(Regex("[^a-z0-9]"), "")

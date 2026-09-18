@@ -1,11 +1,20 @@
 package com.ayuemin.ymnik
 
+import android.app.job.JobInfo
+import android.app.job.JobScheduler
+import android.content.ComponentName
 import android.content.Context
+import android.os.Build
+import android.os.PersistableBundle
 import android.os.PowerManager
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.network.OpenRouterRecoveryRecord
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
+import com.ayuemin.ymnik.network.ServerJobRecoveryRecord
+import com.ayuemin.ymnik.network.ServerJobRecoveryStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -16,11 +25,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Process-wide owner of all foreground model jobs.
+ * Process-wide owner of all user-started model jobs.
  *
- * Requests are isolated by requestId and chatId, so switching Activity/chat or launching
- * another chat does not cancel or overwrite the first request. One chat may have at most
- * one active top-level request; different chats may run concurrently.
+ * Android 14+ runs top-level requests as User-Initiated Data Transfer jobs. Older Android
+ * versions keep the foreground-service fallback. Billing safety is independent from the
+ * transport: an interrupted direct OpenRouter POST is never replayed blindly, while a
+ * personal-server request is recovered through its idempotent server job ID.
  */
 internal object RequestExecutionManager {
     data class Snapshot(
@@ -34,11 +44,17 @@ internal object RequestExecutionManager {
         val startedAt: Long = System.currentTimeMillis()
     )
 
+    private enum class Transport { FOREGROUND_SERVICE, UIDT }
+
     private data class Runtime(
         var snapshot: Snapshot,
         val job: Job,
         val cancelNetworkCall: () -> Unit,
         val appContext: Context,
+        var transport: Transport = Transport.FOREGROUND_SERVICE,
+        var started: Boolean = false,
+        var systemStopRecovery: OpenRouterRecoveryRecord? = null,
+        var systemStopServerRecovery: ServerJobRecoveryRecord? = null,
         var lastPartialUpdateAt: Long = 0L
     )
 
@@ -55,6 +71,7 @@ internal object RequestExecutionManager {
     private const val PARTIAL_UPDATE_MIN_INTERVAL_MS = 120L
     private const val PARTIAL_UPDATE_MIN_CHARS = 96
     private const val MAX_PARTIAL_PREVIEW_CHARS = 120_000
+    private const val UIDT_JOB_ID_BASE = 0x31000000
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val lock = Any()
@@ -147,8 +164,10 @@ internal object RequestExecutionManager {
         val chatRepository = ChatRepository(app)
         val chats = runCatching { chatRepository.list() }.getOrDefault(emptyList())
         val recoveryStore = OpenRouterRecoveryStore(app)
+        val serverRecoveryStore = ServerJobRecoveryStore(app)
         var batchCount = 0
         var recoveryCount = 0
+        var serverRecoveryCount = 0
         var interruptedCount = 0
 
         persisted.distinctBy { it.requestId }.forEach { saved ->
@@ -170,6 +189,13 @@ internal object RequestExecutionManager {
             } == true
             if (completed) {
                 recoveryStore.remove(saved.requestId)
+                serverRecoveryStore.remove(saved.requestId)
+                return@forEach
+            }
+
+            if (messageId != null && serverRecoveryStore.get(saved.requestId) != null) {
+                serverRecoveryCount += 1
+                ServerJobRecoveryWorker.schedule(app, saved.requestId, initialDelaySeconds = 0L, replace = true)
                 return@forEach
             }
 
@@ -194,6 +220,7 @@ internal object RequestExecutionManager {
 
         return buildList {
             if (recoveryCount > 0) add("$recoveryCount запрос(а) восстанавливаются в фоне после перезапуска приложения.")
+            if (serverRecoveryCount > 0) add("$serverRecoveryCount серверных запрос(а) продолжаются на VPS и будут получены автоматически.")
             if (batchCount > 0) add("$batchCount batch-запрос(а) продолжаются на OpenRouter и будут получены автоматически.")
             if (interruptedCount > 0) add("$interruptedCount запрос(а) были прерваны системой до безопасной точки восстановления; при необходимости повторите их вручную.")
         }.joinToString(" ").takeIf { it.isNotBlank() }
@@ -228,12 +255,13 @@ internal object RequestExecutionManager {
             try {
                 execute()
             } catch (error: Throwable) {
-                val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
-                if (recoveryPending) {
+                val directRecoveryPending = ensureOpenRouterRecoveryRecord(app, requestId)
+                val serverRecoveryPending = ensureServerRecoveryRecord(app, requestId)
+                if (directRecoveryPending || serverRecoveryPending) {
                     DiagnosticLog.record(
                         app,
                         "REQUEST_RECOVERY",
-                        "Foreground transport interrupted; preserving pending request=${requestId.take(8)} chat=${chatId.take(8)}",
+                        "Active transport interrupted; preserving pending request=${requestId.take(8)} chat=${chatId.take(8)} server=$serverRecoveryPending",
                         error
                     )
                     updatePhase(app, requestId, "Восстанавливаю ответ в фоне…")
@@ -242,34 +270,7 @@ internal object RequestExecutionManager {
                     fail(requestId, error.message ?: "Запрос прерван")
                 }
             } finally {
-                val recoveryPending = OpenRouterRecoveryStore(app).get(requestId) != null
-                if (!recoveryPending) {
-                    runCatching {
-                        ChatRepository(app).updateMessage(chatId, messageId) {
-                            if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
-                        }
-                    }
-                }
-                prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
-                val remaining = synchronized(lock) {
-                    runtimes.remove(requestId)
-                    reservations.entries.removeAll { it.value == requestId }
-                    publishLocked()
-                    runtimes.size
-                }
-                // Schedule only after publishing the runtime removal. An expedited worker can now
-                // start immediately without mistaking the just-finished foreground job for a live owner.
-                if (recoveryPending) {
-                    OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
-                    DiagnosticLog.record(app, "REQUEST_RECOVERY", "Foreground request handed to WorkManager request=${requestId.take(8)} chat=${chatId.take(8)}")
-                }
-                if (remaining == 0) {
-                    releaseWakeLock(app)
-                    stoppingService = true
-                    RequestKeepAliveService.stop(app)
-                } else {
-                    RequestKeepAliveService.update(app)
-                }
+                finishRuntime(app, requestId, chatId, messageId, prefs)
             }
         }
 
@@ -288,34 +289,81 @@ internal object RequestExecutionManager {
             }
         }
 
-        acquireWakeLock(app)
-        stoppingService = false
-        runCatching { RequestKeepAliveService.start(app) }
-            .onFailure { error ->
-                synchronized(lock) {
-                    runtimes.remove(requestId)
-                    reservations.entries.removeAll { it.value == requestId }
-                    publishLocked()
-                }
-                prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
-                if (!hasActiveRequest()) releaseWakeLock(app)
-                throw error
+        if (Build.VERSION.SDK_INT >= 34) {
+            synchronized(lock) { runtimes[requestId]?.transport = Transport.UIDT }
+            if (scheduleUidt(app, requestId)) {
+                DiagnosticLog.record(
+                    app,
+                    "REQUEST",
+                    "registered UIDT request=${snapshot.requestId.take(8)} chat=${chatId.take(8)} active=${activeCount()}"
+                )
+                return job
             }
-        DiagnosticLog.record(app, "REQUEST", "registered request=${snapshot.requestId.take(8)} chat=${chatId.take(8)} active=${activeCount()}")
-        job.start()
+            synchronized(lock) { runtimes[requestId]?.transport = Transport.FOREGROUND_SERVICE }
+            DiagnosticLog.record(app, "REQUEST", "UIDT schedule failed; using foreground-service fallback request=${requestId.take(8)}")
+        }
+
+        startForegroundFallback(app, requestId, prefs)
+        DiagnosticLog.record(
+            app,
+            "REQUEST",
+            "registered foreground request=${snapshot.requestId.take(8)} chat=${chatId.take(8)} active=${activeCount()}"
+        )
         return job
+    }
+
+    /** Called only by [RequestUidtJobService] after JobScheduler grants execution. */
+    fun startUidtRequest(requestId: String): Job? {
+        val runtime = synchronized(lock) {
+            val current = runtimes[requestId] ?: return@synchronized null
+            if (current.transport != Transport.UIDT) return@synchronized null
+            current.started = true
+            current
+        } ?: return null
+        runtime.job.start()
+        DiagnosticLog.record(runtime.appContext, "UIDT", "JobScheduler started request=${requestId.take(8)}")
+        return runtime.job
+    }
+
+    /**
+     * System/OEM stop of a UIDT job is not a user retry request. Cancel the live socket while
+     * preserving either the read-only OpenRouter recovery record or the idempotent VPS job.
+     */
+    fun stopUidtFromSystem(requestId: String, stopReason: Int) {
+        val runtime = synchronized(lock) { runtimes[requestId] } ?: return
+        if (runtime.transport != Transport.UIDT) return
+
+        val directStore = OpenRouterRecoveryStore(runtime.appContext)
+        val serverStore = ServerJobRecoveryStore(runtime.appContext)
+        val preservedDirect = directStore.get(requestId)
+        val preservedServer = serverStore.get(requestId)
+        synchronized(lock) {
+            runtimes[requestId]?.systemStopRecovery = preservedDirect
+            runtimes[requestId]?.systemStopServerRecovery = preservedServer
+        }
+
+        runCatching { runtime.cancelNetworkCall.invoke() }
+        if (preservedDirect != null) directStore.put(preservedDirect)
+        if (preservedServer != null) serverStore.put(preservedServer)
+
+        DiagnosticLog.record(
+            runtime.appContext,
+            "UIDT",
+            "System stopped UIDT request=${requestId.take(8)} reason=$stopReason directRecovery=${preservedDirect != null} serverRecovery=${preservedServer != null}"
+        )
+        runtime.job.cancel(CancellationException("UIDT stopped by system: $stopReason"))
     }
 
     fun updatePhase(context: Context, requestId: String, label: String) {
         val clean = label.trim().take(160).ifBlank { "Модель работает…" }
-        val changed = synchronized(lock) {
+        val foreground = synchronized(lock) {
             val runtime = runtimes[requestId] ?: return@synchronized false
             sequence += 1L
             runtime.snapshot = runtime.snapshot.copy(sequence = sequence, label = clean)
             publishLocked()
-            true
+            runtime.transport == Transport.FOREGROUND_SERVICE
         }
-        if (changed) RequestKeepAliveService.update(context.applicationContext)
+        if (foreground) RequestKeepAliveService.update(context.applicationContext)
     }
 
     fun updatePartial(requestId: String, text: String) {
@@ -330,7 +378,6 @@ internal object RequestExecutionManager {
             if (!force && !enoughTime && !enoughText) return
             runtime.lastPartialUpdateAt = now
             runtime.snapshot = runtime.snapshot.copy(partialText = clean)
-            // Do not update the foreground notification for every token; the StateFlow is enough for Compose.
             publishLocked()
         }
     }
@@ -345,13 +392,27 @@ internal object RequestExecutionManager {
     }
 
     fun cancel(requestId: String) {
-        val runtime = synchronized(lock) { runtimes[requestId] } ?: return
-        // Manual Stop is final: no WorkManager recovery may resurrect this answer later.
+        val runtime = synchronized(lock) {
+            val current = runtimes[requestId] ?: return@synchronized null
+            current.systemStopRecovery = null
+            current.systemStopServerRecovery = null
+            current
+        } ?: return
+
+        // Manual Stop is final: neither direct nor personal-server recovery may resurrect it.
         OpenRouterRecoveryStore(runtime.appContext).remove(requestId)
         OpenRouterRecoveryWorker.cancel(runtime.appContext, requestId)
+        ServerJobRecoveryStore(runtime.appContext).remove(requestId)
+        ServerJobRecoveryWorker.cancel(runtime.appContext, requestId)
         runCatching { runtime.cancelNetworkCall.invoke() }
+
+        val neverStartedUidt = runtime.transport == Transport.UIDT && !runtime.started
         runtime.job.cancel()
-        DiagnosticLog.record(runtime.appContext, "REQUEST_RECOVERY", "Manual cancellation cleared recovery request=${requestId.take(8)}")
+        if (neverStartedUidt) {
+            cancelUidtSchedule(runtime.appContext, requestId)
+            finishNeverStartedRuntime(runtime, requestId)
+        }
+        DiagnosticLog.record(runtime.appContext, "REQUEST_RECOVERY", "Manual cancellation cleared all recovery request=${requestId.take(8)}")
     }
 
     fun cancelChat(chatId: String) {
@@ -364,15 +425,154 @@ internal object RequestExecutionManager {
         ids.forEach(::cancel)
     }
 
-    /** Destroying the foreground service does not own/cancel in-process requests. */
+    /** Destroying the fallback foreground service does not own/cancel in-process requests. */
     fun serviceStoppedUnexpectedly(context: Context) {
-        if (!stoppingService && hasActiveRequest()) {
+        val foregroundCount = synchronized(lock) { runtimes.values.count { it.transport == Transport.FOREGROUND_SERVICE } }
+        if (!stoppingService && foregroundCount > 0) {
             DiagnosticLog.record(
                 context.applicationContext,
                 "REQUEST",
-                "Foreground service destroyed while ${activeCount()} request(s) are active; network jobs kept alive"
+                "Foreground service destroyed while $foregroundCount fallback request(s) are active; network jobs kept alive"
             )
         }
+    }
+
+    private fun startForegroundFallback(app: Context, requestId: String, prefs: android.content.SharedPreferences) {
+        acquireWakeLock(app)
+        stoppingService = false
+        runCatching { RequestKeepAliveService.start(app) }
+            .onFailure { error ->
+                val removed = synchronized(lock) {
+                    val runtime = runtimes.remove(requestId)
+                    reservations.entries.removeAll { it.value == requestId }
+                    publishLocked()
+                    runtime
+                }
+                prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+                if (!hasForegroundRuntime()) releaseWakeLock(app)
+                removed?.job?.cancel()
+                throw error
+            }
+        val runtime = synchronized(lock) {
+            val current = runtimes[requestId] ?: return@synchronized null
+            current.started = true
+            current
+        }
+        runtime?.job?.start()
+    }
+
+    private fun scheduleUidt(app: Context, requestId: String): Boolean {
+        if (Build.VERSION.SDK_INT < 34) return false
+        return runCatching {
+            val extras = PersistableBundle().apply {
+                putString(RequestUidtJobService.EXTRA_REQUEST_ID, requestId)
+            }
+            val info = JobInfo.Builder(
+                uidtJobId(requestId),
+                ComponentName(app, RequestUidtJobService::class.java)
+            )
+                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                .setUserInitiated(true)
+                .setExtras(extras)
+                .build()
+            app.getSystemService(JobScheduler::class.java).schedule(info) == JobScheduler.RESULT_SUCCESS
+        }.onFailure { error ->
+            DiagnosticLog.record(app, "UIDT", "Could not schedule UIDT request=${requestId.take(8)}", error)
+        }.getOrDefault(false)
+    }
+
+    private fun cancelUidtSchedule(app: Context, requestId: String) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            runCatching { app.getSystemService(JobScheduler::class.java).cancel(uidtJobId(requestId)) }
+        }
+    }
+
+    private fun uidtJobId(requestId: String): Int =
+        UIDT_JOB_ID_BASE or (requestId.hashCode() and 0x0FFFFFFF)
+
+    private fun ensureOpenRouterRecoveryRecord(app: Context, requestId: String): Boolean {
+        val store = OpenRouterRecoveryStore(app)
+        if (store.get(requestId) != null) return true
+        val preserved = synchronized(lock) { runtimes[requestId]?.systemStopRecovery } ?: return false
+        store.put(preserved)
+        return true
+    }
+
+    private fun ensureServerRecoveryRecord(app: Context, requestId: String): Boolean {
+        val store = ServerJobRecoveryStore(app)
+        if (store.get(requestId) != null) return true
+        val preserved = synchronized(lock) { runtimes[requestId]?.systemStopServerRecovery } ?: return false
+        store.put(preserved)
+        return true
+    }
+
+    private fun finishRuntime(
+        app: Context,
+        requestId: String,
+        chatId: String,
+        messageId: String,
+        prefs: android.content.SharedPreferences
+    ) {
+        val serverRecoveryPending = ensureServerRecoveryRecord(app, requestId)
+        val directRecoveryPending = if (serverRecoveryPending) false else ensureOpenRouterRecoveryRecord(app, requestId)
+        val recoveryPending = serverRecoveryPending || directRecoveryPending
+        if (!recoveryPending) {
+            runCatching {
+                ChatRepository(app).updateMessage(chatId, messageId) {
+                    if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+                }
+            }
+        }
+        prefs.edit().remove(ACTIVE_PREFIX + requestId).commit()
+        val hadForeground = synchronized(lock) {
+            val removed = runtimes.remove(requestId)
+            reservations.entries.removeAll { it.value == requestId }
+            publishLocked()
+            removed?.transport == Transport.FOREGROUND_SERVICE
+        }
+
+        when {
+            serverRecoveryPending -> {
+                ServerJobRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replace = true)
+                DiagnosticLog.record(app, "SERVER_RECOVERY", "Interrupted request handed to personal-server recovery request=${requestId.take(8)} chat=${chatId.take(8)}")
+            }
+            directRecoveryPending -> {
+                OpenRouterRecoveryWorker.schedule(app, requestId, initialDelaySeconds = 0L, replaceExisting = true, expedited = true)
+                DiagnosticLog.record(app, "REQUEST_RECOVERY", "Interrupted request handed to read-only recovery request=${requestId.take(8)} chat=${chatId.take(8)}")
+            }
+        }
+
+        if (hadForeground) updateForegroundTransportState(app)
+    }
+
+    private fun finishNeverStartedRuntime(runtime: Runtime, requestId: String) {
+        val app = runtime.appContext
+        runCatching {
+            ChatRepository(app).updateMessage(runtime.snapshot.chatId, runtime.snapshot.messageId) {
+                if (it.deliveryState == "pending") it.copy(deliveryState = "failed") else it
+            }
+        }
+        app.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().remove(ACTIVE_PREFIX + requestId).commit()
+        synchronized(lock) {
+            runtimes.remove(requestId)
+            reservations.entries.removeAll { it.value == requestId }
+            publishLocked()
+        }
+    }
+
+    private fun updateForegroundTransportState(app: Context) {
+        if (!hasForegroundRuntime()) {
+            releaseWakeLock(app)
+            stoppingService = true
+            RequestKeepAliveService.stop(app)
+        } else {
+            RequestKeepAliveService.update(app)
+        }
+    }
+
+    private fun hasForegroundRuntime(): Boolean = synchronized(lock) {
+        runtimes.values.any { it.transport == Transport.FOREGROUND_SERVICE }
     }
 
     private fun publishLocked() {
@@ -387,19 +587,19 @@ internal object RequestExecutionManager {
                 setReferenceCounted(false)
                 acquire(WAKE_LOCK_TIMEOUT_MS)
             }
-        }.onSuccess { lock ->
-            wakeLock = lock
-            DiagnosticLog.record(app, "REQUEST", "Partial wake lock acquired for active requests")
+        }.onSuccess { powerLock ->
+            wakeLock = powerLock
+            DiagnosticLog.record(app, "REQUEST", "Partial wake lock acquired for foreground fallback requests")
         }.onFailure { error ->
             DiagnosticLog.record(app, "REQUEST", "Could not acquire wake lock", error)
         }
     }
 
     private fun releaseWakeLock(app: Context) {
-        val lock = wakeLock
+        val powerLock = wakeLock
         wakeLock = null
-        if (lock?.isHeld == true) {
-            runCatching { lock.release() }
+        if (powerLock?.isHeld == true) {
+            runCatching { powerLock.release() }
                 .onFailure { DiagnosticLog.record(app, "REQUEST", "Could not release wake lock", it) }
         }
     }

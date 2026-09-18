@@ -289,7 +289,8 @@ fun ProjectsDialog(
     vm: ChatViewModel,
     onDismiss: () -> Unit,
     initialProjectId: String? = null,
-    startCreate: Boolean = false
+    startCreate: Boolean = false,
+    onAgentConversationOpened: ((projectId: String, chatId: String) -> Unit)? = null
 ) {
     var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }
     var createOpen by remember(startCreate) { mutableStateOf(startCreate) }
@@ -309,7 +310,7 @@ fun ProjectsDialog(
 
         if (projects.isEmpty()) {
             Text(
-                "Проект объединяет инструкции, постоянные материалы, рабочие чаты и последовательности этапов.",
+                "Проект — это кабинет: Оркестратор управляет независимыми агентами, а каждый агент хранит свои настройки и знания.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(20.dp)
             )
@@ -335,27 +336,29 @@ fun ProjectsDialog(
     }
 
     if (createOpen) {
-        ProjectEditorDialog(project = null, onDismiss = { createOpen = false }) { name, role, prompt, favorite ->
-            openProjectId = vm.createProject(name, role, prompt, favorite)
-            createOpen = false
-        }
+        SimpleProjectCreateDialog(
+            onDismiss = { createOpen = false },
+            onCreate = { name, favorite ->
+                openProjectId = vm.createProject(name = name, favorite = favorite)
+                createOpen = false
+            }
+        )
     }
 
     state.projects.firstOrNull { it.id == openProjectId }?.let { project ->
-        ProjectDetailDialog(
+        AgentProjectDetailDialog(
             project = project,
             state = state,
             vm = vm,
             onDismiss = { openProjectId = null },
-            onOpenChat = { chatId ->
-                vm.switchChat(chatId)
+            onConversationOpened = { chatId ->
                 openProjectId = null
-                onDismiss()
-            },
-            onCreateChat = {
-                vm.createChat(project.id)
-                openProjectId = null
-                onDismiss()
+                if (onAgentConversationOpened != null) {
+                    onAgentConversationOpened(project.id, chatId)
+                } else {
+                    vm.switchChat(chatId)
+                    onDismiss()
+                }
             }
         )
     }
@@ -363,7 +366,9 @@ fun ProjectsDialog(
 
 @Composable
 private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOpen: () -> Unit) {
-    val count = state.chats.count { it.projectId == project.id }
+    val agentCount = state.agents.count {
+        it.projectId == project.id && it.kind == com.ayuemin.ymnik.model.AgentKind.SPECIALIST
+    }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             onClick = onOpen,
@@ -373,7 +378,7 @@ private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOp
             Column(Modifier.fillMaxWidth()) {
                 Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "$count чатов · ${project.files.size} постоянных файлов · ${project.stages.orEmpty().size} этапов",
+                    "$agentCount агентов · Оркестратор",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

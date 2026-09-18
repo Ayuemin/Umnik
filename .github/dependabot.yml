@@ -4,20 +4,32 @@ updates:
     directory: "/"
     schedule:
       interval: "monthly"
-    open-pull-requests-limit: 2
+    open-pull-requests-limit: 4
     groups:
-      gradle-dependencies:
+      android-toolchain:
         patterns:
-          - "*"
+          - "com.android.application"
+          - "org.jetbrains.kotlin.*"
+        update-types:
+          - "minor"
+          - "patch"
+      androidx:
+        patterns:
+          - "androidx.*"
+        update-types:
+          - "minor"
+          - "patch"
+      libraries:
+        patterns:
+          - "com.squareup.okhttp3:*"
+          - "com.google.code.gson:gson"
+          - "com.tom-roush:*"
+        update-types:
+          - "minor"
+          - "patch"
     ignore:
       - dependency-name: "*"
         update-types:
-          - "version-update:semver-major"
-      # Core 1.18+ raises compileSdk requirements beyond the current
-      # SDK 36 baseline. Move this line only during a deliberate SDK/AGP migration.
-      - dependency-name: "androidx.core:core-ktx"
-        update-types:
-          - "version-update:semver-minor"
           - "version-update:semver-major"
 
   - package-ecosystem: "github-actions"
