@@ -571,37 +571,57 @@ onBranch = if (message.role == "assistant") {
             item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
         }
 
-        if ((!imagePromptMode && currentChatFiles.isNotEmpty()) || state.pendingAttachments.isNotEmpty()) {
+        val visibleChatFiles = if (imagePromptMode) emptyList() else currentChatFiles
+        val attachmentCount = visibleChatFiles.size + state.pendingAttachments.size
+        if (attachmentCount > 0) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 5.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    if (!imagePromptMode) {
-                        items(currentChatFiles, key = { "chat-${it.id}" }) { file ->
-                            AssistChip(
-                                onClick = { vm.removeChatFile(file.id) },
-                                label = { Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                leadingIcon = {
-                                    Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(18.dp))
-                                },
-                                trailingIcon = {
-                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл из контекста чата", modifier = Modifier.size(18.dp))
-                                }
+                Column(Modifier.fillMaxWidth()) {
+                    Surface(
+                        onClick = { attachmentsExpanded = !attachmentsExpanded },
+                        color = Color.Transparent
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Outlined.AttachFile,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.width(7.dp))
+                            Text(
+                                "Вложения · $attachmentCount",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Icon(
+                                if (attachmentsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = if (attachmentsExpanded) "Свернуть вложения" else "Показать вложения",
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    items(state.pendingAttachments, key = { "pending-${it.uri}" }) { attachment ->
-                        AssistChip(
-                            onClick = { vm.removeAttachment(attachment.uri) },
-                            label = { Text(attachment.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                            leadingIcon = {
-                                Icon(Icons.Outlined.AttachFile, contentDescription = null, modifier = Modifier.size(18.dp))
-                            },
-                            trailingIcon = {
-                                Icon(Icons.Outlined.Close, contentDescription = "Убрать", modifier = Modifier.size(18.dp))
-                            }
-                        )
+                    if (attachmentsExpanded) {
+                        visibleChatFiles.forEach { file ->
+                            AttachmentListRow(
+                                name = file.name,
+                                subtitle = "В контексте чата",
+                                icon = Icons.Outlined.Description,
+                                onRemove = { vm.removeChatFile(file.id) }
+                            )
+                        }
+                        state.pendingAttachments.forEach { attachment ->
+                            AttachmentListRow(
+                                name = attachment.name,
+                                subtitle = "К отправке",
+                                icon = Icons.Outlined.AttachFile,
+                                onRemove = { vm.removeAttachment(attachment.uri) }
+                            )
+                        }
                     }
                 }
             }
@@ -1300,6 +1320,47 @@ private fun WorkingStopIcon() {
 private fun formatRequestDuration(seconds: Int): String {
     val safe = seconds.coerceAtLeast(0)
     return "%d:%02d".format(Locale.US, safe / 60, safe % 60)
+}
+
+@Composable
+private fun AttachmentListRow(
+    name: String,
+    subtitle: String,
+    icon: ImageVector,
+    onRemove: () -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 6.dp, top = 3.dp, bottom = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            icon,
+            contentDescription = null,
+            modifier = Modifier.size(18.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
+            )
+        }
+        IconButton(onClick = onRemove, modifier = Modifier.size(34.dp)) {
+            Icon(
+                Icons.Outlined.Close,
+                contentDescription = "Убрать $name",
+                modifier = Modifier.size(18.dp)
+            )
+        }
+    }
 }
 
 @Composable
