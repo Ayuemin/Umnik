@@ -365,13 +365,14 @@ private fun AgentSettingsDialog(
                     value = role,
                     onValueChange = { role = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Роль") },
-                    supportingText = {
-                        Text(
-                            if (agent.kind == AgentKind.ORCHESTRATOR) {
-                                "Коротко опишите роль управляющего агента проекта."
+                    label = { Text("Назначение агента") },
+                    trailingIcon = {
+                        UmnikInfoHint(
+                            title = "Назначение агента",
+                            text = if (agent.kind == AgentKind.ORCHESTRATOR) {
+                                "Коротко опишите, чем управляет Оркестратор и какие решения он должен принимать в проекте."
                             } else {
-                                "Коротко опишите, чем занимается агент и какие задачи ему поручать. Это видит Оркестратор."
+                                "Коротко опишите специализацию агента и какие задачи ему можно поручать. Это описание видит Оркестратор."
                             }
                         )
                     },
@@ -383,7 +384,13 @@ private fun AgentSettingsDialog(
                     value = instruction,
                     onValueChange = { instruction = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Инструкция / личность") },
+                    label = { Text("Инструкция агенту") },
+                    trailingIcon = {
+                        UmnikInfoHint(
+                            title = "Инструкция агенту",
+                            text = "Подробные правила работы этого агента: стиль ответа, порядок действий, ограничения, формат результата и другие постоянные требования."
+                        )
+                    },
                     minLines = 5
                 )
             }
@@ -393,6 +400,7 @@ private fun AgentSettingsDialog(
             item {
                 ModelField(
                     label = "Основная модель",
+                    info = "Обязательная модель, которая отвечает в чате агента и выполняет его основные задачи.",
                     value = primaryModel,
                     onValueChange = { primaryModel = it },
                     onPick = { pickerTarget = ModelPickerTarget.PRIMARY }
@@ -404,13 +412,19 @@ private fun AgentSettingsDialog(
                     onValueChange = { quickModelsText = it },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Быстрые модели") },
-                    supportingText = { Text("По одной модели в строке. Эти настройки принадлежат только агенту.") },
+                    trailingIcon = {
+                        UmnikInfoHint(
+                            title = "Быстрые модели",
+                            text = "Необязательно. Дополнительные модели для быстрого переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке."
+                        )
+                    },
                     minLines = 2
                 )
             }
             item {
                 ModelField(
                     label = "Модель контекста",
+                    info = "Необязательно. Используется для обработки и сжатия длинного контекста агента. Если оставить пустым, Umnik использует основную модель.",
                     value = contextModel,
                     onValueChange = { contextModel = it },
                     onPick = { pickerTarget = ModelPickerTarget.CONTEXT }
@@ -421,7 +435,13 @@ private fun AgentSettingsDialog(
                     value = memoryEmbedding,
                     onValueChange = { memoryEmbedding = it.trim() },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Embeddings памяти") },
+                    label = { Text("Модель поиска по памяти") },
+                    trailingIcon = {
+                        UmnikInfoHint(
+                            title = "Модель поиска по памяти",
+                            text = "Необязательно. Embeddings-модель OpenRouter превращает память агента в смысловой индекс и помогает находить подходящие фрагменты прошлых разговоров. Если оставить пустым, Umnik работает с полным контекстом без такого отбора."
+                        )
+                    },
                     singleLine = true
                 )
             }
@@ -432,6 +452,7 @@ private fun AgentSettingsDialog(
                 ToggleSettingRow(
                     title = "Размышление",
                     subtitle = "Настройка действует только для этого агента",
+                    info = "Разрешает модели использовать дополнительное внутреннее рассуждение, если выбранная модель это поддерживает. Обычно повышает качество сложных задач, но может увеличить время и стоимость ответа.",
                     checked = reasoningEnabled,
                     onCheckedChange = { reasoningEnabled = it }
                 )
@@ -467,6 +488,7 @@ private fun AgentSettingsDialog(
                 ToggleSettingRow(
                     title = "Поиск в сети",
                     subtitle = "Только для этого агента",
+                    info = "Разрешает агенту обращаться к веб-поиску через возможности выбранной модели, когда для ответа нужны свежие или внешние данные.",
                     checked = webSearch,
                     onCheckedChange = { webSearch = it }
                 )
@@ -791,7 +813,8 @@ private fun ModelField(
     label: String,
     value: String,
     onValueChange: (String) -> Unit,
-    onPick: () -> Unit
+    onPick: () -> Unit,
+    info: String? = null
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         OutlinedTextField(
@@ -799,6 +822,9 @@ private fun ModelField(
             onValueChange = onValueChange,
             modifier = Modifier.fillMaxWidth(),
             label = { Text(label) },
+            trailingIcon = info?.let { hint ->
+                { UmnikInfoHint(title = label, text = hint) }
+            },
             singleLine = true
         )
         OutlinedButton(onClick = onPick) {
@@ -812,7 +838,8 @@ private fun ToggleSettingRow(
     title: String,
     subtitle: String,
     checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    info: String? = null
 ) {
     UmnikPanel {
         Row(
@@ -820,7 +847,13 @@ private fun ToggleSettingRow(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(Modifier.weight(1f)) {
-                Text(title, fontWeight = FontWeight.Medium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(title, fontWeight = FontWeight.Medium)
+                    if (info != null) {
+                        Spacer(Modifier.width(6.dp))
+                        UmnikInfoHint(title = title, text = info)
+                    }
+                }
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodySmall,
