@@ -10,6 +10,7 @@ import com.ayuemin.ymnik.data.AgentConversationRepository
 import com.ayuemin.ymnik.data.AgentFileRepository
 import com.ayuemin.ymnik.data.AgentRepository
 import com.ayuemin.ymnik.data.AgentSkillRepository
+import com.ayuemin.ymnik.data.AgentWorkRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
@@ -26,6 +27,15 @@ import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
 import com.ayuemin.ymnik.model.AgentKind
 import com.ayuemin.ymnik.model.AgentModelRef
+import com.ayuemin.ymnik.model.AgentOrchestratorAction
+import com.ayuemin.ymnik.model.AgentOrchestratorActionType
+import com.ayuemin.ymnik.model.AgentOrchestratorCodec
+import com.ayuemin.ymnik.model.AgentOrchestratorDecision
+import com.ayuemin.ymnik.model.AgentResult
+import com.ayuemin.ymnik.model.AgentTaskPackage
+import com.ayuemin.ymnik.model.AgentTaskState
+import com.ayuemin.ymnik.model.AgentTaskStatus
+import com.ayuemin.ymnik.model.AgentTransferLogEntry
 import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatFile
@@ -41,6 +51,7 @@ import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeDocument
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.ImageApiProtocol
+import com.ayuemin.ymnik.model.JobWorkspace
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.OrchestratorStep
@@ -100,6 +111,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val agentConversations = AgentConversationRepository(context)
     private val agentFiles = AgentFileRepository(context)
     private val agentSkills = AgentSkillRepository(context)
+    private val agentWork = AgentWorkRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
@@ -385,33 +397,37 @@ class ChatViewModel(private val context: Context) : ViewModel() {
      * ChatSession is only a temporary message-store adapter here. AgentProfile remains
      * the source of truth for personality and runtime settings.
      */
-    fun openAgentChat(agentId: String): String? {
-        val profile = agent(agentId) ?: return null
-        val existingId = agentConversations.conversationsForAgent(agentId)
+    private fun ensureAgentConversation(profile: AgentProfile): ChatSession {
+        val existingId = agentConversations.conversationsForAgent(profile.id)
             .firstOrNull { id -> _state.value.chats.any { it.id == id } }
-
-        val chatId = existingId ?: run {
-            val id = UUID.randomUUID().toString()
-            val chat = ChatSession(
-                id = id,
-                title = profile.name,
-                projectId = profile.projectId,
-                mode = ChatMode.TEXT,
-                connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
-                textModelOverride = profile.primaryModel?.modelId,
-                assignedRole = profile.role.takeIf { it.isNotBlank() },
-                masterPrompt = profile.instruction.takeIf { it.isNotBlank() }
-            )
-            val chats = listOf(chat) + _state.value.chats
-            chatsRepository.save(chats)
-            agentConversations.link(id, agentId)
-            _state.value = _state.value.copy(chats = chats)
-            id
+        if (existingId != null) {
+            return _state.value.chats.first { it.id == existingId }
         }
 
+        val chat = ChatSession(
+            id = UUID.randomUUID().toString(),
+            title = profile.name,
+            projectId = profile.projectId,
+            mode = ChatMode.TEXT,
+            connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
+            textModelOverride = profile.primaryModel?.modelId,
+            assignedRole = profile.role.takeIf { it.isNotBlank() },
+            masterPrompt = profile.instruction.takeIf { it.isNotBlank() }
+        )
+        val chats = listOf(chat) + _state.value.chats
+        chatsRepository.save(chats)
+        agentConversations.link(chat.id, profile.id)
+        _state.value = _state.value.copy(chats = chats)
         syncAgentConversationSnapshots(profile)
-        switchChat(chatId)
-        return chatId
+        return chatsRepository.list().firstOrNull { it.id == chat.id } ?: chat
+    }
+
+    fun openAgentChat(agentId: String): String? {
+        val profile = agent(agentId) ?: return null
+        val chat = ensureAgentConversation(profile)
+        syncAgentConversationSnapshots(profile)
+        switchChat(chat.id)
+        return chat.id
     }
 
     fun agentIdForChat(chatId: String): String? =
@@ -3948,6 +3964,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         projectsRepository.deleteProjectFiles(projectId)
         agentsRepository.deleteProjectAgents(projectId)
+        agentWork.deleteProject(projectId)
         knowledgeBase.deleteOwner(KnowledgeOwnerKind.PROJECT, projectId)
         projectAutomation.deleteProject(projectId)
 
@@ -4558,6 +4575,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
         if (invalidPending != null) {
             _state.value = _state.value.copy(status = attachmentAllowed(invalidPending).second ?: "Вложение не поддерживается выбранной моделью")
+            return
+        }
+
+        val currentAgent = currentChat
+            ?.let { agentConversations.agentIdForConversation(it.id) }
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+
+        if (mode == ChatMode.TEXT && currentAgent?.kind == AgentKind.ORCHESTRATOR) {
+            sendAgentOfficeCommand(currentAgent, clean, pending)
             return
         }
 
