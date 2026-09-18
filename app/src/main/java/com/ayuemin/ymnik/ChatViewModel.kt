@@ -7,6 +7,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.ayuemin.ymnik.data.AgentConversationRepository
+import com.ayuemin.ymnik.data.AgentFileRepository
 import com.ayuemin.ymnik.data.AgentRepository
 import com.ayuemin.ymnik.data.AgentSkillRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
@@ -97,6 +98,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val projectsRepository = ProjectRepository(context)
     private val agentsRepository = AgentRepository(context)
     private val agentConversations = AgentConversationRepository(context)
+    private val agentFiles = AgentFileRepository(context)
     private val agentSkills = AgentSkillRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
@@ -278,6 +280,44 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value.agents.firstOrNull { it.id == agentId }
 
     fun agentSkills(agentId: String) = agentSkills.list(agentId)
+
+    fun agentFiles(agentId: String): List<ChatFile> = agentFiles.list(agentId)
+
+    fun addAgentFiles(agentId: String, uris: List<Uri>) {
+        if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
+        if (agent(agentId) == null) return
+        var added = 0
+        val errors = mutableListOf<String>()
+        uris.forEach { uri ->
+            runCatching {
+                val attachment = api.attachmentFromUri(uri)
+                val duplicate = agentFiles.list(agentId).any {
+                    it.name.equals(attachment.name, ignoreCase = true) &&
+                        (attachment.size <= 0L || it.size == attachment.size)
+                }
+                require(!duplicate) { "«${attachment.name}» уже добавлен агенту" }
+                agentFiles.importFile(agentId, attachment)
+            }.onSuccess {
+                added++
+            }.onFailure { error ->
+                errors += error.message ?: "Не удалось добавить файл"
+            }
+        }
+        _state.value = _state.value.copy(
+            status = when {
+                errors.isEmpty() -> "Файлы агента добавлены: $added"
+                added > 0 -> "Добавлено $added. Ошибки: ${errors.take(2).joinToString("; ")}"
+                else -> errors.take(2).joinToString("; ")
+            }
+        )
+    }
+
+    fun deleteAgentFile(agentId: String, fileId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        if (agentFiles.delete(agentId, fileId)) {
+            _state.value = _state.value.copy(status = "Файл агента удалён")
+        }
+    }
 
     fun createAgentSkill(agentId: String, name: String, body: String): String? = runCatching {
         val skill = agentSkills.createInline(agentId, name, body)
@@ -4607,7 +4647,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.filter { attachmentAllowed(it).first }
         } else emptyList()
         val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
-            persistentChatFiles.filter { attachmentAllowed(it).first }
+            if (requestAgent != null) {
+                agentFiles.list(requestAgent.id).map { file ->
+                    PendingAttachment(
+                        uri = "agent://${file.id}",
+                        name = file.name,
+                        mimeType = file.mimeType,
+                        size = file.size,
+                        localPath = file.localPath
+                    )
+                }.filter { attachmentAllowed(it).first }
+            } else {
+                persistentChatFiles.filter { attachmentAllowed(it).first }
+            }
         } else emptyList()
         val requestProjectImages = if (mode == ChatMode.IMAGE && requestAgent == null) {
             currentProject?.files.orEmpty()
