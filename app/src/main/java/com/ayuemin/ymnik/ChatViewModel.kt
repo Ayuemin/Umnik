@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import com.ayuemin.ymnik.data.AgentConversationRepository
 import com.ayuemin.ymnik.data.AgentRepository
 import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
@@ -93,6 +94,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val embeddingApi = OpenRouterEmbeddingClient(context)
     private val projectsRepository = ProjectRepository(context)
     private val agentsRepository = AgentRepository(context)
+    private val agentConversations = AgentConversationRepository(context)
     private val projectAutomation = ProjectAutomationRepository(context)
     private val openRouterFeaturePrefs = OpenRouterFeaturePrefs(context)
     private val storageRepository = StorageRepository(context)
@@ -219,7 +221,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = chatsRepository.loadError ?: projectsRepository.loadError ?: agentsRepository.loadError ?: skills.loadError ?: recoveredRequest
+            status = chatsRepository.loadError ?: projectsRepository.loadError ?: agentsRepository.loadError ?: agentConversations.loadError ?: skills.loadError ?: recoveredRequest
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
@@ -284,10 +286,87 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun saveAgent(profile: AgentProfile) {
         require(_state.value.projects.any { it.id == profile.projectId }) { "Проект не найден" }
-        agentsRepository.upsert(profile)
+        val saved = agentsRepository.upsert(profile)
+        syncAgentConversationSnapshots(saved)
         _state.value = _state.value.copy(
             agents = agentsRepository.list(),
             status = if (profile.kind == AgentKind.ORCHESTRATOR) "Настройки Оркестратора сохранены" else "Настройки агента сохранены"
+        )
+    }
+
+    /**
+     * Opens the primary conversation of an agent.
+     *
+     * ChatSession is only a temporary message-store adapter here. AgentProfile remains
+     * the source of truth for personality and runtime settings.
+     */
+    fun openAgentChat(agentId: String): String? {
+        val profile = agent(agentId) ?: return null
+        val existingId = agentConversations.conversationsForAgent(agentId)
+            .firstOrNull { id -> _state.value.chats.any { it.id == id } }
+
+        val chatId = existingId ?: run {
+            val id = UUID.randomUUID().toString()
+            val chat = ChatSession(
+                id = id,
+                title = profile.name,
+                projectId = profile.projectId,
+                mode = ChatMode.TEXT,
+                connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
+                textModelOverride = profile.primaryModel?.modelId,
+                assignedRole = profile.role.takeIf { it.isNotBlank() },
+                masterPrompt = profile.instruction.takeIf { it.isNotBlank() }
+            )
+            val chats = listOf(chat) + _state.value.chats
+            chatsRepository.save(chats)
+            agentConversations.link(id, agentId)
+            _state.value = _state.value.copy(chats = chats)
+            id
+        }
+
+        syncAgentConversationSnapshots(profile)
+        switchChat(chatId)
+        return chatId
+    }
+
+    fun agentIdForChat(chatId: String): String? =
+        agentConversations.agentIdForConversation(chatId)
+
+    private fun syncAgentConversationSnapshots(profile: AgentProfile) {
+        val ids = agentConversations.conversationsForAgent(profile.id).toSet()
+        if (ids.isEmpty()) return
+
+        val chats = _state.value.chats.map { chat ->
+            if (chat.id !in ids) chat else chat.copy(
+                title = profile.name,
+                assignedRole = profile.role.takeIf { it.isNotBlank() },
+                masterPrompt = profile.instruction.takeIf { it.isNotBlank() },
+                connectionProfileId = profile.primaryModel?.connectionProfileId ?: "openrouter",
+                textModelOverride = profile.primaryModel?.modelId,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+        chatsRepository.save(chats)
+        ids.forEach { chatId ->
+            projectAutomation.saveProfile(
+                chatId,
+                ProjectChatRuntimeProfile(
+                    modelId = profile.primaryModel?.modelId,
+                    webSearchEnabled = profile.webSearchEnabled,
+                    reasoningEnabled = profile.reasoningEnabled,
+                    reasoningEffort = profile.reasoningEffort,
+                    tools = profile.tools,
+                    // Agent-owned skills are connected to execution separately; do not
+                    // fall back to the old global/project skill library.
+                    skillIds = emptySet()
+                )
+            )
+            prefs.edit().putStringSet(chatSkillsKey(chatId), emptySet()).apply()
+        }
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId }
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = current?.messages ?: _state.value.messages
         )
     }
 
@@ -297,9 +376,36 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Оркестратор удаляется только вместе с проектом")
             return
         }
+
+        val conversationIds = agentConversations.conversationsForAgent(agentId).toSet()
+        conversationIds.forEach { chatId ->
+            chatFilesRepository.deleteChat(chatId)
+            knowledgeBase.deleteOwner(KnowledgeOwnerKind.CHAT, chatId)
+            chatMemory.deleteChat(chatId)
+            projectAutomation.deleteChat(chatId)
+            prefs.edit().remove(chatSkillsKey(chatId)).apply()
+        }
+        agentConversations.unlinkAgent(agentId)
         agentsRepository.delete(agentId)
+
+        var chats = _state.value.chats.filterNot { it.id in conversationIds }
+        if (chats.isEmpty()) {
+            val fallback = ChatSession(
+                id = UUID.randomUUID().toString(),
+                title = "Новый чат",
+                mode = ChatMode.TEXT,
+                connectionProfileId = _state.value.activeConnectionProfileId
+            )
+            chats = listOf(fallback)
+        }
+        chatsRepository.save(chats)
+        val current = chats.firstOrNull { it.id == _state.value.currentChatId } ?: chats.first()
+        prefs.edit().putString("current_chat_id", current.id).apply()
         _state.value = _state.value.copy(
             agents = agentsRepository.list(),
+            chats = chats,
+            currentChatId = current.id,
+            messages = current.messages,
             status = "Агент и его локальное хранилище удалены"
         )
     }
