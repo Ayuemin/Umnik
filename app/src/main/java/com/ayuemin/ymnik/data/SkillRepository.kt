@@ -37,6 +37,29 @@ class SkillRepository(private val context: Context) {
         return skill
     }
 
+    fun createText(text: String): Skill {
+        val body = text.trim()
+        require(body.isNotBlank()) { "Введите текст навыка" }
+        require(body.length <= 12_000) { "Короткий навык ограничен 12 000 символов" }
+
+        val firstLine = body.lineSequence()
+            .map { it.trim().removePrefix("#").trim() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+        val name = firstLine
+            .replace(Regex("\\s+"), " ")
+            .take(48)
+            .ifBlank { "Короткий навык" }
+
+        val id = UUID.randomUUID().toString()
+        val dir = File(root, id).apply { mkdirs() }
+        val fileName = "SKILL.md"
+        File(dir, fileName).writeText(body)
+        val skill = Skill(id, name, listOf(fileName))
+        save(list() + skill)
+        return skill
+    }
+
     fun importTree(uri: Uri): Skill {
         val tree = DocumentFile.fromTreeUri(context, uri) ?: error("Не удалось открыть папку")
         val id = UUID.randomUUID().toString()

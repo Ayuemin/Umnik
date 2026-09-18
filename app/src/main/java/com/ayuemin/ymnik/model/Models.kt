@@ -7,8 +7,7 @@ enum class ChatMode {
 
 enum class UserProfileScope {
     OFF,
-    PROJECTS,
-    EVERYWHERE
+    CHATS
 }
 
 enum class ProviderType {

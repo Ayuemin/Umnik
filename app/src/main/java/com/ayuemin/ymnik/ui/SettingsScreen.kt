@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Palette
@@ -93,12 +94,36 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
     val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::importSkillTree)
     }
+    var quickSkillText by remember { mutableStateOf("") }
 
     Text(
         "Здесь хранится общая библиотека навыков. Включение навыка выполняется отдельно в каждом чате через + → Навыки.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+    Spacer(Modifier.height(9.dp))
+    OutlinedTextField(
+        value = quickSkillText,
+        onValueChange = { quickSkillText = it.take(12_000) },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Короткий навык") },
+        placeholder = { Text("Например: отвечай кратко, без канцелярита, с примерами") },
+        minLines = 3,
+        maxLines = 6
+    )
+    Spacer(Modifier.height(7.dp))
+    FilledTonalButton(
+        onClick = {
+            vm.createTextSkill(quickSkillText)
+            quickSkillText = ""
+        },
+        enabled = quickSkillText.isNotBlank(),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(Icons.Outlined.Add, contentDescription = null)
+        Spacer(Modifier.width(7.dp))
+        Text("Создать короткий навык")
+    }
     Spacer(Modifier.height(9.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) {
@@ -194,8 +219,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     }
     var settingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var storageOpen by remember { mutableStateOf(false) }
-    var quickModelsSettingsOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
+    var defaultChatModelExpanded by remember { mutableStateOf(false) }
+    var quickModelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
@@ -203,7 +229,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var soundExpanded by remember { mutableStateOf(false) }
     var openRouterSpeechExpanded by remember { mutableStateOf(false) }
     var openRouterDocumentSpeechExpanded by remember { mutableStateOf(false) }
-    var storageExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
@@ -248,7 +273,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var profileOccupation by remember(state.userProfile.occupation) { mutableStateOf(state.userProfile.occupation) }
     var profileNote by remember(state.userProfile.note) { mutableStateOf(state.userProfile.note) }
     val themes = ThemeChoice.entries
-    val profileScopes = UserProfileScope.entries
     val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::importAnswerSound)
@@ -426,50 +450,91 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         expanded = modelsExpanded,
                         onToggle = { modelsExpanded = !modelsExpanded }
                     ) {
-                        FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
+                        FilledTonalButton(
+                            onClick = { defaultChatModelExpanded = !defaultChatModelExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Icon(Icons.Outlined.TextFields, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Чат по умолчанию", fontWeight = FontWeight.Medium)
-                                Text(state.textModel, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    state.textModel,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            Icon(
+                                if (defaultChatModelExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null
+                            )
+                        }
+                        if (defaultChatModelExpanded) {
+                            if (state.textModel != "openrouter/auto") {
+                                TextButton(
+                                    onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) { Text("Сбросить модель чата на Auto") }
+                            } else {
+                                Text(
+                                    "Для чата по умолчанию уже используется Auto.",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
+
                         Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }, modifier = Modifier.fillMaxWidth()) {
+                        FilledTonalButton(
+                            onClick = { quickModelsExpanded = !quickModelsExpanded },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
                             Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Быстрые модели", fontWeight = FontWeight.Medium)
                                 Text(
-                                    if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size} · нажмите для каталога",
+                                    if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size}",
                                     style = MaterialTheme.typography.bodySmall
                                 )
                             }
+                            Icon(
+                                if (quickModelsExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null
+                            )
                         }
-                        if (state.quickTextModels.isNotEmpty()) {
-                            Spacer(Modifier.height(5.dp))
-                            state.quickTextModels.forEach { ref ->
-                                val modelId = quickModelId(ref)
-                                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                                    Text(
-                                        modelId,
-                                        modifier = Modifier.weight(1f),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    TextButton(onClick = { vm.toggleQuickTextModelForConnection("openrouter", modelId) }) {
-                                        Text("Убрать")
+                        if (quickModelsExpanded) {
+                            if (state.quickTextModels.isEmpty()) {
+                                Text(
+                                    "Быстрые модели добавляются в «Каталог и модели OpenRouter».",
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            } else {
+                                Spacer(Modifier.height(5.dp))
+                                state.quickTextModels.forEach { ref ->
+                                    val modelId = quickModelId(ref)
+                                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            modelId,
+                                            modifier = Modifier.weight(1f),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        TextButton(onClick = {
+                                            vm.toggleQuickTextModelForConnection(quickModelConnectionId(ref), modelId)
+                                        }) {
+                                            Text("Убрать")
+                                        }
                                     }
                                 }
                             }
                         }
-                        if (state.textModel != "openrouter/auto") {
-                            TextButton(
-                                onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
-                                modifier = Modifier.fillMaxWidth()
-                            ) { Text("Сбросить модель чата на Auto") }
-                        }
+
                         Spacer(Modifier.height(7.dp))
                         FilledTonalButton(
                             onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
@@ -480,7 +545,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Column(Modifier.weight(1f)) {
                                 Text("Каталог и модели OpenRouter", fontWeight = FontWeight.Medium)
                                 Text(
-                                    "Видео, речь, Batch, Embeddings, Rerank, маршрутизация и RAG",
+                                    "Единое место выбора и назначения моделей",
                                     style = MaterialTheme.typography.bodySmall,
                                     maxLines = 2,
                                     overflow = TextOverflow.Ellipsis
@@ -499,31 +564,26 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         expanded = imageModelsExpanded,
                         onToggle = { imageModelsExpanded = !imageModelsExpanded }
                     ) {
-                        Text(
-                            "Выбор модели выполняется в общем каталоге OpenRouter. Здесь показана текущая модель для «+ → Создать».",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(9.dp))
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
-                            modifier = Modifier.fillMaxWidth()
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh
                         ) {
-                            Icon(Icons.Outlined.Image, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Модель изображений", fontWeight = FontWeight.Medium)
-                                Text(
-                                    state.imageModel.ifBlank { "Не выбрана" },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                        if (state.imageModel.isNotBlank()) {
-                            TextButton(onClick = { vm.clearImageModel() }, modifier = Modifier.fillMaxWidth()) {
-                                Text("Снять выбор модели изображений")
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.Image, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text("Модель изображений", fontWeight = FontWeight.Medium)
+                                    Text(
+                                        state.imageModel.ifBlank { "Не выбрана" },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                         Spacer(Modifier.height(7.dp))
@@ -660,14 +720,24 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             maxLines = 3
                         )
                         Spacer(Modifier.height(9.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                            items(profileScopes) { scope ->
-                                FilterChip(
-                                    selected = state.userProfileScope == scope,
-                                    onClick = { vm.setUserProfileScope(scope) },
-                                    label = { Text(profileScopeLabel(scope)) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Использовать в обычных чатах", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "В проекты и агентам этот профиль не передаётся.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            Switch(
+                                checked = state.userProfileScope == UserProfileScope.CHATS,
+                                onCheckedChange = { enabled ->
+                                    vm.setUserProfileScope(if (enabled) UserProfileScope.CHATS else UserProfileScope.OFF)
+                                }
+                            )
                         }
                         Spacer(Modifier.height(8.dp))
                         FilledTonalButton(
@@ -842,23 +912,32 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     }
                     SettingsCategory.DATA -> {
                 item {
-                    ExpandableSettingsCard(
-                        title = "Хранилище Umnik",
-                        subtitle = "${state.storedFiles.size} файлов · ${humanSize(state.storageStats.totalBytes)}",
-                        icon = Icons.Outlined.Storage,
-                        expanded = storageExpanded,
-                        onToggle = { storageExpanded = !storageExpanded }
+                    val userFiles = state.storedFiles.filter { it.deletable }
+                    val userBytes = userFiles.sumOf { it.size }
+                    ElevatedCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(22.dp),
+                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
                     ) {
-                        FilledTonalButton(
+                        TextButton(
                             onClick = {
                                 vm.refreshStorage()
                                 storageOpen = true
                             },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                         ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Открыть хранилище")
+                            Icon(Icons.Outlined.Storage, contentDescription = null)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Хранилище Umnik", fontWeight = FontWeight.Bold)
+                                Text(
+                                    "${userFiles.size} файлов · ${humanSize(userBytes)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null)
                         }
                     }
                 }
@@ -998,9 +1077,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     }
 
     if (storageOpen) StorageDialog(state = state, vm = vm, onDismiss = { storageOpen = false })
-    if (quickModelsSettingsOpen) {
-        QuickModelsSettingsDialog(state = state, vm = vm, onDismiss = { quickModelsSettingsOpen = false })
-    }
     if (imageParametersOpen) {
         ImageParametersDialog(state = state, vm = vm, onDismiss = { imageParametersOpen = false })
     }
@@ -1292,106 +1368,11 @@ private fun reasoningEffortShortLabel(effort: ReasoningEffort): String = when (e
 }
 
 @Composable
-private fun QuickModelsSettingsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
-    val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
-    var selectedConnectionId by remember(enabledConnections.map { it.id }) {
-        mutableStateOf(
-            state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
-                ?: enabledConnections.firstOrNull()?.id
-        )
-    }
-    var query by remember { mutableStateOf("") }
-
-    LaunchedEffect(selectedConnectionId) {
-        selectedConnectionId?.let(vm::loadConnectionModels)
-    }
-
-    val selectedConnection = enabledConnections.firstOrNull { it.id == selectedConnectionId }
-    val models = if (state.modelCatalogConnectionId == selectedConnectionId) state.modelCatalog else emptyList()
-    val filtered = remember(models, query) {
-        models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(300)
-    }
-
-    FullScreenPanel(title = "Быстрые модели", onBack = onDismiss) {
-        Text(
-            "Быстрые модели выбираются в общем каталоге OpenRouter. Ограничения по количеству больше нет.",
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (enabledConnections.isEmpty()) {
-            Text(
-                "Нет включённых подключений. Включите хотя бы одно в разделе «Подключения».",
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                items(enabledConnections, key = { it.id }) { connection ->
-                    FilterChip(
-                        selected = selectedConnectionId == connection.id,
-                        onClick = {
-                            selectedConnectionId = connection.id
-                            query = ""
-                        },
-                        label = { Text(connection.name, maxLines = 1) }
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Поиск модели") }
-            )
-            if (filtered.isEmpty()) {
-                Text(
-                    if (state.isLoading) "Загрузка списка…" else "Модели не найдены или подключение ещё не настроено",
-                    modifier = Modifier.padding(20.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    items(filtered, key = { it.id }) { modelInfo ->
-                        val ref = selectedConnection?.let { quickModelRef(it.id, modelInfo.id) }.orEmpty()
-                        FilterChip(
-                            selected = ref in state.quickTextModels,
-                            onClick = {
-                                selectedConnection?.let { vm.toggleQuickTextModelForConnection(it.id, modelInfo.id) }
-                            },
-                            label = {
-                                Text(
-                                    modelInfo.id,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(5.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<StoredFile?>(null) }
     var clearConfirm by remember { mutableStateOf(false) }
     var deleteSelectedConfirm by remember { mutableStateOf(false) }
-    var protectedExpanded by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
@@ -1406,18 +1387,10 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
             file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
         }
     }
-    val protectedFiles = remember(state.storedFiles, q) {
-        state.storedFiles.filter { file ->
-            !file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
-        }
-    }
-    val protectedTotal = state.storedFiles.filterNot { it.deletable }
-    val protectedBytes = protectedTotal.sumOf { it.size }
-    val showProtectedContents = protectedExpanded || q.isNotBlank()
-
     FullScreenPanel(title = "Хранилище Umnik", onBack = onDismiss) {
+        val workingBytes = workingFiles.sumOf { it.size }
         Text(
-            "Всего ${humanSize(state.storageStats.totalBytes)}",
+            "Рабочие файлы · ${workingFiles.size} · ${humanSize(workingBytes)}",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1509,70 +1482,6 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
                 }
             }
 
-            if (protectedTotal.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(8.dp))
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-                    ) {
-                        TextButton(
-                            onClick = { protectedExpanded = !protectedExpanded },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Системные данные", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "Навыки, проекты и файлы чатов · ${protectedTotal.size} · ${humanSize(protectedBytes)}",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(
-                                if (showProtectedContents) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = if (showProtectedContents) "Свернуть" else "Развернуть"
-                            )
-                        }
-                    }
-                }
-                if (showProtectedContents) {
-                    if (protectedFiles.isEmpty()) {
-                        item { Text("В системных данных совпадений нет", modifier = Modifier.padding(12.dp)) }
-                    } else {
-                        items(protectedFiles, key = { "protected-${it.id}" }) { file ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "${file.category} · ${humanSize(file.size)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    fileToSave = file
-                                    save.launch(file.name)
-                                }) { Icon(Icons.Outlined.Download, contentDescription = "Сохранить копию") }
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1619,9 +1528,6 @@ private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort
 
 private const val SETTINGS_QUICK_MODEL_SEPARATOR = "\u001F"
 
-private fun quickModelRef(connectionId: String, modelId: String): String =
-    connectionId + SETTINGS_QUICK_MODEL_SEPARATOR + modelId
-
 private fun quickModelConnectionId(ref: String, fallback: String = "openrouter"): String =
     if (SETTINGS_QUICK_MODEL_SEPARATOR in ref) ref.substringBefore(SETTINGS_QUICK_MODEL_SEPARATOR) else fallback
 
@@ -1634,9 +1540,8 @@ private fun imageParameterSummary(state: UiState): String =
         .joinToString(" · ")
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
-    UserProfileScope.OFF -> "Выкл"
-    UserProfileScope.PROJECTS -> "Только проекты"
-    UserProfileScope.EVERYWHERE -> "Везде"
+    UserProfileScope.OFF -> "выключен"
+    UserProfileScope.CHATS -> "включён"
 }
 
 private fun themeLabel(choice: ThemeChoice): String = when (choice) {

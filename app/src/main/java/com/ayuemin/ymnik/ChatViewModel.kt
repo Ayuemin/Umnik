@@ -72,6 +72,7 @@ import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
+import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
@@ -218,9 +219,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 occupation = prefs.getString("profile_occupation", "").orEmpty(),
                 note = prefs.getString("profile_note", "").orEmpty()
             ),
-            userProfileScope = runCatching {
-                UserProfileScope.valueOf(prefs.getString("profile_scope", UserProfileScope.OFF.name) ?: UserProfileScope.OFF.name)
-            }.getOrDefault(UserProfileScope.OFF),
+            userProfileScope = when (prefs.getString("profile_scope", UserProfileScope.OFF.name)) {
+                UserProfileScope.CHATS.name, "EVERYWHERE" -> UserProfileScope.CHATS
+                else -> UserProfileScope.OFF
+            },
             apiKeyConfigured = isProfileConfigured(initialProfile),
             answerSoundEnabled = prefs.getBoolean("answer_sound", true),
             answerSoundChoice = runCatching {
@@ -5455,6 +5457,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun createTextSkill(text: String) {
+        runCatching { skills.createText(text) }
+            .onSuccess { skill ->
+                _state.value = _state.value.copy(
+                    skills = skills.list(),
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Навык «${skill.name}» создан"
+                )
+            }
+            .onFailure { error ->
+                _state.value = _state.value.copy(status = error.message ?: "Не удалось создать навык")
+            }
+    }
+
     fun importSkillFile(uri: Uri) {
         runCatching { skills.importFile(uri) }
             .onSuccess { skill ->
@@ -6312,11 +6329,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
         appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
         val profile = _state.value.userProfile
-        val useProfile = agent == null && !profile.isEmpty() && when (_state.value.userProfileScope) {
-            UserProfileScope.OFF -> false
-            UserProfileScope.PROJECTS -> project != null
-            UserProfileScope.EVERYWHERE -> true
-        }
+        val useProfile = !profile.isEmpty() && userProfileApplies(
+            scope = _state.value.userProfileScope,
+            inProject = project != null,
+            isAgent = agent != null
+        )
         if (useProfile) {
             appendLine("\n===== КРАТКО О ПОЛЬЗОВАТЕЛЕ =====")
             if (profile.name.isNotBlank()) appendLine("Имя: ${profile.name}")
