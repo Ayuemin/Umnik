@@ -3096,6 +3096,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Действия с одинаковым parallelGroup должны идти рядом. Не помещай в одну параллельную группу два поручения одному и тому же агенту.")
         appendLine("Если результат одного агента нужен другому, не запускай их параллельно: дождись результата и выбери следующего агента в следующем решении.")
         appendLine("Если результат слабый, используй REQUEST_REVISION и укажи taskId предыдущего поручения.")
+        appendLine("FAILED-поручение не означает потерю всей работы: сохраняй и используй уже полученные COMPLETED-результаты.")
+        appendLine("Не запускай повторно COMPLETED-поручение. FAILED повторяй только если есть разумная причина; при ошибке настройки лучше попроси пользователя исправить её через ASK_USER.")
+        appendLine("Если поручаешь Контролёру проверить синтез относительно нескольких исходных результатов, передай ему все нужные inputResultIds, а не только последний синтез.")
         appendLine("Завершай работу только когда получены необходимые результаты специалистов. Финальный ответ синтезируй из их результатов, не добавляя новые факты от себя.")
         appendLine()
         appendLine("ДОСТУПНЫЕ СПЕЦИАЛИСТЫ:")
@@ -3165,7 +3168,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     "- taskId=" + state.packageData.id +
                         "; агент=" + (worker?.name ?: state.packageData.agentId) +
                         "; статус=" + state.status.name +
-                        (state.resultId?.let { "; resultId=" + it } ?: "")
+                        (state.resultId?.let { "; resultId=" + it } ?: "") +
+                        (state.error?.takeIf { it.isNotBlank() }?.let {
+                            "; ошибка=" + it.replace("\n", " ").take(700)
+                        } ?: "")
                 )
             }
         }
@@ -3579,7 +3585,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
             agentWork.upsert(next)
         } catch (error: Throwable) {
-            agentWork.upsert(
+            val failedWorkspace = agentWork.upsert(
                 updateTaskState(
                     next,
                     packageData.id,
@@ -3587,7 +3593,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     error = error.message ?: "Ошибка агента"
                 )
             )
-            throw error
+            DiagnosticLog.record(
+                context,
+                "AGENT",
+                "FAILED agent=" + target.name +
+                    "; task=" + packageData.id.take(8) +
+                    "; reason=" + (error.message ?: error::class.java.simpleName)
+            )
+            failedWorkspace
         }
     }
 
@@ -3728,15 +3741,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         next = agentWork.upsert(next)
 
-        val failed = outcomes.firstOrNull { it.second.isFailure }?.second?.exceptionOrNull()
+        val failedCount = outcomes.count { it.second.isFailure }
         DiagnosticLog.record(
             context,
             "ORCHESTRATOR",
             "PARALLEL_COMPLETE group=" + groupId +
                 "; completed=" + outcomes.count { it.second.isSuccess } +
-                "; failed=" + outcomes.count { it.second.isFailure }
+                "; failed=" + failedCount
         )
-        if (failed != null) throw failed
+        if (failedCount > 0) {
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "PARALLEL_PARTIAL group=" + groupId +
+                    "; successfulResultsPreserved=true; continuing=true"
+            )
+        }
         return next
     }
 
@@ -3783,6 +3803,67 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return next
     }
 
+    private fun projectPreflightReport(
+        project: Project,
+        orchestrator: AgentProfile
+    ): ProjectPreflightReport {
+        val specialists = _state.value.agents.filter {
+            it.projectId == project.id && it.kind == AgentKind.SPECIALIST
+        }
+        return ProjectPreflight.inspect(
+            project = project,
+            orchestrator = orchestrator,
+            specialists = specialists,
+            profiles = _state.value.connectionProfiles,
+            disabledConnectionIds = _state.value.disabledConnectionIds,
+            hasApiKey = { profileId -> secrets.getProfileApiKey(profileId).orEmpty().isNotBlank() },
+            filesForAgent = { agentId -> agentFiles.list(agentId) },
+            skillIdsForAgent = { agentId -> agentSkills.list(agentId).map { it.id }.toSet() },
+            knowledgeForAgent = { agentId ->
+                knowledgeBase.documents(KnowledgeOwnerKind.AGENT, agentId)
+            },
+            fileExists = { path -> path.isNotBlank() && File(path).isFile }
+        )
+    }
+
+    private fun preflightFingerprintKey(projectId: String): String =
+        "agent_project_preflight_fingerprint::" + projectId
+
+    private fun appendPreflightBlockedMessage(
+        chat: ChatSession,
+        clean: String,
+        pending: List<PendingAttachment>,
+        report: ProjectPreflightReport
+    ) {
+        val user = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = clean,
+            attachmentNames = pending.map { it.name }.distinct()
+        )
+        val diagnostic = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "assistant",
+            text = report.blockedMessage(),
+            providerName = "Диагностика проекта"
+        )
+        val messages = chat.messages + user + diagnostic
+        val chats = replaceChatMessages(_state.value.chats, chat.id, messages, null)
+        chatsRepository.save(chats)
+        _state.value = _state.value.copy(
+            chats = chats,
+            messages = messages,
+            status = "⛔ Диагностика проекта: требуется настройка"
+        )
+        DiagnosticLog.record(
+            context,
+            "PREFLIGHT",
+            "BLOCKED project=" + (chat.projectId ?: "unknown").take(8) +
+                "; blockers=" + report.blockers.size +
+                "; warnings=" + report.warnings.size
+        )
+    }
+
     private fun sendAgentOfficeCommand(
         orchestrator: AgentProfile,
         command: String,
@@ -3795,13 +3876,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val clean = command.trim().ifBlank {
             if (pending.isNotEmpty()) "Организуй работу команды по приложенным материалам." else return
         }
-        if (_state.value.agents.none { it.projectId == project.id && it.kind == AgentKind.SPECIALIST }) {
-            _state.value = _state.value.copy(status = "В проекте пока нет специалистов. Добавьте хотя бы одного агента.")
+        val preflight = projectPreflightReport(project, orchestrator)
+        if (!preflight.ready) {
+            appendPreflightBlockedMessage(chat, clean, pending, preflight)
             return
         }
-        if (orchestrator.primaryModel == null) {
-            _state.value = _state.value.copy(status = "Сначала выберите основную модель Оркестратора")
-            return
+
+        val preflightKey = preflightFingerprintKey(project.id)
+        val previousPreflight = prefs.getString(preflightKey, null)
+        val preflightNotice = if (previousPreflight != preflight.fingerprint) {
+            prefs.edit().putString(preflightKey, preflight.fingerprint).apply()
+            DiagnosticLog.record(
+                context,
+                "PREFLIGHT",
+                "PASSED project=" + project.id.take(8) +
+                    "; warnings=" + preflight.warnings.size
+            )
+            preflight.readyNotice()
+        } else {
+            null
         }
 
         val before = chat.messages
@@ -3820,7 +3913,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             requestActive = true,
             busyLabel = "Оркестратор · распределяю работу…",
-            status = null
+            status = preflightNotice
         )
 
         val requestId = nextRequestGeneration(chatId)
