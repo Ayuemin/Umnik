@@ -2,6 +2,8 @@ name: Android Release
 
 on:
   push:
+    branches:
+      - "main"
     tags:
       - "v*"
   workflow_dispatch:
@@ -16,6 +18,7 @@ permissions:
 
 jobs:
   release:
+    if: github.event_name != 'push' || startsWith(github.ref, 'refs/tags/v') || startsWith(github.event.head_commit.message, 'Release v')
     runs-on: ubuntu-latest
 
     steps:
@@ -31,10 +34,15 @@ jobs:
           DISPATCH_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
+          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$APP_VERSION"
+
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
             TAG="$DISPATCH_TAG"
-          else
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
             TAG="$GITHUB_REF_NAME"
+          else
+            TAG="v$APP_VERSION"
           fi
 
           if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9._-]+)?$ ]]; then
@@ -42,21 +50,28 @@ jobs:
             exit 1
           fi
 
-          git fetch --tags --force
-          TAG_COMMIT=$(git rev-parse "$TAG^{commit}")
-          HEAD_COMMIT=$(git rev-parse HEAD)
-          if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
-            echo "Checked out commit ($HEAD_COMMIT) does not match tag $TAG ($TAG_COMMIT)."
-            exit 1
-          fi
-
           VERSION="${TAG#v}"
-          APP_VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
-          test -n "$VERSION"
-          test -n "$APP_VERSION"
           if [ "$VERSION" != "$APP_VERSION" ]; then
             echo "Tag version ($VERSION) does not match app version ($APP_VERSION)."
             exit 1
+          fi
+
+          git fetch --tags --force
+          HEAD_COMMIT=$(git rev-parse HEAD)
+
+          if git rev-parse "$TAG^{commit}" >/dev/null 2>&1; then
+            TAG_COMMIT=$(git rev-parse "$TAG^{commit}")
+            if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+              echo "Existing tag $TAG points to $TAG_COMMIT, but release commit is $HEAD_COMMIT."
+              exit 1
+            fi
+          else
+            if [ "$GITHUB_EVENT_NAME" != "push" ] || [[ "$GITHUB_REF" != refs/heads/main ]]; then
+              echo "Release tag $TAG does not exist."
+              exit 1
+            fi
+            git tag "$TAG" "$HEAD_COMMIT"
+            git push origin "$TAG"
           fi
 
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
