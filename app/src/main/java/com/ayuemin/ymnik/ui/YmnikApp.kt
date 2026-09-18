@@ -43,6 +43,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -298,6 +299,7 @@ private fun ChatScreen(
     var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
     var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
+    var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
     var projectToolsExpanded by remember { mutableStateOf(false) }
@@ -1433,6 +1435,20 @@ overflow = TextOverflow.Ellipsis
       }
   }
 
+  val locationName = currentAgent?.name ?: currentChat?.title.orEmpty()
+  if (locationName.isNotBlank()) {
+      Spacer(Modifier.width(4.dp))
+      Text(
+          locationName,
+          modifier = Modifier.widthIn(max = 88.dp),
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.60f),
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis
+      )
+      Spacer(Modifier.width(2.dp))
+  }
+
   if (currentChat != null) {
       IconButton(
 onClick = { clearAgentChatConfirm = true },
@@ -2106,7 +2122,7 @@ private fun MessageCard(
                 }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
-                    GeneratedFileCard(file)
+                    GeneratedFileCard(file, onSave = { onSaveGenerated(file) })
                 }
                 val usageMeta = listOfNotNull(
                     message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
@@ -2177,11 +2193,9 @@ private fun MessageCard(
                         onClick = onOpenRouterSpeech
                     )
                     CompactMessageAction(
-                        icon = Icons.Outlined.Download,
-                        description = if (message.generatedFiles.size == 1) "Скачать файл" else "Сохранить ответ файлом",
-                        onClick = {
-                            message.generatedFiles.singleOrNull()?.let(onSaveGenerated) ?: onExportText()
-                        }
+                        icon = Icons.Outlined.Description,
+                        description = "Сохранить текст ответа файлом",
+                        onClick = onExportText
                     )
                 }
                 if (onBranch != null) {
