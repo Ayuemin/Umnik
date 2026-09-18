@@ -93,12 +93,36 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
     val treePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
         uri?.let(vm::importSkillTree)
     }
+    var quickSkillText by remember { mutableStateOf("") }
 
     Text(
         "Здесь хранится общая библиотека навыков. Включение навыка выполняется отдельно в каждом чате через + → Навыки.",
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+    Spacer(Modifier.height(9.dp))
+    OutlinedTextField(
+        value = quickSkillText,
+        onValueChange = { quickSkillText = it.take(12_000) },
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Короткий навык") },
+        placeholder = { Text("Например: отвечай кратко, без канцелярита, с примерами") },
+        minLines = 3,
+        maxLines = 6
+    )
+    Spacer(Modifier.height(7.dp))
+    FilledTonalButton(
+        onClick = {
+            vm.createTextSkill(quickSkillText)
+            quickSkillText = ""
+        },
+        enabled = quickSkillText.isNotBlank(),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Icon(Icons.Outlined.Add, contentDescription = null)
+        Spacer(Modifier.width(7.dp))
+        Text("Создать короткий навык")
+    }
     Spacer(Modifier.height(9.dp))
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         FilledTonalButton(onClick = { filePicker.launch(arrayOf("text/*", "application/json", "application/yaml")) }) {
@@ -1433,7 +1457,6 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
     var fileToSave by remember { mutableStateOf<StoredFile?>(null) }
     var clearConfirm by remember { mutableStateOf(false) }
     var deleteSelectedConfirm by remember { mutableStateOf(false) }
-    var protectedExpanded by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
 
     val save = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri: Uri? ->
@@ -1448,18 +1471,10 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
             file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
         }
     }
-    val protectedFiles = remember(state.storedFiles, q) {
-        state.storedFiles.filter { file ->
-            !file.deletable && (q.isBlank() || file.name.contains(q, true) || file.category.contains(q, true))
-        }
-    }
-    val protectedTotal = state.storedFiles.filterNot { it.deletable }
-    val protectedBytes = protectedTotal.sumOf { it.size }
-    val showProtectedContents = protectedExpanded || q.isNotBlank()
-
     FullScreenPanel(title = "Хранилище Umnik", onBack = onDismiss) {
+        val workingBytes = workingFiles.sumOf { it.size }
         Text(
-            "Всего ${humanSize(state.storageStats.totalBytes)}",
+            "Рабочие файлы · ${workingFiles.size} · ${humanSize(workingBytes)}",
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -1551,70 +1566,6 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
                 }
             }
 
-            if (protectedTotal.isNotEmpty()) {
-                item {
-                    Spacer(Modifier.height(8.dp))
-                    ElevatedCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.elevatedCardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLow)
-                    ) {
-                        TextButton(
-                            onClick = { protectedExpanded = !protectedExpanded },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp)
-                        ) {
-                            Icon(Icons.Outlined.FolderOpen, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Системные данные", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "Навыки, проекты и файлы чатов · ${protectedTotal.size} · ${humanSize(protectedBytes)}",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                            Icon(
-                                if (showProtectedContents) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = if (showProtectedContents) "Свернуть" else "Развернуть"
-                            )
-                        }
-                    }
-                }
-                if (showProtectedContents) {
-                    if (protectedFiles.isEmpty()) {
-                        item { Text("В системных данных совпадений нет", modifier = Modifier.padding(12.dp)) }
-                    } else {
-                        items(protectedFiles, key = { "protected-${it.id}" }) { file ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(start = 12.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Outlined.Description, contentDescription = null, modifier = Modifier.size(20.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text(file.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                    Text(
-                                        "${file.category} · ${humanSize(file.size)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                IconButton(onClick = {
-                                    fileToSave = file
-                                    save.launch(file.name)
-                                }) { Icon(Icons.Outlined.Download, contentDescription = "Сохранить копию") }
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
         }
     }
 
@@ -1677,6 +1628,7 @@ private fun imageParameterSummary(state: UiState): String =
 
 private fun profileScopeLabel(scope: UserProfileScope): String = when (scope) {
     UserProfileScope.OFF -> "Выкл"
+    UserProfileScope.CHATS -> "Только чаты"
     UserProfileScope.PROJECTS -> "Только проекты"
     UserProfileScope.EVERYWHERE -> "Везде"
 }
