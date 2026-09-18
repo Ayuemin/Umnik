@@ -2609,7 +2609,10 @@ private fun splitRichBlocks(text: String): List<MessagePart> {
 }
 
 @Composable
-private fun GeneratedFileCard(file: GeneratedFile) {
+private fun GeneratedFileCard(
+    file: GeneratedFile,
+    onSave: () -> Unit
+) {
     val context = LocalContext.current
     val isImage = file.mimeType.startsWith("image/")
     val isAudio = file.mimeType.startsWith("audio/")
@@ -2630,41 +2633,52 @@ private fun GeneratedFileCard(file: GeneratedFile) {
                 .clip(RoundedCornerShape(14.dp)),
             contentScale = ContentScale.Fit
         )
-    } else {
-        val rowContent: @Composable () -> Unit = {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    Icons.Outlined.Description,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    file.name,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    style = MaterialTheme.typography.bodyMedium
-                )
+        Spacer(Modifier.height(6.dp))
+    }
+
+    Surface(
+        onClick = onSave,
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerLow
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                if (isImage) Icons.Outlined.Image else Icons.Outlined.Description,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(8.dp))
+            Text(
+                file.name,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Icon(
+                Icons.Outlined.Download,
+                contentDescription = "Скачать файл",
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (isVideo) {
+                Spacer(Modifier.width(4.dp))
+                IconButton(
+                    onClick = { openGeneratedFile(context, file) },
+                    modifier = Modifier.size(30.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.PlayArrow,
+                        contentDescription = "Открыть видео",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
-        }
-        if (isVideo) {
-            Surface(
-                onClick = { openGeneratedFile(context, file) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) { rowContent() }
-        } else {
-            Surface(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(10.dp),
-                color = MaterialTheme.colorScheme.surfaceContainerLow
-            ) { rowContent() }
         }
     }
 
