@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
@@ -207,6 +208,12 @@ private fun AgentCard(
     onSettings: () -> Unit,
     onOpenChat: () -> Unit
 ) {
+    val primaryModelId = agent.primaryModel?.modelId
+    val primaryModelLabel = primaryModelId
+        ?.substringAfter('/')
+        ?.ifBlank { primaryModelId }
+        ?: "Основная модель не выбрана"
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -246,8 +253,7 @@ private fun AgentCard(
 
             Spacer(Modifier.height(8.dp))
             Text(
-                agent.primaryModel?.modelId?.substringAfter('/')?.ifBlank { agent.primaryModel.modelId }
-                    ?: "Основная модель не выбрана",
+                primaryModelLabel,
                 style = MaterialTheme.typography.labelMedium,
                 color = if (agent.primaryModel == null)
                     MaterialTheme.colorScheme.error
