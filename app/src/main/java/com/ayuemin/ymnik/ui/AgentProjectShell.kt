@@ -302,6 +302,10 @@ private fun AgentSettingsDialog(
     var skillName by remember(agent.id) { mutableStateOf("") }
     var skillBody by remember(agent.id) { mutableStateOf("") }
     val ownedSkills = vm.agentSkills(agent.id)
+    val ownedFiles = vm.agentFiles(agent.id)
+    val agentFilesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.addAgentFiles(agent.id, uris)
+    }
     val skillFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { vm.importAgentSkillFile(agent.id, it) }
     }
@@ -523,6 +527,53 @@ private fun AgentSettingsDialog(
                         )
                         IconButton(onClick = { vm.deleteAgentSkill(agent.id, skill.id) }) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить навык")
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+
+            item { AgentSettingsSectionTitle("Файлы агента") }
+            item {
+                FilledTonalButton(
+                    onClick = { agentFilesPicker.launch(arrayOf("*/*")) },
+                    enabled = !state.isLoading && !state.requestActive,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Добавить постоянные файлы")
+                }
+            }
+            if (ownedFiles.isEmpty()) {
+                item {
+                    Text(
+                        "Постоянных файлов у агента пока нет.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                items(ownedFiles, key = { "agent-file-${it.id}" }) { file ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                file.name,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "${file.size / 1024} КБ",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = { vm.deleteAgentFile(agent.id, file.id) }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл агента")
                         }
                     }
                     HorizontalDivider()
