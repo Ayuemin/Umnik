@@ -47,6 +47,11 @@ fun ServerConnectionSettings() {
 
     Column(Modifier.fillMaxWidth()) {
         Text("Режим работы", style = MaterialTheme.typography.titleSmall)
+        Text(
+            "Серверный режим находится в разработке. Для обычной работы рекомендуется прямое подключение к OpenRouter.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
         Spacer(Modifier.height(6.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(
@@ -69,7 +74,7 @@ fun ServerConnectionSettings() {
                         config = store.config()
                     }
                 },
-                label = { Text("Через сервер") },
+                label = { Text("Через сервер · в разработке") },
                 leadingIcon = { Icon(Icons.Outlined.Cloud, contentDescription = null) }
             )
         }
@@ -162,7 +167,7 @@ fun ServerConnectionSettings() {
             Text(if (checking) " Проверяю…" else " Проверить сервер")
         }
         Text(
-            "Через сервер пока направляется только обычный текстовый чат. Изображения, аудио и служебные запросы идут напрямую.",
+            "Серверный режим в разработке. Через сервер пока направляется только обычный текстовый чат. Изображения, аудио и служебные запросы идут напрямую.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
