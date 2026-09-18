@@ -3092,6 +3092,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Ты НЕ МОЖЕШЬ менять постоянную модель, навыки, память, базу знаний, reasoning или личную инструкцию другого агента.")
         appendLine("Если специалист уже сделал работу, используй его результат по resultId. Не выдумывай, что он сделал то, чего нет в результате.")
         appendLine("Для обычной передачи результата следующему агенту укажи его ID в inputResultIds. TRANSFER_WORK для этого не нужен.")
+        appendLine("Если несколько поручений НЕ зависят друг от друга, можешь запустить их одновременно: верни подряд несколько CALL_AGENT с одинаковым непустым parallelGroup, например \"research-1\".")
+        appendLine("Действия с одинаковым parallelGroup должны идти рядом. Не помещай в одну параллельную группу два поручения одному и тому же агенту.")
+        appendLine("Если результат одного агента нужен другому, не запускай их параллельно: дождись результата и выбери следующего агента в следующем решении.")
         appendLine("Если результат слабый, используй REQUEST_REVISION и укажи taskId предыдущего поручения.")
         appendLine("Завершай работу только когда получены необходимые результаты специалистов. Финальный ответ синтезируй из их результатов, не добавляя новые факты от себя.")
         appendLine()
@@ -3472,6 +3475,49 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    private fun agentTaskPackageForAction(
+        workspace: JobWorkspace,
+        action: AgentOrchestratorAction
+    ): AgentTaskPackage = when (action.type) {
+        AgentOrchestratorActionType.CALL_AGENT -> {
+            val targetId = action.agentId ?: error("CALL_AGENT без agentId")
+            AgentTaskPackage(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                agentId = targetId,
+                objective = action.objective.ifBlank { action.assignmentInstruction },
+                assignmentInstruction = action.assignmentInstruction,
+                inputResultIds = action.inputResultIds,
+                inputFileIds = action.inputFileIds,
+                expectedOutput = action.expectedOutput
+            )
+        }
+
+        AgentOrchestratorActionType.REQUEST_REVISION -> {
+            val original = action.taskId?.let { id ->
+                workspace.tasks.firstOrNull { it.packageData.id == id }
+            } ?: action.agentId?.let { id ->
+                workspace.tasks.asReversed().firstOrNull { it.packageData.agentId == id }
+            } ?: error("REQUEST_REVISION без taskId или agentId")
+            val previousResultId = original.resultId
+                ?: error("Нельзя отправить на доработку незавершённое поручение")
+            AgentTaskPackage(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                agentId = original.packageData.agentId,
+                objective = action.objective.ifBlank { original.packageData.objective },
+                assignmentInstruction = action.assignmentInstruction.ifBlank {
+                    action.note.ifBlank { "Доработай предыдущий результат по замечаниям Оркестратора." }
+                },
+                inputResultIds = (listOf(previousResultId) + action.inputResultIds).distinct(),
+                inputFileIds = action.inputFileIds,
+                expectedOutput = action.expectedOutput.ifBlank { original.packageData.expectedOutput }
+            )
+        }
+
+        else -> error("Действие " + action.type + " не является поручением агенту")
+    }
+
     private suspend fun executeAgentOfficeAction(
         orchestrator: AgentProfile,
         workspace: JobWorkspace,
@@ -3483,44 +3529,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             error("Оркестратор превысил лимит поручений за один запуск")
         }
 
-        val packageData = when (action.type) {
-            AgentOrchestratorActionType.CALL_AGENT -> {
-                val targetId = action.agentId ?: error("CALL_AGENT без agentId")
-                AgentTaskPackage(
-                    id = UUID.randomUUID().toString(),
-                    workspaceId = workspace.id,
-                    agentId = targetId,
-                    objective = action.objective.ifBlank { action.assignmentInstruction },
-                    assignmentInstruction = action.assignmentInstruction,
-                    inputResultIds = action.inputResultIds,
-                    inputFileIds = action.inputFileIds,
-                    expectedOutput = action.expectedOutput
-                )
-            }
-            AgentOrchestratorActionType.REQUEST_REVISION -> {
-                val original = action.taskId?.let { id ->
-                    workspace.tasks.firstOrNull { it.packageData.id == id }
-                } ?: action.agentId?.let { id ->
-                    workspace.tasks.asReversed().firstOrNull { it.packageData.agentId == id }
-                } ?: error("REQUEST_REVISION без taskId или agentId")
-                val previousResultId = original.resultId
-                    ?: error("Нельзя отправить на доработку незавершённое поручение")
-                AgentTaskPackage(
-                    id = UUID.randomUUID().toString(),
-                    workspaceId = workspace.id,
-                    agentId = original.packageData.agentId,
-                    objective = action.objective.ifBlank { original.packageData.objective },
-                    assignmentInstruction = action.assignmentInstruction.ifBlank {
-                        action.note.ifBlank { "Доработай предыдущий результат по замечаниям Оркестратора." }
-                    },
-                    inputResultIds = (listOf(previousResultId) + action.inputResultIds).distinct(),
-                    inputFileIds = action.inputFileIds,
-                    expectedOutput = action.expectedOutput.ifBlank { original.packageData.expectedOutput }
-                )
-            }
-            else -> return workspace
-        }
-
+        val packageData = agentTaskPackageForAction(workspace, action)
         val target = agent(packageData.agentId) ?: error("Агент для поручения не найден")
         DiagnosticLog.record(
             context,
@@ -3580,6 +3589,198 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
             throw error
         }
+    }
+
+    private suspend fun executeAgentOfficeParallelGroup(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        actions: List<AgentOrchestratorAction>,
+        groupId: String,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): JobWorkspace {
+        if (actions.size < 2) {
+            return executeAgentOfficeAction(orchestrator, workspace, actions.first(), userAttachments, network)
+        }
+        if (workspace.tasks.size + actions.size > maxAgentOfficeTasks) {
+            error("Оркестратор превысил лимит поручений за один запуск")
+        }
+
+        val packages = actions.map { agentTaskPackageForAction(workspace, it) }
+        val targetIds = packages.map { it.agentId }
+        if (targetIds.distinct().size != targetIds.size) {
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "PARALLEL_FALLBACK group=" + groupId + "; reason=same_agent"
+            )
+            var next = workspace
+            actions.forEach { action ->
+                next = executeAgentOfficeAction(orchestrator, next, action, userAttachments, network)
+            }
+            return next
+        }
+
+        val targets = packages.map { packageData ->
+            agent(packageData.agentId) ?: error("Агент для параллельного поручения не найден")
+        }
+        targets.forEach { target ->
+            require(target.projectId == workspace.projectId) { "Агент находится в другом проекте" }
+            require(target.kind == AgentKind.SPECIALIST) { "Оркестратор не может поручить задачу самому себе" }
+            ensureAgentConversation(target)
+        }
+
+        val queuedStates = packages.map { packageData ->
+            AgentTaskState(packageData = packageData, status = AgentTaskStatus.QUEUED)
+        }
+        val outboundTransfers = packages.map { packageData ->
+            AgentTransferLogEntry(
+                id = UUID.randomUUID().toString(),
+                workspaceId = workspace.id,
+                fromAgentId = orchestrator.id,
+                toAgentId = packageData.agentId,
+                taskId = packageData.id,
+                resultIds = packageData.inputResultIds,
+                note = packageData.objective
+            )
+        }
+
+        var next = agentWork.upsert(
+            workspace.copy(
+                tasks = workspace.tasks + queuedStates,
+                transfers = workspace.transfers + outboundTransfers
+            )
+        )
+        val packageIds = packages.map { it.id }.toSet()
+        next = agentWork.upsert(
+            next.copy(
+                tasks = next.tasks.map { state ->
+                    if (state.packageData.id in packageIds) {
+                        state.copy(status = AgentTaskStatus.RUNNING, updatedAt = System.currentTimeMillis())
+                    } else state
+                }
+            )
+        )
+
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "PARALLEL_START group=" + groupId + "; agents=" + targets.joinToString { it.name }
+        )
+        network.updatePhase("Оркестратор · параллельно: " + targets.joinToString { it.name })
+
+        val runningWorkspace = next
+        val outcomes = coroutineScope {
+            packages.map { packageData ->
+                async {
+                    val outcome = try {
+                        Result.success(
+                            dispatchAgentTask(
+                                orchestrator = orchestrator,
+                                workspace = runningWorkspace,
+                                packageData = packageData,
+                                userAttachments = userAttachments,
+                                network = network
+                            )
+                        )
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (error: Throwable) {
+                        Result.failure<AgentResult>(error)
+                    }
+                    packageData to outcome
+                }
+            }.awaitAll()
+        }
+
+        outcomes.forEach { (packageData, outcome) ->
+            val target = agent(packageData.agentId)
+            outcome.onSuccess { result ->
+                next = updateTaskState(next, packageData.id, AgentTaskStatus.COMPLETED, result.id)
+                    .copy(
+                        results = next.results + result,
+                        transfers = next.transfers + AgentTransferLogEntry(
+                            id = UUID.randomUUID().toString(),
+                            workspaceId = next.id,
+                            fromAgentId = packageData.agentId,
+                            toAgentId = orchestrator.id,
+                            taskId = packageData.id,
+                            resultIds = listOf(result.id),
+                            fileIds = result.fileIds,
+                            note = "Параллельный результат возвращён Оркестратору"
+                        )
+                    )
+                DiagnosticLog.record(
+                    context,
+                    "TRANSFER",
+                    (target?.name ?: packageData.agentId) +
+                        " -> Оркестратор; result=" + result.id.take(8) +
+                        "; parallelGroup=" + groupId
+                )
+            }.onFailure { error ->
+                next = updateTaskState(
+                    next,
+                    packageData.id,
+                    AgentTaskStatus.FAILED,
+                    error = error.message ?: "Ошибка агента"
+                )
+            }
+        }
+        next = agentWork.upsert(next)
+
+        val failed = outcomes.firstOrNull { it.second.isFailure }?.second?.exceptionOrNull()
+        DiagnosticLog.record(
+            context,
+            "ORCHESTRATOR",
+            "PARALLEL_COMPLETE group=" + groupId +
+                "; completed=" + outcomes.count { it.second.isSuccess } +
+                "; failed=" + outcomes.count { it.second.isFailure }
+        )
+        if (failed != null) throw failed
+        return next
+    }
+
+    private suspend fun executeAgentOfficeActions(
+        orchestrator: AgentProfile,
+        workspace: JobWorkspace,
+        actions: List<AgentOrchestratorAction>,
+        userAttachments: List<PendingAttachment>,
+        network: RequestNetworkSession
+    ): JobWorkspace {
+        var next = workspace
+        var index = 0
+        while (index < actions.size) {
+            val first = actions[index]
+            val group = first.parallelGroup?.trim()?.takeIf { it.isNotBlank() }
+            if (group == null) {
+                next = executeAgentOfficeAction(orchestrator, next, first, userAttachments, network)
+                index += 1
+                continue
+            }
+
+            val batch = mutableListOf<AgentOrchestratorAction>()
+            var cursor = index
+            while (cursor < actions.size) {
+                val candidate = actions[cursor]
+                if (candidate.parallelGroup?.trim() != group) break
+                batch += candidate
+                cursor += 1
+            }
+            next = if (batch.size > 1) {
+                executeAgentOfficeParallelGroup(
+                    orchestrator = orchestrator,
+                    workspace = next,
+                    actions = batch,
+                    groupId = group,
+                    userAttachments = userAttachments,
+                    network = network
+                )
+            } else {
+                executeAgentOfficeAction(orchestrator, next, first, userAttachments, network)
+            }
+            index += batch.size
+        }
+        return next
     }
 
     private fun sendAgentOfficeCommand(
@@ -3668,15 +3869,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         it.type == AgentOrchestratorActionType.CALL_AGENT ||
                             it.type == AgentOrchestratorActionType.REQUEST_REVISION
                     }
-                    for (action in executable) {
-                        workspace = executeAgentOfficeAction(
-                            orchestrator = orchestrator,
-                            workspace = workspace,
-                            action = action,
-                            userAttachments = pending,
-                            network = network
-                        )
-                    }
+                    workspace = executeAgentOfficeActions(
+                        orchestrator = orchestrator,
+                        workspace = workspace,
+                        actions = executable,
+                        userAttachments = pending,
+                        network = network
+                    )
 
                     decision.actions
                         .filter { it.type == AgentOrchestratorActionType.CANCEL_TASK }
