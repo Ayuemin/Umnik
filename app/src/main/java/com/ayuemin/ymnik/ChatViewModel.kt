@@ -3061,6 +3061,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val maxAgentOfficeRounds = 10
     private val maxAgentOfficeTasks = 14
 
+    private fun agentAttachmentAllowed(
+        attachment: PendingAttachment,
+        profile: ConnectionProfile,
+        modelInfo: ModelInfo?
+    ): Boolean {
+        val mime = attachment.mimeType.lowercase()
+        val name = attachment.name.lowercase()
+        val textLike = mime.startsWith("text/") ||
+            name.endsWith(".md") || name.endsWith(".json") || name.endsWith(".csv") ||
+            name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
+        if (textLike) return true
+        if (mime == "application/pdf" || name.endsWith(".pdf")) {
+            return profile.type == ProviderType.OPENROUTER
+        }
+        if (mime.startsWith("image/")) return modelInfo?.accepts("image") == true
+        if (mime.startsWith("audio/")) return profile.type == ProviderType.OPENROUTER && modelInfo?.accepts("audio") == true
+        if (mime.startsWith("video/")) return modelInfo?.accepts("video") == true
+        return modelInfo?.accepts("file") == true
+    }
+
     private fun agentOfficeSystemPrompt(
         project: Project,
         orchestrator: AgentProfile,
@@ -3203,7 +3223,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         }
         val attachments = (userAttachments + ownFiles)
-            .filter { attachmentAllowed(it).first }
+            .filter { agentAttachmentAllowed(it, profile, modelInfo) }
             .distinctBy { it.localPath ?: it.uri }
 
         DiagnosticLog.record(
@@ -3365,7 +3385,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 userAttachments
             } else emptyList()
             val attachments = (ownAttachments + delegatedAttachments)
-                .filter { attachmentAllowed(it).first }
+                .filter { agentAttachmentAllowed(it, profile, modelInfo) }
                 .distinctBy { it.localPath ?: it.uri }
             val knowledgeContext = knowledgeSystemContext(
                 project = null,
