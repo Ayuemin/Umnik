@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -297,6 +299,16 @@ private fun AgentSettingsDialog(
     var webSearch by remember(agent.id) { mutableStateOf(agent.webSearchEnabled) }
     var pickerTarget by remember(agent.id) { mutableStateOf<ModelPickerTarget?>(null) }
     var deleteConfirm by remember(agent.id) { mutableStateOf(false) }
+    var skillEditorOpen by remember(agent.id) { mutableStateOf(false) }
+    var skillName by remember(agent.id) { mutableStateOf("") }
+    var skillBody by remember(agent.id) { mutableStateOf("") }
+    val ownedSkills = vm.agentSkills(agent.id)
+    val skillFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { vm.importAgentSkillFile(agent.id, it) }
+    }
+    val skillFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
+        uri?.let { vm.importAgentSkillTree(agent.id, it) }
+    }
 
     LaunchedEffect(agent.id) {
         if (state.modelCatalogConnectionId != "openrouter") {
@@ -460,6 +472,74 @@ private fun AgentSettingsDialog(
                 )
             }
 
+            item { AgentSettingsSectionTitle("Навыки") }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            skillName = ""
+                            skillBody = ""
+                            skillEditorOpen = true
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Создать")
+                    }
+                    OutlinedButton(
+                        onClick = { skillFilePicker.launch(arrayOf("text/*", "application/json")) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Файл")
+                    }
+                    OutlinedButton(
+                        onClick = { skillFolderPicker.launch(null) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text("Папка")
+                    }
+                }
+            }
+            if (ownedSkills.isEmpty()) {
+                item {
+                    Text(
+                        "Навыков у этого агента пока нет.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                items(ownedSkills, key = { "agent-skill-${it.id}" }) { skill ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(skill.name, fontWeight = FontWeight.Medium)
+                            Text(
+                                "${skill.files.size} файлов",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = skill.id in agent.skillIds,
+                            onCheckedChange = { enabled ->
+                                vm.setAgentSkillEnabled(agent.id, skill.id, enabled)
+                            }
+                        )
+                        IconButton(onClick = { vm.deleteAgentSkill(agent.id, skill.id) }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить навык")
+                        }
+                    }
+                    HorizontalDivider()
+                }
+            }
+
             item { AgentSettingsSectionTitle("Локальная среда") }
             item {
                 Text(
@@ -521,6 +601,44 @@ private fun AgentSettingsDialog(
                     ModelPickerTarget.CONTEXT -> contextModel = id
                 }
                 pickerTarget = null
+            }
+        )
+    }
+
+    if (skillEditorOpen) {
+        AlertDialog(
+            onDismissRequest = { skillEditorOpen = false },
+            title = { Text("Новый навык") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value = skillName,
+                        onValueChange = { skillName = it.take(120) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Название") },
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = skillBody,
+                        onValueChange = { skillBody = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Инструкция навыка") },
+                        minLines = 8
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        if (vm.createAgentSkill(agent.id, skillName, skillBody) != null) {
+                            skillEditorOpen = false
+                        }
+                    },
+                    enabled = skillBody.isNotBlank()
+                ) { Text("Создать") }
+            },
+            dismissButton = {
+                TextButton(onClick = { skillEditorOpen = false }) { Text("Отмена") }
             }
         )
     }
