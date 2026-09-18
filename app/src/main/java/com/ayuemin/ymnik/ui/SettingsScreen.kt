@@ -1367,100 +1367,6 @@ private fun reasoningEffortShortLabel(effort: ReasoningEffort): String = when (e
 }
 
 @Composable
-private fun QuickModelsSettingsDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
-    val enabledConnections = state.connectionProfiles.filter { it.id !in state.disabledConnectionIds }
-    var selectedConnectionId by remember(enabledConnections.map { it.id }) {
-        mutableStateOf(
-            state.activeConnectionProfileId.takeIf { id -> enabledConnections.any { it.id == id } }
-                ?: enabledConnections.firstOrNull()?.id
-        )
-    }
-    var query by remember { mutableStateOf("") }
-
-    LaunchedEffect(selectedConnectionId) {
-        selectedConnectionId?.let(vm::loadConnectionModels)
-    }
-
-    val selectedConnection = enabledConnections.firstOrNull { it.id == selectedConnectionId }
-    val models = if (state.modelCatalogConnectionId == selectedConnectionId) state.modelCatalog else emptyList()
-    val filtered = remember(models, query) {
-        models.filter { it.id.contains(query.trim(), ignoreCase = true) }.take(300)
-    }
-
-    FullScreenPanel(title = "Быстрые модели", onBack = onDismiss) {
-        Text(
-            "Быстрые модели выбираются в общем каталоге OpenRouter. Ограничения по количеству больше нет.",
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 9.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (enabledConnections.isEmpty()) {
-            Text(
-                "Нет включённых подключений. Включите хотя бы одно в разделе «Подключения».",
-                modifier = Modifier.padding(16.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        } else {
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                items(enabledConnections, key = { it.id }) { connection ->
-                    FilterChip(
-                        selected = selectedConnectionId == connection.id,
-                        onClick = {
-                            selectedConnectionId = connection.id
-                            query = ""
-                        },
-                        label = { Text(connection.name, maxLines = 1) }
-                    )
-                }
-            }
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 7.dp),
-                singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Поиск модели") }
-            )
-            if (filtered.isEmpty()) {
-                Text(
-                    if (state.isLoading) "Загрузка списка…" else "Модели не найдены или подключение ещё не настроено",
-                    modifier = Modifier.padding(20.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            } else {
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-                ) {
-                    items(filtered, key = { it.id }) { modelInfo ->
-                        val ref = selectedConnection?.let { quickModelRef(it.id, modelInfo.id) }.orEmpty()
-                        FilterChip(
-                            selected = ref in state.quickTextModels,
-                            onClick = {
-                                selectedConnection?.let { vm.toggleQuickTextModelForConnection(it.id, modelInfo.id) }
-                            },
-                            label = {
-                                Text(
-                                    modelInfo.id,
-                                    modifier = Modifier.fillMaxWidth(),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            },
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                        Spacer(Modifier.height(5.dp))
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var query by remember { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<StoredFile?>(null) }
@@ -1620,9 +1526,6 @@ private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort
 }
 
 private const val SETTINGS_QUICK_MODEL_SEPARATOR = "\u001F"
-
-private fun quickModelRef(connectionId: String, modelId: String): String =
-    connectionId + SETTINGS_QUICK_MODEL_SEPARATOR + modelId
 
 private fun quickModelConnectionId(ref: String, fallback: String = "openrouter"): String =
     if (SETTINGS_QUICK_MODEL_SEPARATOR in ref) ref.substringBefore(SETTINGS_QUICK_MODEL_SEPARATOR) else fallback
