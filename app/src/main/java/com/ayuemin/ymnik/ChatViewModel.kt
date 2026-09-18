@@ -2067,6 +2067,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             masterPrompt = masterPrompt.trim(),
             isFavorite = favorite
         )
+        agentsRepository.createOrchestrator(project.id)
         val orchestrator = ChatSession(
             id = UUID.randomUUID().toString(),
             title = "Оркестратор",
