@@ -87,7 +87,8 @@ class RequestUidtJobService : JobService() {
         val requestId = params.extras.getString(EXTRA_REQUEST_ID).orEmpty()
         active.remove(params.jobId)
         if (requestId.isNotBlank()) {
-            val stopReason = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) params.stopReason else 0\n            RequestExecutionManager.stopUidtFromSystem(requestId, stopReason)
+            val stopReason = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) params.stopReason else 0
+            RequestExecutionManager.stopUidtFromSystem(requestId, stopReason)
         }
         // Never ask JobScheduler to retry a potentially accepted paid POST.
         return false
