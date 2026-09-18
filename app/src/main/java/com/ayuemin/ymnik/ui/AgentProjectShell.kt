@@ -368,7 +368,13 @@ private fun AgentSettingsDialog(
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Роль") },
                     supportingText = {
-                        Text("Коротко опишите, чем занимается агент и какие задачи ему поручать. Это видит Оркестратор.")
+                        Text(
+                            if (agent.kind == AgentKind.ORCHESTRATOR) {
+                                "Коротко опишите роль управляющего агента проекта."
+                            } else {
+                                "Коротко опишите, чем занимается агент и какие задачи ему поручать. Это видит Оркестратор."
+                            }
+                        )
                     },
                     minLines = 2
                 )
