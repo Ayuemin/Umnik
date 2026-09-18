@@ -5805,12 +5805,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         cleanupTempAttachments(_state.value.pendingAttachments)
         if (_state.value.isLoading) return
         val chatId = _state.value.currentChatId
+        val linkedAgent = agentConversations.agentIdForConversation(chatId)
+            ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
+
         chatFilesRepository.deleteChat(chatId)
         chatMemory.clearMemory(chatId)
+
         val now = System.currentTimeMillis()
         val chats = _state.value.chats.map { chat ->
             if (chat.id == chatId) chat.copy(
-                title = "Новый чат",
+                // Agent identity belongs to AgentProfile and must survive clearing its conversation.
+                title = linkedAgent?.name ?: "Новый чат",
                 messages = emptyList(),
                 chatFiles = emptyList(),
                 updatedAt = now
@@ -5823,7 +5828,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
-            status = "Чат очищен вместе с его временными файлами"
+            status = if (linkedAgent != null)
+                "Переписка «${linkedAgent.name}» очищена. Настройки и рабочая среда агента сохранены."
+            else
+                "Чат очищен вместе с его временными файлами"
+        )
+        DiagnosticLog.action(
+            context,
+            "clear_chat",
+            "chat=${chatId.take(8)}; agent=${linkedAgent?.id?.take(8) ?: "none"}"
         )
     }
 
