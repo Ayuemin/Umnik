@@ -289,7 +289,8 @@ fun ProjectsDialog(
     vm: ChatViewModel,
     onDismiss: () -> Unit,
     initialProjectId: String? = null,
-    startCreate: Boolean = false
+    startCreate: Boolean = false,
+    onAgentConversationOpened: ((projectId: String, chatId: String) -> Unit)? = null
 ) {
     var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }
     var createOpen by remember(startCreate) { mutableStateOf(startCreate) }
@@ -351,9 +352,13 @@ fun ProjectsDialog(
             vm = vm,
             onDismiss = { openProjectId = null },
             onConversationOpened = { chatId ->
-                vm.switchChat(chatId)
                 openProjectId = null
-                onDismiss()
+                if (onAgentConversationOpened != null) {
+                    onAgentConversationOpened(project.id, chatId)
+                } else {
+                    vm.switchChat(chatId)
+                    onDismiss()
+                }
             }
         )
     }
