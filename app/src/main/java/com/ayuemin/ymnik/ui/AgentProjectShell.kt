@@ -293,7 +293,6 @@ private fun AgentSettingsDialog(
     }
     var contextModel by remember(agent.id) { mutableStateOf(agent.contextModel?.modelId.orEmpty()) }
     var memoryEmbedding by remember(agent.id) { mutableStateOf(agent.memoryEmbeddingModel?.modelId.orEmpty()) }
-    var knowledgeEmbedding by remember(agent.id) { mutableStateOf(agent.knowledgeBase.embeddingModel?.modelId.orEmpty()) }
     var reasoningEnabled by remember(agent.id) { mutableStateOf(agent.reasoningEnabled) }
     var reasoningEffort by remember(agent.id) { mutableStateOf(agent.reasoningEffort) }
     var webSearch by remember(agent.id) { mutableStateOf(agent.webSearchEnabled) }
@@ -335,7 +334,7 @@ private fun AgentSettingsDialog(
             .toList(),
         contextModel = ref(contextModel),
         memoryEmbeddingModel = ref(memoryEmbedding),
-        knowledgeBase = agent.knowledgeBase.copy(embeddingModel = ref(knowledgeEmbedding)),
+        knowledgeBase = agent.knowledgeBase,
         reasoningEnabled = reasoningEnabled,
         reasoningEffort = reasoningEffort,
         webSearchEnabled = webSearch
@@ -412,16 +411,6 @@ private fun AgentSettingsDialog(
                     onValueChange = { memoryEmbedding = it.trim() },
                     modifier = Modifier.fillMaxWidth(),
                     label = { Text("Embeddings памяти") },
-                    singleLine = true
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = knowledgeEmbedding,
-                    onValueChange = { knowledgeEmbedding = it.trim() },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Embeddings базы знаний") },
-                    supportingText = { Text("Отдельная модель. При её смене индекс базы будет перестроен.") },
                     singleLine = true
                 )
             }
@@ -538,6 +527,17 @@ private fun AgentSettingsDialog(
                     }
                     HorizontalDivider()
                 }
+            }
+
+            item { AgentSettingsSectionTitle("База знаний") }
+            item {
+                KnowledgeBaseSection(
+                    kind = com.ayuemin.ymnik.model.KnowledgeOwnerKind.AGENT,
+                    ownerId = agent.id,
+                    state = state,
+                    vm = vm,
+                    title = "База знаний агента"
+                )
             }
 
             item { AgentSettingsSectionTitle("Локальная среда") }
