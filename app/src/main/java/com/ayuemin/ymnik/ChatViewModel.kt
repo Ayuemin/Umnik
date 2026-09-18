@@ -98,6 +98,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         const val MAX_ATTACHMENT_MB = 50
         const val MAX_ATTACHMENT_BYTES = MAX_ATTACHMENT_MB * 1024L * 1024L
     }
+
+    private class AgentOfficeProtocolException(message: String) : IllegalStateException(message)
     private val prefs = context.getSharedPreferences("ymnik", Context.MODE_PRIVATE)
     private val secrets = SecretStore(context)
     private val skills = SkillRepository(context)
@@ -3243,7 +3245,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 "; roundTasks=" + workspace.tasks.size +
                 "; results=" + workspace.results.size
         )
-        val result = network.call(
+
+        suspend fun requestDecision(statePrompt: String) = network.call(
             chatId = orchestratorChat.id,
             profileId = profile.id,
             recoverable = true
@@ -3252,7 +3255,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 key,
                 modelRef.modelId,
                 history.takeLast(14),
-                agentOfficeStatePrompt(workspace),
+                statePrompt,
                 attachments,
                 system,
                 orchestrator.webSearchEnabled,
@@ -3264,13 +3267,68 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 streamToUi = false
             )
         }
-        val decision = AgentOrchestratorCodec.parse(result.text)
+
+        fun parseAndValidate(raw: String): Pair<AgentOrchestratorDecision?, String?> {
+            val decision = runCatching { AgentOrchestratorCodec.parse(raw) }.getOrNull()
+                ?: return null to "parse_error"
+            val problem = AgentOrchestratorCodec.validationProblem(decision)
+            return if (problem == null) decision to null else null to problem
+        }
+
+        val baseStatePrompt = agentOfficeStatePrompt(workspace)
+        var result = requestDecision(baseStatePrompt)
+        var (decision, problem) = parseAndValidate(result.text)
+        var repaired = false
+
+        if (problem != null) {
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "INVALID_DECISION workspace=" + workspace.id.take(8) +
+                    "; attempt=1; reason=" + problem
+            )
+            network.updatePhase("Оркестратор · исправляю план")
+            val repairPrompt = buildString {
+                append(baseStatePrompt)
+                appendLine()
+                appendLine()
+                appendLine("ПРЕДЫДУЩЕЕ УПРАВЛЕНЧЕСКОЕ РЕШЕНИЕ НЕКОРРЕКТНО.")
+                appendLine("Код причины: " + problem)
+                appendLine("Не выполняй содержательную работу самостоятельно.")
+                appendLine("Сформируй управленческое решение заново по той же задаче.")
+                appendLine("Верни только один JSON-объект по схеме из системной инструкции.")
+                appendLine("Если работа должна продолжиться, actions не может быть пустым.")
+                appendLine("Если работа завершена, completed=true и finalResult должен содержать итог.")
+                appendLine("Если нужно уточнение пользователя, используй ASK_USER.")
+            }
+            result = requestDecision(repairPrompt)
+            val repairedPair = parseAndValidate(result.text)
+            decision = repairedPair.first
+            problem = repairedPair.second
+            repaired = true
+        }
+
+        if (decision == null || problem != null) {
+            val reason = problem ?: "unknown"
+            DiagnosticLog.record(
+                context,
+                "ORCHESTRATOR",
+                "INVALID_DECISION workspace=" + workspace.id.take(8) +
+                    "; attempt=2; reason=" + reason
+            )
+            throw AgentOfficeProtocolException(
+                "Оркестратор дважды вернул некорректный план работы. " +
+                    "Специалисты не запускались. Можно повторить поручение."
+            )
+        }
+
         DiagnosticLog.record(
             context,
             "ORCHESTRATOR",
             "DECISION workspace=" + workspace.id.take(8) +
                 "; actions=" + decision.actions.joinToString { it.type.name } +
-                "; completed=" + decision.completed
+                "; completed=" + decision.completed +
+                "; repaired=" + repaired
         )
         return decision
     }
@@ -4034,8 +4092,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     it.id == user.id && it.deliveryState == "pending"
                 } == true
                 if (pendingStillExists) {
-                    val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
-                    publishChats(failedChats)
+                    if (error is AgentOfficeProtocolException) {
+                        val assistant = ChatMessage(
+                            id = UUID.randomUUID().toString(),
+                            role = "assistant",
+                            text = error.message
+                                ?: "Оркестратор вернул некорректный план. Специалисты не запускались.",
+                            modelId = orchestrator.primaryModel?.modelId,
+                            providerName = "Оркестратор"
+                        )
+                        val finished = chatsRepository.finishRequest(chatId, user.id, assistant)
+                        publishChats(finished)
+                        playReadySound()
+                    } else {
+                        val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                        publishChats(failedChats)
+                    }
                 }
             } finally {
                 cleanupTempAttachments(pending)
