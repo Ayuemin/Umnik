@@ -1502,7 +1502,7 @@ private fun ChatHeader(
                     DropdownMenuItem(
                         text = {
                             Column {
-                                Text("Баланс OpenRouter", fontWeight = FontWeight.Medium)
+                                Text("Списано OpenRouter", fontWeight = FontWeight.Medium)
                                 Text(
                                     activeUsage?.let { "Сегодня ${formatUsd(it.daily)} · всего ${formatUsd(it.total)}" }
                                         ?: "Нажмите, чтобы обновить",
