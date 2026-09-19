@@ -1,4 +1,4 @@
-// Umnik v1.19.1 — UI polish and contextual help
+// Umnik v1.19.2 — clearer OpenRouter usage label
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 134
-        versionName = "1.19.1"
+        versionCode = 135
+        versionName = "1.19.2"
     }
 
     buildFeatures {
