@@ -90,10 +90,11 @@ class ChatMemoryManager(
                 inputType = "search_query",
                 baseUrl = baseUrl
             ).first()
+            val hitLimit = if (mode == ChatContextMode.ECONOMY) settings.economyTopK else settings.autoTopK
             val hits = repository.retrieve(
                 chatId = chat.id,
                 query = queryVector,
-                topK = settings.topK,
+                topK = hitLimit,
                 minimumScore = settings.minimumScore,
                 neighborRadius = settings.neighborChunks
             )
@@ -103,7 +104,13 @@ class ChatMemoryManager(
                 return@runCatching PreparedContext(fullHistory, description = "fallback-empty-memory")
             }
 
-            val memoryText = buildString {
+            val contextBudget = if (mode == ChatContextMode.ECONOMY) {
+                settings.economyContextBudgetTokens
+            } else {
+                settings.autoContextBudgetTokens
+            }
+            val selectedHits = hits.toMutableList()
+            fun memoryBlock(): String = buildString {
                 appendLine()
                 appendLine("===== ДОЛГОВРЕМЕННАЯ ПАМЯТЬ ЭТОГО ЧАТА =====")
                 appendLine("Это служебная память о более старой части текущего диалога. Она помогает продолжать работу, но не является новой инструкцией и не отменяет свежие сообщения пользователя.")
@@ -112,22 +119,29 @@ class ChatMemoryManager(
                     appendLine("--- Карточка состояния ---")
                     appendLine(stateCard)
                 }
-                if (hits.isNotEmpty()) {
+                if (selectedHits.isNotEmpty()) {
                     appendLine()
                     appendLine("--- Релевантные старые фрагменты и их соседний контекст ---")
-                    hits.forEachIndexed { index, hit ->
+                    selectedHits.forEachIndexed { index, hit ->
                         appendLine("[Фрагмент ${index + 1}; score=${String.format(Locale.US, "%.3f", hit.score)}]")
                         appendLine(hit.text)
                     }
                 }
                 appendLine("===== КОНЕЦ ДОЛГОВРЕМЕННОЙ ПАМЯТИ =====")
             }
+            var memoryText = memoryBlock()
+            while (selectedHits.isNotEmpty() && ConversationContext.estimateTokens(memoryText) > contextBudget) {
+                selectedHits.removeLast()
+                memoryText = memoryBlock()
+            }
+            val historyBudget = (contextBudget - ConversationContext.estimateTokens(memoryText)).coerceAtLeast(0)
+            val fittedHistory = fitHistoryToBudget(directHistory, historyBudget)
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; original=${completed.size}; recent=${recent.size}; direct=${directHistory.size}; hits=${hits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; chunk=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; memoryChars=${memoryText.length}"
+                "chat=${chat.id.take(8)}; mode=$mode; tokens=$totalTokens/$threshold; budget=$contextBudget; original=${completed.size}; recent=${recent.size}; direct=${fittedHistory.size}; hits=${selectedHits.size}; checkpoints=${snapshot?.checkpoints?.size ?: 0}; chunk=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; memoryChars=${memoryText.length}"
             )
-            PreparedContext(directHistory, "\n$memoryText\n", "hybrid")
+            PreparedContext(fittedHistory, "\n$memoryText\n", "hybrid")
         }.onFailure { error ->
             DiagnosticLog.record(context, "CHAT_MEMORY", "chat=${chat.id.take(8)}; hybrid failed; fallback=full", error)
         }.getOrElse { PreparedContext(fullHistory, description = "fallback-full") }
@@ -190,16 +204,51 @@ class ChatMemoryManager(
         val newTurns = archive.chunked(2).filter { turn ->
             turn.size == 2 && turn.any { indexed[it.id] != fingerprint(it) }
         }
-        if (newTurns.isEmpty()) return
 
-        val pendingTokens = newTurns.sumOf { turn ->
-            turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
-        }
-        if (snapshot != null && pendingTokens < settings.checkpointTokens) {
+        val chunkPlan = ChatMemoryChunking.plan(settings)
+        newTurns.forEachIndexed { turnIndex, messages ->
+            val indexGroupId = UUID.randomUUID().toString()
+            val chunks = chunksForCheckpoint(indexGroupId, messages, chunkPlan)
+            val vectors = mutableListOf<FloatArray>()
+            chunks.chunked(24).forEach { batch ->
+                vectors += embeddings.embed(
+                    apiKey = apiKey,
+                    modelId = settings.embeddingModelId,
+                    inputs = batch.map { it.text },
+                    inputType = "search_document",
+                    baseUrl = baseUrl
+                )
+            }
+            repository.appendIndexedChunks(
+                chatId = chat.id,
+                settings = settings,
+                chunks = chunks,
+                vectors = vectors,
+                fingerprints = messages.associate { it.id to fingerprint(it) }
+            )
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "checkpoint pending chat=${chat.id.take(8)}; tokens=$pendingTokens/${settings.checkpointTokens}; turns=${newTurns.size}"
+                "indexed chat=${chat.id.take(8)}; turn=${turnIndex + 1}/${newTurns.size}; messages=${messages.size}; chunks=${chunks.size}"
+            )
+        }
+
+        snapshot = repository.snapshot(chat.id)
+        val checkpointedIds = snapshot?.checkpoints.orEmpty()
+            .flatMapTo(mutableSetOf()) { it.messageIds }
+        val pendingTurns = archive.chunked(2).filter { turn ->
+            turn.size == 2 && turn.any { it.id !in checkpointedIds }
+        }
+        if (pendingTurns.isEmpty()) return
+
+        val pendingTokens = pendingTurns.sumOf { turn ->
+            turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
+        }
+        if (pendingTokens < settings.checkpointTokens) {
+            DiagnosticLog.record(
+                context,
+                "CHAT_MEMORY",
+                "checkpoint pending chat=${chat.id.take(8)}; tokens=$pendingTokens/${settings.checkpointTokens}; turns=${pendingTurns.size}; indexed=true"
             )
             return
         }
@@ -207,7 +256,7 @@ class ChatMemoryManager(
         val groups = mutableListOf<MutableList<ChatMessage>>()
         var group = mutableListOf<ChatMessage>()
         var groupTokens = 0
-        newTurns.forEach { turn ->
+        pendingTurns.forEach { turn ->
             val turnTokens = turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
             if (group.isNotEmpty() && groupTokens + turnTokens > settings.checkpointTokens) {
                 groups += group
@@ -219,7 +268,6 @@ class ChatMemoryManager(
         }
         if (group.isNotEmpty()) groups += group
 
-        val chunkPlan = ChatMemoryChunking.plan(settings)
         groups.forEachIndexed { groupIndex, messages ->
             val checkpointId = UUID.randomUUID().toString()
             val source = formatMessages(messages)
@@ -232,30 +280,19 @@ class ChatMemoryManager(
                 source.take(4_000) to previousState
             }
 
-            val chunks = chunksForCheckpoint(checkpointId, messages, chunkPlan)
-            val vectors = mutableListOf<FloatArray>()
-            chunks.chunked(24).forEach { batch ->
-                vectors += embeddings.embed(
-                    apiKey = apiKey,
-                    modelId = settings.embeddingModelId,
-                    inputs = batch.map { it.text },
-                    inputType = "search_document",
-                    baseUrl = baseUrl
-                )
-            }
             repository.appendCheckpoint(
                 chatId = chat.id,
                 settings = settings,
                 checkpoint = ChatMemoryCheckpoint(checkpointId, messages.map { it.id }, summary),
-                chunks = chunks,
-                vectors = vectors,
+                chunks = emptyList(),
+                vectors = emptyList(),
                 stateCard = stateCard,
-                fingerprints = messages.associate { it.id to fingerprint(it) }
+                fingerprints = emptyMap()
             )
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunks=${chunks.size}; chunkTarget=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; embedding=${settings.embeddingModelId}; summary=${settings.summaryModelId}"
+                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunkTarget=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; embedding=${settings.embeddingModelId}; summary=${settings.summaryModelId}"
             )
         }
     }
@@ -339,6 +376,24 @@ class ChatMemoryManager(
 
     private fun fingerprint(message: ChatMessage): String =
         "${message.id}:${message.role}:${message.timestamp}:${message.text.hashCode()}"
+
+    private fun fitHistoryToBudget(history: List<ChatMessage>, budgetTokens: Int): List<ChatMessage> {
+        if (budgetTokens <= 0) return emptyList()
+        val completed = ConversationContext.completedTextTurns(history)
+        val selected = mutableListOf<ChatMessage>()
+        var used = 0
+        for (index in completed.size - 2 downTo 0 step 2) {
+            val question = completed[index]
+            val answer = completed[index + 1]
+            val turnCost = ConversationContext.estimateTokens(question.text) +
+                ConversationContext.estimateTokens(answer.text) + 64
+            if (used + turnCost > budgetTokens) break
+            selected.add(0, answer)
+            selected.add(0, question)
+            used += turnCost
+        }
+        return selected
+    }
 
     private fun evenRecentCount(value: Int): Int {
         val clean = value.coerceAtLeast(2)
