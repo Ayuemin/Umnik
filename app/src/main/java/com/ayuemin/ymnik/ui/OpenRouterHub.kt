@@ -685,14 +685,15 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
         item {
             Text("Сервис интернет-поиска", fontWeight = FontWeight.SemiBold)
             Text(
-                "Auto использует встроенный поиск провайдера, когда он доступен, иначе OpenRouter выбирает совместимый сервис. Firecrawl требует настроенный BYOK в OpenRouter.",
+                "Auto использует встроенный поиск провайдера, когда он доступен, иначе OpenRouter выбирает совместимый сервис.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(WebSearchEngine.entries) { engine ->
+                items(WebSearchEngine.entries.filter { it != WebSearchEngine.FIRECRAWL }) { engine ->
                     FilterChip(
-                        selected = tools.webSearchEngine == engine,
+                        selected = tools.webSearchEngine == engine ||
+                            (tools.webSearchEngine == WebSearchEngine.FIRECRAWL && engine == WebSearchEngine.AUTO),
                         onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) },
                         label = { Text(searchEngineLabel(engine)) }
                     )
@@ -1314,7 +1315,7 @@ private fun searchEngineLabel(value: WebSearchEngine): String = when (value) {
     WebSearchEngine.AUTO -> "Auto"
     WebSearchEngine.NATIVE -> "Native"
     WebSearchEngine.EXA -> "Exa"
-    WebSearchEngine.FIRECRAWL -> "Firecrawl"
+    WebSearchEngine.FIRECRAWL -> "Auto"
     WebSearchEngine.PARALLEL -> "Parallel"
     WebSearchEngine.PERPLEXITY -> "Perplexity"
 }
