@@ -476,6 +476,7 @@ private fun AgentSettingsDialog(
                                         ReasoningEffort.MEDIUM -> "Med"
                                         ReasoningEffort.HIGH -> "High"
                                         ReasoningEffort.XHIGH -> "XH"
+                                        ReasoningEffort.MAX -> "Max"
                                     },
                                     fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
                                 )
