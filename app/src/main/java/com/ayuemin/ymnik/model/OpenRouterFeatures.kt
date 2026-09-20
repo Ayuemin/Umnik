@@ -28,7 +28,8 @@ enum class WebSearchEngine(val apiValue: String) {
     AUTO("auto"),
     NATIVE("native"),
     EXA("exa"),
-    FIRECRAWL("firecrawl"),
+    // Legacy stored value from older Umnik builds; not offered by current server web search.
+    FIRECRAWL("auto"),
     PARALLEL("parallel"),
     PERPLEXITY("perplexity")
 }
@@ -71,5 +72,6 @@ data class ServerToolSettings(
 fun ServerToolSettings.normalized(): ServerToolSettings = copy(
     webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
     webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+    webSearchEngine = (runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO)
+        .let { if (it == WebSearchEngine.FIRECRAWL) WebSearchEngine.AUTO else it }
 )
