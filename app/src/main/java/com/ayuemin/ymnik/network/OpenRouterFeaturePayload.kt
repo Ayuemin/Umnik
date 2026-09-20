@@ -4,6 +4,7 @@ import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 
@@ -44,12 +45,7 @@ internal object OpenRouterFeaturePayload {
     /** Server tools supported directly by Chat Completions. Shell is Responses/Messages only. */
     fun chatServerTools(settings: ServerToolSettings): JsonArray = JsonArray().apply {
         if (settings.webSearch != WebSearchMode.OFF) {
-            add(JsonObject().apply {
-                addProperty("type", "openrouter:web_search")
-                add("parameters", JsonObject().apply {
-                    addProperty("engine", settings.webSearchEngine.apiValue)
-                })
-            })
+            add(webSearchTool(settings))
         }
         if (settings.webFetch) add(serverTool("openrouter:web_fetch"))
         if (settings.datetime) add(serverTool("openrouter:datetime"))
@@ -73,6 +69,46 @@ internal object OpenRouterFeaturePayload {
     }
 
     fun requiresResponsesApi(settings: ServerToolSettings): Boolean = settings.shell
+
+    /**
+     * Modern OpenRouter web search uses the server-side openrouter:web_search tool.
+     * Search depth follows OpenRouter's current 1 / 5 / 25 tool-call budgets.
+     */
+    fun applyServerToolBudget(payload: JsonObject, settings: ServerToolSettings) {
+        if (settings.webSearch == WebSearchMode.OFF) return
+        val maxCalls = when (settings.webSearchPreset) {
+            WebSearchPreset.ON_DEMAND -> null
+            WebSearchPreset.FAST -> 1
+            WebSearchPreset.NORMAL -> 5
+            WebSearchPreset.DEEP -> 25
+        }
+        maxCalls?.let { payload.addProperty("max_tool_calls", it) }
+    }
+
+    private fun webSearchTool(settings: ServerToolSettings) = JsonObject().apply {
+        addProperty("type", "openrouter:web_search")
+        add("parameters", JsonObject().apply {
+            addProperty("engine", settings.webSearchEngine.apiValue)
+            when (settings.webSearchPreset) {
+                WebSearchPreset.ON_DEMAND -> Unit
+                WebSearchPreset.FAST -> {
+                    addProperty("max_results", 3)
+                    addProperty("max_total_results", 3)
+                    addProperty("search_context_size", "low")
+                }
+                WebSearchPreset.NORMAL -> {
+                    addProperty("max_results", 5)
+                    addProperty("max_total_results", 25)
+                    addProperty("search_context_size", "medium")
+                }
+                WebSearchPreset.DEEP -> {
+                    addProperty("max_results", 10)
+                    addProperty("max_total_results", 100)
+                    addProperty("search_context_size", "high")
+                }
+            }
+        })
+    }
 
     private fun serverTool(type: String) = JsonObject().apply { addProperty("type", type) }
 
