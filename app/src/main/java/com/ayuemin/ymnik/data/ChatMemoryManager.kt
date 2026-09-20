@@ -131,7 +131,7 @@ class ChatMemoryManager(
             }
             var memoryText = memoryBlock()
             while (selectedHits.isNotEmpty() && ConversationContext.estimateTokens(memoryText) > contextBudget) {
-                selectedHits.removeLast()
+                selectedHits.removeAt(selectedHits.lastIndex)
                 memoryText = memoryBlock()
             }
             val historyBudget = (contextBudget - ConversationContext.estimateTokens(memoryText)).coerceAtLeast(0)
