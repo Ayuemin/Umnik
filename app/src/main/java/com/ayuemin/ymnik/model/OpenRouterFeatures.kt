@@ -28,7 +28,8 @@ enum class WebSearchEngine(val apiValue: String) {
     AUTO("auto"),
     NATIVE("native"),
     EXA("exa"),
-    FIRECRAWL("firecrawl"),
+    // Legacy stored value; current OpenRouter web search no longer documents Firecrawl as a search engine.
+    FIRECRAWL("auto"),
     PARALLEL("parallel"),
     PERPLEXITY("perplexity")
 }
