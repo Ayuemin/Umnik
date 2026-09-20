@@ -258,15 +258,17 @@ class ChatMemoryManager(
         var groupTokens = 0
         pendingTurns.forEach { turn ->
             val turnTokens = turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
-            if (group.isNotEmpty() && groupTokens + turnTokens > settings.checkpointTokens) {
+            group += turn
+            groupTokens += turnTokens
+            if (groupTokens >= settings.checkpointTokens) {
                 groups += group
                 group = mutableListOf()
                 groupTokens = 0
             }
-            group += turn
-            groupTokens += turnTokens
         }
-        if (group.isNotEmpty()) groups += group
+        // The unfinished tail deliberately remains uncheckpointed. Its pairs are already
+        // searchable through embeddings; it will be folded into the state card after the
+        // next turns bring the accumulated checkpoint block to ~8K tokens.
 
         groups.forEachIndexed { groupIndex, messages ->
             val checkpointId = UUID.randomUUID().toString()
