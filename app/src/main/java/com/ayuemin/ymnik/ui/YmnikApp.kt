@@ -985,7 +985,7 @@ onBranch = if (message.role == "assistant") {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
                             label = "Размышление",
-                            subtitle = if (state.reasoningEnabled) reasoningEffortUiLabel(state.reasoningEffort) else null,
+                            subtitle = reasoningEffortUiLabel(state.reasoningEffort),
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
@@ -995,7 +995,7 @@ onBranch = if (message.role == "assistant") {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
                             label = "Поиск",
-                            subtitle = if (state.webSearchEnabled) webSearchPresetUiLabel(state.webSearchPreset) else null,
+                            subtitle = webSearchPresetUiLabel(state.webSearchPreset),
                             checked = state.webSearchEnabled,
                             enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
@@ -1130,7 +1130,6 @@ onBranch = if (message.role == "assistant") {
                                 selected = state.webSearchPreset == preset,
                                 onClick = {
                                     vm.setWebSearchPreset(preset)
-                                    vm.setWebSearchEnabled(true)
                                     webSearchModeOpen = false
                                 },
                                 label = { Text(webSearchPresetUiLabel(preset)) }
