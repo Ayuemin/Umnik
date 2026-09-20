@@ -5,7 +5,6 @@ import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
-import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
 import com.google.gson.Gson
@@ -20,9 +19,7 @@ class OpenRouterFeaturePrefs(context: Context) {
     fun tools(): ServerToolSettings = read("tools", ServerToolSettings::class.java, ServerToolSettings()).let { value ->
         value.copy(
             webSearch = runCatching { value.webSearch }.getOrNull() ?: WebSearchMode.OFF,
-            webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-            webSearchEngine = (runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO)
-                .let { if (it == WebSearchEngine.FIRECRAWL) WebSearchEngine.AUTO else it }
+            webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND
         )
     }
     fun saveTools(value: ServerToolSettings) { prefs.edit().putString("tools", gson.toJson(value)).apply() }
