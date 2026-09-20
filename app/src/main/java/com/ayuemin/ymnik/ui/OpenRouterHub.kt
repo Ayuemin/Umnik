@@ -997,12 +997,12 @@ private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) 
 private fun simplePriceFilterLabel(value: SimplePriceFilter): String = when (value) {
     SimplePriceFilter.ALL -> "Все"
     SimplePriceFilter.FREE -> "Бесплатно"
-    SimplePriceFilter.UP_TO_0_02 -> "до $0,02"
-    SimplePriceFilter.UP_TO_0_05 -> "до $0,05"
-    SimplePriceFilter.UP_TO_0_1 -> "до $0,1"
-    SimplePriceFilter.UP_TO_1 -> "до $1"
-    SimplePriceFilter.UP_TO_5 -> "до $5"
-    SimplePriceFilter.OVER_5 -> "более $5"
+    SimplePriceFilter.UP_TO_0_02 -> "до \\$0,02"
+    SimplePriceFilter.UP_TO_0_05 -> "до \\$0,05"
+    SimplePriceFilter.UP_TO_0_1 -> "до \\$0,1"
+    SimplePriceFilter.UP_TO_1 -> "до \\$1"
+    SimplePriceFilter.UP_TO_5 -> "до \\$5"
+    SimplePriceFilter.OVER_5 -> "более \\$5"
 }
 
 private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
