@@ -21,8 +21,7 @@ class OpenRouterFeaturePrefs(context: Context) {
         value.copy(
             webSearch = runCatching { value.webSearch }.getOrNull() ?: WebSearchMode.OFF,
             webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-            webSearchEngine = (runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO)
-                .let { if (it == WebSearchEngine.FIRECRAWL) WebSearchEngine.AUTO else it }
+            webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
         )
     }
     fun saveTools(value: ServerToolSettings) { prefs.edit().putString("tools", gson.toJson(value)).apply() }
