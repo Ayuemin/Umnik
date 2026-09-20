@@ -67,3 +67,11 @@ data class ServerToolSettings(
         get() = webSearch != WebSearchMode.OFF || webFetch || datetime || imageGeneration ||
             fusion || !advisorModel.isNullOrBlank() || !subagentModel.isNullOrBlank() || shell
 }
+
+/** Safely upgrades Gson-loaded settings whose newer enum fields may be absent. */
+fun ServerToolSettings.normalized(): ServerToolSettings = copy(
+    webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
+    webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
+    webSearchEngine = (runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO)
+        .let { if (it == WebSearchEngine.FIRECRAWL) WebSearchEngine.AUTO else it }
+)
