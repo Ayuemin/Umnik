@@ -1422,7 +1422,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val clean = modelId.trim()
         if (clean.isBlank()) return
         val sameProfile = profile.id == _state.value.activeConnectionProfileId
-        val info = if (sameProfile) _state.value.availableTextModels.firstOrNull { it.id == clean } else null
+        val info = if (sameProfile) {
+            _state.value.availableTextModels.firstOrNull { it.id == clean }
+                ?: _state.value.modelCatalog.firstOrNull { it.id == clean }
+        } else {
+            _state.value.modelCatalog.firstOrNull { it.id == clean }
+        }
         val effort = preferredReasoningEffort(clean, info)
         val keepReasoning = sameProfile && reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
@@ -1519,6 +1524,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = activeConnectionProfile()
         val modelId = _state.value.textModel
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
@@ -3535,6 +3541,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun currentTextModelInfo(): ModelInfo? =
         _state.value.availableTextModels.firstOrNull { it.id == currentTextModelId() }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == currentTextModelId() }
 
     private fun reasoningStillValid(info: ModelInfo?, effort: ReasoningEffort = _state.value.reasoningEffort): Boolean =
         _state.value.reasoningEnabled && info?.supportsReasoning == true &&
