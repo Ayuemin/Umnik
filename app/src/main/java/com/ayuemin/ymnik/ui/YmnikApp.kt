@@ -1255,7 +1255,8 @@ private fun reasoningEffortUiLabel(effort: ReasoningEffort): String = when (effo
     ReasoningEffort.LOW -> "Низкий"
     ReasoningEffort.MEDIUM -> "Средний"
     ReasoningEffort.HIGH -> "Высокий"
-    ReasoningEffort.XHIGH -> "Максимальный"
+    ReasoningEffort.XHIGH -> "Очень высокий"
+    ReasoningEffort.MAX -> "Максимальный"
 }
 
 private fun webSearchPresetUiLabel(preset: WebSearchPreset): String = when (preset) {
