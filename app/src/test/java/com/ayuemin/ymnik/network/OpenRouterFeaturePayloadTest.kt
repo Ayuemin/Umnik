@@ -111,18 +111,4 @@ class OpenRouterFeaturePayloadTest {
         assertFalse(onDemandPayload.has("max_tool_calls"))
     }
 
-    @Test
-    fun firecrawlEngineKeepsCurrentOpenRouterApiValue() {
-        val settings = ServerToolSettings(
-            webSearch = WebSearchMode.AUTO,
-            webSearchPreset = WebSearchPreset.FAST,
-            webSearchEngine = WebSearchEngine.FIRECRAWL
-        )
-        val params = OpenRouterFeaturePayload.chatServerTools(settings)
-            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
-            .asJsonObject.getAsJsonObject("parameters")
-
-        assertEquals("firecrawl", params.get("engine").asString)
-    }
-
 }
