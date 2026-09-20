@@ -132,22 +132,47 @@ data class UserProfile(
     fun isEmpty(): Boolean = name.isBlank() && gender.isBlank() && age.isBlank() && occupation.isBlank() && note.isBlank()
 }
 
+data class ModelParameterCapability(
+    val type: String? = null,
+    val values: List<String> = emptyList(),
+    val min: Double? = null,
+    val max: Double? = null
+)
+
 data class ModelInfo(
     val id: String,
+    val name: String? = null,
+    val description: String? = null,
+    val canonicalSlug: String? = null,
+    val huggingFaceId: String? = null,
+    val createdAtEpochSeconds: Long? = null,
+    val architectureModality: String? = null,
+    val tokenizer: String? = null,
+    val instructType: String? = null,
     val inputModalities: Set<String> = setOf("text"),
     val outputModalities: Set<String> = setOf("text"),
     val supportedParameters: Set<String> = emptySet(),
     val reasoningEfforts: Set<String> = emptySet(),
     val parameterOptions: Map<String, List<String>> = emptyMap(),
+    val parameterCapabilities: Map<String, ModelParameterCapability> = emptyMap(),
     val contextLength: Int? = null,
+    val topProviderContextLength: Int? = null,
     val maxCompletionTokens: Int? = null,
     val reasoningMandatory: Boolean = false,
     val reasoningDefaultEnabled: Boolean = false,
+    val supportsStreaming: Boolean? = null,
+    val topProviderModerated: Boolean? = null,
     val promptPriceUsdPerMillion: Double? = null,
     val completionPriceUsdPerMillion: Double? = null,
     val imagePriceUsd: Double? = null,
     val imageTokenPriceUsd: Double? = null,
     val imageOutputPriceUsd: Double? = null,
+    val pricingUsd: Map<String, Double> = emptyMap(),
+    val capabilityValues: Map<String, List<String>> = emptyMap(),
+    val capabilityFlags: Map<String, Boolean> = emptyMap(),
+    val pricingSkusUsd: Map<String, Double> = emptyMap(),
+    val allowedPassthroughParameters: Set<String> = emptySet(),
+    val rawOpenRouterMetadata: List<String> = emptyList(),
     val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
@@ -160,6 +185,14 @@ data class ModelInfo(
         get() = "reasoning_effort" in supportedParameters
     val supportsTools: Boolean
         get() = "tools" in supportedParameters
+    val supportsImageInput: Boolean
+        get() = accepts("image")
+    val supportsImageOutput: Boolean
+        get() = outputs("image")
+    val isMultimodalChat: Boolean
+        get() = accepts("text") && accepts("image") && outputs("text") && outputs("image")
+    val providerId: String
+        get() = id.substringBefore('/').ifBlank { id }
     val isBatch: Boolean
         get() = ModelVariant.BATCH in variants || id.endsWith(":batch", ignoreCase = true)
     val batchBaseModelId: String

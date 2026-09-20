@@ -137,7 +137,7 @@ class ModelCatalogFilterTest {
         )
         val extended = models + textAndImage
         assertEquals(
-            listOf("vendor/chat", "vendor/multimodal-output"),
+            listOf("vendor/multimodal-output"),
             ModelCatalogFilter.apply(
                 extended,
                 capabilities = ModelCapabilityFilter(multimodal = true)
@@ -149,6 +149,54 @@ class ModelCatalogFilterTest {
                 extended,
                 capabilities = ModelCapabilityFilter(imageOutput = true)
             ).map { it.id }
+        )
+    }
+
+    @Test
+    fun advancedCriteriaUseAndSemantics() {
+        val advanced = ModelInfo(
+            id = "vendor/advanced",
+            name = "Advanced",
+            description = "Vision model with tools",
+            inputModalities = setOf("text", "image", "audio"),
+            outputModalities = setOf("text", "image"),
+            supportedParameters = setOf("tools", "reasoning", "response_format"),
+            supportsStreaming = true,
+            contextLength = 262144,
+            maxCompletionTokens = 65536
+        )
+        val extended = models + advanced
+
+        assertEquals(
+            listOf("vendor/advanced"),
+            ModelCatalogFilter.apply(
+                extended,
+                capabilities = ModelCapabilityFilter(
+                    requiredInputModalities = setOf("image", "audio"),
+                    requiredOutputModalities = setOf("image"),
+                    requiredParameters = setOf("tools", "response_format"),
+                    streaming = true,
+                    minContextTokens = 256000,
+                    minMaxCompletionTokens = 16384
+                )
+            ).map { it.id }
+        )
+    }
+
+    @Test
+    fun searchUsesNameDescriptionAndProvider() {
+        val named = ModelInfo(
+            id = "vendor/model-x",
+            name = "Aurora Vision",
+            description = "Specialized photo analysis model"
+        )
+        val extended = models + named
+
+        assertEquals(listOf("vendor/model-x"), ModelCatalogFilter.apply(extended, query = "Aurora").map { it.id })
+        assertEquals(listOf("vendor/model-x"), ModelCatalogFilter.apply(extended, query = "photo analysis").map { it.id })
+        assertEquals(
+            extended.filter { it.providerId == "vendor" }.map { it.id },
+            ModelCatalogFilter.apply(extended, query = "vendor").map { it.id }
         )
     }
 
