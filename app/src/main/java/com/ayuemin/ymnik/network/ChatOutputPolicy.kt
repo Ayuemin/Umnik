@@ -2,19 +2,19 @@ package com.ayuemin.ymnik.network
 
 internal object ChatOutputPolicy {
     private val directImageVerb = Regex(
-        """(?iu)\b(нарисуй|изобрази|сгенерируй|сгенерировать|отрисуй|визуализируй|render|draw|paint)\b"""
+        """(?iuU)\b(нарисуй|изобрази|сгенерируй|сгенерировать|отрисуй|визуализируй|render|draw|paint)\b"""
     )
     private val imageNoun = Regex(
-        """(?iu)\b(изображени\w*|картинк\w*|иллюстраци\w*|обложк\w*|постер\w*|логотип\w*|баннер\w*|аватар\w*|фото\w*|image\w*|picture\w*|illustration\w*|cover\w*|poster\w*|logo\w*|banner\w*|avatar\w*|photo\w*)\b"""
+        """(?iuU)\b(изображени\w*|картинк\w*|иллюстраци\w*|обложк\w*|постер\w*|логотип\w*|баннер\w*|аватар\w*|фото\w*|image\w*|picture\w*|illustration\w*|cover\w*|poster\w*|logo\w*|banner\w*|avatar\w*|photo\w*)\b"""
     )
     private val createVerb = Regex(
-        """(?iu)\b(создай|сделай|подготовь|разработай|оформи|create|make|design|generate)\b"""
+        """(?iuU)\b(создай|сделай|подготовь|разработай|оформи|create|make|design|generate)\b"""
     )
     private val editVerb = Regex(
-        """(?iu)\b(измени|изменить|отредактируй|перерисуй|убери|удали|замени|добавь|перекрась|ретушир\w*|edit|modify|redraw|remove|replace|add|retouch)\b"""
+        """(?iuU)\b(измени|изменить|отредактируй|перерисуй|убери|удали|замени|добавь|перекрась|ретушир\w*|edit|modify|redraw|remove|replace|add|retouch)\b"""
     )
     private val promptOnly = Regex(
-        """(?iu)\b(промпт|prompt)\b.{0,40}\b(для|for)\b.{0,30}(изображ|картин|image|picture|illustration)"""
+        """(?iuU)\b(промпт|prompt)\b.{0,40}\b(для|for)\b.{0,30}(изображ|картин|image|picture|illustration)"""
     )
 
     fun wantsGeneratedImage(prompt: String, hasImageAttachment: Boolean = false): Boolean {
