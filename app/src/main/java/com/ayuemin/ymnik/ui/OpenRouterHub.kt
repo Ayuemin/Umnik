@@ -1087,17 +1087,22 @@ private fun priceFilterLabel(value: ModelPriceFilter, category: ModelCategory?):
 
 private fun catalogPriceText(model: ModelInfo): String? {
     if (ModelVariant.FREE in model.variants) return "Цена: бесплатно (:free)"
+
+    val parts = mutableListOf<String>()
+    if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
+        parts += "Текст / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}"
+    }
     if (ModelCategory.IMAGE in model.categories) {
         model.estimatedImageOutputUsd1K?.let { estimate ->
-            if (estimate > 0.0) return "Изображение: ≈ ${formatCatalogPrice(estimate)} за 1K · итог зависит от размера/качества"
+            if (estimate > 0.0) {
+                parts += "изображение ≈ ${formatCatalogPrice(estimate)} за 1K"
+            }
         }
     }
-    if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
-        val bothZero = (model.promptPriceUsdPerMillion ?: 0.0) <= 0.0 && (model.completionPriceUsdPerMillion ?: 0.0) <= 0.0
-        if (ModelCategory.IMAGE in model.categories && bothZero) return "Изображение: цена зависит от image-тарифа OpenRouter"
-        return "Цена / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}"
+    if (parts.isEmpty() && ModelCategory.IMAGE in model.categories) {
+        parts += "изображение: цена зависит от image-тарифа OpenRouter"
     }
-    return null
+    return parts.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
 }
 
 private fun formatCatalogPrice(value: Double?): String = when {
