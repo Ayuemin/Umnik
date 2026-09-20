@@ -75,6 +75,7 @@ import com.ayuemin.ymnik.model.ModelCapabilityFilter
 import com.ayuemin.ymnik.model.ModelCatalogFilter
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
+import com.ayuemin.ymnik.model.ModelParameterCapability
 import com.ayuemin.ymnik.model.ModelPriceFilter
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
@@ -87,10 +88,14 @@ import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
 import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
+private enum class ModelCatalogSort { ID, CONTEXT, NEWEST, PRICE }
 
 @Composable
 fun UmnikV16Root(viewModel: ChatViewModel) {
@@ -310,8 +315,10 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     var variant by remember { mutableStateOf<ModelVariant?>(null) }
     var price by remember { mutableStateOf(ModelPriceFilter.ALL) }
     var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
+    var sort by remember { mutableStateOf(ModelCatalogSort.ID) }
     var filtersExpanded by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
+
     val availableCategories = remember(state.catalog) {
         ModelCategory.entries.filter { candidate -> state.catalog.any { candidate in it.categories } }
     }
@@ -320,6 +327,15 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     }
     val availableVariants = remember(state.catalog) {
         variantOrder.filter { candidate -> state.catalog.any { candidate in it.variants } }
+    }
+    val availableInputs = remember(state.catalog) {
+        state.catalog.flatMap { it.inputModalities }.map(String::lowercase).distinct().sortedBy(::modalitySortKey)
+    }
+    val availableOutputs = remember(state.catalog) {
+        state.catalog.flatMap { it.outputModalities }.map(String::lowercase).distinct().sortedBy(::modalitySortKey)
+    }
+    val availableParameters = remember(state.catalog) {
+        state.catalog.flatMap { it.supportedParameters }.map(String::lowercase).distinct().sortedBy(::parameterSortKey)
     }
     val selectedIds = remember(
         appState.textModel,
@@ -342,9 +358,38 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             add(state.rag.rerankModel)
         }.filter(String::isNotBlank).toSet()
     }
-    val filtered = remember(state.catalog, query, category, variant, price, capabilities, selectedIds) {
-        ModelCatalogFilter.apply(state.catalog, query, category, variant, price, capabilities, limit = 700)
-            .sortedWith(compareByDescending<ModelInfo> { it.id in selectedIds }.thenBy { it.id })
+
+    val filtered = remember(state.catalog, query, category, variant, price, capabilities, sort, selectedIds) {
+        val base = ModelCatalogFilter.apply(
+            state.catalog,
+            query,
+            category,
+            variant,
+            price,
+            capabilities,
+            limit = Int.MAX_VALUE
+        )
+        val sorted = when (sort) {
+            ModelCatalogSort.ID -> base.sortedWith(
+                compareByDescending<ModelInfo> { it.id in selectedIds }.thenBy { it.id }
+            )
+            ModelCatalogSort.CONTEXT -> base.sortedWith(
+                compareByDescending<ModelInfo> { it.id in selectedIds }
+                    .thenByDescending { maxOf(it.contextLength ?: 0, it.topProviderContextLength ?: 0) }
+                    .thenBy { it.id }
+            )
+            ModelCatalogSort.NEWEST -> base.sortedWith(
+                compareByDescending<ModelInfo> { it.id in selectedIds }
+                    .thenByDescending { it.createdAtEpochSeconds ?: 0L }
+                    .thenBy { it.id }
+            )
+            ModelCatalogSort.PRICE -> base.sortedWith(
+                compareByDescending<ModelInfo> { it.id in selectedIds }
+                    .thenBy { it.catalogPriceFor(category) ?: Double.MAX_VALUE }
+                    .thenBy { it.id }
+            )
+        }
+        sorted.take(700)
     }
 
     LaunchedEffect(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
@@ -353,58 +398,196 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         }
     }
 
+    fun resetFilters() {
+        category = null
+        variant = null
+        price = ModelPriceFilter.ALL
+        capabilities = ModelCapabilityFilter()
+        sort = ModelCatalogSort.ID
+    }
+
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Поиск по OpenRouter") }
+                placeholder = { Text("Название, ID, описание, провайдер") }
             )
             TextButton(onClick = { filtersExpanded = !filtersExpanded }) {
-                Text(if (filtersExpanded) "Свернуть" else "Фильтры")
+                Text(if (filtersExpanded) "Свернуть" else "Подбор")
             }
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
         }
+
         if (filtersExpanded) {
-            Text("Категории", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Подбор моделей по критериям",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+                val extraCount = (if (category != null) 1 else 0) +
+                    (if (variant != null) 1 else 0) +
+                    (if (price != ModelPriceFilter.ALL) 1 else 0) +
+                    capabilities.activeCount
+                if (extraCount > 0) {
+                    TextButton(onClick = ::resetFilters) { Text("Сбросить (${extraCount})") }
+                }
+            }
+
+            Text("Быстрые условия", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                item {
+                    CapabilityChip("Мультимодальный чат", capabilities.multimodal) {
+                        capabilities = capabilities.copy(multimodal = !capabilities.multimodal)
+                    }
+                }
+                item {
+                    CapabilityChip("Reasoning", capabilities.reasoning) {
+                        capabilities = capabilities.copy(reasoning = !capabilities.reasoning)
+                    }
+                }
+                item {
+                    CapabilityChip("Tools", capabilities.tools) {
+                        capabilities = capabilities.copy(tools = !capabilities.tools)
+                    }
+                }
+                item {
+                    CapabilityChip("Streaming", capabilities.streaming) {
+                        capabilities = capabilities.copy(streaming = !capabilities.streaming)
+                    }
+                }
+            }
+            Text(
+                "«Мультимодальный чат» = одна модель принимает текст+изображение и умеет выдавать и текст, и изображение.",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Text("Что модель должна принимать", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(availableInputs) { modality ->
+                    val selected = modality in capabilities.requiredInputModalities
+                    CapabilityChip(modalityLabel(modality), selected) {
+                        capabilities = capabilities.copy(
+                            requiredInputModalities = capabilities.requiredInputModalities.toggle(modality)
+                        )
+                    }
+                }
+            }
+
+            Text("Что модель должна выдавать", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(availableOutputs) { modality ->
+                    val selected = modality in capabilities.requiredOutputModalities
+                    CapabilityChip(modalityLabel(modality), selected) {
+                        capabilities = capabilities.copy(
+                            requiredOutputModalities = capabilities.requiredOutputModalities.toggle(modality)
+                        )
+                    }
+                }
+            }
+
+            Text("Возможности API модели", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(availableParameters) { parameter ->
+                    val selected = parameter in capabilities.requiredParameters
+                    CapabilityChip(parameterLabel(parameter), selected) {
+                        capabilities = capabilities.copy(
+                            requiredParameters = capabilities.requiredParameters.toggle(parameter)
+                        )
+                    }
+                }
+            }
+
+            Text("Минимальный контекст", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(listOf<Int?>(null, 32_000, 128_000, 256_000, 1_000_000)) { minimum ->
+                    FilterChip(
+                        selected = capabilities.minContextTokens == minimum,
+                        onClick = { capabilities = capabilities.copy(minContextTokens = minimum) },
+                        label = { Text(minimum?.let(::compactTokenCount) ?: "Любой") }
+                    )
+                }
+            }
+
+            Text("Максимальный ответ не меньше", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
+            LazyRow(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(listOf<Int?>(null, 4_096, 16_384, 65_536)) { minimum ->
+                    FilterChip(
+                        selected = capabilities.minMaxCompletionTokens == minimum,
+                        onClick = { capabilities = capabilities.copy(minMaxCompletionTokens = minimum) },
+                        label = { Text(minimum?.let(::compactTokenCount) ?: "Любой") }
+                    )
+                }
+            }
+
+            Text("Категории", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
             LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item { FilterChip(selected = category == null, onClick = { category = null }, label = { Text("Все") }) }
                 items(availableCategories) { item ->
                     FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
                 }
             }
-            Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+
+            Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
             LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
                 items(availableVariants) { item ->
                     FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
                 }
             }
+
             val priceOptions = when (category) {
                 ModelCategory.TEXT, ModelCategory.IMAGE -> ModelPriceFilter.entries.toList()
                 else -> listOf(ModelPriceFilter.ALL, ModelPriceFilter.FREE)
             }
-            Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 3.dp), style = MaterialTheme.typography.labelMedium)
+            Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
             LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(priceOptions) { item ->
                     FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item, category)) })
                 }
             }
+
+            Text("Сортировка", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
             LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                item { CapabilityChip("Мультимодальные", capabilities.multimodal) { capabilities = capabilities.copy(multimodal = !capabilities.multimodal) } }
-                item { CapabilityChip("Вход: изображение", capabilities.imageInput) { capabilities = capabilities.copy(imageInput = !capabilities.imageInput) } }
-                item { CapabilityChip("Выход: изображение", capabilities.imageOutput) { capabilities = capabilities.copy(imageOutput = !capabilities.imageOutput) } }
-                item { CapabilityChip("Вход: аудио", capabilities.audioInput) { capabilities = capabilities.copy(audioInput = !capabilities.audioInput) } }
-                item { CapabilityChip("Вход: видео", capabilities.videoInput) { capabilities = capabilities.copy(videoInput = !capabilities.videoInput) } }
-                item { CapabilityChip("Reasoning", capabilities.reasoning) { capabilities = capabilities.copy(reasoning = !capabilities.reasoning) } }
-                item { CapabilityChip("Tools", capabilities.tools) { capabilities = capabilities.copy(tools = !capabilities.tools) } }
+                items(ModelCatalogSort.entries) { item ->
+                    FilterChip(selected = sort == item, onClick = { sort = item }, label = { Text(modelSortLabel(item)) })
+                }
             }
         }
+
         Text(
             "Показано ${filtered.size} из ${state.catalog.size} · выбранные модели сверху",
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 3.dp),
@@ -419,7 +602,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (filtered.isEmpty()) {
-                item { Text(if (state.loading) "Каталог загружается…" else "По фильтрам моделей нет", modifier = Modifier.padding(16.dp)) }
+                item { Text(if (state.loading) "Каталог загружается…" else "По выбранным критериям моделей нет", modifier = Modifier.padding(16.dp)) }
             }
             items(filtered, key = { it.id }) { model -> ModelCatalogCard(model, controller, appState, state) }
         }
