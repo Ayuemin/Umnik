@@ -396,9 +396,11 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 }
             }
             LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                item { CapabilityChip("Vision", capabilities.imageInput) { capabilities = capabilities.copy(imageInput = !capabilities.imageInput) } }
-                item { CapabilityChip("Audio", capabilities.audioInput) { capabilities = capabilities.copy(audioInput = !capabilities.audioInput) } }
-                item { CapabilityChip("Video", capabilities.videoInput) { capabilities = capabilities.copy(videoInput = !capabilities.videoInput) } }
+                item { CapabilityChip("Мультимодальные", capabilities.multimodal) { capabilities = capabilities.copy(multimodal = !capabilities.multimodal) } }
+                item { CapabilityChip("Вход: изображение", capabilities.imageInput) { capabilities = capabilities.copy(imageInput = !capabilities.imageInput) } }
+                item { CapabilityChip("Выход: изображение", capabilities.imageOutput) { capabilities = capabilities.copy(imageOutput = !capabilities.imageOutput) } }
+                item { CapabilityChip("Вход: аудио", capabilities.audioInput) { capabilities = capabilities.copy(audioInput = !capabilities.audioInput) } }
+                item { CapabilityChip("Вход: видео", capabilities.videoInput) { capabilities = capabilities.copy(videoInput = !capabilities.videoInput) } }
                 item { CapabilityChip("Reasoning", capabilities.reasoning) { capabilities = capabilities.copy(reasoning = !capabilities.reasoning) } }
                 item { CapabilityChip("Tools", capabilities.tools) { capabilities = capabilities.copy(tools = !capabilities.tools) } }
             }
@@ -519,6 +521,25 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            val inputCapabilities = model.inputModalities
+                .map(::modalityLabel)
+                .distinct()
+                .joinToString(" · ")
+            val outputCapabilities = model.outputModalities
+                .map(::modalityLabel)
+                .distinct()
+                .joinToString(" · ")
+            if (inputCapabilities.isNotBlank() || outputCapabilities.isNotBlank()) {
+                Text(
+                    buildString {
+                        if (inputCapabilities.isNotBlank()) append("Вход: $inputCapabilities")
+                        if (inputCapabilities.isNotBlank() && outputCapabilities.isNotBlank()) append("  •  ")
+                        if (outputCapabilities.isNotBlank()) append("Выход: $outputCapabilities")
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f)
+                )
+            }
             catalogPriceText(model)?.let { priceText ->
                 Text(
                     priceText,
@@ -539,6 +560,20 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
             }
         }
     }
+}
+
+private fun modalityLabel(value: String): String = when (value.trim().lowercase()) {
+    "text" -> "текст"
+    "image" -> "изображение"
+    "video" -> "видео"
+    "audio" -> "аудио"
+    "speech" -> "речь"
+    "transcription" -> "распознавание"
+    "file" -> "файлы"
+    "pdf" -> "PDF"
+    "embeddings", "embedding" -> "эмбеддинги"
+    "rerank", "ranking" -> "ранжирование"
+    else -> value
 }
 
 private fun priceSectionLabel(category: ModelCategory?): String = when (category) {
