@@ -182,6 +182,7 @@ internal object OpenRouterModelCatalog {
             capabilityFlags = capabilityFlags,
             pricingSkusUsd = numberMap(item.getAsJsonObject("pricing_skus")),
             allowedPassthroughParameters = stringSet(item.get("allowed_passthrough_parameters")),
+            rawOpenRouterMetadata = listOf(gson.toJson(item)),
             variants = variants
         )
     }
@@ -224,6 +225,7 @@ internal object OpenRouterModelCatalog {
             capabilityFlags = first.capabilityFlags + second.capabilityFlags,
             pricingSkusUsd = first.pricingSkusUsd + second.pricingSkusUsd,
             allowedPassthroughParameters = first.allowedPassthroughParameters + second.allowedPassthroughParameters,
+            rawOpenRouterMetadata = (first.rawOpenRouterMetadata + second.rawOpenRouterMetadata).distinct(),
             variants = first.variants + second.variants
         )
     }
