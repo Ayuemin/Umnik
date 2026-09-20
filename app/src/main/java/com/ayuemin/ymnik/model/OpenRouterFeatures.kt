@@ -28,8 +28,7 @@ enum class WebSearchEngine(val apiValue: String) {
     AUTO("auto"),
     NATIVE("native"),
     EXA("exa"),
-    // Legacy stored value; current OpenRouter web search no longer documents Firecrawl as a search engine.
-    FIRECRAWL("auto"),
+    FIRECRAWL("firecrawl"),
     PARALLEL("parallel"),
     PERPLEXITY("perplexity")
 }
@@ -72,6 +71,5 @@ data class ServerToolSettings(
 fun ServerToolSettings.normalized(): ServerToolSettings = copy(
     webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
     webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-    webSearchEngine = (runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO)
-        .let { if (it == WebSearchEngine.FIRECRAWL) WebSearchEngine.AUTO else it }
+    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
 )
