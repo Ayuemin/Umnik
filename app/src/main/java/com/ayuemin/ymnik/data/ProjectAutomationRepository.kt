@@ -2,6 +2,8 @@ package com.ayuemin.ymnik.data
 
 import android.content.Context
 import com.ayuemin.ymnik.model.ProjectChatRuntimeProfile
+import com.ayuemin.ymnik.model.ServerToolSettings
+import com.ayuemin.ymnik.model.normalized
 import com.google.gson.Gson
 
 /** Per-conversation runtime settings for project/agent chats. */
@@ -25,6 +27,9 @@ class ProjectAutomationRepository(context: Context) {
     fun profile(chatId: String): ProjectChatRuntimeProfile? = runCatching {
         prefs.getString(profileKey(chatId), null)?.let {
             gson.fromJson(it, ProjectChatRuntimeProfile::class.java)
+        }?.let { profile ->
+            val tools = runCatching { profile.tools }.getOrNull()?.normalized() ?: ServerToolSettings()
+            profile.copy(tools = tools)
         }
     }.getOrNull()
 
