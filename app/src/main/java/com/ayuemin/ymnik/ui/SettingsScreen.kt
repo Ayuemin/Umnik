@@ -199,6 +199,42 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
 }
 
 @Composable
+private fun SettingsActionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit
+) {
+    UmnikPanel(onClick = onClick) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(UmnikPanelPadding),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.size(42.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp))
+                }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
 internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val appVersion = remember(context) {
@@ -269,6 +305,16 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     item(key = category.name) {
                         SettingsCategoryCard(category = category, onClick = { settingsCategory = category })
                     }
+                    if (category == SettingsCategory.CONNECTION) {
+                        item(key = "OPENROUTER_MODEL_CATALOG") {
+                            SettingsActionCard(
+                                title = "Каталог и модели OpenRouter",
+                                subtitle = "Поиск, фильтры, цены и назначение моделей",
+                                icon = Icons.Outlined.Search,
+                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }
+                            )
+                        }
+                    }
                 }
             } else {
                 when (settingsCategory) {
@@ -281,7 +327,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         icon = Icons.Outlined.Language,
                         expanded = connectionsExpanded,
                         onToggle = { connectionsExpanded = !connectionsExpanded },
-                        info = "Единственное сетевое подключение Umnik. Здесь хранится API-ключ OpenRouter и проверяется связь. Выбор моделей находится в отдельном разделе «Модели»."
+                        info = "Единственное сетевое подключение Umnik. Здесь хранится API-ключ OpenRouter и проверяется связь. Поиск и выбор моделей вынесены в отдельный пункт «Каталог и модели OpenRouter»."
                     ) {
                         OutlinedTextField(
                             value = connectionKey,
@@ -392,7 +438,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         icon = Icons.Outlined.TextFields,
                         expanded = modelsExpanded,
                         onToggle = { modelsExpanded = !modelsExpanded },
-                        info = "Здесь задаются модели приложения: основная модель чата, быстрые модели, генерация изображений и параметры размышления. Настройки отдельных агентов находятся внутри самих агентов."
+                        info = "Здесь задаются уже выбранные модели приложения: чат по умолчанию, быстрые модели, генерация изображений и параметры размышления. Поиск и назначение моделей вынесены в отдельный пункт «Каталог и модели OpenRouter» на главном экране настроек."
                     ) {
                         FilledTonalButton(
                             onClick = { defaultChatModelExpanded = !defaultChatModelExpanded },
@@ -479,23 +525,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             }
                         }
 
-                        Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.Settings, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Каталог и модели OpenRouter", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "Единое место выбора и назначения моделей",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
                     }
                 }
 
