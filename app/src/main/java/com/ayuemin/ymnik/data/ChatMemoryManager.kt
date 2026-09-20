@@ -98,7 +98,7 @@ class ChatMemoryManager(
                 minimumScore = settings.minimumScore,
                 neighborRadius = settings.neighborChunks
             )
-            val stateCard = snapshot?.stateCard.orEmpty().trim()
+            val stateCard = snapshot?.stateCard.orEmpty().trim().take(settings.stateCardMaxChars)
             if (stateCard.isBlank() && hits.isEmpty()) {
                 DiagnosticLog.record(context, "CHAT_MEMORY", "chat=${chat.id.take(8)}; hybrid empty; fallback=full")
                 return@runCatching PreparedContext(fullHistory, description = "fallback-empty-memory")
