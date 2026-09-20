@@ -1297,7 +1297,8 @@ private fun reasoningEffortShortLabel(effort: ReasoningEffort): String = when (e
     ReasoningEffort.LOW -> "Низк"
     ReasoningEffort.MEDIUM -> "Средн"
     ReasoningEffort.HIGH -> "Высок"
-    ReasoningEffort.XHIGH -> "Макс"
+    ReasoningEffort.XHIGH -> "Очень выс."
+    ReasoningEffort.MAX -> "Макс"
 }
 
 @Composable
@@ -1456,7 +1457,8 @@ private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort
     ReasoningEffort.LOW -> "Низкая"
     ReasoningEffort.MEDIUM -> "Средняя"
     ReasoningEffort.HIGH -> "Высокая"
-    ReasoningEffort.XHIGH -> "Максимальная"
+    ReasoningEffort.XHIGH -> "Очень высокая"
+    ReasoningEffort.MAX -> "Максимальная"
 }
 
 private const val SETTINGS_QUICK_MODEL_SEPARATOR = "\u001F"
