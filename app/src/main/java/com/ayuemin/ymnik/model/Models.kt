@@ -236,7 +236,8 @@ enum class ReasoningEffort(val apiValue: String) {
     LOW("low"),
     MEDIUM("medium"),
     HIGH("high"),
-    XHIGH("xhigh")
+    XHIGH("xhigh"),
+    MAX("max")
 }
 
 enum class AnswerSoundChoice {
