@@ -127,13 +127,13 @@ class OpenRouterModelCatalogTest {
             JsonParser.parseString(
                 """
                 {
-                  "id": "openai/gpt-5.6-sol",
+                  "id": "z-ai/glm-5.3",
                   "architecture": {"input_modalities":["text"],"output_modalities":["text"]},
                   "supported_parameters": ["reasoning", "reasoning_effort", "tools"],
                   "reasoning": {
                     "mandatory": false,
                     "default_enabled": true,
-                    "supported_efforts": ["max", "xhigh", "high", "medium", "low", "none"]
+                    "supported_efforts": ["max", "high", "low"]
                   }
                 }
                 """.trimIndent()
@@ -142,7 +142,7 @@ class OpenRouterModelCatalogTest {
 
         assertTrue(info.supportsReasoning)
         assertTrue(info.supportsReasoningEffort)
-        assertEquals(setOf("max", "xhigh", "high", "medium", "low", "none"), info.reasoningEfforts)
+        assertEquals(setOf("max", "high", "low"), info.reasoningEfforts)
     }
 
 }
