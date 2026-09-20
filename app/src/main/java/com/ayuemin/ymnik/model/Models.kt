@@ -172,6 +172,7 @@ data class ModelInfo(
     val capabilityFlags: Map<String, Boolean> = emptyMap(),
     val pricingSkusUsd: Map<String, Double> = emptyMap(),
     val allowedPassthroughParameters: Set<String> = emptySet(),
+    val rawOpenRouterMetadata: List<String> = emptyList(),
     val variants: Set<ModelVariant> = setOf(ModelVariant.STANDARD)
 ) {
     fun accepts(modality: String): Boolean = modality.lowercase() in inputModalities
