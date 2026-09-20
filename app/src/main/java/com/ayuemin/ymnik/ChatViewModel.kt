@@ -1487,7 +1487,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val runtime = projectAutomation.profile(chatId) ?: ProjectChatRuntimeProfile(
             modelId = profileAgent.primaryModel?.modelId,
             webSearchEnabled = profileAgent.webSearchEnabled,
-            webSearchPreset = profileAgent.tools.webSearchPreset,
             reasoningEnabled = profileAgent.reasoningEnabled,
             reasoningEffort = profileAgent.reasoningEffort,
             tools = profileAgent.tools,
@@ -1501,6 +1500,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatTextModel = modelId,
             mode = ChatMode.TEXT,
             webSearchEnabled = profileAgent.webSearchEnabled,
+            webSearchPreset = profileAgent.tools.webSearchPreset,
             reasoningEnabled = profileAgent.reasoningEnabled,
             reasoningEffort = profileAgent.reasoningEffort,
             apiKeyConfigured = isProfileConfigured(connection),
