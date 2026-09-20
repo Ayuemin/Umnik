@@ -73,4 +73,56 @@ class OpenRouterFeaturePayloadTest {
         assertEquals("medium", parameters.get("search_context_size").asString)
     }
 
+    @Test
+    fun searchPresetsMapToExpectedBudgets() {
+        val fast = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.FAST
+        )
+        val fastPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(fastPayload, fast)
+        val fastParams = OpenRouterFeaturePayload.chatServerTools(fast)
+            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
+            .asJsonObject.getAsJsonObject("parameters")
+        assertEquals(1, fastPayload.get("max_tool_calls").asInt)
+        assertEquals(3, fastParams.get("max_results").asInt)
+        assertEquals(3, fastParams.get("max_total_results").asInt)
+        assertEquals("low", fastParams.get("search_context_size").asString)
+
+        val deep = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.DEEP
+        )
+        val deepPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(deepPayload, deep)
+        val deepParams = OpenRouterFeaturePayload.chatServerTools(deep)
+            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
+            .asJsonObject.getAsJsonObject("parameters")
+        assertEquals(25, deepPayload.get("max_tool_calls").asInt)
+        assertEquals(10, deepParams.get("max_results").asInt)
+        assertEquals(100, deepParams.get("max_total_results").asInt)
+        assertEquals("high", deepParams.get("search_context_size").asString)
+
+        val onDemandPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(
+            onDemandPayload,
+            ServerToolSettings(webSearch = WebSearchMode.AUTO, webSearchPreset = WebSearchPreset.ON_DEMAND)
+        )
+        assertFalse(onDemandPayload.has("max_tool_calls"))
+    }
+
+    @Test
+    fun firecrawlEngineKeepsCurrentOpenRouterApiValue() {
+        val settings = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.FAST,
+            webSearchEngine = WebSearchEngine.FIRECRAWL
+        )
+        val params = OpenRouterFeaturePayload.chatServerTools(settings)
+            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
+            .asJsonObject.getAsJsonObject("parameters")
+
+        assertEquals("firecrawl", params.get("engine").asString)
+    }
+
 }
