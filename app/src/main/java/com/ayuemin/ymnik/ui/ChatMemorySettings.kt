@@ -327,7 +327,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                     label = { Text("Минимальная близость embeddings") },
                     singleLine = true
                 )
-                NumericMemoryField("Максимум карточки состояния, знаков", stateCardMaxChars) { stateCardMaxChars = it }
+                NumericMemoryField("Максимум общего конспекта, знаков", stateCardMaxChars) { stateCardMaxChars = it }
                 Text(
                     "Хранилище памяти не ограничивается Umnik по размеру и находится отдельно от обычных файлов и базы знаний.",
                     style = MaterialTheme.typography.bodySmall,
