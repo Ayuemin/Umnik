@@ -3878,15 +3878,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 execute = { execute(network) }
             )
         }.getOrElse { error ->
-            activeRequestPending.remove(chatId)
+            val restore = activeRequestPending.remove(chatId).orEmpty()
             val chats = chatsRepository.finishRequest(chatId, messageId, null)
+            val restoreHere = _state.value.currentChatId == chatId && restore.isNotEmpty()
             _state.value = _state.value.copy(
                 chats = chats,
                 messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                pendingAttachments = if (restoreHere) {
+                    (_state.value.pendingAttachments + restore).distinctBy { it.uri }
+                } else {
+                    _state.value.pendingAttachments
+                },
                 requestActive = RequestExecutionManager.hasActiveRequest(),
                 busyLabel = RequestExecutionManager.snapshotForChat(_state.value.currentChatId)?.label,
                 status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
             )
+            if (!restoreHere) cleanupTempAttachments(restore)
             null
         }
     }
@@ -4014,6 +4021,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(
                     chats = failedChats,
                     messages = failedChats.firstOrNull { it.id == chatId }?.messages.orEmpty(),
+                    pendingAttachments = (_state.value.pendingAttachments + pending).distinctBy { it.uri },
                     status = "Эта модель предназначена не для обычного текстового чата. Выберите текстовую модель в каталоге OpenRouter."
                 )
                 refreshModels(ChatMode.TEXT)
