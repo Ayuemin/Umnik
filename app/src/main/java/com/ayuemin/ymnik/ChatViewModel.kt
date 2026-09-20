@@ -64,6 +64,8 @@ import com.ayuemin.ymnik.model.ThemeChoice
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
+import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
@@ -196,6 +198,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 if (replyModel.isBlank()) "" else prefs.getString(replySpeechFormatKey(replyModel), "").orEmpty().trim()
             },
             webSearchEnabled = projectAutomation.profile(initialChat.id)?.webSearchEnabled ?: prefs.getBoolean("web_search", false),
+            webSearchPreset = projectAutomation.profile(initialChat.id)?.tools?.webSearchPreset
+                ?: openRouterFeaturePrefs.tools().webSearchPreset,
             reasoningEnabled = projectAutomation.profile(initialChat.id)?.reasoningEnabled ?: prefs.getBoolean("reasoning_enabled", false),
             reasoningEffort = projectAutomation.profile(initialChat.id)?.reasoningEffort ?: runCatching {
                 ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
@@ -673,6 +677,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = chats,
             currentChatTextModel = if (current) clean.modelId else _state.value.currentChatTextModel,
             webSearchEnabled = if (current) clean.webSearchEnabled else _state.value.webSearchEnabled,
+            webSearchPreset = if (current) clean.tools.webSearchPreset else _state.value.webSearchPreset,
             reasoningEnabled = if (current) clean.reasoningEnabled else _state.value.reasoningEnabled,
             reasoningEffort = if (current) clean.reasoningEffort else _state.value.reasoningEffort,
             activeSkillIds = if (current) clean.skillIds else _state.value.activeSkillIds,
@@ -1482,6 +1487,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val runtime = projectAutomation.profile(chatId) ?: ProjectChatRuntimeProfile(
             modelId = profileAgent.primaryModel?.modelId,
             webSearchEnabled = profileAgent.webSearchEnabled,
+            webSearchPreset = profileAgent.tools.webSearchPreset,
             reasoningEnabled = profileAgent.reasoningEnabled,
             reasoningEffort = profileAgent.reasoningEffort,
             tools = profileAgent.tools,
@@ -1533,15 +1539,45 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
-        DiagnosticLog.action(context, "web_search_toggle", "enabled=$enabled; model=${currentTextModelId()}")
+        DiagnosticLog.action(context, "web_search_toggle", "enabled=$enabled; model=${currentTextModelId()}; preset=${_state.value.webSearchPreset.name}")
         if (enabled && (activeConnectionProfile().type != ProviderType.OPENROUTER || "openrouter" in _state.value.disabledConnectionIds)) {
             _state.value = _state.value.copy(status = "Поиск в сети доступен через OpenRouter")
             return
         }
+        if (enabled && currentTextModelInfo()?.supportsTools == false) {
+            _state.value = _state.value.copy(status = "Выбранная модель не поддерживает современный веб-поиск OpenRouter")
+            return
+        }
+        val preset = _state.value.webSearchPreset
+        val mode = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF
         val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-        if (chat?.projectId != null) updateCurrentProjectRuntime { it.copy(webSearchEnabled = enabled) }
-        else prefs.edit().putBoolean("web_search", enabled).apply()
+        if (chat?.projectId != null) {
+            updateCurrentProjectRuntime {
+                it.copy(
+                    webSearchEnabled = enabled,
+                    tools = it.tools.copy(webSearch = mode, webSearchPreset = preset)
+                )
+            }
+        } else {
+            prefs.edit().putBoolean("web_search", enabled).apply()
+            val tools = openRouterFeaturePrefs.tools()
+            openRouterFeaturePrefs.saveTools(tools.copy(webSearch = mode, webSearchPreset = preset))
+        }
         _state.value = _state.value.copy(webSearchEnabled = enabled)
+    }
+
+    fun setWebSearchPreset(preset: WebSearchPreset) {
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        if (chat?.projectId != null) {
+            updateCurrentProjectRuntime {
+                it.copy(tools = it.tools.copy(webSearchPreset = preset))
+            }
+        } else {
+            val tools = openRouterFeaturePrefs.tools()
+            openRouterFeaturePrefs.saveTools(tools.copy(webSearchPreset = preset))
+        }
+        _state.value = _state.value.copy(webSearchPreset = preset)
+        DiagnosticLog.action(context, "web_search_preset", "preset=${preset.name}; model=${currentTextModelId()}")
     }
 
     fun setReasoningEnabled(enabled: Boolean) {
@@ -1975,6 +2011,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = effort,
             reasoningEnabled = fixed?.reasoningEnabled ?: prefs.getBoolean("reasoning_enabled", false),
             webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) fixed?.webSearchEnabled ?: prefs.getBoolean("web_search", false) else false,
+            webSearchPreset = fixed?.tools?.webSearchPreset ?: openRouterFeaturePrefs.tools().webSearchPreset,
             apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
@@ -3954,6 +3991,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             profile.type != ProviderType.OPENROUTER || imageInfo?.supportedParameters?.contains("resolution") == true
         }
         val webSearchEnabled = _state.value.webSearchEnabled
+        val webSearchPreset = _state.value.webSearchPreset
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
@@ -4052,9 +4090,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 effort,
                                 modelInfo?.supportsTools == true,
                                 effectiveTextBaseUrl(profile),
-                                requestModelInfo
-                            ,
-                                streamToUi = true)
+                                requestModelInfo,
+                                streamToUi = true,
+                                webSearchPreset = webSearchPreset
+                            )
                         }
                     }
                     ChatMode.IMAGE -> {
