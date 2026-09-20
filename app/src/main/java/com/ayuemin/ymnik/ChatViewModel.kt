@@ -67,6 +67,7 @@ import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.model.userProfileApplies
+import com.ayuemin.ymnik.network.ChatToolPolicy
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
@@ -2602,6 +2603,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 contextLength = listOfNotNull(modelInfo.contextLength, profile.contextLimitTokens).minOrNull()
             )
             val skillText = withContext(Dispatchers.IO) { agentSkills.promptFor(worker.id, worker.skillIds) }
+            val createFileToolEnabled = modelInfo.supportsTools && ChatToolPolicy.needsCreateFile(
+                prompt = delegatedText,
+                instructions = listOf(skillText, worker.instruction, latestChat.masterPrompt.orEmpty())
+            )
             val ownAttachments = agentFiles.list(worker.id).map { file ->
                 PendingAttachment(
                     uri = "agent://" + file.id,
@@ -2649,13 +2654,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         skillText = skillText,
                         project = null,
                         chat = latestChat,
-                        toolsEnabled = modelInfo.supportsTools,
+                        toolsEnabled = createFileToolEnabled,
                         agent = worker
                     ) + preparedContext.systemContext + knowledgeContext,
                     worker.webSearchEnabled,
                     actualReasoning,
                     effort,
-                    modelInfo.supportsTools,
+                    createFileToolEnabled,
                     effectiveTextBaseUrl(profile),
                     requestInfo,
                     streamToUi = false,
@@ -4103,6 +4108,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val actualReasoning = reasoningEnabled && modelInfo?.supportsReasoning == true &&
                             (modelInfo.reasoningEfforts.isEmpty() || reasoningEffort.apiValue in modelInfo.reasoningEfforts)
                         val effort = if (actualReasoning && modelInfo.supportsReasoningEffort) reasoningEffort.apiValue else null
+                        val createFileToolEnabled = modelInfo?.supportsTools == true && ChatToolPolicy.needsCreateFile(
+                            prompt = clean,
+                            instructions = listOf(
+                                skillText,
+                                currentChat?.masterPrompt.orEmpty(),
+                                requestAgent?.instruction.orEmpty()
+                            )
+                        )
                         val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         val knowledgeContext = if (requestAgent == null) {
@@ -4137,14 +4150,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     skillText = skillText,
                                     project = if (requestAgent == null) currentProject else null,
                                     chat = currentChat,
-                                    toolsEnabled = modelInfo?.supportsTools == true,
+                                    toolsEnabled = createFileToolEnabled,
                                     agent = requestAgent
                                 ) +
                                     preparedContext.systemContext + knowledgeContext,
                                 webSearchEnabled,
                                 actualReasoning,
                                 effort,
-                                modelInfo?.supportsTools == true,
+                                createFileToolEnabled,
                                 effectiveTextBaseUrl(profile),
                                 requestModelInfo,
                                 streamToUi = true,
@@ -4219,16 +4232,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     it
                 )
                 val rawError = it.message.orEmpty()
-                val toolUseUnavailable = webSearchEnabled && (
+                val toolRouteUnavailable =
                     rawError.contains("No endpoints found that support tool use", ignoreCase = true) ||
                         (rawError.contains("404") && rawError.contains("tool use", ignoreCase = true))
-                    )
-                if (toolUseUnavailable) {
+                val searchRouteUnavailable = webSearchEnabled && toolRouteUnavailable
+                if (searchRouteUnavailable) {
                     persistWebSearchEnabled(chatId, false)
                 }
                 val friendlyError = when {
-                    toolUseUnavailable ->
+                    searchRouteUnavailable ->
                         "Поиск отключён: для этой модели OpenRouter не нашёл доступный маршрут с поддержкой веб-поиска. Повторите запрос."
+                    toolRouteUnavailable ->
+                        "Для выбранной модели OpenRouter не нашёл маршрут с поддержкой нужного инструмента. Если вы просили создать файл, выберите модель с поддержкой tools или попросите результат обычным текстом."
                     it is java.net.SocketTimeoutException ->
                         "Сервис не ответил вовремя. Повторите запрос один раз или выберите другую модель."
                     it is java.net.SocketException ->
@@ -4643,7 +4658,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
-        appendLine("Не создавай скачиваемый файл автоматически из-за длины ответа. Используй create_file только если пользователь прямо просит файл/скачивание либо проект, навык или другая подключённая инструкция явно требует вернуть результат файлом.")
+        if (toolsEnabled) {
+            appendLine("Инструмент create_file доступен только для явно запрошенного файлового результата. Используй его, если пользователь прямо просит файл/скачивание либо подключённая инструкция явно требует вернуть результат файлом.")
+        } else {
+            appendLine("Не утверждай, что создал скачиваемый файл: в этом запросе инструмент создания файла не подключён.")
+        }
         val profile = _state.value.userProfile
         val useProfile = !profile.isEmpty() && userProfileApplies(
             scope = _state.value.userProfileScope,
@@ -4687,7 +4706,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (!chat?.chatFiles.isNullOrEmpty()) {
             appendLine("Файлы этого диалога автоматически приложены к текущему запросу. Используй их как постоянный рабочий контекст этого чата.")
         }
-        if (toolsEnabled) appendLine("У тебя есть локальный инструмент create_file. Если пользователь просит результат файлом или материал получается слишком длинным для удобного чтения в чате, используй create_file.")
+        if (toolsEnabled) appendLine("У тебя есть локальный инструмент create_file. Используй его только для файлового результата, который явно запрошен пользователем или подключённой инструкцией.")
         appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")
         appendLine(":::copy")
         appendLine("текст блока")

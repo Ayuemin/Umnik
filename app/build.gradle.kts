@@ -1,4 +1,4 @@
-// Umnik v1.19.4 — chat model/search UX and attachment recovery
+// Umnik v1.19.5 — transient scroll control and safer tool routing
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 137
-        versionName = "1.19.4"
+        versionCode = 138
+        versionName = "1.19.5"
     }
 
     buildFeatures {

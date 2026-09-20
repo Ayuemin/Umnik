@@ -388,17 +388,12 @@ private fun ChatScreen(
     val availableRetryAttachmentNames = (
         currentChatFiles.map { it.name } + state.pendingAttachments.map { it.name }
     ).toSet()
-    LaunchedEffect(
-        state.currentChatId,
-        listState.isScrollInProgress,
-        listState.canScrollForward
-    ) {
-        if (listState.isScrollInProgress || listState.canScrollForward) {
+    LaunchedEffect(state.currentChatId, listState.isScrollInProgress) {
+        if (listState.isScrollInProgress) {
             scrollToBottomVisible = true
-        }
-        if (!listState.isScrollInProgress && !listState.canScrollForward) {
+        } else if (scrollToBottomVisible) {
             delay(1_500)
-            if (!listState.isScrollInProgress && !listState.canScrollForward) {
+            if (!listState.isScrollInProgress) {
                 scrollToBottomVisible = false
             }
         }
