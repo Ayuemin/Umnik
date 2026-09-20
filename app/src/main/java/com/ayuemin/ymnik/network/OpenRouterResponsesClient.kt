@@ -70,6 +70,7 @@ class OpenRouterResponsesClient(private val context: Context) {
             sessionId?.takeIf { it.isNotBlank() }?.let { addProperty("session_id", it.take(256)) }
         }
         OpenRouterFeaturePayload.applyRouting(payload, routing)
+        OpenRouterFeaturePayload.applyServerToolBudget(payload, tools)
         val serverTools = OpenRouterFeaturePayload.responsesServerTools(tools)
         if (shellFileIds.isNotEmpty()) attachShellFiles(serverTools, shellFileIds)
         if (serverTools.size() > 0) payload.add("tools", serverTools)

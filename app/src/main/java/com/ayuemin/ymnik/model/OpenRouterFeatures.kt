@@ -10,14 +10,24 @@ enum class ProviderRouteStrategy {
 enum class WebSearchMode {
     OFF,
     AUTO,
+    /**
+     * Legacy value kept for stored settings compatibility.
+     * Modern OpenRouter search is agentic, so ALWAYS is treated as AUTO.
+     */
     ALWAYS
+}
+
+enum class WebSearchPreset {
+    ON_DEMAND,
+    FAST,
+    NORMAL,
+    DEEP
 }
 
 enum class WebSearchEngine(val apiValue: String) {
     AUTO("auto"),
     NATIVE("native"),
     EXA("exa"),
-    FIRECRAWL("firecrawl"),
     PARALLEL("parallel"),
     PERPLEXITY("perplexity")
 }
@@ -41,6 +51,7 @@ data class ProviderRoutingSettings(
 
 data class ServerToolSettings(
     val webSearch: WebSearchMode = WebSearchMode.OFF,
+    val webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
     val webSearchEngine: WebSearchEngine = WebSearchEngine.AUTO,
     val webFetch: Boolean = false,
     val datetime: Boolean = false,
@@ -54,3 +65,10 @@ data class ServerToolSettings(
         get() = webSearch != WebSearchMode.OFF || webFetch || datetime || imageGeneration ||
             fusion || !advisorModel.isNullOrBlank() || !subagentModel.isNullOrBlank() || shell
 }
+
+/** Safely upgrades Gson-loaded settings whose newer enum fields may be absent. */
+fun ServerToolSettings.normalized(): ServerToolSettings = copy(
+    webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
+    webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
+    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+)

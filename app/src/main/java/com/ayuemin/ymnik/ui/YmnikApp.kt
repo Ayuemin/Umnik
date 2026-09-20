@@ -23,6 +23,7 @@ import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.rememberScrollState
@@ -168,6 +169,7 @@ import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.Skill
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.UiState
+import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
 import java.io.File
@@ -291,6 +293,8 @@ private fun ChatScreen(
     var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
     var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
+    var reasoningModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
@@ -328,8 +332,8 @@ private fun ChatScreen(
     } else {
         !activeTextModel.endsWith(":batch", ignoreCase = true) && textModelInfo?.accepts("image") == true
     }
-    val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true &&
-        (textModelInfo.reasoningEfforts.isEmpty() || state.reasoningEffort.apiValue in textModelInfo.reasoningEfforts)
+    val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true
+    val webSearchAvailable = !imagePromptMode && openRouterProfile && textModelInfo?.supportsTools == true
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
     val chatSearchMatches = remember(state.messages, chatSearchQuery) {
@@ -981,17 +985,21 @@ onBranch = if (message.role == "assistant") {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
                             label = "Размышление",
+                            subtitle = reasoningEffortUiLabel(state.reasoningEffort),
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
+                            onOpenSettings = { reasoningModeOpen = true },
                             onCheckedChange = vm::setReasoningEnabled
                         )
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
-                            label = "Веб-поиск",
+                            label = "Поиск",
+                            subtitle = webSearchPresetUiLabel(state.webSearchPreset),
                             checked = state.webSearchEnabled,
-                            enabled = openRouterProfile,
+                            enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
+                            onOpenSettings = { webSearchModeOpen = true },
                             onCheckedChange = vm::setWebSearchEnabled
                         )
                     }
@@ -1070,6 +1078,83 @@ onBranch = if (message.role == "assistant") {
         }
     }
 
+    if (reasoningModeOpen) {
+        val controllableEfforts = if (textModelInfo?.supportsReasoningEffort == true) {
+            ReasoningEffort.entries.filter { effort ->
+                textModelInfo.reasoningEfforts.isNotEmpty() && effort.apiValue in textModelInfo.reasoningEfforts
+            }
+        } else {
+            emptyList()
+        }
+        AlertDialog(
+            onDismissRequest = { reasoningModeOpen = false },
+            title = { Text("Уровень размышления") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        activeTextModel.substringAfter('/').ifBlank { activeTextModel },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (controllableEfforts.isEmpty()) {
+                        Text("Модель поддерживает размышление, но доступный уровень выбирает сама.")
+                    } else {
+                        controllableEfforts.forEach { effort ->
+                            FilterChip(
+                                selected = state.reasoningEffort == effort,
+                                onClick = {
+                                    vm.setReasoningEffort(effort)
+                                    reasoningModeOpen = false
+                                },
+                                label = { Text(reasoningEffortUiLabel(effort)) }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { reasoningModeOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+    if (webSearchModeOpen) {
+        AlertDialog(
+            onDismissRequest = { webSearchModeOpen = false },
+            title = { Text("Режим поиска") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WebSearchPreset.entries.forEach { preset ->
+                        Column {
+                            FilterChip(
+                                selected = state.webSearchPreset == preset,
+                                onClick = {
+                                    vm.setWebSearchPreset(preset)
+                                    webSearchModeOpen = false
+                                },
+                                label = { Text(webSearchPresetUiLabel(preset)) }
+                            )
+                            Text(
+                                webSearchPresetDescription(preset),
+                                modifier = Modifier.padding(start = 6.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Text(
+                        "Сервис поиска и другие технические параметры настраиваются в общих настройках OpenRouter.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { webSearchModeOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
     if (projectsOpen) {
         ProjectsDialog(
             state = state,
@@ -1105,9 +1190,11 @@ onBranch = if (message.role == "assistant") {
 private fun ComposerToggleTile(
     icon: ImageVector,
     label: String,
+    subtitle: String? = null,
     checked: Boolean,
     enabled: Boolean,
     modifier: Modifier = Modifier,
+    onOpenSettings: (() -> Unit)? = null,
     onCheckedChange: (Boolean) -> Unit
 ) {
     Surface(
@@ -1119,12 +1206,70 @@ private fun ComposerToggleTile(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f))
-            Spacer(Modifier.width(7.dp))
-            Text(label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(
+                modifier = Modifier
+                    .weight(1f)
+                    .then(
+                        if (enabled && onOpenSettings != null) {
+                            Modifier.clickable(onClick = onOpenSettings)
+                        } else {
+                            Modifier
+                        }
+                    ),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = if (enabled) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                )
+                Spacer(Modifier.width(7.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        label,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!subtitle.isNullOrBlank()) {
+                        Text(
+                            subtitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         }
     }
+}
+
+private fun reasoningEffortUiLabel(effort: ReasoningEffort): String = when (effort) {
+    ReasoningEffort.MINIMAL -> "Минимальный"
+    ReasoningEffort.LOW -> "Низкий"
+    ReasoningEffort.MEDIUM -> "Средний"
+    ReasoningEffort.HIGH -> "Высокий"
+    ReasoningEffort.XHIGH -> "Очень высокий"
+    ReasoningEffort.MAX -> "Максимальный"
+}
+
+private fun webSearchPresetUiLabel(preset: WebSearchPreset): String = when (preset) {
+    WebSearchPreset.ON_DEMAND -> "По необходимости"
+    WebSearchPreset.FAST -> "Быстрый"
+    WebSearchPreset.NORMAL -> "Обычный"
+    WebSearchPreset.DEEP -> "Глубокий"
+}
+
+private fun webSearchPresetDescription(preset: WebSearchPreset): String = when (preset) {
+    WebSearchPreset.ON_DEMAND -> "Модель сама решает, когда обращаться к интернету."
+    WebSearchPreset.FAST -> "Один короткий поиск, до 3 результатов."
+    WebSearchPreset.NORMAL -> "Обычный поиск, до 5 результатов за обращение."
+    WebSearchPreset.DEEP -> "Несколько поисковых шагов для сложных вопросов. Может работать дольше и стоить дороже."
 }
 
 @Composable

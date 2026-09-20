@@ -85,6 +85,7 @@ import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.VideoJobStatus
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
 import kotlinx.coroutines.delay
 import java.util.Locale
 
@@ -665,26 +666,35 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
             )
         }
         item {
-            Text("Поиск в интернете", fontWeight = FontWeight.SemiBold)
-            Text("Авто — модель решает сама, «Всегда» — поиск разрешён для каждого запроса.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Режим веб-поиска по умолчанию", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Включение поиска остаётся в текущем чате. Здесь задаётся режим, который будет предложен по умолчанию.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(WebSearchMode.entries) { mode ->
+                items(WebSearchPreset.entries) { preset ->
                     FilterChip(
-                        selected = tools.webSearch == mode,
-                        onClick = { controller.updateTools(tools.copy(webSearch = mode)) },
-                        label = { Text(webModeLabel(mode)) }
+                        selected = tools.webSearchPreset == preset,
+                        onClick = { controller.updateTools(tools.copy(webSearchPreset = preset)) },
+                        label = { Text(webSearchPresetLabel(preset)) }
                     )
                 }
             }
         }
         item {
             Text("Сервис интернет-поиска", fontWeight = FontWeight.SemiBold)
+            Text(
+                "Auto использует встроенный поиск провайдера, когда он доступен, иначе OpenRouter выбирает совместимый сервис.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchEngine.entries) { engine ->
                     FilterChip(
                         selected = tools.webSearchEngine == engine,
                         onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) },
-                        label = { Text(engine.name.lowercase().replaceFirstChar { it.uppercase() }) }
+                        label = { Text(searchEngineLabel(engine)) }
                     )
                 }
             }
@@ -1290,8 +1300,22 @@ private fun routeLabel(value: ProviderRouteStrategy): String = when (value) {
 
 private fun webModeLabel(value: WebSearchMode): String = when (value) {
     WebSearchMode.OFF -> "Выкл"
-    WebSearchMode.AUTO -> "Авто"
-    WebSearchMode.ALWAYS -> "Всегда"
+    WebSearchMode.AUTO, WebSearchMode.ALWAYS -> "Включён"
+}
+
+private fun webSearchPresetLabel(value: WebSearchPreset): String = when (value) {
+    WebSearchPreset.ON_DEMAND -> "По необходимости"
+    WebSearchPreset.FAST -> "Быстрый"
+    WebSearchPreset.NORMAL -> "Обычный"
+    WebSearchPreset.DEEP -> "Глубокий"
+}
+
+private fun searchEngineLabel(value: WebSearchEngine): String = when (value) {
+    WebSearchEngine.AUTO -> "Auto"
+    WebSearchEngine.NATIVE -> "Native"
+    WebSearchEngine.EXA -> "Exa"
+    WebSearchEngine.PARALLEL -> "Parallel"
+    WebSearchEngine.PERPLEXITY -> "Perplexity"
 }
 
 private fun batchLabel(value: BatchJobStatus): String = when (value) {

@@ -12,10 +12,14 @@ import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
+import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
+import com.ayuemin.ymnik.model.ServerToolSettings
+import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
@@ -45,6 +49,7 @@ class OpenRouterClient(
     private val phaseCallback: (String) -> Unit = {}
 ) {
     private val gson = Gson()
+    private val featurePrefs by lazy { OpenRouterFeaturePrefs(context.applicationContext) }
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter", requestId, requestChatId))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "OpenRouter") }
@@ -227,7 +232,8 @@ class OpenRouterClient(
         toolsEnabled: Boolean = true,
         baseUrl: String = DEFAULT_BASE_URL,
         modelInfo: ModelInfo? = null,
-        streamToUi: Boolean = false
+        streamToUi: Boolean = false,
+        webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -252,16 +258,22 @@ class OpenRouterClient(
                     addProperty("umnik_request_id", requestRunId)
                     addProperty("umnik_step", loops.toString())
                 })
-                if (toolsEnabled) add("tools", tools())
-
+                val mergedTools = JsonArray()
+                if (toolsEnabled) tools().forEach(mergedTools::add)
                 if (webSearchEnabled) {
-                    add("plugins", JsonArray().apply {
-                        add(JsonObject().apply {
-                            addProperty("id", "web")
-                            addProperty("max_results", 5)
-                        })
-                    })
+                    if (modelInfo?.supportsTools == false) {
+                        error("Выбранная модель не поддерживает современный веб-поиск OpenRouter")
+                    }
+                    val saved = featurePrefs.tools()
+                    val searchSettings = ServerToolSettings(
+                        webSearch = WebSearchMode.AUTO,
+                        webSearchPreset = webSearchPreset,
+                        webSearchEngine = saved.webSearchEngine
+                    )
+                    OpenRouterFeaturePayload.chatServerTools(searchSettings).forEach(mergedTools::add)
+                    OpenRouterFeaturePayload.applyServerToolBudget(this, searchSettings)
                 }
+                if (mergedTools.size() > 0) add("tools", mergedTools)
 
                 if (reasoningEnabled) {
                     add("reasoning", JsonObject().apply {

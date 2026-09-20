@@ -320,6 +320,21 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Spacer(Modifier.width(7.dp))
                             Text("Проверить подключение")
                         }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("tools") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Language, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Инструменты и веб-поиск", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "Сервис поиска и расширенные параметры OpenRouter",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(5.dp))
                         TextButton(
                             onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
@@ -1282,7 +1297,8 @@ private fun reasoningEffortShortLabel(effort: ReasoningEffort): String = when (e
     ReasoningEffort.LOW -> "Низк"
     ReasoningEffort.MEDIUM -> "Средн"
     ReasoningEffort.HIGH -> "Высок"
-    ReasoningEffort.XHIGH -> "Макс"
+    ReasoningEffort.XHIGH -> "Очень выс."
+    ReasoningEffort.MAX -> "Макс"
 }
 
 @Composable
@@ -1441,7 +1457,8 @@ private fun reasoningEffortLabel(effort: ReasoningEffort): String = when (effort
     ReasoningEffort.LOW -> "Низкая"
     ReasoningEffort.MEDIUM -> "Средняя"
     ReasoningEffort.HIGH -> "Высокая"
-    ReasoningEffort.XHIGH -> "Максимальная"
+    ReasoningEffort.XHIGH -> "Очень высокая"
+    ReasoningEffort.MAX -> "Максимальная"
 }
 
 private const val SETTINGS_QUICK_MODEL_SEPARATOR = "\u001F"

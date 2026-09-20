@@ -127,6 +127,50 @@ class ChatMemoryRepository(private val context: Context) {
         return next
     }
 
+    /**
+     * Adds searchable chunks immediately, without creating a summary checkpoint.
+     * Checkpoints are intentionally independent so the 8K checkpoint cadence never delays indexing.
+     */
+    @Synchronized
+    fun appendIndexedChunks(
+        chatId: String,
+        settings: ChatMemoryGlobalSettings,
+        chunks: List<ChatMemoryChunk>,
+        vectors: List<FloatArray>,
+        fingerprints: Map<String, String>
+    ): ChatMemorySnapshot {
+        require(chunks.size == vectors.size) { "Число фрагментов памяти и embeddings не совпадает" }
+        val clean = sanitize(settings)
+        val current = snapshot(chatId)?.takeIf {
+            it.embeddingModelId == clean.embeddingModelId &&
+                it.summaryModelId == clean.summaryModelId &&
+                it.chunkTokens == clean.chunkTokens &&
+                it.chunkOverlapTokens == clean.chunkOverlapTokens &&
+                it.embeddingContextTokens == clean.embeddingContextTokens
+        } ?: ChatMemorySnapshot(
+            chatId = chatId,
+            embeddingModelId = clean.embeddingModelId,
+            summaryModelId = clean.summaryModelId,
+            chunkTokens = clean.chunkTokens,
+            chunkOverlapTokens = clean.chunkOverlapTokens,
+            embeddingContextTokens = clean.embeddingContextTokens
+        )
+
+        val storedChunks = chunks.mapIndexed { index, chunk ->
+            val vector = vectors[index]
+            require(vector.isNotEmpty()) { "Embedding памяти пуст" }
+            writeVector(vectorFile(chatId, chunk.id), vector)
+            chunk.copy(vectorDimension = vector.size)
+        }
+        val next = current.copy(
+            chunks = current.chunks + storedChunks,
+            indexedFingerprints = current.indexedFingerprints + fingerprints,
+            updatedAt = System.currentTimeMillis()
+        )
+        saveSnapshot(next)
+        return next
+    }
+
     suspend fun retrieve(
         chatId: String,
         query: FloatArray,
@@ -154,25 +198,32 @@ class ChatMemoryRepository(private val context: Context) {
             val score = if (norm <= 0.0) 0.0 else dot / (queryNorm * sqrt(norm))
             Scored(chunk, score)
         }
+        val limit = topK.coerceIn(1, 10)
         val centers = scored
             .filter { it.score >= minimumScore }
             .sortedByDescending { it.score }
-            .take(topK.coerceIn(1, 10))
+            .take(limit)
         if (centers.isEmpty()) return@withContext emptyList()
 
         val radius = neighborRadius.coerceIn(0, 1)
         val scoredById = scored.associateBy { it.chunk.id }
         val selectedIds = linkedSetOf<String>()
         centers.forEach { center ->
-            snapshot.chunks.forEach { candidate ->
-                if (
+            if (selectedIds.size >= limit) return@forEach
+            snapshot.chunks
+                .asSequence()
+                .filter { candidate ->
                     candidate.checkpointId == center.chunk.checkpointId &&
-                    abs(candidate.ordinal - center.chunk.ordinal) <= radius &&
-                    candidate.id in scoredById
-                ) {
-                    selectedIds += candidate.id
+                        abs(candidate.ordinal - center.chunk.ordinal) <= radius &&
+                        candidate.id in scoredById
                 }
-            }
+                .sortedWith(
+                    compareBy<ChatMemoryChunk> { abs(it.ordinal - center.chunk.ordinal) }
+                        .thenByDescending { scoredById[it.id]?.score ?: Double.NEGATIVE_INFINITY }
+                )
+                .forEach { candidate ->
+                    if (selectedIds.size < limit) selectedIds += candidate.id
+                }
         }
 
         selectedIds.mapNotNull { id ->
@@ -270,18 +321,24 @@ class ChatMemoryRepository(private val context: Context) {
     }.getOrNull()
 
     private fun sanitize(value: ChatMemoryGlobalSettings): ChatMemoryGlobalSettings {
-        val legacy = value.schemaVersion < ChatMemoryGlobalSettings.CURRENT_SCHEMA_VERSION
+        val legacyV2 = value.schemaVersion < 2
+        val legacyV3 = value.schemaVersion < 3
         val autoThreshold = value.autoThresholdTokens.coerceIn(8_000, 1_000_000)
-        val economyThreshold = value.economyThresholdTokens.coerceIn(4_000, autoThreshold)
-        val defaultMode = if (legacy) {
+        val requestedEconomyThreshold = if (legacyV3 && value.economyThresholdTokens == 10_000) 5_000 else value.economyThresholdTokens
+        val economyThreshold = requestedEconomyThreshold.coerceIn(4_000, autoThreshold)
+        val defaultMode = if (legacyV2) {
             ChatContextMode.AUTO
         } else {
             runCatching { value.defaultContextMode }.getOrNull() ?: ChatContextMode.AUTO
         }
-        val overlap = if (legacy) 80 else value.chunkOverlapTokens.coerceIn(0, 1_000)
-        val neighbors = if (legacy) 1 else value.neighborChunks.coerceIn(0, 1)
+        val overlap = if (legacyV2) 80 else value.chunkOverlapTokens.coerceIn(0, 1_000)
+        val neighbors = if (legacyV2) 1 else value.neighborChunks.coerceIn(0, 1)
         val embeddingId = runCatching { value.embeddingModelId }.getOrNull()?.trim().orEmpty()
         val summaryId = runCatching { value.summaryModelId }.getOrNull()?.trim().orEmpty()
+        val autoBudget = if (legacyV3 || value.autoContextBudgetTokens <= 0) 16_000 else value.autoContextBudgetTokens
+        val economyBudget = if (legacyV3 || value.economyContextBudgetTokens <= 0) 6_000 else value.economyContextBudgetTokens
+        val autoHits = if (legacyV3 || value.autoTopK <= 0) 3 else value.autoTopK
+        val economyHits = if (legacyV3 || value.economyTopK <= 0) 2 else value.economyTopK
         return value.copy(
             schemaVersion = ChatMemoryGlobalSettings.CURRENT_SCHEMA_VERSION,
             embeddingModelId = embeddingId.ifBlank { ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL },
@@ -289,16 +346,20 @@ class ChatMemoryRepository(private val context: Context) {
             defaultContextMode = defaultMode,
             autoThresholdTokens = autoThreshold,
             economyThresholdTokens = economyThreshold,
+            autoContextBudgetTokens = autoBudget.coerceIn(4_000, 100_000),
+            economyContextBudgetTokens = economyBudget.coerceIn(2_000, autoBudget.coerceAtLeast(4_000)),
             autoRecentMessages = value.autoRecentMessages.coerceIn(4, 30),
             economyRecentMessages = value.economyRecentMessages.coerceIn(2, 20),
-            topK = value.topK.coerceIn(1, 10),
+            autoTopK = autoHits.coerceIn(1, 10),
+            economyTopK = economyHits.coerceIn(1, 10),
+            topK = value.topK.takeIf { it > 0 }?.coerceIn(1, 10) ?: 3,
             checkpointTokens = value.checkpointTokens.coerceIn(4_000, 30_000),
             chunkTokens = value.chunkTokens.coerceIn(128, 4_000),
             chunkOverlapTokens = overlap,
             neighborChunks = neighbors,
             embeddingContextTokens = value.embeddingContextTokens?.coerceIn(128, 1_000_000),
             minimumScore = value.minimumScore.coerceIn(-1.0, 1.0),
-            stateCardMaxChars = value.stateCardMaxChars.coerceIn(1_000, 20_000)
+            stateCardMaxChars = value.stateCardMaxChars.coerceIn(1_000, 3_000)
         )
     }
 

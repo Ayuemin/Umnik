@@ -12,20 +12,25 @@ data class ChatMemoryGlobalSettings(
     val summaryModelId: String = DEFAULT_SUMMARY_MODEL,
     val defaultContextMode: ChatContextMode = ChatContextMode.AUTO,
     val autoThresholdTokens: Int = 30_000,
-    val economyThresholdTokens: Int = 10_000,
+    val economyThresholdTokens: Int = 5_000,
+    val autoContextBudgetTokens: Int = 16_000,
+    val economyContextBudgetTokens: Int = 6_000,
     val autoRecentMessages: Int = 10,
     val economyRecentMessages: Int = 6,
-    val topK: Int = 5,
+    val autoTopK: Int = 3,
+    val economyTopK: Int = 2,
+    // Legacy shared value retained for migration from schema v2.
+    val topK: Int = 3,
     val checkpointTokens: Int = 8_000,
     val chunkTokens: Int = 1_200,
     val chunkOverlapTokens: Int = 80,
     val neighborChunks: Int = 1,
     val embeddingContextTokens: Int? = null,
     val minimumScore: Double = 0.20,
-    val stateCardMaxChars: Int = 6_000
+    val stateCardMaxChars: Int = 3_000
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 2
+        const val CURRENT_SCHEMA_VERSION = 3
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
         const val DEFAULT_SUMMARY_MODEL = "openrouter/auto"
     }

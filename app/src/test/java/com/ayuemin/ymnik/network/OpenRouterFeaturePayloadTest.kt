@@ -5,6 +5,9 @@ import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
+import com.ayuemin.ymnik.model.normalized
+import com.google.gson.Gson
 import com.google.gson.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +42,7 @@ class OpenRouterFeaturePayloadTest {
     fun chatToolsExcludeShellButResponsesIncludeIt() {
         val settings = ServerToolSettings(
             webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.NORMAL,
             webSearchEngine = WebSearchEngine.EXA,
             fusion = true,
             shell = true
@@ -51,4 +55,72 @@ class OpenRouterFeaturePayloadTest {
         assertTrue(responses.any { it.asJsonObject.get("type").asString == "openrouter:shell" })
         assertTrue(OpenRouterFeaturePayload.requiresResponsesApi(settings))
     }
+    @Test
+    fun normalSearchUsesModernServerToolAndFiveTurnBudget() {
+        val settings = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.NORMAL,
+            webSearchEngine = WebSearchEngine.EXA
+        )
+        val payload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(payload, settings)
+        val tools = OpenRouterFeaturePayload.chatServerTools(settings)
+        val search = tools.first { it.asJsonObject.get("type").asString == "openrouter:web_search" }.asJsonObject
+        val parameters = search.getAsJsonObject("parameters")
+
+        assertEquals(5, payload.get("max_tool_calls").asInt)
+        assertEquals("exa", parameters.get("engine").asString)
+        assertEquals(5, parameters.get("max_results").asInt)
+        assertEquals(25, parameters.get("max_total_results").asInt)
+        assertEquals("medium", parameters.get("search_context_size").asString)
+    }
+
+    @Test
+    fun searchPresetsMapToExpectedBudgets() {
+        val fast = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.FAST
+        )
+        val fastPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(fastPayload, fast)
+        val fastParams = OpenRouterFeaturePayload.chatServerTools(fast)
+            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
+            .asJsonObject.getAsJsonObject("parameters")
+        assertEquals(1, fastPayload.get("max_tool_calls").asInt)
+        assertEquals(3, fastParams.get("max_results").asInt)
+        assertEquals(3, fastParams.get("max_total_results").asInt)
+        assertEquals("low", fastParams.get("search_context_size").asString)
+
+        val deep = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.DEEP
+        )
+        val deepPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(deepPayload, deep)
+        val deepParams = OpenRouterFeaturePayload.chatServerTools(deep)
+            .first { it.asJsonObject.get("type").asString == "openrouter:web_search" }
+            .asJsonObject.getAsJsonObject("parameters")
+        assertEquals(25, deepPayload.get("max_tool_calls").asInt)
+        assertEquals(10, deepParams.get("max_results").asInt)
+        assertEquals(100, deepParams.get("max_total_results").asInt)
+        assertEquals("high", deepParams.get("search_context_size").asString)
+
+        val onDemandPayload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(
+            onDemandPayload,
+            ServerToolSettings(webSearch = WebSearchMode.AUTO, webSearchPreset = WebSearchPreset.ON_DEMAND)
+        )
+        assertFalse(onDemandPayload.has("max_tool_calls"))
+    }
+
+    @Test
+    fun legacyFirecrawlSettingFallsBackToAuto() {
+        val stored = Gson().fromJson(
+            """{"webSearch":"AUTO","webSearchPreset":"NORMAL","webSearchEngine":"FIRECRAWL"}""",
+            ServerToolSettings::class.java
+        ).normalized()
+
+        assertEquals(WebSearchEngine.AUTO, stored.webSearchEngine)
+    }
+
 }
