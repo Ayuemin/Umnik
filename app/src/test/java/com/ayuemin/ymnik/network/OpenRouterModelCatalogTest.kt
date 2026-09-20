@@ -145,4 +145,62 @@ class OpenRouterModelCatalogTest {
         assertEquals(setOf("max", "high", "low"), info.reasoningEfforts)
     }
 
+    @Test
+    fun parsesRichCatalogMetadataWithoutDroppingRawPayload() {
+        val info = OpenRouterModelCatalog.parse(
+            JsonParser.parseString(
+                """
+                {
+                  "id": "vendor/omni",
+                  "name": "Omni",
+                  "description": "A rich multimodal model",
+                  "canonical_slug": "vendor/omni-2026",
+                  "hugging_face_id": "vendor/omni-hf",
+                  "created": 1789900000,
+                  "architecture": {
+                    "modality": "text+image->text+image",
+                    "input_modalities": ["text","image"],
+                    "output_modalities": ["text","image"],
+                    "tokenizer": "OmniTokenizer",
+                    "instruct_type": "chatml"
+                  },
+                  "supported_parameters": {
+                    "temperature": {"type":"number","min":0,"max":2},
+                    "tools": {"type":"array"},
+                    "response_format": {"type":"string","values":["json","text"]}
+                  },
+                  "supports_streaming": true,
+                  "context_length": 262144,
+                  "top_provider": {
+                    "context_length": 200000,
+                    "max_completion_tokens": 65536,
+                    "is_moderated": false
+                  },
+                  "pricing": {
+                    "prompt": "0.000001",
+                    "completion": "0.000002",
+                    "web_search": "0.01"
+                  },
+                  "supported_resolutions": ["1K","2K"],
+                  "supported_aspect_ratios": ["1:1","16:9"],
+                  "allowed_passthrough_parameters": ["foo","bar"]
+                }
+                """.trimIndent()
+            )
+        )!!
+
+        assertEquals("Omni", info.name)
+        assertEquals("vendor", info.providerId)
+        assertTrue(info.isMultimodalChat)
+        assertTrue(info.supportsStreaming == true)
+        assertEquals(262144, info.contextLength)
+        assertEquals(65536, info.maxCompletionTokens)
+        assertEquals(2.0, info.parameterCapabilities["temperature"]?.max ?: 0.0, 0.000001)
+        assertEquals(listOf("json", "text"), info.parameterCapabilities["response_format"]?.values)
+        assertEquals(listOf("1K", "2K"), info.capabilityValues["resolutions"])
+        assertEquals(setOf("foo", "bar"), info.allowedPassthroughParameters)
+        assertTrue(info.pricingUsd.containsKey("web_search"))
+        assertTrue(info.rawOpenRouterMetadata.single().contains("\"canonical_slug\""))
+    }
+
 }
