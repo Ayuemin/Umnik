@@ -96,7 +96,7 @@ import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
-private enum class ModelCatalogSort { ID, CONTEXT, NEWEST, PRICE }
+private enum class ModelCatalogSort { ID, CAPABILITIES, CONTEXT, NEWEST, PRICE }
 
 @Composable
 fun UmnikV16Root(viewModel: ChatViewModel) {
@@ -373,6 +373,11 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         val sorted = when (sort) {
             ModelCatalogSort.ID -> base.sortedWith(
                 compareByDescending<ModelInfo> { it.id in selectedIds }.thenBy { it.id }
+            )
+            ModelCatalogSort.CAPABILITIES -> base.sortedWith(
+                compareByDescending<ModelInfo> { it.id in selectedIds }
+                    .thenByDescending { ModelUniversality.score(it).total }
+                    .thenBy { it.id }
             )
             ModelCatalogSort.CONTEXT -> base.sortedWith(
                 compareByDescending<ModelInfo> { it.id in selectedIds }
@@ -738,7 +743,7 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 modifier = Modifier.padding(top = 3.dp)
             ) {
                 Text(
-                    "Универсальность ${universality.total}/100",
+                    "Возможности ${universality.total}/100",
                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold
@@ -827,18 +832,18 @@ private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
                     }
 
                     item {
-                        ModelInfoSection("Универсальность ${universality.total}/100") {
+                        ModelInfoSection("Возможности ${universality.total}/100") {
                             Text(
-                                "Это показатель широты заявленных возможностей, а не качества ответов, интеллекта или скорости модели.",
+                                "Это показатель широты функций, которые OpenRouter заявляет для модели. 100/100 означает максимально широкий набор поддерживаемых возможностей, а не качество, интеллект, скорость или цену.",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.height(6.dp))
                             ModelDetailLine("Входные модальности", "${universality.inputBreadth}/20")
                             ModelDetailLine("Выходные модальности", "${universality.outputBreadth}/25")
-                            ModelDetailLine("Общие функции API", "${universality.generalCapabilities}/25")
+                            ModelDetailLine("Общие функции API", "${universality.generalCapabilities}/30")
                             ModelDetailLine("Контекст и размер ответа", "${universality.capacity}/15")
-                            ModelDetailLine("Специализированные возможности", "${universality.specializedCapabilities}/15")
+                            ModelDetailLine("Специализированные возможности", "${universality.specializedCapabilities}/10")
                         }
                     }
 
@@ -1037,6 +1042,7 @@ private fun parameterLabel(value: String): String = when (value.lowercase()) {
 
 private fun modelSortLabel(value: ModelCatalogSort): String = when (value) {
     ModelCatalogSort.ID -> "По имени"
+    ModelCatalogSort.CAPABILITIES -> "Больше возможностей"
     ModelCatalogSort.CONTEXT -> "Большой контекст"
     ModelCatalogSort.NEWEST -> "Новые"
     ModelCatalogSort.PRICE -> "Дешевле"
