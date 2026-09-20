@@ -359,7 +359,7 @@ class ChatMemoryRepository(private val context: Context) {
             neighborChunks = neighbors,
             embeddingContextTokens = value.embeddingContextTokens?.coerceIn(128, 1_000_000),
             minimumScore = value.minimumScore.coerceIn(-1.0, 1.0),
-            stateCardMaxChars = if (legacyV3) 3_000 else value.stateCardMaxChars.coerceIn(1_000, 3_000)
+            stateCardMaxChars = value.stateCardMaxChars.coerceIn(1_000, 3_000)
         )
     }
 
