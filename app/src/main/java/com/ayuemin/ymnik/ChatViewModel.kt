@@ -3839,8 +3839,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
             ?: return
         if (previous.attachmentNames.isNotEmpty()) {
-            _state.value = _state.value.copy(status = "Для повтора прикрепите файлы заново и отправьте запрос вручную")
-            return
+            val pendingNames = _state.value.pendingAttachments.map { it.name }.toSet()
+            if (!pendingNames.containsAll(previous.attachmentNames)) {
+                _state.value = _state.value.copy(status = "Вложения этого запроса уже недоступны. Прикрепите их заново.")
+                return
+            }
         }
         val chatId = _state.value.currentChatId
         val cleanedMessages = _state.value.messages.filterNot { it.id == messageId }
@@ -4158,6 +4161,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 return@launchRequest
             }
 
+            var keepPendingForRetry = false
             operation.onSuccess { result ->
                 val finalText = result.text
                 DiagnosticLog.record(
@@ -4197,7 +4201,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     it
                 )
                 val rawError = it.message.orEmpty()
+                val toolUseUnavailable = webSearchEnabled && (
+                    rawError.contains("No endpoints found that support tool use", ignoreCase = true) ||
+                        (rawError.contains("404") && rawError.contains("tool use", ignoreCase = true))
+                    )
+                if (toolUseUnavailable) {
+                    persistWebSearchEnabled(chatId, false)
+                }
                 val friendlyError = when {
+                    toolUseUnavailable ->
+                        "Поиск отключён: для этой модели OpenRouter не нашёл доступный маршрут с поддержкой веб-поиска. Повторите запрос."
                     it is java.net.SocketTimeoutException ->
                         "Сервис не ответил вовремя. Повторите запрос один раз или выберите другую модель."
                     it is java.net.SocketException ->
@@ -4222,14 +4235,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 } else {
                     activeRequestId?.let { RequestExecutionManager.fail(it, friendlyError) }
                     val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                    keepPendingForRetry = pending.isNotEmpty() && _state.value.currentChatId == chatId
                     _state.value = _state.value.copy(
                         messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                         chats = failedChats,
+                        pendingAttachments = if (keepPendingForRetry) {
+                            (_state.value.pendingAttachments + pending).distinctBy { attachment -> attachment.uri }
+                        } else {
+                            _state.value.pendingAttachments
+                        },
                         status = friendlyError
                     )
                 }
             }
-            cleanupTempAttachments(pending)
+            if (!keepPendingForRetry) cleanupTempAttachments(pending)
             if (isCurrentRequestGeneration(chatId, requestId)) {
                 activeRequestPending.remove(chatId)
             }
