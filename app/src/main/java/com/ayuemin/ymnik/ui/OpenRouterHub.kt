@@ -618,54 +618,54 @@ private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit
 private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
     val context = LocalContext.current
     var menuOpen by remember(model.id) { mutableStateOf(false) }
+    var infoOpen by remember(model.id) { mutableStateOf(false) }
+
     UmnikPanel {
         Column(Modifier.padding(12.dp)) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
-                Text(
-                    model.id,
-                    modifier = Modifier.weight(1f),
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        model.name?.takeIf { it.isNotBlank() } ?: model.id,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (!model.name.isNullOrBlank() && model.name != model.id) {
+                        Text(
+                            model.id,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
                         Text("⋮", style = MaterialTheme.typography.titleLarge)
                     }
                     DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                        DropdownMenuItem(
+                            text = { Text("Информация о модели") },
+                            onClick = {
+                                menuOpen = false
+                                infoOpen = true
+                            }
+                        )
                         if (ModelCategory.TEXT in model.categories && !model.isBatch) {
-                            DropdownMenuItem(
-                                text = { Text("Выбрать для чата") },
-                                onClick = { menuOpen = false; controller.useAsTextModel(model) }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("Добавить / убрать из быстрых") },
-                                onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
-                            )
+                            DropdownMenuItem(text = { Text("Выбрать для чата") }, onClick = { menuOpen = false; controller.useAsTextModel(model) })
+                            DropdownMenuItem(text = { Text("Добавить / убрать из быстрых") }, onClick = { menuOpen = false; controller.toggleQuickTextModel(model) })
                             if (appState.textModel == model.id) {
-                                DropdownMenuItem(
-                                    text = { Text("Сбросить чат на OpenRouter Auto") },
-                                    onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TEXT) }
-                                )
+                                DropdownMenuItem(text = { Text("Сбросить чат на OpenRouter Auto") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TEXT) })
                             }
                         }
                         if (model.isBatch) {
-                            DropdownMenuItem(
-                                text = { Text("Выбрать для пакетных задач") },
-                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) }
-                            )
-                            if (hubState.media.batchModel == model.id) {
-                                DropdownMenuItem(text = { Text("Снять с пакетных задач") }, onClick = { menuOpen = false; controller.clearBatchModel() })
-                            }
+                            DropdownMenuItem(text = { Text("Выбрать для пакетных задач") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) })
+                            if (hubState.media.batchModel == model.id) DropdownMenuItem(text = { Text("Снять с пакетных задач") }, onClick = { menuOpen = false; controller.clearBatchModel() })
                         }
                         if (ModelCategory.IMAGE in model.categories) {
-                            DropdownMenuItem(
-                                text = { Text("Выбрать для создания изображений") },
-                                onClick = { menuOpen = false; controller.useAsImageModel(model) }
-                            )
-                            if (appState.imageModel == model.id) {
-                                DropdownMenuItem(text = { Text("Снять с изображений") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.IMAGE) })
-                            }
+                            DropdownMenuItem(text = { Text("Выбрать для создания изображений") }, onClick = { menuOpen = false; controller.useAsImageModel(model) })
+                            if (appState.imageModel == model.id) DropdownMenuItem(text = { Text("Снять с изображений") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.IMAGE) })
                         }
                         if (ModelCategory.VIDEO in model.categories) {
                             DropdownMenuItem(text = { Text("Выбрать для видео") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.VIDEO) })
@@ -687,49 +687,53 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             DropdownMenuItem(text = { Text("Выбрать для точной сортировки") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.RERANK) })
                             if (hubState.rag.rerankModel == model.id) DropdownMenuItem(text = { Text("Снять с точной сортировки") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.RERANK) })
                         }
-                        DropdownMenuItem(
-                            text = { Text("Копировать ID модели") },
-                            onClick = { menuOpen = false; copyToClipboard(context, model.id) }
-                        )
+                        DropdownMenuItem(text = { Text("Копировать ID модели") }, onClick = { menuOpen = false; copyToClipboard(context, model.id) })
                     }
                 }
             }
+
+            val contextTokens = maxOf(model.contextLength ?: 0, model.topProviderContextLength ?: 0)
             Text(
                 buildString {
                     append(model.categories.joinToString(" · ") { categoryLabel(it) })
+                    if (contextTokens > 0) append(" · контекст ${compactTokenCount(contextTokens)}")
                     val variants = model.variants.filterNot { it == ModelVariant.STANDARD }
                     if (variants.isNotEmpty()) append(" · " + variants.joinToString(" · ") { variantLabel(it) })
-                    model.contextLength?.let { append(" · контекст ${it / 1000}K") }
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            val inputCapabilities = model.inputModalities
-                .map(::modalityLabel)
-                .distinct()
-                .joinToString(" · ")
-            val outputCapabilities = model.outputModalities
-                .map(::modalityLabel)
-                .distinct()
-                .joinToString(" · ")
-            if (inputCapabilities.isNotBlank() || outputCapabilities.isNotBlank()) {
+
+            val inputText = model.inputModalities.map(::modalityLabel).distinct().joinToString(" · ")
+            val outputText = model.outputModalities.map(::modalityLabel).distinct().joinToString(" · ")
+            Text(
+                "Вход: ${inputText.ifBlank { "—" }}  •  Выход: ${outputText.ifBlank { "—" }}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.88f)
+            )
+
+            val keyCapabilities = buildList {
+                if (model.isMultimodalChat) add("мультимодальный чат")
+                else {
+                    if (model.accepts("image")) add("понимает изображения")
+                    if (model.outputs("image")) add("создаёт изображения")
+                }
+                if (model.supportsReasoning) add("reasoning")
+                if (model.supportsTools) add("tools")
+                if (model.supportsStreaming == true) add("streaming")
+            }
+            if (keyCapabilities.isNotEmpty()) {
                 Text(
-                    buildString {
-                        if (inputCapabilities.isNotBlank()) append("Вход: $inputCapabilities")
-                        if (inputCapabilities.isNotBlank() && outputCapabilities.isNotBlank()) append("  •  ")
-                        if (outputCapabilities.isNotBlank()) append("Выход: $outputCapabilities")
-                    },
+                    keyCapabilities.joinToString(" · "),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.82f)
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
+
             catalogPriceText(model)?.let { priceText ->
-                Text(
-                    priceText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Text(priceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+
             Spacer(Modifier.height(6.dp))
             Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 if (ModelCategory.TEXT in model.categories && !model.isBatch) SmallAssignButton("Использовать в чате") { controller.useAsTextModel(model) }
@@ -743,6 +747,204 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
             }
         }
     }
+
+    if (infoOpen) {
+        ModelInfoDialog(model = model, onDismiss = { infoOpen = false })
+    }
+}
+
+@Composable
+private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
+            color = MaterialTheme.colorScheme.background
+        ) {
+            Column(Modifier.fillMaxSize()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
+                    }
+                    Text(
+                        "Информация о модели",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = { copyToClipboard(context, model.id) }) {
+                        Text("ID")
+                    }
+                }
+                HorizontalDivider()
+
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    item {
+                        Text(model.name?.takeIf { it.isNotBlank() } ?: model.id, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        if (!model.name.isNullOrBlank() && model.name != model.id) {
+                            Text(model.id, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        model.description?.takeIf { it.isNotBlank() }?.let {
+                            Text(it, modifier = Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+
+                    item {
+                        ModelInfoSection("Основное") {
+                            ModelDetailLine("Провайдер", model.providerId)
+                            ModelDetailLine("Категории", model.categories.joinToString(", ") { categoryLabel(it) })
+                            if (model.variants.isNotEmpty()) ModelDetailLine("Варианты", model.variants.joinToString(", ") { variantLabel(it) })
+                            model.createdAtEpochSeconds?.let { ModelDetailLine("Добавлена / создана", formatModelDate(it)) }
+                            model.canonicalSlug?.let { ModelDetailLine("Canonical slug", it) }
+                            model.huggingFaceId?.let { ModelDetailLine("Hugging Face", it) }
+                        }
+                    }
+
+                    item {
+                        ModelInfoSection("Вход и выход") {
+                            ModelDetailLine("Принимает", model.inputModalities.sortedBy(::modalitySortKey).joinToString(", ") { modalityLabel(it) })
+                            ModelDetailLine("Выдаёт", model.outputModalities.sortedBy(::modalitySortKey).joinToString(", ") { modalityLabel(it) })
+                            ModelDetailLine("Мультимодальный чат", if (model.isMultimodalChat) "да" else "нет")
+                        }
+                    }
+
+                    item {
+                        ModelInfoSection("Архитектура и лимиты") {
+                            model.architectureModality?.let { ModelDetailLine("Модальность архитектуры", it) }
+                            model.tokenizer?.let { ModelDetailLine("Токенизатор", it) }
+                            model.instructType?.let { ModelDetailLine("Формат инструкций", it) }
+                            model.contextLength?.let { ModelDetailLine("Контекст модели", compactTokenCount(it)) }
+                            model.topProviderContextLength?.let { ModelDetailLine("Контекст top provider", compactTokenCount(it)) }
+                            model.maxCompletionTokens?.let { ModelDetailLine("Максимальный ответ", compactTokenCount(it)) }
+                            model.supportsStreaming?.let { ModelDetailLine("Streaming", if (it) "да" else "нет") }
+                            model.topProviderModerated?.let { ModelDetailLine("Модерация top provider", if (it) "да" else "нет") }
+                        }
+                    }
+
+                    if (model.supportsReasoning || model.reasoningEfforts.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Reasoning") {
+                                ModelDetailLine("Поддерживается", if (model.supportsReasoning) "да" else "нет")
+                                ModelDetailLine("Обязательное", if (model.reasoningMandatory) "да" else "нет")
+                                ModelDetailLine("По умолчанию", if (model.reasoningDefaultEnabled) "включено" else "выключено")
+                                if (model.reasoningEfforts.isNotEmpty()) {
+                                    ModelDetailLine("Уровни", model.reasoningEfforts.sorted().joinToString(", "))
+                                }
+                            }
+                        }
+                    }
+
+                    if (model.supportedParameters.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Параметры API") {
+                                model.supportedParameters.sortedBy(::parameterSortKey).forEach { parameter ->
+                                    val descriptor = model.parameterCapabilities[parameter]
+                                    Text(
+                                        "• ${parameterCapabilityText(parameter, descriptor)}",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (model.capabilityValues.isNotEmpty() || model.capabilityFlags.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Специализированные возможности") {
+                                model.capabilityValues.toSortedMap().forEach { (key, values) ->
+                                    ModelDetailLine(capabilityFieldLabel(key), values.joinToString(", "))
+                                }
+                                model.capabilityFlags.toSortedMap().forEach { (key, value) ->
+                                    ModelDetailLine(capabilityFieldLabel(key), if (value) "да" else "нет")
+                                }
+                            }
+                        }
+                    }
+
+                    if (model.allowedPassthroughParameters.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Passthrough-параметры") {
+                                Text(
+                                    model.allowedPassthroughParameters.sorted().joinToString(", "),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    if (model.pricingUsd.isNotEmpty() || model.pricingSkusUsd.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Стоимость OpenRouter") {
+                                model.pricingUsd.toSortedMap().forEach { (key, value) ->
+                                    ModelDetailLine(pricingFieldLabel(key), formatRawPricing(key, value))
+                                }
+                                model.pricingSkusUsd.toSortedMap().forEach { (key, value) ->
+                                    ModelDetailLine(key, formatCatalogPrice(value))
+                                }
+                            }
+                        }
+                    }
+
+                    if (model.rawOpenRouterMetadata.isNotEmpty()) {
+                        item {
+                            ModelInfoSection("Все данные OpenRouter") {
+                                Text(
+                                    "Ниже сохранены исходные метаданные каталога без потери неизвестных Umnik полей.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                model.rawOpenRouterMetadata.forEachIndexed { index, raw ->
+                                    if (model.rawOpenRouterMetadata.size > 1) {
+                                        Text("Источник ${index + 1}", fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 6.dp))
+                                    }
+                                    Text(
+                                        raw,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    TextButton(onClick = { copyToClipboard(context, raw) }) {
+                                        Text("Копировать исходные данные")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModelInfoSection(title: String, content: @Composable () -> Unit) {
+    UmnikPanel {
+        Column(Modifier.fillMaxWidth().padding(12.dp)) {
+            Text(title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.height(6.dp))
+            content()
+        }
+    }
+}
+
+@Composable
+private fun ModelDetailLine(label: String, value: String) {
+    Text(
+        "$label: $value",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
 }
 
 private fun modalityLabel(value: String): String = when (value.trim().lowercase()) {
@@ -757,6 +959,115 @@ private fun modalityLabel(value: String): String = when (value.trim().lowercase(
     "embeddings", "embedding" -> "эмбеддинги"
     "rerank", "ranking" -> "ранжирование"
     else -> value
+}
+
+private fun Set<String>.toggle(value: String): Set<String> =
+    if (value in this) this - value else this + value
+
+private fun modalitySortKey(value: String): String = when (value.lowercase()) {
+    "text" -> "00"
+    "image" -> "01"
+    "video" -> "02"
+    "audio" -> "03"
+    "file", "pdf" -> "04"
+    "speech" -> "05"
+    "transcription" -> "06"
+    "embeddings", "embedding" -> "07"
+    "rerank", "ranking" -> "08"
+    else -> "99_$value"
+}
+
+private fun parameterSortKey(value: String): String = when (value.lowercase()) {
+    "reasoning", "reasoning_effort" -> "00_$value"
+    "tools", "tool_choice" -> "01_$value"
+    "response_format", "structured_outputs" -> "02_$value"
+    "web_search" -> "03_$value"
+    "temperature", "top_p", "top_k", "min_p" -> "04_$value"
+    else -> "99_$value"
+}
+
+private fun parameterLabel(value: String): String = when (value.lowercase()) {
+    "reasoning" -> "Reasoning"
+    "reasoning_effort" -> "Уровень reasoning"
+    "tools" -> "Tools"
+    "tool_choice" -> "Выбор tools"
+    "response_format" -> "Формат ответа"
+    "structured_outputs" -> "Структурированный ответ"
+    "web_search" -> "Веб-поиск"
+    "temperature" -> "Temperature"
+    "top_p" -> "Top P"
+    "top_k" -> "Top K"
+    "min_p" -> "Min P"
+    "max_tokens" -> "Max tokens"
+    "seed" -> "Seed"
+    else -> value
+}
+
+private fun modelSortLabel(value: ModelCatalogSort): String = when (value) {
+    ModelCatalogSort.ID -> "По имени"
+    ModelCatalogSort.CONTEXT -> "Большой контекст"
+    ModelCatalogSort.NEWEST -> "Новые"
+    ModelCatalogSort.PRICE -> "Дешевле"
+}
+
+private fun compactTokenCount(value: Int): String = when {
+    value >= 1_000_000 -> {
+        val millions = value / 1_000_000.0
+        if (millions % 1.0 == 0.0) "${millions.toInt()}M" else "${"%.1f".format(Locale.US, millions)}M"
+    }
+    value >= 1_000 -> "${value / 1_000}K"
+    else -> value.toString()
+}
+
+private fun formatModelDate(epochSeconds: Long): String = runCatching {
+    Instant.ofEpochSecond(epochSeconds)
+        .atZone(ZoneId.systemDefault())
+        .format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))
+}.getOrDefault("")
+
+private fun parameterCapabilityText(name: String, descriptor: ModelParameterCapability?): String {
+    val details = buildList {
+        descriptor?.type?.takeIf { it.isNotBlank() }?.let(::add)
+        descriptor?.values?.takeIf { it.isNotEmpty() }?.let { add(it.joinToString(", ")) }
+        if (descriptor?.min != null || descriptor?.max != null) {
+            add("${descriptor.min?.let(::formatNumberCompact) ?: "…"} … ${descriptor.max?.let(::formatNumberCompact) ?: "…"}")
+        }
+    }
+    return if (details.isEmpty()) "${parameterLabel(name)} ($name)"
+    else "${parameterLabel(name)} ($name): ${details.joinToString(" · ")}"
+}
+
+private fun formatNumberCompact(value: Double): String =
+    if (value % 1.0 == 0.0) value.toLong().toString()
+    else "%.4f".format(Locale.US, value).trimEnd('0').trimEnd('.')
+
+private fun capabilityFieldLabel(value: String): String = when (value) {
+    "resolutions" -> "Разрешения"
+    "aspect_ratios" -> "Соотношения сторон"
+    "sizes" -> "Размеры"
+    "durations" -> "Длительности"
+    "frame_images" -> "Опорные кадры"
+    "generate_audio" -> "Генерация аудио"
+    "seed" -> "Seed"
+    else -> value
+}
+
+private fun pricingFieldLabel(value: String): String = when (value) {
+    "prompt" -> "Входные токены"
+    "completion" -> "Выходные токены"
+    "request" -> "Запрос"
+    "image" -> "Изображение"
+    "image_token" -> "Image token"
+    "image_output" -> "Image output"
+    "web_search" -> "Веб-поиск"
+    "internal_reasoning" -> "Reasoning tokens"
+    "audio" -> "Аудио"
+    else -> value
+}
+
+private fun formatRawPricing(key: String, value: Double): String = when (key) {
+    "prompt", "completion" -> "${formatCatalogPrice(value * 1_000_000.0)} / 1M токенов"
+    else -> formatCatalogPrice(value)
 }
 
 private fun priceSectionLabel(category: ModelCategory?): String = when (category) {
