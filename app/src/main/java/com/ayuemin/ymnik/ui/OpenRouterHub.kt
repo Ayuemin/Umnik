@@ -76,6 +76,7 @@ import com.ayuemin.ymnik.model.ModelCatalogFilter
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelParameterCapability
+import com.ayuemin.ymnik.model.ModelUniversality
 import com.ayuemin.ymnik.model.ModelPriceFilter
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
@@ -617,6 +618,7 @@ private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit
 @Composable
 private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
     val context = LocalContext.current
+    val universality = remember(model) { ModelUniversality.score(model) }
     var menuOpen by remember(model.id) { mutableStateOf(false) }
     var infoOpen by remember(model.id) { mutableStateOf(false) }
 
@@ -730,6 +732,19 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 )
             }
 
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.padding(top = 3.dp)
+            ) {
+                Text(
+                    "Универсальность ${universality.total}/100",
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+
             catalogPriceText(model)?.let { priceText ->
                 Text(priceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -756,6 +771,7 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
 @Composable
 private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val universality = remember(model) { ModelUniversality.score(model) }
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
@@ -807,6 +823,22 @@ private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
                             model.createdAtEpochSeconds?.let { ModelDetailLine("Добавлена / создана", formatModelDate(it)) }
                             model.canonicalSlug?.let { ModelDetailLine("Canonical slug", it) }
                             model.huggingFaceId?.let { ModelDetailLine("Hugging Face", it) }
+                        }
+                    }
+
+                    item {
+                        ModelInfoSection("Универсальность ${universality.total}/100") {
+                            Text(
+                                "Это показатель широты заявленных возможностей, а не качества ответов, интеллекта или скорости модели.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            ModelDetailLine("Входные модальности", "${universality.inputBreadth}/20")
+                            ModelDetailLine("Выходные модальности", "${universality.outputBreadth}/25")
+                            ModelDetailLine("Общие функции API", "${universality.generalCapabilities}/25")
+                            ModelDetailLine("Контекст и размер ответа", "${universality.capacity}/15")
+                            ModelDetailLine("Специализированные возможности", "${universality.specializedCapabilities}/15")
                         }
                     }
 
