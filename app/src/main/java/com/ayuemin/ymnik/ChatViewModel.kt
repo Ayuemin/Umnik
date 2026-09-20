@@ -1545,25 +1545,47 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
         if (enabled && currentTextModelInfo()?.supportsTools == false) {
-            _state.value = _state.value.copy(status = "Выбранная модель не поддерживает современный веб-поиск OpenRouter")
+            _state.value = _state.value.copy(status = "Поиск недоступен для выбранной модели")
             return
         }
+        persistWebSearchEnabled(_state.value.currentChatId, enabled)
+    }
+
+    private fun persistWebSearchEnabled(chatId: String, enabled: Boolean) {
         val preset = _state.value.webSearchPreset
         val mode = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF
-        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val chat = _state.value.chats.firstOrNull { it.id == chatId }
         if (chat?.projectId != null) {
-            updateCurrentProjectRuntime {
-                it.copy(
+            val current = projectAutomation.profile(chatId) ?: defaultRuntimeProfile(chat)
+            projectAutomation.saveProfile(
+                chatId,
+                current.copy(
                     webSearchEnabled = enabled,
-                    tools = it.tools.copy(webSearch = mode, webSearchPreset = preset)
+                    tools = current.tools.copy(webSearch = mode, webSearchPreset = preset)
                 )
-            }
+            )
         } else {
             prefs.edit().putBoolean("web_search", enabled).apply()
             val tools = openRouterFeaturePrefs.tools()
             openRouterFeaturePrefs.saveTools(tools.copy(webSearch = mode, webSearchPreset = preset))
         }
-        _state.value = _state.value.copy(webSearchEnabled = enabled)
+        if (_state.value.currentChatId == chatId) {
+            _state.value = _state.value.copy(webSearchEnabled = enabled)
+        }
+    }
+
+    private fun disableWebSearchForUnsupportedModel(
+        chatId: String,
+        modelInfo: ModelInfo?,
+        notify: Boolean = true
+    ): Boolean {
+        if (!_state.value.webSearchEnabled || modelInfo?.supportsTools != false) return false
+        persistWebSearchEnabled(chatId, false)
+        DiagnosticLog.action(context, "web_search_auto_disabled", "chat=${chatId.take(8)}; model=${modelInfo.id}")
+        if (notify && _state.value.currentChatId == chatId) {
+            _state.value = _state.value.copy(status = "Поиск отключён: выбранная модель его не поддерживает")
+        }
+        return true
     }
 
     fun setWebSearchPreset(preset: WebSearchPreset) {
