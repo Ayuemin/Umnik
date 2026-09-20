@@ -3846,8 +3846,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
             ?: return
         if (previous.attachmentNames.isNotEmpty()) {
-            val pendingNames = _state.value.pendingAttachments.map { it.name }.toSet()
-            if (!pendingNames.containsAll(previous.attachmentNames)) {
+            val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+            val availableNames = (
+                _state.value.pendingAttachments.map { it.name } + current?.chatFiles.orEmpty().map { it.name }
+            ).toSet()
+            if (!availableNames.containsAll(previous.attachmentNames)) {
                 _state.value = _state.value.copy(status = "Вложения этого запроса уже недоступны. Прикрепите их заново.")
                 return
             }
