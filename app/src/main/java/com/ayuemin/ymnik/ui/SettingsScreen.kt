@@ -320,6 +320,21 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Spacer(Modifier.width(7.dp))
                             Text("Проверить подключение")
                         }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("tools") },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Language, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Инструменты и веб-поиск", fontWeight = FontWeight.Medium)
+                                Text(
+                                    "Сервис поиска и расширенные параметры OpenRouter",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
                         Spacer(Modifier.height(5.dp))
                         TextButton(
                             onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
