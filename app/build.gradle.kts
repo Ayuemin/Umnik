@@ -1,4 +1,4 @@
-// Umnik v1.19.5 — transient scroll control and safer tool routing
+// Umnik v1.19.6 — multimodal chat image output and zoomable viewer
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 138
-        versionName = "1.19.5"
+        versionCode = 139
+        versionName = "1.19.6"
     }
 
     buildFeatures {
