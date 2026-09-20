@@ -121,4 +121,28 @@ class OpenRouterModelCatalogTest {
         assertTrue(merged.supportsTools)
         assertEquals(200000, merged.contextLength)
     }
+    @Test
+    fun parsesCurrentReasoningEffortsIncludingMax() {
+        val info = OpenRouterModelCatalog.parse(
+            JsonParser.parseString(
+                """
+                {
+                  "id": "openai/gpt-5.6-sol",
+                  "architecture": {"input_modalities":["text"],"output_modalities":["text"]},
+                  "supported_parameters": ["reasoning", "reasoning_effort", "tools"],
+                  "reasoning": {
+                    "mandatory": false,
+                    "default_enabled": true,
+                    "supported_efforts": ["max", "xhigh", "high", "medium", "low", "none"]
+                  }
+                }
+                """.trimIndent()
+            )
+        )!!
+
+        assertTrue(info.supportsReasoning)
+        assertTrue(info.supportsReasoningEffort)
+        assertEquals(setOf("max", "xhigh", "high", "medium", "low", "none"), info.reasoningEfforts)
+    }
+
 }
