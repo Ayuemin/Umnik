@@ -378,6 +378,7 @@ data class UiState(
     val openRouterSpeechVoice: String = "",
     val openRouterSpeechResponseFormat: String = "",
     val webSearchEnabled: Boolean = false,
+    val webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
     val reasoningEffortsByModel: Map<String, ReasoningEffort> = emptyMap(),
