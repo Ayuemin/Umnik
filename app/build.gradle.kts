@@ -1,4 +1,4 @@
-// Umnik v1.19.6 — multimodal chat image output and zoomable viewer
+// Umnik v1.19.7 — full OpenRouter model capability catalog
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 139
-        versionName = "1.19.6"
+        versionCode = 140
+        versionName = "1.19.7"
     }
 
     buildFeatures {
