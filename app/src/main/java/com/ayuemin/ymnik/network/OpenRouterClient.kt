@@ -233,7 +233,8 @@ class OpenRouterClient(
         baseUrl: String = DEFAULT_BASE_URL,
         modelInfo: ModelInfo? = null,
         streamToUi: Boolean = false,
-        webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND
+        webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
+        requestImageOutput: Boolean = false
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -254,6 +255,12 @@ class OpenRouterClient(
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
+                if (requestImageOutput && modelInfo?.outputs("image") == true) {
+                    add("modalities", JsonArray().apply {
+                        add("image")
+                        if (modelInfo.outputs("text")) add("text")
+                    })
+                }
                 add("metadata", JsonObject().apply {
                     addProperty("umnik_request_id", requestRunId)
                     addProperty("umnik_step", loops.toString())
@@ -297,6 +304,7 @@ class OpenRouterClient(
                 apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
             )
             val responseMessage = completion.message
+            created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
                 val content = extractText(responseMessage.get("content"))
@@ -422,9 +430,15 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
+        val requestsImageOutput = payload.get("modalities")
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.any { it.isJsonPrimitive && it.asString.equals("image", ignoreCase = true) } == true
         val requestPayload = payload.deepCopy().apply {
-            addProperty("stream", true)
-            add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+            addProperty("stream", !requestsImageOutput)
+            if (!requestsImageOutput) {
+                add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+            }
         }
         val payloadJson = gson.toJson(requestPayload)
         val recoveryRecord = recoveryRecord(apiKey, baseUrl, model)
@@ -800,6 +814,31 @@ class OpenRouterClient(
         val file = File(dir, "${UUID.randomUUID()}_$name")
         file.writeText(content)
         return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
+    }
+
+    private fun generatedImagesFromMessage(message: JsonObject): List<GeneratedFile> {
+        val images = message.get("images")?.takeIf { it.isJsonArray }?.asJsonArray ?: return emptyList()
+        return images.mapIndexedNotNull { index, element ->
+            if (!element.isJsonObject) return@mapIndexedNotNull null
+            val item = element.asJsonObject
+            val dataUrl = item.getAsJsonObject("image_url")
+                ?.get("url")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
+                ?.takeIf { it.isNotBlank() }
+                ?: item.get("url")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+            val encoded = dataUrl?.takeIf { it.startsWith("data:", ignoreCase = true) }
+                ?: item.get("b64_json")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+            val mime = when {
+                dataUrl?.startsWith("data:", ignoreCase = true) == true ->
+                    dataUrl.substringAfter("data:").substringBefore(';').takeIf { it.contains('/') }
+                        ?: "image/png"
+                else -> item.get("media_type")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+                    ?: "image/png"
+            }
+            saveGeneratedImage(encoded, mime, index)
+        }
     }
 
     private fun saveGeneratedImage(encoded: String, mimeType: String, index: Int): GeneratedFile {
