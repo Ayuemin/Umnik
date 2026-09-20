@@ -4,6 +4,8 @@ import android.content.Context
 import com.ayuemin.ymnik.model.AgentKind
 import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.ReasoningEffort
+import com.ayuemin.ymnik.model.ServerToolSettings
+import com.ayuemin.ymnik.model.normalized
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
@@ -27,7 +29,11 @@ class AgentRepository(private val context: Context) {
         private set
 
     fun list(): List<AgentProfile> = runCatching {
-        atomic.read(::validJson)?.let { gson.fromJson<List<AgentProfile>>(it, type) } ?: emptyList()
+        val stored = atomic.read(::validJson)?.let { gson.fromJson<List<AgentProfile>>(it, type) } ?: emptyList()
+        stored.map { profile ->
+            val tools = runCatching { profile.tools }.getOrNull()?.normalized() ?: ServerToolSettings()
+            profile.copy(tools = tools)
+        }
     }.onFailure {
         loadError = "Данные агентов повреждены и защищены от перезаписи."
     }.getOrDefault(emptyList())
