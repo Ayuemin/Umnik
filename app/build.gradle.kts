@@ -1,4 +1,4 @@
-// Umnik v1.19.7 — full OpenRouter model capability catalog
+// Umnik v1.19.8 — simplified model catalog filters and scrolling
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 140
-        versionName = "1.19.7"
+        versionCode = 141
+        versionName = "1.19.8"
     }
 
     buildFeatures {
