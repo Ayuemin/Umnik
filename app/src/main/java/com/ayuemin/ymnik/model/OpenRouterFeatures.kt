@@ -10,7 +10,18 @@ enum class ProviderRouteStrategy {
 enum class WebSearchMode {
     OFF,
     AUTO,
+    /**
+     * Legacy value kept for stored settings compatibility.
+     * Modern OpenRouter search is agentic, so ALWAYS is treated as AUTO.
+     */
     ALWAYS
+}
+
+enum class WebSearchPreset {
+    ON_DEMAND,
+    FAST,
+    NORMAL,
+    DEEP
 }
 
 enum class WebSearchEngine(val apiValue: String) {
@@ -41,6 +52,7 @@ data class ProviderRoutingSettings(
 
 data class ServerToolSettings(
     val webSearch: WebSearchMode = WebSearchMode.OFF,
+    val webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
     val webSearchEngine: WebSearchEngine = WebSearchEngine.AUTO,
     val webFetch: Boolean = false,
     val datetime: Boolean = false,
