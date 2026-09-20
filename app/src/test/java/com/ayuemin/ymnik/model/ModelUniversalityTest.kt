@@ -58,4 +58,48 @@ class ModelUniversalityTest {
         assertTrue(score.total < 100)
         assertTrue(score.outputBreadth > 0)
     }
+    @Test
+    fun fullCapabilitySurfaceDefinesOneHundred() {
+        val full = ModelInfo(
+            id = "vendor/everything",
+            inputModalities = setOf("text", "image", "audio", "video", "file"),
+            outputModalities = setOf(
+                "text", "image", "audio", "video",
+                "transcription", "embeddings", "rerank"
+            ),
+            supportedParameters = setOf(
+                "reasoning", "reasoning_effort",
+                "tools", "tool_choice",
+                "response_format", "web_search",
+                "temperature", "top_p",
+                "seed", "logprobs",
+                "max_tokens", "frequency_penalty",
+                "image_size", "image_quality"
+            ),
+            supportsStreaming = true,
+            contextLength = 1_000_000,
+            maxCompletionTokens = 65_536,
+            capabilityValues = mapOf(
+                "resolutions" to listOf("1K", "2K", "4K"),
+                "aspect_ratios" to listOf("1:1", "16:9"),
+                "durations" to listOf("5", "10"),
+                "frame_images" to listOf("first", "last")
+            ),
+            capabilityFlags = mapOf(
+                "generate_audio" to true,
+                "seed" to true
+            ),
+            allowedPassthroughParameters = setOf("foo", "bar")
+        )
+
+        val score = ModelUniversality.score(full)
+
+        assertTrue(score.total == 100)
+        assertTrue(score.inputBreadth == 20)
+        assertTrue(score.outputBreadth == 25)
+        assertTrue(score.generalCapabilities == 30)
+        assertTrue(score.capacity == 15)
+        assertTrue(score.specializedCapabilities == 10)
+    }
+
 }
