@@ -67,6 +67,7 @@ import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.model.userProfileApplies
+import com.ayuemin.ymnik.network.ChatOutputPolicy
 import com.ayuemin.ymnik.network.ChatToolPolicy
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
@@ -4063,6 +4064,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
         val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
             ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
+        val requestWantsImageOutput = mode == ChatMode.TEXT &&
+            requestTextModelInfo?.outputs("image") == true &&
+            ChatOutputPolicy.wantsGeneratedImage(
+                prompt = clean,
+                hasImageAttachment = pending.any { it.mimeType.startsWith("image/") }
+            )
         // Projects are rooms only. Persistent work files belong to the selected agent
         // or to the current ordinary chat, never to the project itself.
         val requestProjectTextAttachments = emptyList<PendingAttachment>()
@@ -4160,8 +4167,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 createFileToolEnabled,
                                 effectiveTextBaseUrl(profile),
                                 requestModelInfo,
-                                streamToUi = true,
-                                webSearchPreset = webSearchPreset
+                                streamToUi = !requestWantsImageOutput,
+                                webSearchPreset = webSearchPreset,
+                                requestImageOutput = requestWantsImageOutput
                             )
                         }
                     }
