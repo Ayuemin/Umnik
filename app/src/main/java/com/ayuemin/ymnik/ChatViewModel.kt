@@ -3518,7 +3518,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ReasoningEffort.LOW,
             ReasoningEffort.HIGH,
             ReasoningEffort.MINIMAL,
-            ReasoningEffort.XHIGH
+            ReasoningEffort.XHIGH,
+            ReasoningEffort.MAX
         )
         return fallbackOrder.firstOrNull { it.apiValue in info.reasoningEfforts } ?: configured
     }
@@ -3528,7 +3529,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ReasoningEffort.LOW -> "Низкая сила"
         ReasoningEffort.MEDIUM -> "Средняя сила"
         ReasoningEffort.HIGH -> "Высокая сила"
-        ReasoningEffort.XHIGH -> "Максимальная сила"
+        ReasoningEffort.XHIGH -> "Очень высокая сила"
+        ReasoningEffort.MAX -> "Максимальная сила"
     }
 
     private fun currentImageModelInfo(): ModelInfo? =
