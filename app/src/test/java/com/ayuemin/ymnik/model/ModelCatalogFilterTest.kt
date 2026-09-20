@@ -128,4 +128,28 @@ class ModelCatalogFilterTest {
             ).map { it.id }
         )
     }
+    @Test
+    fun multimodalAndImageOutputFiltersAreExplicit() {
+        val textAndImage = ModelInfo(
+            id = "vendor/multimodal-output",
+            inputModalities = setOf("text", "image"),
+            outputModalities = setOf("text", "image")
+        )
+        val extended = models + textAndImage
+        assertEquals(
+            listOf("vendor/chat", "vendor/multimodal-output"),
+            ModelCatalogFilter.apply(
+                extended,
+                capabilities = ModelCapabilityFilter(multimodal = true)
+            ).map { it.id }
+        )
+        assertEquals(
+            listOf("vendor/image-paid", "vendor/image:free", "vendor/multimodal-output"),
+            ModelCatalogFilter.apply(
+                extended,
+                capabilities = ModelCapabilityFilter(imageOutput = true)
+            ).map { it.id }
+        )
+    }
+
 }

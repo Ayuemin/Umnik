@@ -1,14 +1,16 @@
 package com.ayuemin.ymnik.model
 
 data class ModelCapabilityFilter(
+    val multimodal: Boolean = false,
     val imageInput: Boolean = false,
+    val imageOutput: Boolean = false,
     val audioInput: Boolean = false,
     val videoInput: Boolean = false,
     val reasoning: Boolean = false,
     val tools: Boolean = false
 ) {
     val active: Boolean
-        get() = imageInput || audioInput || videoInput || reasoning || tools
+        get() = multimodal || imageInput || imageOutput || audioInput || videoInput || reasoning || tools
 }
 
 object ModelCatalogFilter {
@@ -46,7 +48,13 @@ object ModelCatalogFilter {
                     }
                 }
             }
+            .filter { model ->
+                !capabilities.multimodal ||
+                    model.inputModalities.size > 1 ||
+                    model.outputModalities.size > 1
+            }
             .filter { model -> !capabilities.imageInput || model.accepts("image") }
+            .filter { model -> !capabilities.imageOutput || model.outputs("image") }
             .filter { model -> !capabilities.audioInput || model.accepts("audio") }
             .filter { model -> !capabilities.videoInput || model.accepts("video") }
             .filter { model -> !capabilities.reasoning || model.supportsReasoning }

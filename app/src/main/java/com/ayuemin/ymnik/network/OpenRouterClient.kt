@@ -150,69 +150,7 @@ class OpenRouterClient(
             if (!response.isSuccessful) error(apiError(response.code, body))
             val root = gson.fromJson(body, JsonObject::class.java)
             return root.getAsJsonArray("data")
-                ?.mapNotNull { element ->
-                    val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-                    val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val inputModalities = item.getAsJsonObject("architecture")
-                        ?.getAsJsonArray("input_modalities")
-                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                        ?.toSet()
-                        .orEmpty()
-                        .ifEmpty { setOf("text") }
-                    val supportedParameters = when (val supported = item.get("supported_parameters")) {
-                        null -> emptySet()
-                        else -> when {
-                            supported.isJsonArray -> supported.asJsonArray
-                                .mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                                .toSet()
-                            supported.isJsonObject -> supported.asJsonObject.keySet().map { it.lowercase() }.toSet()
-                            else -> emptySet()
-                        }
-                    }
-                    val reasoningEfforts = item.getAsJsonObject("reasoning")
-                        ?.getAsJsonArray("supported_efforts")
-                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                        ?.toSet()
-                        .orEmpty()
-                    val reasoningInfo = item.getAsJsonObject("reasoning")
-                    val contextLength = runCatching { item.get("context_length")?.asInt }.getOrNull()
-                        ?.takeIf { it > 0 }
-                    val maxCompletionTokens = runCatching {
-                        item.getAsJsonObject("top_provider")?.get("max_completion_tokens")?.asInt
-                    }.getOrNull()?.takeIf { it > 0 }
-                    val parameterOptions = item.get("supported_parameters")
-                        ?.takeIf { it.isJsonObject }
-                        ?.asJsonObject
-                        ?.entrySet()
-                        ?.mapNotNull { (name, descriptor) ->
-                            val values = descriptor.takeIf { it.isJsonObject }
-                                ?.asJsonObject
-                                ?.get("values")
-                                ?.takeIf { it.isJsonArray }
-                                ?.asJsonArray
-                                ?.mapNotNull { value ->
-                                    value.takeIf { it.isJsonPrimitive }
-                                        ?.asString
-                                        ?.takeIf { it.isNotBlank() }
-                                }
-                                .orEmpty()
-                                .distinct()
-                            if (values.isEmpty()) null else name.lowercase() to values
-                        }
-                        ?.toMap()
-                        .orEmpty()
-                    ModelInfo(
-                        id = id,
-                        inputModalities = inputModalities,
-                        supportedParameters = supportedParameters,
-                        reasoningEfforts = reasoningEfforts,
-                        parameterOptions = parameterOptions,
-                        contextLength = contextLength,
-                        maxCompletionTokens = maxCompletionTokens,
-                        reasoningMandatory = runCatching { reasoningInfo?.get("mandatory")?.asBoolean }.getOrNull() == true,
-                        reasoningDefaultEnabled = runCatching { reasoningInfo?.get("default_enabled")?.asBoolean }.getOrNull() == true
-                    )
-                }
+                ?.mapNotNull(OpenRouterModelCatalog::parse)
                 ?.distinctBy { it.id }
                 ?.sortedBy { it.id }
                 ?: emptyList()
@@ -233,7 +171,8 @@ class OpenRouterClient(
         baseUrl: String = DEFAULT_BASE_URL,
         modelInfo: ModelInfo? = null,
         streamToUi: Boolean = false,
-        webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND
+        webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
+        requestImageOutput: Boolean = false
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -254,6 +193,12 @@ class OpenRouterClient(
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
+                if (requestImageOutput && modelInfo?.outputs("image") == true) {
+                    add("modalities", JsonArray().apply {
+                        add("image")
+                        if (modelInfo.outputs("text")) add("text")
+                    })
+                }
                 add("metadata", JsonObject().apply {
                     addProperty("umnik_request_id", requestRunId)
                     addProperty("umnik_step", loops.toString())
@@ -297,6 +242,7 @@ class OpenRouterClient(
                 apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
             )
             val responseMessage = completion.message
+            created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
                 val content = extractText(responseMessage.get("content"))
@@ -422,9 +368,15 @@ class OpenRouterClient(
         if (model.endsWith(":batch", ignoreCase = true)) {
             return chatBatchRunner.complete(apiKey, baseUrl, payload)
         }
+        val requestsImageOutput = payload.get("modalities")
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.any { it.isJsonPrimitive && it.asString.equals("image", ignoreCase = true) } == true
         val requestPayload = payload.deepCopy().apply {
-            addProperty("stream", true)
-            add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+            addProperty("stream", !requestsImageOutput)
+            if (!requestsImageOutput) {
+                add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
+            }
         }
         val payloadJson = gson.toJson(requestPayload)
         val recoveryRecord = recoveryRecord(apiKey, baseUrl, model)
@@ -800,6 +752,31 @@ class OpenRouterClient(
         val file = File(dir, "${UUID.randomUUID()}_$name")
         file.writeText(content)
         return GeneratedFile(UUID.randomUUID().toString(), name, mimeType, file.absolutePath, file.length())
+    }
+
+    private fun generatedImagesFromMessage(message: JsonObject): List<GeneratedFile> {
+        val images = message.get("images")?.takeIf { it.isJsonArray }?.asJsonArray ?: return emptyList()
+        return images.mapIndexedNotNull { index, element ->
+            if (!element.isJsonObject) return@mapIndexedNotNull null
+            val item = element.asJsonObject
+            val dataUrl = item.getAsJsonObject("image_url")
+                ?.get("url")
+                ?.takeUnless { it.isJsonNull }
+                ?.asString
+                ?.takeIf { it.isNotBlank() }
+                ?: item.get("url")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+            val encoded = dataUrl?.takeIf { it.startsWith("data:", ignoreCase = true) }
+                ?: item.get("b64_json")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+            val mime = when {
+                dataUrl?.startsWith("data:", ignoreCase = true) == true ->
+                    dataUrl.substringAfter("data:").substringBefore(';').takeIf { it.contains('/') }
+                        ?: "image/png"
+                else -> item.get("media_type")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }
+                    ?: "image/png"
+            }
+            saveGeneratedImage(encoded, mime, index)
+        }
     }
 
     private fun saveGeneratedImage(encoded: String, mimeType: String, index: Int): GeneratedFile {
