@@ -405,7 +405,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Название, ID или провайдер") }
+                placeholder = { Text("Название модели или ID") }
             )
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
