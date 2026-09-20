@@ -2392,7 +2392,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 false,
                 effectiveTextBaseUrl(profile),
                 requestInfo,
-                streamToUi = false
+                streamToUi = false,
+                webSearchPreset = orchestrator.tools.webSearchPreset
             )
         }
 
@@ -2622,7 +2623,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     modelInfo.supportsTools,
                     effectiveTextBaseUrl(profile),
                     requestInfo,
-                    streamToUi = false
+                    streamToUi = false,
+                    webSearchPreset = worker.tools.webSearchPreset
                 )
             }
             require(modelResult.text.isNotBlank() || modelResult.files.isNotEmpty()) {
