@@ -127,6 +127,50 @@ class ChatMemoryRepository(private val context: Context) {
         return next
     }
 
+    /**
+     * Adds searchable chunks immediately, without creating a summary checkpoint.
+     * Checkpoints are intentionally independent so the 8K checkpoint cadence never delays indexing.
+     */
+    @Synchronized
+    fun appendIndexedChunks(
+        chatId: String,
+        settings: ChatMemoryGlobalSettings,
+        chunks: List<ChatMemoryChunk>,
+        vectors: List<FloatArray>,
+        fingerprints: Map<String, String>
+    ): ChatMemorySnapshot {
+        require(chunks.size == vectors.size) { "Число фрагментов памяти и embeddings не совпадает" }
+        val clean = sanitize(settings)
+        val current = snapshot(chatId)?.takeIf {
+            it.embeddingModelId == clean.embeddingModelId &&
+                it.summaryModelId == clean.summaryModelId &&
+                it.chunkTokens == clean.chunkTokens &&
+                it.chunkOverlapTokens == clean.chunkOverlapTokens &&
+                it.embeddingContextTokens == clean.embeddingContextTokens
+        } ?: ChatMemorySnapshot(
+            chatId = chatId,
+            embeddingModelId = clean.embeddingModelId,
+            summaryModelId = clean.summaryModelId,
+            chunkTokens = clean.chunkTokens,
+            chunkOverlapTokens = clean.chunkOverlapTokens,
+            embeddingContextTokens = clean.embeddingContextTokens
+        )
+
+        val storedChunks = chunks.mapIndexed { index, chunk ->
+            val vector = vectors[index]
+            require(vector.isNotEmpty()) { "Embedding памяти пуст" }
+            writeVector(vectorFile(chatId, chunk.id), vector)
+            chunk.copy(vectorDimension = vector.size)
+        }
+        val next = current.copy(
+            chunks = current.chunks + storedChunks,
+            indexedFingerprints = current.indexedFingerprints + fingerprints,
+            updatedAt = System.currentTimeMillis()
+        )
+        saveSnapshot(next)
+        return next
+    }
+
     suspend fun retrieve(
         chatId: String,
         query: FloatArray,
