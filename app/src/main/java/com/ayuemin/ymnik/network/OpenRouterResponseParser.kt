@@ -38,7 +38,8 @@ internal object OpenRouterResponseParser {
         }.getOrNull()
         val message = choice.getAsJsonObject("message") ?: error("OpenRouter не вернул сообщение модели")
         val toolCount = message.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray?.size() ?: 0
-        if (!allowEmpty && toolCount == 0 && contentText(message.get("content")).isBlank()) {
+        val imageCount = message.get("images")?.takeIf { it.isJsonArray }?.asJsonArray?.size() ?: 0
+        if (!allowEmpty && toolCount == 0 && imageCount == 0 && contentText(message.get("content")).isBlank()) {
             error("Модель вернула пустой текст (finish_reason=${finish.ifBlank { "не указан" }}, reasoning_tokens=${reasoningTokens ?: "неизвестно"}). Попробуйте уменьшить рассуждение или повторить запрос.")
         }
         return Completion(
