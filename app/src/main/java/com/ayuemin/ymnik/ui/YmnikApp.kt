@@ -124,6 +124,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -172,6 +173,7 @@ import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.io.File
 import java.util.Locale
 
@@ -307,6 +309,8 @@ private fun ChatScreen(
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
     val listState = rememberLazyListState()
+    val chatScope = rememberCoroutineScope()
+    var scrollToBottomVisible by remember(state.currentChatId) { mutableStateOf(false) }
     val context = LocalContext.current
     val voiceRecorder = remember(context) { WavRecorder(context) }
     var isRecording by remember { mutableStateOf(false) }
@@ -381,6 +385,24 @@ private fun ChatScreen(
         guideScrollTarget = 0
     }
     val currentChatFiles = currentChat?.chatFiles.orEmpty()
+    val availableRetryAttachmentNames = (
+        currentChatFiles.map { it.name } + state.pendingAttachments.map { it.name }
+    ).toSet()
+    LaunchedEffect(
+        state.currentChatId,
+        listState.isScrollInProgress,
+        listState.canScrollForward
+    ) {
+        if (listState.isScrollInProgress || listState.canScrollForward) {
+            scrollToBottomVisible = true
+        }
+        if (!listState.isScrollInProgress && !listState.canScrollForward) {
+            delay(1_500)
+            if (!listState.isScrollInProgress && !listState.canScrollForward) {
+                scrollToBottomVisible = false
+            }
+        }
+    }
     val currentProject = currentChat?.projectId
         ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
     val activeSkillCount = state.activeSkillIds.size
@@ -554,12 +576,15 @@ private fun ChatScreen(
             )
         }
 
-        LazyColumn(
-            state = listState,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        Box(
+            modifier = Modifier.weight(1f).fillMaxWidth()
         ) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
             if (state.messages.isEmpty()) {
                 item { EmptyChatWelcome(Modifier.fillParentMaxSize()) }
             }
@@ -599,15 +624,12 @@ onBranch = if (message.role == "assistant") {
                     onRetry = when {
                         message.role != "user" || message.text.isBlank() -> null
                         message.deliveryState == "pending" -> null
-                        message.deliveryState == "failed" && message.attachmentNames.all { name ->
-                            currentChatFiles.any { file -> file.name == name }
-                        } -> { { vm.retryFailedMessage(message.id) } }
+                        message.deliveryState == "failed" && message.attachmentNames.all { it in availableRetryAttachmentNames } ->
+                            { { vm.retryFailedMessage(message.id) } }
                         message.imageGeneration && message.attachmentNames.isEmpty() -> {
                             { vm.sendImagePrompt(message.text) }
                         }
-                        !message.imageGeneration && message.attachmentNames.all { name ->
-                            currentChatFiles.any { file -> file.name == name }
-                        } -> {
+                        !message.imageGeneration && message.attachmentNames.all { it in availableRetryAttachmentNames } -> {
                             { vm.send(message.text) }
                         }
                         else -> null
@@ -619,7 +641,35 @@ onBranch = if (message.role == "assistant") {
                     StreamingAssistantMessage(streamingText)
                 }
             }
-            item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
+                item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
+            }
+
+            if (scrollToBottomVisible && listState.layoutInfo.totalItemsCount > 1) {
+                Surface(
+                    onClick = {
+                        chatScope.launch {
+                            val target = (listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0)
+                            listState.animateScrollToItem(target)
+                        }
+                    },
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 12.dp)
+                        .size(44.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    tonalElevation = 4.dp,
+                    shadowElevation = 4.dp
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            Icons.Outlined.KeyboardArrowDown,
+                            contentDescription = "Прокрутить чат вниз",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
 
         val visibleChatFiles = if (imagePromptMode) emptyList() else currentChatFiles

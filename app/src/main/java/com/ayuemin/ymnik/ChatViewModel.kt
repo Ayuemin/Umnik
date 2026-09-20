@@ -1389,6 +1389,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(profile),
             status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
         refreshModelCapabilities()
         if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
@@ -1421,7 +1422,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val clean = modelId.trim()
         if (clean.isBlank()) return
         val sameProfile = profile.id == _state.value.activeConnectionProfileId
-        val info = if (sameProfile) _state.value.availableTextModels.firstOrNull { it.id == clean } else null
+        val info = if (sameProfile) {
+            _state.value.availableTextModels.firstOrNull { it.id == clean }
+                ?: _state.value.modelCatalog.firstOrNull { it.id == clean }
+        } else {
+            _state.value.modelCatalog.firstOrNull { it.id == clean }
+        }
         val effort = preferredReasoningEffort(clean, info)
         val keepReasoning = sameProfile && reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
@@ -1452,6 +1458,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(profile),
             status = null
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
         refreshModelCapabilities()
     }
 
@@ -1492,6 +1499,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             tools = profileAgent.tools,
             skillIds = emptySet()
         )
+        val modelInfo = _state.value.modelCatalog.firstOrNull { it.id == modelId }
+            ?: _state.value.availableTextModels.firstOrNull { it.id == modelId }
         projectAutomation.saveProfile(chatId, runtime.copy(modelId = modelId))
 
         _state.value = _state.value.copy(
@@ -1506,6 +1515,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(connection),
             status = null
         )
+        disableWebSearchForUnsupportedModel(chatId, modelInfo)
         refreshModelCapabilities()
     }
 
@@ -1514,6 +1524,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val profile = activeConnectionProfile()
         val modelId = _state.value.textModel
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
         val keepReasoning = reasoningStillValid(info, effort)
         val chats = _state.value.chats.map { chat ->
@@ -1536,6 +1547,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
+        refreshModelCapabilities()
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
@@ -1545,25 +1558,47 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
         if (enabled && currentTextModelInfo()?.supportsTools == false) {
-            _state.value = _state.value.copy(status = "Выбранная модель не поддерживает современный веб-поиск OpenRouter")
+            _state.value = _state.value.copy(status = "Поиск недоступен для выбранной модели")
             return
         }
+        persistWebSearchEnabled(_state.value.currentChatId, enabled)
+    }
+
+    private fun persistWebSearchEnabled(chatId: String, enabled: Boolean) {
         val preset = _state.value.webSearchPreset
         val mode = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF
-        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val chat = _state.value.chats.firstOrNull { it.id == chatId }
         if (chat?.projectId != null) {
-            updateCurrentProjectRuntime {
-                it.copy(
+            val current = projectAutomation.profile(chatId) ?: defaultRuntimeProfile(chat)
+            projectAutomation.saveProfile(
+                chatId,
+                current.copy(
                     webSearchEnabled = enabled,
-                    tools = it.tools.copy(webSearch = mode, webSearchPreset = preset)
+                    tools = current.tools.copy(webSearch = mode, webSearchPreset = preset)
                 )
-            }
+            )
         } else {
             prefs.edit().putBoolean("web_search", enabled).apply()
             val tools = openRouterFeaturePrefs.tools()
             openRouterFeaturePrefs.saveTools(tools.copy(webSearch = mode, webSearchPreset = preset))
         }
-        _state.value = _state.value.copy(webSearchEnabled = enabled)
+        if (_state.value.currentChatId == chatId) {
+            _state.value = _state.value.copy(webSearchEnabled = enabled)
+        }
+    }
+
+    private fun disableWebSearchForUnsupportedModel(
+        chatId: String,
+        modelInfo: ModelInfo?,
+        notify: Boolean = true
+    ): Boolean {
+        if (!_state.value.webSearchEnabled || modelInfo?.supportsTools != false) return false
+        persistWebSearchEnabled(chatId, false)
+        DiagnosticLog.action(context, "web_search_auto_disabled", "chat=${chatId.take(8)}; model=${modelInfo.id}")
+        if (notify && _state.value.currentChatId == chatId) {
+            _state.value = _state.value.copy(status = "Поиск отключён: выбранная модель его не поддерживает")
+        }
+        return true
     }
 
     fun setWebSearchPreset(preset: WebSearchPreset) {
@@ -3497,6 +3532,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 quickTextModels = loadAllQuickTextModels(next.connectionProfiles, next.disabledConnectionIds)
             )
             _state.value = next
+            val refreshedModelInfo = next.availableTextModels.firstOrNull { it.id == (next.currentChatTextModel ?: next.textModel) }
+            disableWebSearchForUnsupportedModel(next.currentChatId, refreshedModelInfo)
         }
     }
 
@@ -3504,6 +3541,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun currentTextModelInfo(): ModelInfo? =
         _state.value.availableTextModels.firstOrNull { it.id == currentTextModelId() }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == currentTextModelId() }
 
     private fun reasoningStillValid(info: ModelInfo?, effort: ReasoningEffort = _state.value.reasoningEffort): Boolean =
         _state.value.reasoningEnabled && info?.supportsReasoning == true &&
@@ -3808,8 +3846,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
             ?: return
         if (previous.attachmentNames.isNotEmpty()) {
-            _state.value = _state.value.copy(status = "Для повтора прикрепите файлы заново и отправьте запрос вручную")
-            return
+            val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+            val availableNames = (
+                _state.value.pendingAttachments.map { it.name } + current?.chatFiles.orEmpty().map { it.name }
+            ).toSet()
+            if (!availableNames.containsAll(previous.attachmentNames)) {
+                _state.value = _state.value.copy(status = "Вложения этого запроса уже недоступны. Прикрепите их заново.")
+                return
+            }
         }
         val chatId = _state.value.currentChatId
         val cleanedMessages = _state.value.messages.filterNot { it.id == messageId }
@@ -3844,15 +3888,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 execute = { execute(network) }
             )
         }.getOrElse { error ->
-            activeRequestPending.remove(chatId)
+            val restore = activeRequestPending.remove(chatId).orEmpty()
             val chats = chatsRepository.finishRequest(chatId, messageId, null)
+            val restoreHere = _state.value.currentChatId == chatId && restore.isNotEmpty()
             _state.value = _state.value.copy(
                 chats = chats,
                 messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                pendingAttachments = if (restoreHere) {
+                    (_state.value.pendingAttachments + restore).distinctBy { it.uri }
+                } else {
+                    _state.value.pendingAttachments
+                },
                 requestActive = RequestExecutionManager.hasActiveRequest(),
                 busyLabel = RequestExecutionManager.snapshotForChat(_state.value.currentChatId)?.label,
                 status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
             )
+            if (!restoreHere) cleanupTempAttachments(restore)
             null
         }
     }
@@ -3980,6 +4031,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 _state.value = _state.value.copy(
                     chats = failedChats,
                     messages = failedChats.firstOrNull { it.id == chatId }?.messages.orEmpty(),
+                    pendingAttachments = (_state.value.pendingAttachments + pending).distinctBy { it.uri },
                     status = "Эта модель предназначена не для обычного текстового чата. Выберите текстовую модель в каталоге OpenRouter."
                 )
                 refreshModels(ChatMode.TEXT)
@@ -4127,6 +4179,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 return@launchRequest
             }
 
+            var keepPendingForRetry = false
             operation.onSuccess { result ->
                 val finalText = result.text
                 DiagnosticLog.record(
@@ -4166,7 +4219,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     it
                 )
                 val rawError = it.message.orEmpty()
+                val toolUseUnavailable = webSearchEnabled && (
+                    rawError.contains("No endpoints found that support tool use", ignoreCase = true) ||
+                        (rawError.contains("404") && rawError.contains("tool use", ignoreCase = true))
+                    )
+                if (toolUseUnavailable) {
+                    persistWebSearchEnabled(chatId, false)
+                }
                 val friendlyError = when {
+                    toolUseUnavailable ->
+                        "Поиск отключён: для этой модели OpenRouter не нашёл доступный маршрут с поддержкой веб-поиска. Повторите запрос."
                     it is java.net.SocketTimeoutException ->
                         "Сервис не ответил вовремя. Повторите запрос один раз или выберите другую модель."
                     it is java.net.SocketException ->
@@ -4191,14 +4253,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 } else {
                     activeRequestId?.let { RequestExecutionManager.fail(it, friendlyError) }
                     val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+                    keepPendingForRetry = pending.isNotEmpty() && _state.value.currentChatId == chatId
                     _state.value = _state.value.copy(
                         messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                         chats = failedChats,
+                        pendingAttachments = if (keepPendingForRetry) {
+                            (_state.value.pendingAttachments + pending).distinctBy { attachment -> attachment.uri }
+                        } else {
+                            _state.value.pendingAttachments
+                        },
                         status = friendlyError
                     )
                 }
             }
-            cleanupTempAttachments(pending)
+            if (!keepPendingForRetry) cleanupTempAttachments(pending)
             if (isCurrentRequestGeneration(chatId, requestId)) {
                 activeRequestPending.remove(chatId)
             }
