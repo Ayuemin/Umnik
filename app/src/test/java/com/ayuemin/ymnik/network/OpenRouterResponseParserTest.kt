@@ -51,4 +51,12 @@ class OpenRouterResponseParserTest {
         assertEquals(19, parsed.totalTokens)
         assertEquals(0.00123, parsed.costUsd!!, 0.0000001)
     }
+    @Test
+    fun imageOnlyChatCompletionIsAccepted() {
+        val response = OpenRouterResponseParser.parse(
+            """{"choices":[{"message":{"role":"assistant","content":"","images":[{"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}]},"finish_reason":"stop"}]}"""
+        )
+        assertEquals(1, response.message.getAsJsonArray("images").size())
+    }
+
 }
