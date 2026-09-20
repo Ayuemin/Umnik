@@ -5,6 +5,7 @@ import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchPreset
 import com.google.gson.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -39,6 +40,7 @@ class OpenRouterFeaturePayloadTest {
     fun chatToolsExcludeShellButResponsesIncludeIt() {
         val settings = ServerToolSettings(
             webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.NORMAL,
             webSearchEngine = WebSearchEngine.EXA,
             fusion = true,
             shell = true
@@ -51,4 +53,24 @@ class OpenRouterFeaturePayloadTest {
         assertTrue(responses.any { it.asJsonObject.get("type").asString == "openrouter:shell" })
         assertTrue(OpenRouterFeaturePayload.requiresResponsesApi(settings))
     }
+    @Test
+    fun normalSearchUsesModernServerToolAndFiveTurnBudget() {
+        val settings = ServerToolSettings(
+            webSearch = WebSearchMode.AUTO,
+            webSearchPreset = WebSearchPreset.NORMAL,
+            webSearchEngine = WebSearchEngine.EXA
+        )
+        val payload = JsonObject()
+        OpenRouterFeaturePayload.applyServerToolBudget(payload, settings)
+        val tools = OpenRouterFeaturePayload.chatServerTools(settings)
+        val search = tools.first { it.asJsonObject.get("type").asString == "openrouter:web_search" }.asJsonObject
+        val parameters = search.getAsJsonObject("parameters")
+
+        assertEquals(5, payload.get("max_tool_calls").asInt)
+        assertEquals("exa", parameters.get("engine").asString)
+        assertEquals(5, parameters.get("max_results").asInt)
+        assertEquals(25, parameters.get("max_total_results").asInt)
+        assertEquals("medium", parameters.get("search_context_size").asString)
+    }
+
 }
