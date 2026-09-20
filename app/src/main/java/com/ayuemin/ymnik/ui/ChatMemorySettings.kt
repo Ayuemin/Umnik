@@ -82,8 +82,8 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
     ) { vm.setChatContextMode(chat.id, null) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.AUTO,
-        title = "Автоматический",
-        description = "Полная история до заданного порога, затем свежие сообщения + карточка памяти + найденные старые фрагменты."
+        title = "Баланс",
+        description = "До порога используется полная история, затем Umnik держит свежие пары, компактный конспект и найденные старые фрагменты в общем бюджете."
     ) { vm.setChatContextMode(chat.id, ChatContextMode.AUTO) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.FULL,
@@ -92,8 +92,8 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
     ) { vm.setChatContextMode(chat.id, ChatContextMode.FULL) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.ECONOMY,
-        title = "Экономный",
-        description = "Раньше переходить на гибридную память и держать меньший свежий хвост диалога."
+        title = "Эконом",
+        description = "Раньше включает гибридную память и использует меньший бюджет истории и памяти."
     ) { vm.setChatContextMode(chat.id, ChatContextMode.ECONOMY) }
 
     Text(
@@ -156,9 +156,12 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     var defaultMode by remember(initial.defaultContextMode) { mutableStateOf(initial.defaultContextMode) }
     var autoThreshold by remember(initial.autoThresholdTokens) { mutableStateOf(initial.autoThresholdTokens.toString()) }
     var economyThreshold by remember(initial.economyThresholdTokens) { mutableStateOf(initial.economyThresholdTokens.toString()) }
-    var autoRecent by remember(initial.autoRecentMessages) { mutableStateOf(initial.autoRecentMessages.toString()) }
-    var economyRecent by remember(initial.economyRecentMessages) { mutableStateOf(initial.economyRecentMessages.toString()) }
-    var topK by remember(initial.topK) { mutableStateOf(initial.topK.toString()) }
+    var autoBudget by remember(initial.autoContextBudgetTokens) { mutableStateOf(initial.autoContextBudgetTokens.toString()) }
+    var economyBudget by remember(initial.economyContextBudgetTokens) { mutableStateOf(initial.economyContextBudgetTokens.toString()) }
+    var autoRecentPairs by remember(initial.autoRecentMessages) { mutableStateOf((initial.autoRecentMessages / 2).toString()) }
+    var economyRecentPairs by remember(initial.economyRecentMessages) { mutableStateOf((initial.economyRecentMessages / 2).toString()) }
+    var autoTopK by remember(initial.autoTopK) { mutableStateOf(initial.autoTopK.toString()) }
+    var economyTopK by remember(initial.economyTopK) { mutableStateOf(initial.economyTopK.toString()) }
     var checkpointTokens by remember(initial.checkpointTokens) { mutableStateOf(initial.checkpointTokens.toString()) }
     var chunkTokens by remember(initial.chunkTokens) { mutableStateOf(initial.chunkTokens.toString()) }
     var chunkOverlap by remember(initial.chunkOverlapTokens) { mutableStateOf(initial.chunkOverlapTokens.toString()) }
@@ -219,7 +222,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 FilterChip(
                     selected = defaultMode == ChatContextMode.AUTO,
                     onClick = { defaultMode = ChatContextMode.AUTO },
-                    label = { Text("Авто") }
+                    label = { Text("Баланс") }
                 )
                 FilterChip(
                     selected = defaultMode == ChatContextMode.FULL,
@@ -291,11 +294,14 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 singleLine = true
             )
 
-            NumericMemoryField("Автоматический: включить после, токенов", autoThreshold) { autoThreshold = it }
-            NumericMemoryField("Экономный: включить после, токенов", economyThreshold) { economyThreshold = it }
-            NumericMemoryField("Автоматический: свежих сообщений", autoRecent) { autoRecent = it }
-            NumericMemoryField("Экономный: свежих сообщений", economyRecent) { economyRecent = it }
-            NumericMemoryField("Старых фрагментов в поиске", topK) { topK = it }
+            NumericMemoryField("Баланс: включить память после, токенов", autoThreshold) { autoThreshold = it }
+            NumericMemoryField("Эконом: включить память после, токенов", economyThreshold) { economyThreshold = it }
+            NumericMemoryField("Баланс: бюджет истории и памяти, токенов", autoBudget) { autoBudget = it }
+            NumericMemoryField("Эконом: бюджет истории и памяти, токенов", economyBudget) { economyBudget = it }
+            NumericMemoryField("Баланс: последних пар диалога", autoRecentPairs) { autoRecentPairs = it }
+            NumericMemoryField("Эконом: последних пар диалога", economyRecentPairs) { economyRecentPairs = it }
+            NumericMemoryField("Баланс: максимум найденных фрагментов", autoTopK) { autoTopK = it }
+            NumericMemoryField("Эконом: максимум найденных фрагментов", economyTopK) { economyTopK = it }
 
             TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
                 Text(if (advanced) "Скрыть дополнительные параметры" else "Дополнительные параметры")
@@ -341,9 +347,13 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                             defaultContextMode = defaultMode,
                             autoThresholdTokens = autoThreshold.toIntOrNull() ?: initial.autoThresholdTokens,
                             economyThresholdTokens = economyThreshold.toIntOrNull() ?: initial.economyThresholdTokens,
-                            autoRecentMessages = autoRecent.toIntOrNull() ?: initial.autoRecentMessages,
-                            economyRecentMessages = economyRecent.toIntOrNull() ?: initial.economyRecentMessages,
-                            topK = topK.toIntOrNull() ?: initial.topK,
+                            autoContextBudgetTokens = autoBudget.toIntOrNull() ?: initial.autoContextBudgetTokens,
+                            economyContextBudgetTokens = economyBudget.toIntOrNull() ?: initial.economyContextBudgetTokens,
+                            autoRecentMessages = (autoRecentPairs.toIntOrNull()?.times(2)) ?: initial.autoRecentMessages,
+                            economyRecentMessages = (economyRecentPairs.toIntOrNull()?.times(2)) ?: initial.economyRecentMessages,
+                            autoTopK = autoTopK.toIntOrNull() ?: initial.autoTopK,
+                            economyTopK = economyTopK.toIntOrNull() ?: initial.economyTopK,
+                            topK = initial.topK,
                             checkpointTokens = checkpointTokens.toIntOrNull() ?: initial.checkpointTokens,
                             chunkTokens = chunkTokens.toIntOrNull() ?: initial.chunkTokens,
                             chunkOverlapTokens = chunkOverlap.toIntOrNull() ?: initial.chunkOverlapTokens,
@@ -421,9 +431,9 @@ private fun adaptiveChunkTarget(requestedTokens: Int, embeddingContextTokens: In
 }
 
 private fun modeLabel(mode: ChatContextMode): String = when (mode) {
-    ChatContextMode.AUTO -> "Автоматический"
+    ChatContextMode.AUTO -> "Баланс"
     ChatContextMode.FULL -> "Всегда полный"
-    ChatContextMode.ECONOMY -> "Экономный"
+    ChatContextMode.ECONOMY -> "Эконом"
 }
 
 private fun formatMemoryBytes(bytes: Long): String = when {
