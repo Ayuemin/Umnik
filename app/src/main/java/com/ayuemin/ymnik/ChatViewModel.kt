@@ -1389,6 +1389,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(profile),
             status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
         refreshModelCapabilities()
         if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
@@ -1452,6 +1453,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(profile),
             status = null
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
         refreshModelCapabilities()
     }
 
@@ -1492,6 +1494,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             tools = profileAgent.tools,
             skillIds = emptySet()
         )
+        val modelInfo = _state.value.modelCatalog.firstOrNull { it.id == modelId }
+            ?: _state.value.availableTextModels.firstOrNull { it.id == modelId }
         projectAutomation.saveProfile(chatId, runtime.copy(modelId = modelId))
 
         _state.value = _state.value.copy(
@@ -1506,6 +1510,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             apiKeyConfigured = isProfileConfigured(connection),
             status = null
         )
+        disableWebSearchForUnsupportedModel(chatId, modelInfo)
         refreshModelCapabilities()
     }
 
@@ -1536,6 +1541,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning
         )
+        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
+        refreshModelCapabilities()
     }
 
     fun setWebSearchEnabled(enabled: Boolean) {
@@ -3519,6 +3526,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 quickTextModels = loadAllQuickTextModels(next.connectionProfiles, next.disabledConnectionIds)
             )
             _state.value = next
+            val refreshedModelInfo = next.availableTextModels.firstOrNull { it.id == (next.currentChatTextModel ?: next.textModel) }
+            disableWebSearchForUnsupportedModel(next.currentChatId, refreshedModelInfo)
         }
     }
 
