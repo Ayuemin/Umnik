@@ -1,4 +1,4 @@
-// Umnik v1.19.3 — search modes, model-aware reasoning and tuned chat memory
+// Umnik v1.19.4 — chat model/search UX and attachment recovery
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 136
-        versionName = "1.19.3"
+        versionCode = 137
+        versionName = "1.19.4"
     }
 
     buildFeatures {
