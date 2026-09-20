@@ -6,6 +6,8 @@ import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
+import com.ayuemin.ymnik.model.normalized
+import com.google.gson.Gson
 import com.google.gson.JsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -109,6 +111,16 @@ class OpenRouterFeaturePayloadTest {
             ServerToolSettings(webSearch = WebSearchMode.AUTO, webSearchPreset = WebSearchPreset.ON_DEMAND)
         )
         assertFalse(onDemandPayload.has("max_tool_calls"))
+    }
+
+    @Test
+    fun legacyFirecrawlSettingFallsBackToAuto() {
+        val stored = Gson().fromJson(
+            """{"webSearch":"AUTO","webSearchPreset":"NORMAL","webSearchEngine":"FIRECRAWL"}""",
+            ServerToolSettings::class.java
+        ).normalized()
+
+        assertEquals(WebSearchEngine.AUTO, stored.webSearchEngine)
     }
 
 }
