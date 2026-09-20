@@ -22,6 +22,8 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image as ComposeImage
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -134,6 +136,8 @@ import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
@@ -154,6 +158,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
@@ -2559,6 +2565,7 @@ private fun GeneratedFileCard(
             BitmapFactory.decodeFile(file.localPath)
         } else null
     }
+    var imageViewerOpen by remember(file.id) { mutableStateOf(false) }
 
     if (bitmap != null) {
         ComposeImage(
@@ -2567,7 +2574,8 @@ private fun GeneratedFileCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1).toFloat())
-                .clip(RoundedCornerShape(14.dp)),
+                .clip(RoundedCornerShape(14.dp))
+                .clickable { imageViewerOpen = true },
             contentScale = ContentScale.Fit
         )
         Spacer(Modifier.height(6.dp))
@@ -2622,6 +2630,86 @@ private fun GeneratedFileCard(
     if (isAudio) {
         Spacer(Modifier.height(6.dp))
         GeneratedAudioPlayer(file)
+    }
+
+    if (imageViewerOpen && bitmap != null) {
+        FullScreenImageViewer(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = file.name,
+            onDismiss = { imageViewerOpen = false }
+        )
+    }
+}
+
+@Composable
+private fun FullScreenImageViewer(
+    bitmap: androidx.compose.ui.graphics.ImageBitmap,
+    contentDescription: String,
+    onDismiss: () -> Unit
+) {
+    var scale by remember(bitmap) { mutableStateOf(1f) }
+    var offset by remember(bitmap) { mutableStateOf(Offset.Zero) }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false
+        )
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = Color.Black
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                ComposeImage(
+                    bitmap = bitmap,
+                    contentDescription = contentDescription,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scale
+                            scaleY = scale
+                            translationX = offset.x
+                            translationY = offset.y
+                        }
+                        .pointerInput(bitmap) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                val nextScale = (scale * zoom).coerceIn(1f, 5f)
+                                scale = nextScale
+                                offset = if (nextScale <= 1.01f) {
+                                    Offset.Zero
+                                } else {
+                                    offset + pan
+                                }
+                            }
+                        }
+                        .pointerInput(bitmap) {
+                            detectTapGestures(
+                                onDoubleTap = {
+                                    if (scale > 1.05f) {
+                                        scale = 1f
+                                        offset = Offset.Zero
+                                    } else {
+                                        scale = 2.5f
+                                    }
+                                }
+                            )
+                        },
+                    contentScale = ContentScale.Fit
+                )
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.align(Alignment.TopEnd).padding(12.dp)
+                ) {
+                    Icon(
+                        Icons.Outlined.Close,
+                        contentDescription = "Закрыть изображение",
+                        tint = Color.White
+                    )
+                }
+            }
+        }
     }
 }
 
