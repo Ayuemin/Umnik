@@ -25,7 +25,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -71,13 +74,10 @@ import androidx.compose.ui.window.DialogProperties
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.BatchJobStatus
-import com.ayuemin.ymnik.model.ModelCapabilityFilter
-import com.ayuemin.ymnik.model.ModelCatalogFilter
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelParameterCapability
 import com.ayuemin.ymnik.model.ModelUniversality
-import com.ayuemin.ymnik.model.ModelPriceFilter
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
@@ -96,7 +96,32 @@ import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
-private enum class ModelCatalogSort { ID, CAPABILITIES, CONTEXT, NEWEST, PRICE }
+private enum class SimpleModelKind {
+    ALL,
+    TEXT,
+    IMAGE,
+    VIDEO,
+    BATCH,
+    SPEECH,
+    TRANSCRIPTION,
+    EMBEDDINGS,
+    RERANK,
+    AUDIO_INPUT,
+    MULTIMODAL,
+    REASONING,
+    TOOLS
+}
+
+private enum class SimplePriceFilter {
+    ALL,
+    FREE,
+    UP_TO_0_02,
+    UP_TO_0_05,
+    UP_TO_0_1,
+    UP_TO_1,
+    UP_TO_5,
+    OVER_5
+}
 
 @Composable
 fun UmnikV16Root(viewModel: ChatViewModel) {
@@ -312,104 +337,61 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
 @Composable
 private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
-    var category by remember { mutableStateOf<ModelCategory?>(null) }
-    var variant by remember { mutableStateOf<ModelVariant?>(null) }
-    var price by remember { mutableStateOf(ModelPriceFilter.ALL) }
-    var capabilities by remember { mutableStateOf(ModelCapabilityFilter()) }
-    var sort by remember { mutableStateOf(ModelCatalogSort.ID) }
-    var filtersExpanded by remember { mutableStateOf(true) }
+    var kind by remember { mutableStateOf(SimpleModelKind.ALL) }
+    var price by remember { mutableStateOf(SimplePriceFilter.ALL) }
+    var sortByCapabilities by remember { mutableStateOf(false) }
+    var moreKindsOpen by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
 
-    val availableCategories = remember(state.catalog) {
-        ModelCategory.entries.filter { candidate -> state.catalog.any { candidate in it.categories } }
-    }
-    val variantOrder = remember {
-        listOf(ModelVariant.BATCH, ModelVariant.FREE, ModelVariant.THINKING, ModelVariant.EXTENDED, ModelVariant.ONLINE, ModelVariant.NITRO, ModelVariant.FLOOR)
-    }
-    val availableVariants = remember(state.catalog) {
-        variantOrder.filter { candidate -> state.catalog.any { candidate in it.variants } }
-    }
-    val availableInputs = remember(state.catalog) {
-        state.catalog.flatMap { it.inputModalities }.map(String::lowercase).distinct().sortedBy(::modalitySortKey)
-    }
-    val availableOutputs = remember(state.catalog) {
-        state.catalog.flatMap { it.outputModalities }.map(String::lowercase).distinct().sortedBy(::modalitySortKey)
-    }
-    val availableParameters = remember(state.catalog) {
-        state.catalog.flatMap { it.supportedParameters }.map(String::lowercase).distinct().sortedBy(::parameterSortKey)
-    }
-    val selectedIds = remember(
-        appState.textModel,
-        appState.currentChatTextModel,
-        appState.quickTextModels,
-        appState.imageModel,
-        state.media,
-        state.rag
-    ) {
-        buildSet {
-            add(appState.textModel)
-            appState.currentChatTextModel?.let(::add)
-            appState.quickTextModels.forEach { add(it.substringAfter('\u001F')) }
-            add(appState.imageModel)
-            add(state.media.batchModel)
-            add(state.media.videoModel)
-            add(state.media.speechModel)
-            add(state.media.transcriptionModel)
-            add(state.rag.embeddingModel)
-            add(state.rag.rerankModel)
-        }.filter(String::isNotBlank).toSet()
-    }
-
-    val filtered = remember(state.catalog, query, category, variant, price, capabilities, sort, selectedIds) {
-        val base = ModelCatalogFilter.apply(
-            state.catalog,
-            query,
-            category,
-            variant,
-            price,
-            capabilities,
-            limit = Int.MAX_VALUE
+    val mainKinds = remember {
+        listOf(
+            SimpleModelKind.ALL,
+            SimpleModelKind.TEXT,
+            SimpleModelKind.IMAGE,
+            SimpleModelKind.VIDEO,
+            SimpleModelKind.BATCH,
+            SimpleModelKind.SPEECH
         )
-        val sorted = when (sort) {
-            ModelCatalogSort.ID -> base.sortedWith(
-                compareByDescending<ModelInfo> { it.id in selectedIds }.thenBy { it.id }
-            )
-            ModelCatalogSort.CAPABILITIES -> base.sortedWith(
-                compareByDescending<ModelInfo> { it.id in selectedIds }
-                    .thenByDescending { ModelUniversality.score(it).total }
-                    .thenBy { it.id }
-            )
-            ModelCatalogSort.CONTEXT -> base.sortedWith(
-                compareByDescending<ModelInfo> { it.id in selectedIds }
-                    .thenByDescending { maxOf(it.contextLength ?: 0, it.topProviderContextLength ?: 0) }
-                    .thenBy { it.id }
-            )
-            ModelCatalogSort.NEWEST -> base.sortedWith(
-                compareByDescending<ModelInfo> { it.id in selectedIds }
-                    .thenByDescending { it.createdAtEpochSeconds ?: 0L }
-                    .thenBy { it.id }
-            )
-            ModelCatalogSort.PRICE -> base.sortedWith(
-                compareByDescending<ModelInfo> { it.id in selectedIds }
-                    .thenBy { it.catalogPriceFor(category) ?: Double.MAX_VALUE }
-                    .thenBy { it.id }
-            )
-        }
-        sorted.take(700)
+    }
+    val extraKinds = remember {
+        listOf(
+            SimpleModelKind.TRANSCRIPTION,
+            SimpleModelKind.EMBEDDINGS,
+            SimpleModelKind.RERANK,
+            SimpleModelKind.AUDIO_INPUT,
+            SimpleModelKind.MULTIMODAL,
+            SimpleModelKind.REASONING,
+            SimpleModelKind.TOOLS
+        )
     }
 
-    LaunchedEffect(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset) {
-        if (filtersExpanded && (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 48)) {
-            filtersExpanded = false
-        }
-    }
-
-    fun resetFilters() {
-        category = null
-        variant = null
-        price = ModelPriceFilter.ALL
-        capabilities = ModelCapabilityFilter()
-        sort = ModelCatalogSort.ID
+    val filtered = remember(state.catalog, query, kind, price, sortByCapabilities) {
+        val needle = query.trim()
+        state.catalog.asSequence()
+            .filter { model ->
+                needle.isBlank() || listOfNotNull(
+                    model.id,
+                    model.name,
+                    model.description,
+                    model.canonicalSlug,
+                    model.huggingFaceId,
+                    model.providerId
+                ).any { it.contains(needle, ignoreCase = true) }
+            }
+            .filter { model -> modelMatchesSimpleKind(model, kind) }
+            .filter { model -> modelMatchesSimplePrice(model, kind, price) }
+            .sortedWith(
+                if (sortByCapabilities) {
+                    compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
+                        .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                        .thenBy { it.id }
+                } else {
+                    compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                        .thenBy { it.id }
+                }
+            )
+            .take(700)
+            .toList()
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -423,180 +405,96 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Название, ID, описание, провайдер") }
+                placeholder = { Text("Название модели или ID") }
             )
-            TextButton(onClick = { filtersExpanded = !filtersExpanded }) {
-                Text(if (filtersExpanded) "Свернуть" else "Подбор")
-            }
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
         }
 
-        if (filtersExpanded) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 2.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    "Подбор моделей по критериям",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
-                val extraCount = (if (category != null) 1 else 0) +
-                    (if (variant != null) 1 else 0) +
-                    (if (price != ModelPriceFilter.ALL) 1 else 0) +
-                    capabilities.activeCount
-                if (extraCount > 0) {
-                    TextButton(onClick = ::resetFilters) { Text("Сбросить (${extraCount})") }
-                }
-            }
-
-            Text("Быстрые условия", modifier = Modifier.padding(start = 14.dp), style = MaterialTheme.typography.labelMedium)
+        Text(
+            "Тип",
+            modifier = Modifier.padding(start = 14.dp, top = 1.dp),
+            style = MaterialTheme.typography.labelMedium
+        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                item {
-                    CapabilityChip("Мультимодальный чат", capabilities.multimodal) {
-                        capabilities = capabilities.copy(multimodal = !capabilities.multimodal)
-                    }
-                }
-                item {
-                    CapabilityChip("Reasoning", capabilities.reasoning) {
-                        capabilities = capabilities.copy(reasoning = !capabilities.reasoning)
-                    }
-                }
-                item {
-                    CapabilityChip("Tools", capabilities.tools) {
-                        capabilities = capabilities.copy(tools = !capabilities.tools)
-                    }
-                }
-                item {
-                    CapabilityChip("Streaming", capabilities.streaming) {
-                        capabilities = capabilities.copy(streaming = !capabilities.streaming)
-                    }
+                items(mainKinds) { item ->
+                    FilterChip(
+                        selected = kind == item,
+                        onClick = { kind = item },
+                        label = { Text(simpleModelKindLabel(item)) }
+                    )
                 }
             }
-            Text(
-                "«Мультимодальный чат» = одна модель принимает текст+изображение и умеет выдавать и текст, и изображение.",
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            Spacer(Modifier.width(6.dp))
+            FilterChip(
+                selected = kind in extraKinds,
+                onClick = { moreKindsOpen = true },
+                label = {
+                    Text(
+                        if (kind in extraKinds) simpleModelKindLabel(kind) else "Больше",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             )
+        }
 
-            Text("Что модель должна принимать", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(availableInputs) { modality ->
-                    val selected = modality in capabilities.requiredInputModalities
-                    CapabilityChip(modalityLabel(modality), selected) {
-                        capabilities = capabilities.copy(
-                            requiredInputModalities = capabilities.requiredInputModalities.toggle(modality)
-                        )
+        Text(
+            "Стоимость",
+            modifier = Modifier.padding(start = 14.dp, top = 4.dp),
+            style = MaterialTheme.typography.labelMedium
+        )
+        LazyRow(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            items(SimplePriceFilter.entries) { item ->
+                FilterChip(
+                    selected = price == item,
+                    onClick = { price = item },
+                    label = { Text(simplePriceFilterLabel(item)) }
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            FilterChip(
+                selected = sortByCapabilities,
+                onClick = { sortByCapabilities = !sortByCapabilities },
+                label = { Text(if (sortByCapabilities) "Возможности ↓" else "По возможностям") }
+            )
+            Spacer(Modifier.weight(1f))
+            if (kind != SimpleModelKind.ALL || price != SimplePriceFilter.ALL || sortByCapabilities) {
+                TextButton(
+                    onClick = {
+                        kind = SimpleModelKind.ALL
+                        price = SimplePriceFilter.ALL
+                        sortByCapabilities = false
                     }
-                }
-            }
-
-            Text("Что модель должна выдавать", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(availableOutputs) { modality ->
-                    val selected = modality in capabilities.requiredOutputModalities
-                    CapabilityChip(modalityLabel(modality), selected) {
-                        capabilities = capabilities.copy(
-                            requiredOutputModalities = capabilities.requiredOutputModalities.toggle(modality)
-                        )
-                    }
-                }
-            }
-
-            Text("Возможности API модели", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(availableParameters) { parameter ->
-                    val selected = parameter in capabilities.requiredParameters
-                    CapabilityChip(parameterLabel(parameter), selected) {
-                        capabilities = capabilities.copy(
-                            requiredParameters = capabilities.requiredParameters.toggle(parameter)
-                        )
-                    }
-                }
-            }
-
-            Text("Минимальный контекст", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(listOf<Int?>(null, 32_000, 128_000, 256_000, 1_000_000)) { minimum ->
-                    FilterChip(
-                        selected = capabilities.minContextTokens == minimum,
-                        onClick = { capabilities = capabilities.copy(minContextTokens = minimum) },
-                        label = { Text(minimum?.let(::compactTokenCount) ?: "Любой") }
-                    )
-                }
-            }
-
-            Text("Максимальный ответ не меньше", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(listOf<Int?>(null, 4_096, 16_384, 65_536)) { minimum ->
-                    FilterChip(
-                        selected = capabilities.minMaxCompletionTokens == minimum,
-                        onClick = { capabilities = capabilities.copy(minMaxCompletionTokens = minimum) },
-                        label = { Text(minimum?.let(::compactTokenCount) ?: "Любой") }
-                    )
-                }
-            }
-
-            Text("Категории", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                item { FilterChip(selected = category == null, onClick = { category = null }, label = { Text("Все") }) }
-                items(availableCategories) { item ->
-                    FilterChip(selected = category == item, onClick = { category = item }, label = { Text(categoryLabel(item)) })
-                }
-            }
-
-            Text("Варианты", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                item { FilterChip(selected = variant == null, onClick = { variant = null }, label = { Text("Все") }) }
-                items(availableVariants) { item ->
-                    FilterChip(selected = variant == item, onClick = { variant = item }, label = { Text(variantLabel(item)) })
-                }
-            }
-
-            val priceOptions = when (category) {
-                ModelCategory.TEXT, ModelCategory.IMAGE -> ModelPriceFilter.entries.toList()
-                else -> listOf(ModelPriceFilter.ALL, ModelPriceFilter.FREE)
-            }
-            Text(priceSectionLabel(category), modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(priceOptions) { item ->
-                    FilterChip(selected = price == item, onClick = { price = item }, label = { Text(priceFilterLabel(item, category)) })
-                }
-            }
-
-            Text("Сортировка", modifier = Modifier.padding(start = 14.dp, top = 4.dp), style = MaterialTheme.typography.labelMedium)
-            LazyRow(modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(ModelCatalogSort.entries) { item ->
-                    FilterChip(selected = sort == item, onClick = { sort = item }, label = { Text(modelSortLabel(item)) })
+                ) {
+                    Text("Сбросить")
                 }
             }
         }
 
         Text(
-            "Показано ${filtered.size} из ${state.catalog.size} · выбранные модели сверху",
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 3.dp),
+            buildString {
+                append("Показано ${filtered.size} из ${state.catalog.size}")
+                if (!sortByCapabilities) append(" · по алфавиту")
+                else append(" · больше возможностей выше")
+            },
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -608,16 +506,53 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             if (filtered.isEmpty()) {
-                item { Text(if (state.loading) "Каталог загружается…" else "По выбранным критериям моделей нет", modifier = Modifier.padding(16.dp)) }
+                item {
+                    Text(
+                        if (state.loading) "Каталог загружается…" else "По выбранным условиям моделей нет",
+                        modifier = Modifier.padding(16.dp)
+                    )
+                }
             }
-            items(filtered, key = { it.id }) { model -> ModelCatalogCard(model, controller, appState, state) }
+            items(filtered, key = { it.id }) { model ->
+                ModelCatalogCard(model, controller, appState, state)
+            }
         }
     }
-}
 
-@Composable
-private fun CapabilityChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    FilterChip(selected = selected, onClick = onClick, label = { Text(label) })
+    if (moreKindsOpen) {
+        AlertDialog(
+            onDismissRequest = { moreKindsOpen = false },
+            title = { Text("Другие типы и возможности") },
+            text = {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(2),
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    gridItems(extraKinds) { item ->
+                        FilterChip(
+                            selected = kind == item,
+                            onClick = {
+                                kind = item
+                                moreKindsOpen = false
+                            },
+                            label = {
+                                Text(
+                                    simpleModelKindLabel(item),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { moreKindsOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
 }
 
 @Composable
@@ -998,9 +933,6 @@ private fun modalityLabel(value: String): String = when (value.trim().lowercase(
     else -> value
 }
 
-private fun Set<String>.toggle(value: String): Set<String> =
-    if (value in this) this - value else this + value
-
 private fun modalitySortKey(value: String): String = when (value.lowercase()) {
     "text" -> "00"
     "image" -> "01"
@@ -1040,13 +972,120 @@ private fun parameterLabel(value: String): String = when (value.lowercase()) {
     else -> value
 }
 
-private fun modelSortLabel(value: ModelCatalogSort): String = when (value) {
-    ModelCatalogSort.ID -> "По имени"
-    ModelCatalogSort.CAPABILITIES -> "Больше возможностей"
-    ModelCatalogSort.CONTEXT -> "Большой контекст"
-    ModelCatalogSort.NEWEST -> "Новые"
-    ModelCatalogSort.PRICE -> "Дешевле"
+private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) {
+    SimpleModelKind.ALL -> "Все"
+    SimpleModelKind.TEXT -> "Текст"
+    SimpleModelKind.IMAGE -> "Изображения"
+    SimpleModelKind.VIDEO -> "Видео"
+    SimpleModelKind.BATCH -> "Batch"
+    SimpleModelKind.SPEECH -> "Озвучка"
+    SimpleModelKind.TRANSCRIPTION -> "Распознавание речи"
+    SimpleModelKind.EMBEDDINGS -> "Поиск по документам"
+    SimpleModelKind.RERANK -> "Rerank"
+    SimpleModelKind.AUDIO_INPUT -> "Аудио на вход"
+    SimpleModelKind.MULTIMODAL -> "Мультимодальный чат"
+    SimpleModelKind.REASONING -> "Reasoning"
+    SimpleModelKind.TOOLS -> "Tools"
 }
+
+private fun simplePriceFilterLabel(value: SimplePriceFilter): String = when (value) {
+    SimplePriceFilter.ALL -> "Все"
+    SimplePriceFilter.FREE -> "Бесплатно"
+    SimplePriceFilter.UP_TO_0_02 -> "до \$0,02"
+    SimplePriceFilter.UP_TO_0_05 -> "до \$0,05"
+    SimplePriceFilter.UP_TO_0_1 -> "до \$0,1"
+    SimplePriceFilter.UP_TO_1 -> "до \$1"
+    SimplePriceFilter.UP_TO_5 -> "до \$5"
+    SimplePriceFilter.OVER_5 -> "более \$5"
+}
+
+private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
+    SimpleModelKind.ALL -> true
+    SimpleModelKind.TEXT -> ModelCategory.TEXT in model.categories && !model.isBatch
+    SimpleModelKind.IMAGE -> ModelCategory.IMAGE in model.categories
+    SimpleModelKind.VIDEO -> ModelCategory.VIDEO in model.categories
+    SimpleModelKind.BATCH -> model.isBatch
+    SimpleModelKind.SPEECH -> ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories
+    SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION in model.categories
+    SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS in model.categories
+    SimpleModelKind.RERANK -> ModelCategory.RERANK in model.categories
+    SimpleModelKind.AUDIO_INPUT -> model.accepts("audio")
+    SimpleModelKind.MULTIMODAL -> model.isMultimodalChat
+    SimpleModelKind.REASONING -> model.supportsReasoning
+    SimpleModelKind.TOOLS -> model.supportsTools
+}
+
+private fun modelMatchesSimplePrice(
+    model: ModelInfo,
+    kind: SimpleModelKind,
+    filter: SimplePriceFilter
+): Boolean {
+    if (filter == SimplePriceFilter.ALL) return true
+    if (filter == SimplePriceFilter.FREE) return isSimpleCatalogFree(model, kind)
+
+    val value = simpleCatalogPrice(model, kind) ?: return false
+    return when (filter) {
+        SimplePriceFilter.ALL, SimplePriceFilter.FREE -> true
+        SimplePriceFilter.UP_TO_0_02 -> value <= 0.02
+        SimplePriceFilter.UP_TO_0_05 -> value <= 0.05
+        SimplePriceFilter.UP_TO_0_1 -> value <= 0.10
+        SimplePriceFilter.UP_TO_1 -> value <= 1.0
+        SimplePriceFilter.UP_TO_5 -> value <= 5.0
+        SimplePriceFilter.OVER_5 -> value > 5.0
+    }
+}
+
+private fun isSimpleCatalogFree(model: ModelInfo, kind: SimpleModelKind): Boolean {
+    if (ModelVariant.FREE in model.variants) return true
+    val category = simplePriceCategory(kind, model)
+    if (category == ModelCategory.TEXT || category == ModelCategory.IMAGE) {
+        return model.isFreeFor(category)
+    }
+    val prices = simpleRawUnitPrices(model)
+    return prices.isNotEmpty() && prices.all { it <= 0.0 }
+}
+
+private fun simpleCatalogPrice(model: ModelInfo, kind: SimpleModelKind): Double? {
+    return when (simplePriceCategory(kind, model)) {
+        ModelCategory.TEXT -> model.maxTextPriceUsdPerMillion
+        ModelCategory.IMAGE -> model.estimatedImageOutputUsd1K ?: model.imagePriceUsd
+        ModelCategory.EMBEDDINGS, ModelCategory.RERANK -> model.maxTextPriceUsdPerMillion
+        else -> simpleRawUnitPrices(model).filter { it > 0.0 }.minOrNull()
+            ?: simpleRawUnitPrices(model).firstOrNull()
+            ?: model.maxTextPriceUsdPerMillion
+            ?: model.estimatedImageOutputUsd1K
+    }
+}
+
+private fun simplePriceCategory(kind: SimpleModelKind, model: ModelInfo): ModelCategory? = when (kind) {
+    SimpleModelKind.TEXT, SimpleModelKind.BATCH -> ModelCategory.TEXT
+    SimpleModelKind.IMAGE -> ModelCategory.IMAGE
+    SimpleModelKind.VIDEO -> ModelCategory.VIDEO
+    SimpleModelKind.SPEECH -> ModelCategory.SPEECH
+    SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION
+    SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS
+    SimpleModelKind.RERANK -> ModelCategory.RERANK
+    SimpleModelKind.ALL, SimpleModelKind.AUDIO_INPUT, SimpleModelKind.MULTIMODAL,
+    SimpleModelKind.REASONING, SimpleModelKind.TOOLS -> when {
+        model.outputModalities == setOf("image") -> ModelCategory.IMAGE
+        ModelCategory.TEXT in model.categories -> ModelCategory.TEXT
+        ModelCategory.VIDEO in model.categories -> ModelCategory.VIDEO
+        ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories -> ModelCategory.SPEECH
+        ModelCategory.TRANSCRIPTION in model.categories -> ModelCategory.TRANSCRIPTION
+        ModelCategory.EMBEDDINGS in model.categories -> ModelCategory.EMBEDDINGS
+        ModelCategory.RERANK in model.categories -> ModelCategory.RERANK
+        else -> null
+    }
+}
+
+private fun simpleRawUnitPrices(model: ModelInfo): List<Double> {
+    val tokenKeys = setOf("prompt", "completion", "internal_reasoning", "image_token", "image_output")
+    return model.pricingUsd
+        .filterKeys { it.lowercase() !in tokenKeys }
+        .values
+        .toList()
+}
+
 
 private fun compactTokenCount(value: Int): String = when {
     value >= 1_000_000 -> {
@@ -1106,21 +1145,6 @@ private fun pricingFieldLabel(value: String): String = when (value) {
 private fun formatRawPricing(key: String, value: Double): String = when (key) {
     "prompt", "completion" -> "${formatCatalogPrice(value * 1_000_000.0)} / 1M токенов"
     else -> formatCatalogPrice(value)
-}
-
-private fun priceSectionLabel(category: ModelCategory?): String = when (category) {
-    ModelCategory.IMAGE -> "Цена изображения (≈ для 1K; точная зависит от параметров)"
-    ModelCategory.TEXT -> "Цена текста (макс. вход/выход за 1M токенов)"
-    else -> "Цена"
-}
-
-private fun priceFilterLabel(value: ModelPriceFilter, category: ModelCategory?): String = when (value) {
-    ModelPriceFilter.ALL -> "Все"
-    ModelPriceFilter.FREE -> "Бесплатно"
-    ModelPriceFilter.UP_TO_0_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.02" else "≤ \$0.5/M"
-    ModelPriceFilter.UP_TO_1 -> if (category == ModelCategory.IMAGE) "≤ \$0.05" else "≤ \$1/M"
-    ModelPriceFilter.UP_TO_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.10" else "≤ \$5/M"
-    ModelPriceFilter.UP_TO_10 -> if (category == ModelCategory.IMAGE) "≤ \$0.20" else "≤ \$10/M"
 }
 
 private fun catalogPriceText(model: ModelInfo): String? {
