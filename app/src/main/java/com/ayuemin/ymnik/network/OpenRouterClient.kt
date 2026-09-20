@@ -150,69 +150,7 @@ class OpenRouterClient(
             if (!response.isSuccessful) error(apiError(response.code, body))
             val root = gson.fromJson(body, JsonObject::class.java)
             return root.getAsJsonArray("data")
-                ?.mapNotNull { element ->
-                    val item = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-                    val id = item.get("id")?.asString?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val inputModalities = item.getAsJsonObject("architecture")
-                        ?.getAsJsonArray("input_modalities")
-                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                        ?.toSet()
-                        .orEmpty()
-                        .ifEmpty { setOf("text") }
-                    val supportedParameters = when (val supported = item.get("supported_parameters")) {
-                        null -> emptySet()
-                        else -> when {
-                            supported.isJsonArray -> supported.asJsonArray
-                                .mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                                .toSet()
-                            supported.isJsonObject -> supported.asJsonObject.keySet().map { it.lowercase() }.toSet()
-                            else -> emptySet()
-                        }
-                    }
-                    val reasoningEfforts = item.getAsJsonObject("reasoning")
-                        ?.getAsJsonArray("supported_efforts")
-                        ?.mapNotNull { it.takeIf { value -> value.isJsonPrimitive }?.asString?.lowercase() }
-                        ?.toSet()
-                        .orEmpty()
-                    val reasoningInfo = item.getAsJsonObject("reasoning")
-                    val contextLength = runCatching { item.get("context_length")?.asInt }.getOrNull()
-                        ?.takeIf { it > 0 }
-                    val maxCompletionTokens = runCatching {
-                        item.getAsJsonObject("top_provider")?.get("max_completion_tokens")?.asInt
-                    }.getOrNull()?.takeIf { it > 0 }
-                    val parameterOptions = item.get("supported_parameters")
-                        ?.takeIf { it.isJsonObject }
-                        ?.asJsonObject
-                        ?.entrySet()
-                        ?.mapNotNull { (name, descriptor) ->
-                            val values = descriptor.takeIf { it.isJsonObject }
-                                ?.asJsonObject
-                                ?.get("values")
-                                ?.takeIf { it.isJsonArray }
-                                ?.asJsonArray
-                                ?.mapNotNull { value ->
-                                    value.takeIf { it.isJsonPrimitive }
-                                        ?.asString
-                                        ?.takeIf { it.isNotBlank() }
-                                }
-                                .orEmpty()
-                                .distinct()
-                            if (values.isEmpty()) null else name.lowercase() to values
-                        }
-                        ?.toMap()
-                        .orEmpty()
-                    ModelInfo(
-                        id = id,
-                        inputModalities = inputModalities,
-                        supportedParameters = supportedParameters,
-                        reasoningEfforts = reasoningEfforts,
-                        parameterOptions = parameterOptions,
-                        contextLength = contextLength,
-                        maxCompletionTokens = maxCompletionTokens,
-                        reasoningMandatory = runCatching { reasoningInfo?.get("mandatory")?.asBoolean }.getOrNull() == true,
-                        reasoningDefaultEnabled = runCatching { reasoningInfo?.get("default_enabled")?.asBoolean }.getOrNull() == true
-                    )
-                }
+                ?.mapNotNull(OpenRouterModelCatalog::parse)
                 ?.distinctBy { it.id }
                 ?.sortedBy { it.id }
                 ?: emptyList()
