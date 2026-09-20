@@ -74,13 +74,10 @@ import androidx.compose.ui.window.DialogProperties
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.BatchJobStatus
-import com.ayuemin.ymnik.model.ModelCapabilityFilter
-import com.ayuemin.ymnik.model.ModelCatalogFilter
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelParameterCapability
 import com.ayuemin.ymnik.model.ModelUniversality
-import com.ayuemin.ymnik.model.ModelPriceFilter
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
@@ -936,9 +933,6 @@ private fun modalityLabel(value: String): String = when (value.trim().lowercase(
     else -> value
 }
 
-private fun Set<String>.toggle(value: String): Set<String> =
-    if (value in this) this - value else this + value
-
 private fun modalitySortKey(value: String): String = when (value.lowercase()) {
     "text" -> "00"
     "image" -> "01"
@@ -1151,21 +1145,6 @@ private fun pricingFieldLabel(value: String): String = when (value) {
 private fun formatRawPricing(key: String, value: Double): String = when (key) {
     "prompt", "completion" -> "${formatCatalogPrice(value * 1_000_000.0)} / 1M токенов"
     else -> formatCatalogPrice(value)
-}
-
-private fun priceSectionLabel(category: ModelCategory?): String = when (category) {
-    ModelCategory.IMAGE -> "Цена изображения (≈ для 1K; точная зависит от параметров)"
-    ModelCategory.TEXT -> "Цена текста (макс. вход/выход за 1M токенов)"
-    else -> "Цена"
-}
-
-private fun priceFilterLabel(value: ModelPriceFilter, category: ModelCategory?): String = when (value) {
-    ModelPriceFilter.ALL -> "Все"
-    ModelPriceFilter.FREE -> "Бесплатно"
-    ModelPriceFilter.UP_TO_0_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.02" else "≤ \$0.5/M"
-    ModelPriceFilter.UP_TO_1 -> if (category == ModelCategory.IMAGE) "≤ \$0.05" else "≤ \$1/M"
-    ModelPriceFilter.UP_TO_5 -> if (category == ModelCategory.IMAGE) "≤ \$0.10" else "≤ \$5/M"
-    ModelPriceFilter.UP_TO_10 -> if (category == ModelCategory.IMAGE) "≤ \$0.20" else "≤ \$10/M"
 }
 
 private fun catalogPriceText(model: ModelInfo): String? {
