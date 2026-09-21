@@ -2,9 +2,6 @@ AntiFeatures:
   NonFreeNet:
     en-US: Depends on OpenRouter, a proprietary network service, for AI requests.
     ru-RU: Для ИИ-запросов используется проприетарный сетевой сервис OpenRouter.
-  TetheredNet:
-    en-US: Requires OpenRouter and does not offer a user-selectable replacement service.
-    ru-RU: Для работы требуется OpenRouter, заменить сервис через настройки приложения нельзя.
 
 Categories:
   - AI Chat
