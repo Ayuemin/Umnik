@@ -64,6 +64,6 @@ The candidate recipe therefore uses `Binaries` and `AllowedAPKSigningKeys`, allo
 
 ## Remaining submission work
 
-2. Optionally add at least one real screenshot or feature graphic to the upstream Fastlane metadata so the app can qualify for F-Droid's Latest tab. The launcher icon is already included in the APK.
-2. Run `fdroid readmeta`, `fdroid lint` and `fdroid build` against the pinned v1.19.9 release commit.
-5. Submit the final metadata as a merge request to `fdroid/fdroiddata`.
+1. Optionally add at least one real screenshot or feature graphic to the upstream Fastlane metadata. The launcher icon is already included in the APK.
+2. Submit `docs/fdroiddata/com.ayuemin.umnik.yml` as `metadata/com.ayuemin.umnik.yml` in a merge request to `fdroid/fdroiddata`.
+3. Follow the F-Droid GitLab CI and packager review; apply any requested metadata-only adjustments upstream as well.
