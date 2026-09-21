@@ -23,6 +23,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -58,6 +59,7 @@ fun KnowledgeBaseSection(
     val context = LocalContext.current
     val current = vm.knowledgeSettings(kind, ownerId)
     val documents = vm.knowledgeDocuments(kind, ownerId)
+    val knowledgeTask = vm.knowledgeTaskLabel(kind, ownerId)
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
     var modelId by remember(ownerId, current.embeddingModelId) { mutableStateOf(current.embeddingModelId) }
@@ -98,6 +100,7 @@ fun KnowledgeBaseSection(
         SettingsExpander(
             title = title,
             subtitle = when {
+                knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
                 documents.isEmpty() -> "Нет источников"
                 !enabled -> "${documents.size} источн. · автопоиск выключен"
                 else -> "${documents.size} источн. · RAG включён"
@@ -112,6 +115,23 @@ fun KnowledgeBaseSection(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+
+        if (knowledgeTask != null) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(knowledgeTask, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Индексация работает отдельно. Можно перейти в другой чат или настройки — Umnik больше не блокируется целиком.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Использовать автоматически", Modifier.weight(1f))
@@ -207,13 +227,13 @@ fun KnowledgeBaseSection(
                         }
                         IconButton(
                             onClick = { vm.reindexKnowledgeDocument(document.id, modelId) },
-                            enabled = !state.isLoading && !state.requestActive
+                            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = "Переиндексировать")
                         }
                         IconButton(
                             onClick = { vm.deleteKnowledgeDocument(document.id) },
-                            enabled = !state.isLoading && !state.requestActive
+                            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
                         ) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить из базы знаний")
                         }
@@ -224,7 +244,7 @@ fun KnowledgeBaseSection(
 
         FilledTonalButton(
             onClick = { addDocuments.launch(arrayOf("*/*")) },
-            enabled = !state.isLoading && !state.requestActive,
+            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive,
             modifier = Modifier.fillMaxWidth()
         ) {
             Icon(Icons.Outlined.Add, contentDescription = null)
