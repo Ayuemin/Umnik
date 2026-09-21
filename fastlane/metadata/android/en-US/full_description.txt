@@ -1,0 +1,14 @@
+Umnik is a local-first Android client for working with AI models through OpenRouter.
+
+Features include:
+• chats with model selection, files, images, audio, reasoning and web search where supported;
+• long-chat memory and hybrid context;
+• reusable skills and local knowledge bases;
+• projects with independent AI agents and an orchestrator;
+• image generation, speech, transcription, Batch and video features where supported;
+• user-initiated background request handling;
+• local chat, project, settings and diagnostic storage.
+
+The user supplies their own OpenRouter API key. Umnik has no ads, analytics SDK or mandatory developer telemetry.
+
+Chat content and files stay on the device unless the user explicitly sends them to OpenRouter. OpenRouter and individual model providers are third-party network services with their own terms, privacy policies and pricing.
