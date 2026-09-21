@@ -1,0 +1,1 @@
+Knowledge-base indexing no longer blocks the whole app, FB2 is supported directly, and release builds now use R8 as requested during F-Droid review.
