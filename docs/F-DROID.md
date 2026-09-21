@@ -15,12 +15,9 @@ Umnik is being prepared for submission to the official F-Droid repository.
 
 Umnik is an OpenRouter client. The user supplies their own OpenRouter API key.
 
-The proposed F-Droid metadata therefore declares both:
+The proposed F-Droid metadata declares `NonFreeNet`, because OpenRouter is a proprietary network service.
 
-- `NonFreeNet`, because OpenRouter is a proprietary network service;
-- `TetheredNet`, because the app is designed for that service and does not offer a simple alternative-server setting.
-
-These are informational F-Droid anti-feature labels, not bundled proprietary SDKs.
+This matches the treatment of existing OpenRouter clients in the official F-Droid catalog. It is an informational anti-feature label, not a bundled proprietary SDK.
 
 ## Build
 
