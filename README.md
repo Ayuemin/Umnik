@@ -96,6 +96,7 @@ API-ключ OpenRouter хранится локально с использов�
 - [docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md) — Оркестратор и передача работы;
 - [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md) — базы знаний;
 - [CHANGELOG.md](CHANGELOG.md) — история изменений.
+- [docs/F-DROID.md](docs/F-DROID.md) — подготовка и сопровождение публикации в F-Droid.
 
 В самом приложении есть **Настройки → Диагностика и о приложении → Памятка Umnik**. Памятка работает локально и не отправляет запрос модели.
 
