@@ -2,7 +2,6 @@ AntiFeatures:
   NonFreeNet:
     en-US: Depends on OpenRouter, a proprietary network service, for AI requests.
     ru-RU: Для ИИ-запросов используется проприетарный сетевой сервис OpenRouter.
-
 Categories:
   - AI Chat
 License: GPL-3.0-or-later
@@ -18,9 +17,9 @@ Repo: https://github.com/Ayuemin/Umnik.git
 Binaries: https://github.com/Ayuemin/Umnik/releases/download/v%v/Umnik-v%v.apk
 
 Builds:
-  - versionName: 1.19.9
-    versionCode: 142
-    commit: 0f573321f89da7dd5ef74e53bce1913b144fda99
+  - versionName: 1.19.10
+    versionCode: 143
+    commit: 3d720b422e94ccd2451ef720ba1834375758c732
     subdir: app
     gradle:
       - yes
@@ -29,5 +28,5 @@ AllowedAPKSigningKeys: bc0c8bfe9031c29fc3148fdc52c1cb84d897682b83af73e37f3af670f
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
-CurrentVersion: 1.19.9
-CurrentVersionCode: 142
+CurrentVersion: 1.19.10
+CurrentVersionCode: 143
