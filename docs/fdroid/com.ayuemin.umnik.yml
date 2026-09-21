@@ -1,0 +1,32 @@
+AntiFeatures:
+  NonFreeNet:
+    en-US: Depends on OpenRouter, a proprietary network service, for AI model access.
+  TetheredNet:
+    en-US: Requires the OpenRouter service and does not provide a user-selectable replacement service.
+
+Categories:
+  - AI Chat
+License: GPL-3.0-or-later
+AuthorName: Ayuemin
+SourceCode: https://github.com/Ayuemin/Umnik
+IssueTracker: https://github.com/Ayuemin/Umnik/issues
+Changelog: https://github.com/Ayuemin/Umnik/blob/main/CHANGELOG.md
+
+AutoName: Umnik
+
+RepoType: git
+Repo: https://github.com/Ayuemin/Umnik.git
+
+Builds:
+  - versionName: 1.19.8
+    versionCode: 141
+    commit: 6b740f93f4a2632625f0b4181778731c7ba0cd32
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+UpdateCheckData: 'app/build.gradle.kts|versionCode\s*=\s*(\d+)|.|versionName\s*=\s*"([^"]+)"'
+CurrentVersion: 1.19.8
+CurrentVersionCode: 141
