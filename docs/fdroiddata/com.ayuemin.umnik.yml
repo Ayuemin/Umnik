@@ -1,0 +1,30 @@
+Categories:
+  - Internet
+License: GPL-3.0-or-later
+SourceCode: https://github.com/Ayuemin/Umnik
+IssueTracker: https://github.com/Ayuemin/Umnik/issues
+Changelog: https://github.com/Ayuemin/Umnik/blob/HEAD/CHANGELOG.md
+
+AntiFeatures:
+  NonFreeNet:
+    en-US: Uses OpenRouter, a proprietary network service, for AI requests.
+    ru-RU: Для ИИ-запросов используется проприетарный сетевой сервис OpenRouter.
+  TetheredNet:
+    en-US: The app is designed to connect to the OpenRouter service.
+    ru-RU: Приложение рассчитано на подключение к сервису OpenRouter.
+
+RepoType: git
+Repo: https://github.com/Ayuemin/Umnik.git
+
+Builds:
+  - versionName: 1.19.8
+    versionCode: 141
+    commit: 6b740f93f4a2632625f0b4181778731c7ba0cd32
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+CurrentVersion: 1.19.8
+CurrentVersionCode: 141
