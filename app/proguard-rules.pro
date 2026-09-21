@@ -25,3 +25,7 @@
 -keepclassmembers class * {
     @com.google.gson.annotations.SerializedName <fields>;
 }
+
+# pdfbox-android references an optional JPEG-2000 decoder that is not bundled.
+# Umnik only extracts text from PDFs; suppress the optional-class warning.
+-dontwarn com.gemalto.jp2.**
