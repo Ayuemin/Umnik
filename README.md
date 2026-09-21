@@ -1,6 +1,6 @@
 # Umnik
 
-Android-клиент для работы с моделями OpenRouter.
+Android-клиент для работы с моделями OpenRouter с поддержкой дополнительных OpenAI-совместимых API.
 
 [![Android CI](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Ayuemin/Umnik?display_name=tag)](https://github.com/Ayuemin/Umnik/releases/latest)
@@ -11,6 +11,8 @@ Android-клиент для работы с моделями OpenRouter.
 ## Что есть в приложении
 
 Umnik использует личный API-ключ OpenRouter. Встроенной подписки на модели нет: запросы оплачиваются по тарифам выбранных моделей.
+
+OpenRouter встроен как основной полнофункциональный профиль. Дополнительно можно добавить собственный OpenAI-совместимый API-адрес и ключ; для таких подключений Umnik использует безопасный текстовый режим и не включает неподтверждённые возможности автоматически.
 
 Основные возможности:
 
@@ -103,7 +105,9 @@ API-ключ OpenRouter хранится локально с использов�
 
 Проект использует Kotlin, Jetpack Compose и Material 3. Минимальная версия Android — API 26.
 
-CI выполняет Android Lint, unit-тесты и сборку через GitHub Actions. Официальные релизы собираются и подписываются отдельным release workflow.
+CI выполняет Android Lint, unit-тесты, debug-сборку и неподписанную release-сборку через GitHub Actions. Неподписанная release-сборка проверяет тот же сценарий, который нужен внешним сборочным системам вроде F-Droid.
+
+Без переменных `UMNIK_KEYSTORE_*` команда `./gradlew :app:assembleRelease` создаёт неподписанный release APK. Официальные GitHub Releases собираются и подписываются отдельным release workflow постоянным ключом проекта.
 
 ## Лицензия
 
