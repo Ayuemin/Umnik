@@ -1,0 +1,113 @@
+name: F-Droid Reproducibility Check
+
+on:
+  push:
+    branches:
+      - "test/fdroid-repro-v1.19.9"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reproduce:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout exact release tag
+        uses: actions/checkout@v7
+        with:
+          ref: v1.19.9
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: platform-tools
+
+      - name: Install Android SDK packages
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "build-tools;34.0.0"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build unsigned release from v1.19.9
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Download upstream signed APK
+        run: |
+          mkdir -p repro
+          curl -L --fail --retry 3 \
+            "https://github.com/Ayuemin/Umnik/releases/download/v1.19.9/Umnik-v1.19.9.apk" \
+            -o repro/upstream-signed.apk
+          find app/build/outputs/apk/release -maxdepth 1 -type f -name "*.apk" -print
+
+      - name: Install signature comparison tool
+        run: python3 -m pip install --user "apksigcopier==1.1.1"
+
+      - name: Compare upstream APK with unsigned rebuild
+        id: compare
+        shell: bash
+        run: |
+          set -uo pipefail
+          UNSIGNED_APK="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name "*.apk" | head -n 1)"
+          test -n "$UNSIGNED_APK"
+          cp "$UNSIGNED_APK" repro/rebuilt-unsigned.apk
+
+          export PATH="$ANDROID_HOME/build-tools/34.0.0:$HOME/.local/bin:$PATH"
+
+          echo "Upstream signed APK:"
+          sha256sum repro/upstream-signed.apk
+          echo "Locally rebuilt unsigned APK:"
+          sha256sum repro/rebuilt-unsigned.apk
+
+          set +e
+          apksigcopier compare --unsigned \
+            repro/upstream-signed.apk \
+            repro/rebuilt-unsigned.apk 2>&1 | tee repro/compare.log
+          RC=${PIPESTATUS[0]}
+          set -e
+
+          echo "rc=$RC" >> "$GITHUB_OUTPUT"
+
+          if [ "$RC" -eq 0 ]; then
+            echo "REPRODUCIBLE" | tee repro/result.txt
+          else
+            echo "NOT_REPRODUCIBLE" | tee repro/result.txt
+          fi
+
+      - name: Collect basic APK diagnostics
+        if: always()
+        shell: bash
+        run: |
+          export PATH="$ANDROID_HOME/build-tools/34.0.0:$PATH"
+          {
+            echo "=== upstream certificate ==="
+            apksigner verify --print-certs repro/upstream-signed.apk || true
+            echo
+            echo "=== upstream zip entries ==="
+            unzip -l repro/upstream-signed.apk | head -n 80 || true
+            echo
+            echo "=== rebuilt zip entries ==="
+            unzip -l repro/rebuilt-unsigned.apk | head -n 80 || true
+          } > repro/diagnostics.txt 2>&1
+
+      - name: Upload reproducibility evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fdroid-repro-v1.19.9
+          path: repro/
+          if-no-files-found: error
+
+      - name: Require reproducible result
+        if: always()
+        shell: bash
+        run: test "${{ steps.compare.outputs.rc }}" = "0"
