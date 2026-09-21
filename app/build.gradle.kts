@@ -58,7 +58,10 @@ android {
         }
 
         release {
-            isMinifyEnabled = false
+            // F-Droid review requested an R8-processed release. Keep shrinking and
+            // optimisation enabled for release builds; app-specific keep rules live
+            // in proguard-rules.pro and are exercised by CI via assembleRelease.
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
