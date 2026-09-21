@@ -9,7 +9,7 @@ Umnik is being prepared for submission to the official F-Droid repository.
 - Minimum Android version: API 26
 - Prepared release: `1.19.9`
 - versionCode: `142`
-- release commit: set after the final release commit is created
+- release commit: `0f573321f89da7dd5ef74e53bce1913b144fda99`
 
 ## Network model
 
@@ -61,8 +61,7 @@ Until that verification is complete, the candidate recipe intentionally does not
 
 ## Remaining submission work
 
-1. Merge this preparation and publish the `v1.19.9` release tag.
 2. Optionally add at least one real screenshot or feature graphic to the upstream Fastlane metadata so the app can qualify for F-Droid's Latest tab. The launcher icon is already included in the APK.
-3. Replace the temporary `commit: v1.19.9` in the candidate recipe with the full release commit SHA, then run `fdroid readmeta`, `fdroid lint` and `fdroid build`.
+2. Run `fdroid readmeta`, `fdroid lint` and `fdroid build` against the pinned v1.19.9 release commit.
 4. If reproducibility succeeds, add `Binaries` and `AllowedAPKSigningKeys`.
 5. Submit the final metadata as a merge request to `fdroid/fdroiddata`.
