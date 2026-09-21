@@ -7,9 +7,9 @@ Umnik is being prepared for submission to the official F-Droid repository.
 - Application ID: `com.ayuemin.umnik`
 - License: `GPL-3.0-or-later`
 - Minimum Android version: API 26
-- Prepared release: `1.19.8`
-- versionCode: `141`
-- release commit: `6b740f93f4a2632625f0b4181778731c7ba0cd32`
+- Prepared release: `1.19.9`
+- versionCode: `142`
+- release commit: set after the final release commit is created
 
 ## Network model
 
@@ -61,8 +61,8 @@ Until that verification is complete, the candidate recipe intentionally does not
 
 ## Remaining submission work
 
-1. Merge this preparation into a release tag.
+1. Merge this preparation and publish the `v1.19.9` release tag.
 2. Add a real app icon and at least one real screenshot to the upstream Fastlane metadata.
-3. Run `fdroid readmeta`, `fdroid lint` and a local/containerized `fdroid build` against the exact release tag.
+3. Replace the temporary `commit: v1.19.9` in the candidate recipe with the full release commit SHA, then run `fdroid readmeta`, `fdroid lint` and `fdroid build`.
 4. If reproducibility succeeds, add `Binaries` and `AllowedAPKSigningKeys`.
 5. Submit the final metadata as a merge request to `fdroid/fdroiddata`.
