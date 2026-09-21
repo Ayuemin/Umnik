@@ -18,10 +18,12 @@ internal object KnowledgeTextExtractor {
             lower.endsWith(".docx") || mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" -> extractDocx(file)
             lower.endsWith(".html") || lower.endsWith(".htm") || mime == "text/html" ->
                 listOf(KnowledgeSourceSection(htmlToText(file.readText(Charsets.UTF_8))))
+            lower.endsWith(".fb2") || mime == "application/x-fictionbook+xml" ->
+                listOf(KnowledgeSourceSection(xmlToText(file.readText(Charsets.UTF_8))))
             lower.endsWith(".xml") || mime.endsWith("xml") ->
                 listOf(KnowledgeSourceSection(xmlToText(file.readText(Charsets.UTF_8))))
             isPlainText(lower, mime) -> listOf(KnowledgeSourceSection(readPlainText(file)))
-            else -> error("Формат «${name.substringAfterLast('.', name)}» пока нельзя индексировать. Поддерживаются PDF, EPUB, DOCX, TXT, MD, HTML, XML, JSON, CSV, YAML и файлы исходного кода.")
+            else -> error("Формат «${name.substringAfterLast('.', name)}» пока нельзя индексировать. Поддерживаются PDF, EPUB, FB2, DOCX, TXT, MD, HTML, XML, JSON, CSV, YAML и файлы исходного кода.")
         }.filter { it.text.isNotBlank() }
     }
 
