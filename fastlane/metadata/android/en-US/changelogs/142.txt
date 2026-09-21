@@ -1,0 +1,1 @@
+Prepared Umnik for official F-Droid submission with upstream store metadata and continuous verification of an unsigned release build. Application behavior is unchanged.
