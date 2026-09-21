@@ -17,14 +17,14 @@ RepoType: git
 Repo: https://github.com/Ayuemin/Umnik.git
 
 Builds:
-  - versionName: 1.19.8
-    versionCode: 141
-    commit: 6b740f93f4a2632625f0b4181778731c7ba0cd32
+  - versionName: 1.19.9
+    versionCode: 142
+    commit: v1.19.9
     subdir: app
     gradle:
       - yes
 
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
-CurrentVersion: 1.19.8
-CurrentVersionCode: 141
+CurrentVersion: 1.19.9
+CurrentVersionCode: 142
