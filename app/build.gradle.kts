@@ -1,4 +1,4 @@
-// Umnik v1.19.10 — F-Droid compatibility fix
+// Umnik v1.19.11-rc.1 — knowledge indexing + R8 test
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 143
-        versionName = "1.19.10"
+        versionCode = 144
+        versionName = "1.19.11-rc.1"
     }
 
     buildFeatures {
