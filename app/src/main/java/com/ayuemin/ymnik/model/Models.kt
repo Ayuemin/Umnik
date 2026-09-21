@@ -422,6 +422,7 @@ data class UiState(
     val isLoading: Boolean = false,
     val requestActive: Boolean = false,
     val busyLabel: String? = null,
+    val knowledgeTasks: Map<String, String> = emptyMap(),
     val status: String? = null,
     val availableTextModels: List<ModelInfo> = emptyList(),
     val availableImageModels: List<ModelInfo> = emptyList(),
