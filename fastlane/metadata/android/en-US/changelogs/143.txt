@@ -1,0 +1,1 @@
+Improved F-Droid compatibility by disabling Android dependency metadata embedded in the APK and App Bundle. Application behavior is unchanged.
