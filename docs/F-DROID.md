@@ -50,15 +50,20 @@ This file is a submission aid. The actual official copy must be added to the F-D
 
 ## Reproducible build
 
-Umnik already publishes GitHub release APKs signed with a permanent project key. The preferred long-term setup is an F-Droid reproducible build using the upstream signed APK.
+Umnik v1.19.9 has been verified reproducible against the published upstream APK.
 
-Before enabling `Binaries` and `AllowedAPKSigningKeys` in the official fdroiddata recipe, verify the current release certificate SHA-256 directly from a published release asset and verify that an unsigned F-Droid build reproduces the upstream APK byte-for-byte after signature normalization.
+The verification rebuilt the exact `v1.19.9` tag without signing secrets and compared the resulting unsigned APK with `Umnik-v1.19.9.apk` using `apksigcopier 1.1.1`. Signature copying and APK verification succeeded.
 
-Until that verification is complete, the candidate recipe intentionally does not claim reproducible-build compatibility.
+Reference values:
+
+- release commit: `0f573321f89da7dd5ef74e53bce1913b144fda99`
+- upstream APK SHA-256: `f66a3cbc2ee54271941946f6aed0726df8825e40b34181a2d85aa4590c7ed510`
+- signing certificate SHA-256: `bc0c8bfe9031c29fc3148fdc52c1cb84d897682b83af73e37f3af670f047d79e`
+
+The candidate recipe therefore uses `Binaries` and `AllowedAPKSigningKeys`, allowing F-Droid to publish the upstream developer-signed APK only when its own source build verifies against it.
 
 ## Remaining submission work
 
 2. Optionally add at least one real screenshot or feature graphic to the upstream Fastlane metadata so the app can qualify for F-Droid's Latest tab. The launcher icon is already included in the APK.
 2. Run `fdroid readmeta`, `fdroid lint` and `fdroid build` against the pinned v1.19.9 release commit.
-4. If reproducibility succeeds, add `Binaries` and `AllowedAPKSigningKeys`.
 5. Submit the final metadata as a merge request to `fdroid/fdroiddata`.
