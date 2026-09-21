@@ -1,0 +1,1 @@
+Simplified the model catalog with compact type and price filters, capability sorting, preserved name/ID search, restored scrolling, and moved the catalog to the top level of Settings.

@@ -1,0 +1,34 @@
+AntiFeatures:
+  NonFreeNet:
+    en-US: Depends on OpenRouter, a proprietary network service, for AI requests.
+    ru-RU: Для ИИ-запросов используется проприетарный сетевой сервис OpenRouter.
+  TetheredNet:
+    en-US: Requires OpenRouter and does not offer a user-selectable replacement service.
+    ru-RU: Для работы требуется OpenRouter, заменить сервис через настройки приложения нельзя.
+
+Categories:
+  - AI Chat
+License: GPL-3.0-or-later
+AuthorName: Ayuemin
+SourceCode: https://github.com/Ayuemin/Umnik
+IssueTracker: https://github.com/Ayuemin/Umnik/issues
+Changelog: https://github.com/Ayuemin/Umnik/blob/main/CHANGELOG.md
+
+AutoName: Umnik
+
+RepoType: git
+Repo: https://github.com/Ayuemin/Umnik.git
+
+Builds:
+  - versionName: 1.19.9
+    versionCode: 142
+    commit: v1.19.9
+    subdir: app
+    gradle:
+      - yes
+
+AutoUpdateMode: Version
+UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
+UpdateCheckData: 'app/build.gradle.kts|versionCode\s*=\s*(\d+)|.|versionName\s*=\s*"([^"]+)"'
+CurrentVersion: 1.19.9
+CurrentVersionCode: 142

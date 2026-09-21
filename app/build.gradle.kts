@@ -1,4 +1,4 @@
-// Umnik v1.19.8 — simplified model catalog filters and scrolling
+// Umnik v1.19.9 — F-Droid publication preparation
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 141
-        versionName = "1.19.8"
+        versionCode = 142
+        versionName = "1.19.9"
     }
 
     buildFeatures {

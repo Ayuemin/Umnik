@@ -96,6 +96,7 @@ API-ключ OpenRouter хранится локально с использов�
 - [docs/ORCHESTRATOR.md](docs/ORCHESTRATOR.md) — Оркестратор и передача работы;
 - [docs/KNOWLEDGE_BASE.md](docs/KNOWLEDGE_BASE.md) — базы знаний;
 - [CHANGELOG.md](CHANGELOG.md) — история изменений.
+- [docs/F-DROID.md](docs/F-DROID.md) — подготовка и сопровождение публикации в F-Droid.
 
 В самом приложении есть **Настройки → Диагностика и о приложении → Памятка Umnik**. Памятка работает локально и не отправляет запрос модели.
 
@@ -103,7 +104,9 @@ API-ключ OpenRouter хранится локально с использов�
 
 Проект использует Kotlin, Jetpack Compose и Material 3. Минимальная версия Android — API 26.
 
-CI выполняет Android Lint, unit-тесты и сборку через GitHub Actions. Официальные релизы собираются и подписываются отдельным release workflow.
+CI выполняет Android Lint, unit-тесты, debug-сборку и неподписанную release-сборку через GitHub Actions. Неподписанная release-сборка проверяет тот же сценарий, который нужен внешним сборочным системам вроде F-Droid.
+
+Без переменных `UMNIK_KEYSTORE_*` команда `./gradlew :app:assembleRelease` создаёт неподписанный release APK. Официальные GitHub Releases собираются и подписываются отдельным release workflow постоянным ключом проекта.
 
 ## Лицензия
 
