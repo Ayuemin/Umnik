@@ -1,6 +1,6 @@
 # Umnik
 
-Android-клиент для работы с моделями OpenRouter с поддержкой дополнительных OpenAI-совместимых API.
+Android-клиент для работы с моделями OpenRouter.
 
 [![Android CI](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml/badge.svg)](https://github.com/Ayuemin/Umnik/actions/workflows/android-ci.yml)
 [![Latest release](https://img.shields.io/github/v/release/Ayuemin/Umnik?display_name=tag)](https://github.com/Ayuemin/Umnik/releases/latest)
@@ -11,8 +11,6 @@ Android-клиент для работы с моделями OpenRouter с по�
 ## Что есть в приложении
 
 Umnik использует личный API-ключ OpenRouter. Встроенной подписки на модели нет: запросы оплачиваются по тарифам выбранных моделей.
-
-OpenRouter встроен как основной полнофункциональный профиль. Дополнительно можно добавить собственный OpenAI-совместимый API-адрес и ключ; для таких подключений Umnik использует безопасный текстовый режим и не включает неподтверждённые возможности автоматически.
 
 Основные возможности:
 
