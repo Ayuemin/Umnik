@@ -15,6 +15,7 @@ AutoName: Umnik
 
 RepoType: git
 Repo: https://github.com/Ayuemin/Umnik.git
+Binaries: https://github.com/Ayuemin/Umnik/releases/download/v%v/Umnik-v%v.apk
 
 Builds:
   - versionName: 1.19.9
@@ -24,8 +25,9 @@ Builds:
     gradle:
       - yes
 
+AllowedAPKSigningKeys: bc0c8bfe9031c29fc3148fdc52c1cb84d897682b83af73e37f3af670f047d79e
+
 AutoUpdateMode: Version
 UpdateCheckMode: Tags ^v[0-9]+\.[0-9]+\.[0-9]+$
-UpdateCheckData: 'app/build.gradle.kts|versionCode\s*=\s*(\d+)|.|versionName\s*=\s*"([^"]+)"'
 CurrentVersion: 1.19.9
 CurrentVersionCode: 142
