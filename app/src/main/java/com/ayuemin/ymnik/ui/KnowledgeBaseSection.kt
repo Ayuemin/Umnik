@@ -252,7 +252,7 @@ fun KnowledgeBaseSection(
             Text("Добавить источник знаний")
         }
         Text(
-            "Сейчас поддерживаются PDF с текстовым слоем, EPUB, DOCX, TXT/MD, HTML/XML, JSON/CSV/YAML и текстовые файлы кода. Сканированные PDF потребуют OCR в будущем.",
+            "Сейчас поддерживаются PDF с текстовым слоем, EPUB, FB2, DOCX, TXT/MD, HTML/XML, JSON/CSV/YAML и текстовые файлы кода. Сканированные PDF потребуют OCR в будущем.",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
