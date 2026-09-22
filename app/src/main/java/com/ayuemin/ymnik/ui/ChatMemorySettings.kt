@@ -19,13 +19,13 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -38,7 +38,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -66,35 +68,34 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             modeLabel(effectiveMode)
         },
         expanded = expanded,
+        info = "Режим определяет, сколько старой переписки отправляется модели. Исходная история чата всегда остаётся на телефоне.",
         onToggle = { expanded = !expanded }
     )
     if (!expanded) return
 
-    Text(
-        "Режим определяет, сколько старой переписки отправляется модели. Исходная история чата всегда остаётся на телефоне.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Режим контекста", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+        UmnikInfoHint(
+            title = "Режимы контекста",
+            text = "По умолчанию следует общей настройке. «Баланс» после порога использует свежую переписку, конспект и найденные старые фрагменты. «Всегда полный» отправляет максимум исходной истории и не использует долговременную память. «Эконом» раньше включает гибридную память и уменьшает бюджет контекста."
+        )
+    }
 
     ContextModeChoice(
         selected = overrideMode == null,
-        title = "По умолчанию: ${modeLabel(defaultMode)}",
-        description = "Следовать общему режиму из Настройки → Память и контекст. Если общий режим изменится, этот чат изменится вместе с ним."
+        title = "По умолчанию: ${modeLabel(defaultMode)}"
     ) { vm.setChatContextMode(chat.id, null) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.AUTO,
-        title = "Баланс",
-        description = "До порога используется полная история, затем Umnik держит свежие пары, компактный конспект и найденные старые фрагменты в общем бюджете."
+        title = "Баланс"
     ) { vm.setChatContextMode(chat.id, ChatContextMode.AUTO) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.FULL,
-        title = "Всегда полный",
-        description = "Отправлять максимум исходной истории, который помещается в контекст выбранной модели. Долговременная память не используется."
+        title = "Всегда полный"
     ) { vm.setChatContextMode(chat.id, ChatContextMode.FULL) }
     ContextModeChoice(
         selected = overrideMode == ChatContextMode.ECONOMY,
-        title = "Эконом",
-        description = "Раньше включает гибридную память и использует меньший бюджет истории и памяти."
+        title = "Эконом"
     ) { vm.setChatContextMode(chat.id, ChatContextMode.ECONOMY) }
 
     Text(
@@ -111,6 +112,11 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(6.dp))
             Text("Перестроить")
+            Spacer(Modifier.width(4.dp))
+            UmnikInfoHint(
+                title = "Перестроить память",
+                text = "Заново создаёт служебные checkpoint-конспекты и индекс старой переписки. Исходные сообщения не удаляются."
+            )
         }
         TextButton(
             onClick = { vm.clearChatMemory(chat.id) },
@@ -118,31 +124,22 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             modifier = Modifier.weight(1f)
         ) {
             Text("Очистить память")
+            Spacer(Modifier.width(4.dp))
+            UmnikInfoHint(
+                title = "Очистить память чата",
+                text = "Удаляет только служебные checkpoint-конспекты, embeddings и карточку состояния. Переписка и файлы останутся."
+            )
         }
     }
-    Text(
-        "Очистка памяти не удаляет переписку. При удалении самого чата его checkpoint-конспекты, embeddings и карточка состояния удаляются автоматически.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 @Composable
 private fun ContextModeChoice(
     selected: Boolean,
     title: String,
-    description: String,
     onClick: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        FilterChip(selected = selected, onClick = onClick, label = { Text(title) })
-        Text(
-            description,
-            modifier = Modifier.padding(start = 6.dp, top = 2.dp, bottom = 4.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-    }
+    FilterChip(selected = selected, onClick = onClick, label = { Text(title) })
 }
 
 @Composable
@@ -182,15 +179,16 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     val requestedChunk = chunkTokens.toIntOrNull() ?: initial.chunkTokens
     val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
 
-    ElevatedCard(Modifier.fillMaxWidth()) {
-        ExpandableSettingsHeader(
+    UmnikPanel {
+        ChatSettingsExpanderHeader(
             icon = Icons.Outlined.History,
             title = "Память и контекст",
             subtitle = "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
             expanded = expanded,
+            info = "Управляет долговременной памятью длинных обычных чатов: сколько истории отправлять модели и как находить старые фрагменты. Переписка при этом хранится отдельно и не удаляется.",
             onToggle = { expanded = !expanded }
         )
-        if (!expanded) return@ElevatedCard
+        if (!expanded) return@UmnikPanel
         Column(
             Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
@@ -368,6 +366,11 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 Icon(Icons.Outlined.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Очистить память всех чатов")
+                Spacer(Modifier.width(4.dp))
+                UmnikInfoHint(
+                    title = "Очистить память всех чатов",
+                    text = "Удалит только служебные checkpoint-конспекты, embeddings и карточки состояния. Переписка и пользовательские файлы не удаляются."
+                )
             }
         }
     }
@@ -401,15 +404,65 @@ private fun MemorySettingsExpander(
     title: String,
     subtitle: String,
     expanded: Boolean,
+    info: String? = null,
     onToggle: () -> Unit
 ) {
-    ElevatedCard(Modifier.fillMaxWidth()) {
-        ExpandableSettingsHeader(
+    UmnikPanel {
+        ChatSettingsExpanderHeader(
             icon = Icons.Outlined.History,
             title = title,
             subtitle = subtitle,
             expanded = expanded,
+            info = info,
             onToggle = onToggle
+        )
+    }
+}
+
+@Composable
+internal fun ChatSettingsExpanderHeader(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    expanded: Boolean,
+    info: String? = null,
+    onToggle: () -> Unit
+) {
+    TextButton(
+        onClick = onToggle,
+        modifier = Modifier.fillMaxWidth(),
+        contentPadding = UmnikPanelPadding
+    ) {
+        Surface(
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            modifier = Modifier.size(40.dp)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
+            }
+        }
+        Spacer(Modifier.width(11.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
+            Text(
+                subtitle,
+                modifier = Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (!info.isNullOrBlank()) {
+            Spacer(Modifier.width(6.dp))
+            UmnikInfoHint(title = title, text = info)
+            Spacer(Modifier.width(4.dp))
+        }
+        Icon(
+            if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+            contentDescription = if (expanded) "Свернуть" else "Развернуть",
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

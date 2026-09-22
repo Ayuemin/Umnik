@@ -67,26 +67,22 @@ fun KnowledgeBaseSection(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
-        SettingsExpander(
-            title = title,
-            subtitle = when {
-                knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
-                documents.isEmpty() -> "Нет источников"
-                !enabled -> "${documents.size} источн. · автопоиск выключен"
-                else -> "${documents.size} источн. · автопоиск включён"
-            },
-            expanded = expanded,
-            onToggle = { expanded = !expanded }
-        )
-        if (!expanded) return@Column
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Как работает база знаний", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            UmnikInfoHint(
-                title = "Как работает база знаний",
-                text = "Книги и справочники индексируются один раз. При запросе Umnik автоматически находит подходящие фрагменты и добавляет только их в контекст модели. Полный документ заново не отправляется."
+        UmnikPanel {
+            ChatSettingsExpanderHeader(
+                icon = Icons.Outlined.MenuBook,
+                title = title,
+                subtitle = when {
+                    knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
+                    documents.isEmpty() -> "Нет источников"
+                    !enabled -> "${documents.size} источн. · автопоиск выключен"
+                    else -> "${documents.size} источн. · автопоиск включён"
+                },
+                expanded = expanded,
+                info = "Книги и справочники индексируются один раз. При запросе Umnik автоматически находит подходящие фрагменты и добавляет только их в контекст модели. Полный документ заново не отправляется.",
+                onToggle = { expanded = !expanded }
             )
         }
+        if (!expanded) return@Column
 
         if (knowledgeTask != null) {
             ElevatedCard(Modifier.fillMaxWidth()) {

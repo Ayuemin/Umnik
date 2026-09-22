@@ -96,6 +96,12 @@ class OpenRouterHubController(
 
     fun close() = scope.cancel()
 
+    fun clearStatus() {
+        if (mutableState.value.status != null) {
+            mutableState.value = mutableState.value.copy(status = null)
+        }
+    }
+
     fun refreshCatalog(forceMessage: Boolean = false) {
         val profile = openRouterProfile()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
@@ -134,23 +140,23 @@ class OpenRouterHubController(
 
     fun updateRouting(value: ProviderRoutingSettings) {
         featurePrefs.saveRouting(value)
-        mutableState.value = mutableState.value.copy(routing = value, status = "Маршрутизация сохранена")
+        mutableState.value = mutableState.value.copy(routing = value, status = null)
     }
 
     fun updateTools(value: ServerToolSettings) {
         featurePrefs.saveTools(value)
-        mutableState.value = mutableState.value.copy(tools = value, status = "Инструменты OpenRouter сохранены")
+        mutableState.value = mutableState.value.copy(tools = value, status = null)
     }
 
     fun updateRag(value: RagSettings) {
         val clean = value.copy(topK = value.topK.coerceIn(1, 30))
         featurePrefs.saveRag(clean)
-        mutableState.value = mutableState.value.copy(rag = clean, status = "Настройки RAG сохранены")
+        mutableState.value = mutableState.value.copy(rag = clean, status = null)
     }
 
     fun updateMedia(value: OpenRouterMediaSettings) {
         featurePrefs.saveMedia(value)
-        mutableState.value = mutableState.value.copy(media = value, status = "Модель сохранена")
+        mutableState.value = mutableState.value.copy(media = value, status = null)
     }
 
     fun useAsTextModel(model: ModelInfo) {
@@ -161,12 +167,12 @@ class OpenRouterHubController(
         if (model.isBatch) {
             val media = mutableState.value.media.copy(batchModel = model.id)
             featurePrefs.saveMedia(media)
-            mutableState.value = mutableState.value.copy(media = media, status = "${model.id} выбрана только для пакетных задач")
+            mutableState.value = mutableState.value.copy(media = media, status = null)
             return
         }
         val profile = openRouterProfile() ?: return
         viewModel.selectDefaultTextModel(profile.id, model.id)
-        mutableState.value = mutableState.value.copy(status = "${model.id} выбрана для обычного чата")
+        mutableState.value = mutableState.value.copy(status = null)
     }
 
     fun toggleQuickTextModel(model: ModelInfo) {
@@ -177,7 +183,7 @@ class OpenRouterHubController(
         }
         val profile = openRouterProfile() ?: return
         viewModel.toggleQuickTextModelForConnection(profile.id, model.id)
-        mutableState.value = mutableState.value.copy(status = "Список быстрых моделей обновлён")
+        mutableState.value = mutableState.value.copy(status = null)
     }
 
     fun useAsImageModel(model: ModelInfo) {
@@ -187,7 +193,7 @@ class OpenRouterHubController(
         }
         val profile = openRouterProfile() ?: return
         viewModel.selectImageModel(profile.id, model.id)
-        mutableState.value = mutableState.value.copy(status = "${model.id} выбрана для изображений")
+        mutableState.value = mutableState.value.copy(status = null)
     }
 
     fun assignModel(model: ModelInfo, category: ModelCategory) {
@@ -196,7 +202,7 @@ class OpenRouterHubController(
                 if (model.isBatch) {
                     val media = mutableState.value.media.copy(batchModel = model.id)
                     featurePrefs.saveMedia(media)
-                    mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для пакетных задач")
+                    mutableState.value = mutableState.value.copy(media = media, status = null)
                 } else {
                     useAsTextModel(model)
                 }
@@ -205,7 +211,7 @@ class OpenRouterHubController(
             ModelCategory.VIDEO -> {
                 val media = mutableState.value.media.copy(videoModel = model.id)
                 featurePrefs.saveMedia(media)
-                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для видео")
+                mutableState.value = mutableState.value.copy(media = media, status = null)
             }
             ModelCategory.SPEECH, ModelCategory.AUDIO -> {
                 val current = mutableState.value.media
@@ -215,22 +221,22 @@ class OpenRouterHubController(
                     responseFormat = if (current.speechModel == model.id) current.responseFormat else null
                 )
                 featurePrefs.saveMedia(media)
-                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для озвучивания текста и документов")
+                mutableState.value = mutableState.value.copy(media = media, status = null)
             }
             ModelCategory.TRANSCRIPTION -> {
                 val media = mutableState.value.media.copy(transcriptionModel = model.id)
                 featurePrefs.saveMedia(media)
-                mutableState.value = mutableState.value.copy(media = media, status = "${model.id} назначена для распознавания речи")
+                mutableState.value = mutableState.value.copy(media = media, status = null)
             }
             ModelCategory.EMBEDDINGS -> {
                 val rag = mutableState.value.rag.copy(embeddingModel = model.id)
                 featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = "${model.id} назначена для поиска по документам")
+                mutableState.value = mutableState.value.copy(rag = rag, status = null)
             }
             ModelCategory.RERANK -> {
                 val rag = mutableState.value.rag.copy(rerankModel = model.id)
                 featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = "${model.id} назначена для точной сортировки результатов")
+                mutableState.value = mutableState.value.copy(rag = rag, status = null)
             }
         }
     }
@@ -277,7 +283,7 @@ class OpenRouterHubController(
             return
         }
         viewModel.setOpenRouterSpeechModel(model.id)
-        mutableState.value = mutableState.value.copy(status = "${model.id} назначена для озвучивания ответов")
+        mutableState.value = mutableState.value.copy(status = null)
     }
 
     fun updateReplySpeechVoice(voice: String) {

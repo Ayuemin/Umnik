@@ -1108,12 +1108,12 @@ onBranch = if (message.role == "assistant") {
                     )
                     if (skillsExpanded) {
                         Text(
-                            "Выберите навыки для текущего обычного чата.",
+                            "Выберите навыки для текущего чата.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (state.skills.isEmpty()) {
-                            Text("Навыков пока нет.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Навыков пока нет. Добавьте их в общих настройках.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         } else {
                             ComposerSkillList(
                                 skills = state.skills,
@@ -2651,6 +2651,7 @@ private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.g
     }
 }
 
+@Composable
 private fun markdownInline(source: String) = buildAnnotatedString {
     val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
     var cursor = 0
@@ -2660,7 +2661,7 @@ private fun markdownInline(source: String) = buildAnnotatedString {
             match.groupValues[1].isNotEmpty() -> withStyle(
                 SpanStyle(
                     fontFamily = FontFamily.Monospace,
-                    background = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.16f)
+                    background = MaterialTheme.colorScheme.surfaceContainerHigh
                 )
             ) { append(match.groupValues[1]) }
             match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
@@ -2853,7 +2854,7 @@ private fun FullScreenImageViewer(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color.Black
+            color = MaterialTheme.colorScheme.background
         ) {
             Box(Modifier.fillMaxSize()) {
                 ComposeImage(
@@ -2899,7 +2900,7 @@ private fun FullScreenImageViewer(
                     Icon(
                         Icons.Outlined.Close,
                         contentDescription = "Закрыть изображение",
-                        tint = Color.White
+                        tint = MaterialTheme.colorScheme.onBackground
                     )
                 }
             }
