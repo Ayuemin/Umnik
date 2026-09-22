@@ -1,0 +1,1 @@
+Added catalog links for attachment RAG Embeddings/Rerank fields, detailed routing help, and clearer behavior when a knowledge base contains indexes created with different Embeddings models.
