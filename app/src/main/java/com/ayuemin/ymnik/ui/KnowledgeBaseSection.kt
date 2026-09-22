@@ -60,6 +60,7 @@ fun KnowledgeBaseSection(
     val current = vm.knowledgeSettings(kind, ownerId)
     val documents = vm.knowledgeDocuments(kind, ownerId)
     val knowledgeTask = vm.knowledgeTaskLabel(kind, ownerId)
+    val knowledgeFailure = vm.knowledgeFailure(kind, ownerId)
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
     var modelId by remember(ownerId, current.embeddingModelId) { mutableStateOf(current.embeddingModelId) }
@@ -125,10 +126,33 @@ fun KnowledgeBaseSection(
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                     Text(knowledgeTask, fontWeight = FontWeight.SemiBold)
                     Text(
-                        "Индексация работает отдельно. Можно перейти в другой чат или настройки — Umnik больше не блокируется целиком.",
+                        "Можно перейти в другой чат или погасить экран. Прогресс сохраняется после каждой партии и продолжится с последнего checkpoint.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                }
+            }
+        }
+
+        if (knowledgeTask == null && knowledgeFailure != null) {
+            ElevatedCard(Modifier.fillMaxWidth()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text("Индексация остановлена", fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.error)
+                    Text(
+                        knowledgeFailure,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    FilledTonalButton(
+                        onClick = { vm.retryKnowledgeIndexing(kind, ownerId) },
+                        enabled = !state.isLoading && !state.requestActive,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Продолжить с checkpoint")
+                    }
                 }
             }
         }

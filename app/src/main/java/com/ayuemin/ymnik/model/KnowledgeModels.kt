@@ -44,3 +44,32 @@ data class KnowledgeHit(
     val page: Int? = null,
     val score: Double
 )
+
+
+enum class KnowledgeIndexTaskStatus {
+    QUEUED,
+    PREPARING,
+    INDEXING,
+    FAILED
+}
+
+data class KnowledgeIndexTask(
+    val id: String,
+    val ownerKind: KnowledgeOwnerKind,
+    val ownerId: String,
+    val name: String,
+    val mimeType: String,
+    val localPath: String,
+    val size: Long,
+    val embeddingModelId: String,
+    val connectionProfileId: String,
+    val baseUrl: String,
+    val replaceDocumentId: String? = null,
+    val totalChunks: Int = 0,
+    val completedChunks: Int = 0,
+    val vectorDimension: Int = 0,
+    val status: KnowledgeIndexTaskStatus = KnowledgeIndexTaskStatus.QUEUED,
+    val error: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis()
+)
