@@ -3732,14 +3732,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun currentTextModelId(): String = _state.value.currentChatTextModel ?: _state.value.textModel
 
-    private fun fallbackRouterInfo(modelId: String): ModelInfo? = when (modelId) {
-        "openrouter/auto", "openrouter/auto-beta" -> ModelInfo(
+    private fun isOpenRouterAuto(modelId: String): Boolean =
+        modelId == "openrouter/auto" || modelId == "openrouter/auto-beta"
+
+    private fun fallbackRouterInfo(modelId: String): ModelInfo? = when {
+        isOpenRouterAuto(modelId) -> ModelInfo(
             id = modelId,
             name = if (modelId.endsWith("-beta")) "Auto Router (Beta)" else "Auto Router",
-            inputModalities = setOf("text", "image", "audio", "file", "video"),
-            outputModalities = setOf("text", "image"),
-            supportedParameters = setOf("reasoning", "reasoning_effort", "tools", "tool_choice", "web_search_options"),
-            contextLength = 2_000_000
+            inputModalities = setOf("text"),
+            outputModalities = setOf("text")
         )
         else -> null
     }
@@ -4256,7 +4257,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
 
         val textModel = currentTextModelId()
-        if (mode == ChatMode.TEXT && textModel != "openrouter/auto") {
+        val autoRouter = isOpenRouterAuto(textModel)
+        if (autoRouter) {
+            DiagnosticLog.record(
+                context,
+                "AUTO",
+                "Preparing Auto Router request; chat=${chatId.take(8)}; pending=${pending.size}; persistent=${persistentChatFiles.size}"
+            )
+        }
+        if (mode == ChatMode.TEXT && !autoRouter) {
             val knownInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
                 ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
             val absentFromLoadedTextCatalog = _state.value.availableTextModels.isNotEmpty() &&
@@ -4291,8 +4300,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ?.let { agentConversations.agentIdForConversation(it.id) }
             ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
         val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
-        val requestTextModelInfo = modelInfoForId(textModel)
+        val requestTextModelInfo = if (autoRouter) null else modelInfoForId(textModel)
         val requestWantsImageOutput = mode == ChatMode.TEXT &&
+            !autoRouter &&
             requestTextModelInfo?.outputs("image") == true &&
             ChatOutputPolicy.wantsGeneratedImage(
                 prompt = clean,
@@ -4324,6 +4334,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             "REQUEST",
             "start id=$requestId; provider=${profile.name}; mode=$mode; model=${if (mode == ChatMode.TEXT) textModel else imageModel}; history=${before.size}; pending=${pending.size}; persistent=${persistentChatFiles.size}; promptChars=${clean.length}"
         )
+        if (autoRouter) {
+            DiagnosticLog.record(context, "AUTO", "Auto Router request registered; id=$requestId")
+        }
 
         launchRequest(chatId, user.id, "${profile.name} · ${if (mode == ChatMode.TEXT) textModel else imageModel}") { network ->
             val answerStartedAt = System.currentTimeMillis()
