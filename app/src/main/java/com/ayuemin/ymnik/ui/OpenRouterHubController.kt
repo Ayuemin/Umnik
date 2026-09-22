@@ -132,6 +132,12 @@ class OpenRouterHubController(
         }
     }
 
+    fun clearStatus() {
+        if (mutableState.value.status != null) {
+            mutableState.value = mutableState.value.copy(status = null)
+        }
+    }
+
     fun updateRouting(value: ProviderRoutingSettings) {
         featurePrefs.saveRouting(value)
         mutableState.value = mutableState.value.copy(routing = value, status = null)
