@@ -344,7 +344,19 @@ data class ChatMessage(
     val providerName: String? = null,
     val costUsd: Double? = null,
     val inputTokens: Int? = null,
-    val outputTokens: Int? = null
+    val outputTokens: Int? = null,
+    val responseDurationMs: Long? = null,
+    val knowledgeHitCount: Int? = null,
+    val knowledgeSources: List<String>? = null,
+    val webSearchEnabled: Boolean? = null,
+    val reasoningEnabled: Boolean? = null,
+    val reasoningEffort: String? = null,
+    val memoryContextUsed: Boolean? = null,
+    val activeSkillCount: Int? = null,
+    val projectContextUsed: Boolean? = null,
+    val attachmentCount: Int? = null,
+    val connectionName: String? = null,
+    val requestId: String? = null
 )
 
 data class ChatSession(

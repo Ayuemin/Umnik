@@ -72,6 +72,7 @@ import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
@@ -2044,6 +2045,24 @@ private fun MessageCard(
     val context = LocalContext.current
     val user = message.role == "user"
     val content = MaterialTheme.colorScheme.onSurface
+    var answerInfoOpen by remember(message.id) { mutableStateOf(false) }
+    val hasAnswerInfo = !user && (
+        !message.modelId.isNullOrBlank() ||
+            !message.providerName.isNullOrBlank() ||
+            message.inputTokens != null ||
+            message.outputTokens != null ||
+            message.costUsd != null ||
+            message.responseDurationMs != null ||
+            message.knowledgeHitCount != null ||
+            message.webSearchEnabled != null ||
+            message.reasoningEnabled != null ||
+            message.memoryContextUsed != null ||
+            message.activeSkillCount != null ||
+            message.projectContextUsed != null ||
+            message.attachmentCount != null ||
+            !message.connectionName.isNullOrBlank() ||
+            !message.requestId.isNullOrBlank()
+        )
 
     val searchShape = RoundedCornerShape(20.dp)
     val searchModifier = when {
@@ -2128,21 +2147,6 @@ private fun MessageCard(
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSave = { onSaveGenerated(file) })
                 }
-                val usageMeta = listOfNotNull(
-                    message.modelId?.takeIf { it.isNotBlank() }?.substringAfterLast('/'),
-                    message.providerName?.takeIf { it.isNotBlank() },
-                    message.inputTokens?.let { "in $it" },
-                    message.outputTokens?.let { "out $it" },
-                    message.costUsd?.takeIf { it >= 0.0 }?.let { formatUsd(it) }
-                ).joinToString(" · ")
-                if (usageMeta.isNotBlank()) {
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        usageMeta,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.72f)
-                    )
-                }
             }
         }
 
@@ -2215,9 +2219,199 @@ private fun MessageCard(
                         )
                     }
                 }
+                if (hasAnswerInfo) {
+                    CompactMessageAction(
+                        icon = Icons.Outlined.Info,
+                        description = "Об ответе",
+                        onClick = { answerInfoOpen = true }
+                    )
+                }
             }
         }
     }
+
+    if (answerInfoOpen) {
+        AnswerInfoSheet(
+            message = message,
+            onDismiss = { answerInfoOpen = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun AnswerInfoSheet(
+    message: ChatMessage,
+    onDismiss: () -> Unit
+) {
+    var technicalOpen by remember(message.id) { mutableStateOf(false) }
+    val knowledgeCount = message.knowledgeHitCount
+    val sources = message.knowledgeSources.orEmpty()
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 680.dp)
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                "Об ответе",
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                "Техническая и контекстная информация скрыта здесь, чтобы не загромождать чат.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+
+            Spacer(Modifier.height(10.dp))
+            AnswerInfoSectionTitle("Ответ")
+            message.modelId?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("Модель", it) }
+            message.providerName?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("Провайдер", it) }
+            message.connectionName?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("Подключение", it) }
+            message.responseDurationMs?.let { AnswerInfoRow("Время", formatAnswerDuration(it)) }
+
+            if (message.inputTokens != null || message.outputTokens != null || message.costUsd != null) {
+                Spacer(Modifier.height(8.dp))
+                AnswerInfoSectionTitle("Расход")
+                message.inputTokens?.let { AnswerInfoRow("Вход", "$it токенов") }
+                message.outputTokens?.let { AnswerInfoRow("Выход", "$it токенов") }
+                if (message.inputTokens != null && message.outputTokens != null) {
+                    AnswerInfoRow("Всего", "${message.inputTokens + message.outputTokens} токенов")
+                }
+                message.costUsd?.takeIf { it >= 0.0 }?.let { AnswerInfoRow("Стоимость", formatAnswerCost(it)) }
+            }
+
+            if (
+                knowledgeCount != null ||
+                message.webSearchEnabled != null ||
+                message.reasoningEnabled != null ||
+                message.memoryContextUsed != null ||
+                message.activeSkillCount != null ||
+                message.projectContextUsed != null ||
+                message.attachmentCount != null
+            ) {
+                Spacer(Modifier.height(8.dp))
+                AnswerInfoSectionTitle("Контекст")
+                knowledgeCount?.let { count ->
+                    AnswerInfoRow(
+                        "База знаний",
+                        if (count > 0) "Использована · $count фрагм." else "Фрагменты не добавлялись"
+                    )
+                    if (sources.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier.padding(start = 12.dp, bottom = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            sources.forEach { source ->
+                                Text(
+                                    "• $source",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+                message.webSearchEnabled?.let {
+                    AnswerInfoRow("Веб-поиск", if (it) "Включён для запроса" else "Выключен")
+                }
+                message.reasoningEnabled?.let { enabled ->
+                    val suffix = message.reasoningEffort?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
+                    AnswerInfoRow("Размышление", if (enabled) "Включено$suffix" else "Выключено")
+                }
+                message.memoryContextUsed?.let {
+                    AnswerInfoRow("Память чата", if (it) "Добавлена в контекст" else "Не добавлялась")
+                }
+                message.activeSkillCount?.let {
+                    AnswerInfoRow("Навыки", if (it > 0) "$it активн." else "Не использовались")
+                }
+                message.projectContextUsed?.let {
+                    AnswerInfoRow("Проект", if (it) "Контекст проекта добавлен" else "Без проекта")
+                }
+                message.attachmentCount?.let {
+                    AnswerInfoRow("Вложения", if (it > 0) "$it" else "Нет")
+                }
+                if (message.generatedFiles.isNotEmpty()) {
+                    AnswerInfoRow("Создано файлов", message.generatedFiles.size.toString())
+                }
+            }
+
+            if (!message.requestId.isNullOrBlank() || message.id.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                TextButton(
+                    onClick = { technicalOpen = !technicalOpen },
+                    contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                ) {
+                    Text(if (technicalOpen) "Скрыть техническое" else "Техническое")
+                    Icon(
+                        if (technicalOpen) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                if (technicalOpen) {
+                    message.requestId?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("ID запроса", it) }
+                    AnswerInfoRow("ID сообщения", message.id)
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+        }
+    }
+}
+
+@Composable
+private fun AnswerInfoSectionTitle(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.primary,
+        fontWeight = FontWeight.SemiBold,
+        modifier = Modifier.padding(top = 2.dp, bottom = 2.dp)
+    )
+}
+
+@Composable
+private fun AnswerInfoRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(112.dp)
+        )
+        SelectionContainer(
+            modifier = Modifier.weight(1f)
+        ) {
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+        }
+    }
+}
+
+private fun formatAnswerDuration(milliseconds: Long): String =
+    if (milliseconds < 1_000L) {
+        "$milliseconds мс"
+    } else {
+        "%.1f с".format(Locale.US, milliseconds / 1000.0)
+    }
+
+private fun formatAnswerCost(value: Double): String = when {
+    value <= 0.0 -> "$0.00"
+    value < 0.01 -> "$" + "%.6f".format(Locale.US, value)
+    else -> "$" + "%.4f".format(Locale.US, value)
 }
 
 private enum class MessagePartKind { PLAIN, CODE, COPY }
