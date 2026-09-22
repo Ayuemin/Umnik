@@ -155,7 +155,7 @@ private enum class SettingsCategory(val title: String, val subtitle: String) {
     MODELS("Модели", "Чат, изображения, reasoning и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
-    DATA("Данные", "Локальное хранилище и файлы"),
+    DATA("Хранилище", "Локальные файлы и данные"),
     ABOUT("Диагностика и о приложении", "Логи, памятка и версия")
 }
 
@@ -304,7 +304,17 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
             if (settingsCategory == null) {
                 SettingsCategory.entries.forEach { category ->
                     item(key = category.name) {
-                        SettingsCategoryCard(category = category, onClick = { settingsCategory = category })
+                        SettingsCategoryCard(
+                            category = category,
+                            onClick = {
+                                if (category == SettingsCategory.DATA) {
+                                    vm.refreshStorage()
+                                    storageOpen = true
+                                } else {
+                                    settingsCategory = category
+                                }
+                            }
+                        )
                     }
                     if (category == SettingsCategory.CONNECTION) {
                         item(key = "OPENROUTER_MODEL_CATALOG") {
@@ -366,21 +376,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Icon(Icons.Outlined.Refresh, contentDescription = null)
                             Spacer(Modifier.width(7.dp))
                             Text("Проверить подключение")
-                        }
-                        Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("tools") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.Language, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Инструменты и веб-поиск", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "Сервис поиска и расширенные параметры OpenRouter",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
                         }
                         Spacer(Modifier.height(5.dp))
                         TextButton(
@@ -559,6 +554,28 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                            }
+                        }
+                        Spacer(Modifier.height(7.dp))
+                        FilledTonalButton(
+                            onClick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Генерация изображений"
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Search, contentDescription = null)
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("Выбрать модель в каталоге", fontWeight = FontWeight.Medium)
+                                Text(
+                                    state.imageModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
                             }
                         }
                         Spacer(Modifier.height(7.dp))
