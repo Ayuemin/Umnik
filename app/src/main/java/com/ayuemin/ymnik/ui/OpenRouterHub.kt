@@ -386,6 +386,32 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
     FilterChip(selected = selected == value, onClick = { onPage(value) }, label = { Text(label) })
 }
 
+private val modelSearchSeparators = Regex("""[^\\p{L}\\p{N}]+""")
+
+private fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean {
+    val query = rawQuery.trim()
+    if (query.isBlank()) return true
+
+    val fields = listOfNotNull(
+        model.id,
+        model.name,
+        model.description,
+        model.canonicalSlug,
+        model.huggingFaceId,
+        model.providerId
+    )
+    if (fields.any { it.contains(query, ignoreCase = true) }) return true
+
+    fun normalized(value: String): String = modelSearchSeparators
+        .replace(value.lowercase(Locale.ROOT), " ")
+        .trim()
+
+    val tokens = normalized(query).split(' ').filter { it.isNotBlank() }
+    if (tokens.isEmpty()) return true
+    val haystack = normalized(fields.joinToString(" "))
+    return tokens.all { token -> token in haystack }
+}
+
 @Composable
 private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
@@ -406,6 +432,12 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24)
         ) {
             filtersExpanded = false
+        }
+    }
+
+    LaunchedEffect(query, kind, price, sortByCapabilities) {
+        if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
+            listState.scrollToItem(0)
         }
     }
 
@@ -434,16 +466,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     val filtered = remember(state.catalog, query, kind, price, sortByCapabilities) {
         val needle = query.trim()
         state.catalog.asSequence()
-            .filter { model ->
-                needle.isBlank() || listOfNotNull(
-                    model.id,
-                    model.name,
-                    model.description,
-                    model.canonicalSlug,
-                    model.huggingFaceId,
-                    model.providerId
-                ).any { it.contains(needle, ignoreCase = true) }
-            }
+            .filter { model -> modelMatchesSearch(model, needle) }
             .filter { model -> modelMatchesSimpleKind(model, kind) }
             .filter { model -> modelMatchesSimplePrice(model, kind, price) }
             .sortedWith(
@@ -595,7 +618,11 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             if (filtered.isEmpty()) {
                 item {
                     Text(
-                        if (state.loading) "Каталог загружается…" else "По выбранным условиям моделей нет",
+                        when {
+                            state.loading -> "Каталог загружается…"
+                            query.isNotBlank() -> "По запросу «${query.trim()}» ничего не найдено"
+                            else -> "По выбранным условиям моделей нет"
+                        },
                         modifier = Modifier.padding(16.dp)
                     )
                 }
