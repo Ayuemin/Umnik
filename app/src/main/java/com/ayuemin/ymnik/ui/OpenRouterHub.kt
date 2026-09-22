@@ -34,6 +34,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
@@ -130,8 +131,10 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     var open by remember { mutableStateOf(false) }
     var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
     var requestedMediaSection by remember { mutableStateOf(MediaSection.ALL) }
+    var requestedReturnLabel by remember { mutableStateOf<String?>(null) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
+    val hubReturnLabel by AsyncJobEvents.hubReturnLabel.collectAsState()
     val speechRequest by AsyncJobEvents.speechRequest.collectAsState()
     val appState by viewModel.state.collectAsState()
 
@@ -156,6 +159,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     }
 
     LaunchedEffect(hubRequest) {
+        if (hubRequest != null) requestedReturnLabel = hubReturnLabel
         when (hubRequest) {
             "jobs", "batch" -> {
                 requestedPage = HubPage.JOBS
@@ -224,7 +228,14 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     UmnikTheme(appState.themeChoice, appState.customThemeColor) {
         YmnikApp(viewModel)
         if (open) {
-            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, initialMediaSection = requestedMediaSection, onDismiss = { open = false })
+            OpenRouterHubDialog(
+                controller = controller,
+                viewModel = viewModel,
+                initialPage = requestedPage,
+                initialMediaSection = requestedMediaSection,
+                returnLabel = requestedReturnLabel,
+                onDismiss = { open = false; requestedReturnLabel = null }
+            )
         }
     }
 }
@@ -235,6 +246,7 @@ private fun OpenRouterHubDialog(
     viewModel: ChatViewModel,
     initialPage: HubPage,
     initialMediaSection: MediaSection,
+    returnLabel: String?,
     onDismiss: () -> Unit
 ) {
     val state by controller.state.collectAsState()
@@ -283,7 +295,15 @@ private fun OpenRouterHubDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
+                            if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
+                                TextButton(onClick = onDismiss) {
+                                    Icon(Icons.Outlined.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Вернуться")
+                                }
+                            } else {
+                                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
+                            }
                         }
                         if (settingsMode) HubPageBar(page = page, onPage = { page = it })
                         if (state.loading) {
@@ -297,6 +317,21 @@ private fun OpenRouterHubDialog(
                 }
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
+                    if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Каталог открыт из: $returnLabel",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(onClick = onDismiss) { Text("Вернуться") }
+                            }
+                        }
+                    }
                     state.status?.let { status ->
                         Surface(color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)) {
                             Text(status, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
@@ -582,6 +617,12 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                         )
                     }
                 }
+                IconButton(
+                    onClick = { copyToClipboard(context, model.id) },
+                    modifier = Modifier.size(34.dp)
+                ) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать ID модели", modifier = Modifier.size(18.dp))
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
                         Text("⋮", style = MaterialTheme.typography.titleLarge)
@@ -595,41 +636,22 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             }
                         )
                         if (ModelCategory.TEXT in model.categories && !model.isBatch) {
-                            DropdownMenuItem(text = { Text("Выбрать для чата") }, onClick = { menuOpen = false; controller.useAsTextModel(model) })
-                            DropdownMenuItem(text = { Text("Добавить / убрать из быстрых") }, onClick = { menuOpen = false; controller.toggleQuickTextModel(model) })
-                            if (appState.textModel == model.id) {
-                                DropdownMenuItem(text = { Text("Сбросить чат на OpenRouter Auto") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TEXT) })
-                            }
+                            DropdownMenuItem(
+                                text = { Text("Основная модель чатов по умолчанию") },
+                                onClick = { menuOpen = false; controller.useAsTextModel(model) }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (appState.quickTextModels.any { it.modelId == model.id })
+                                            "Удалить из дополнительных моделей чатов"
+                                        else
+                                            "Добавить в дополнительные модели чатов"
+                                    )
+                                },
+                                onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
+                            )
                         }
-                        if (model.isBatch) {
-                            DropdownMenuItem(text = { Text("Выбрать для пакетных задач") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) })
-                            if (hubState.media.batchModel == model.id) DropdownMenuItem(text = { Text("Снять с пакетных задач") }, onClick = { menuOpen = false; controller.clearBatchModel() })
-                        }
-                        if (ModelCategory.IMAGE in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для создания изображений") }, onClick = { menuOpen = false; controller.useAsImageModel(model) })
-                            if (appState.imageModel == model.id) DropdownMenuItem(text = { Text("Снять с изображений") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.IMAGE) })
-                        }
-                        if (ModelCategory.VIDEO in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для видео") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.VIDEO) })
-                            if (hubState.media.videoModel == model.id) DropdownMenuItem(text = { Text("Снять с видео") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.VIDEO) })
-                        }
-                        if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для озвучивания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.SPEECH) })
-                            if (hubState.media.speechModel == model.id) DropdownMenuItem(text = { Text("Снять с озвучивания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.SPEECH) })
-                        }
-                        if (ModelCategory.TRANSCRIPTION in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для распознавания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TRANSCRIPTION) })
-                            if (hubState.media.transcriptionModel == model.id) DropdownMenuItem(text = { Text("Снять с распознавания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TRANSCRIPTION) })
-                        }
-                        if (ModelCategory.EMBEDDINGS in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для поиска по документам") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.EMBEDDINGS) })
-                            if (hubState.rag.embeddingModel == model.id) DropdownMenuItem(text = { Text("Снять с поиска по документам") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.EMBEDDINGS) })
-                        }
-                        if (ModelCategory.RERANK in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для точной сортировки") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.RERANK) })
-                            if (hubState.rag.rerankModel == model.id) DropdownMenuItem(text = { Text("Снять с точной сортировки") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.RERANK) })
-                        }
-                        DropdownMenuItem(text = { Text("Копировать ID модели") }, onClick = { menuOpen = false; copyToClipboard(context, model.id) })
                     }
                 }
             }
@@ -689,17 +711,6 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 Text(priceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (ModelCategory.TEXT in model.categories && !model.isBatch) SmallAssignButton("Использовать в чате") { controller.useAsTextModel(model) }
-                if (ModelCategory.IMAGE in model.categories) SmallAssignButton("Для изображений") { controller.useAsImageModel(model) }
-                if (model.isBatch) SmallAssignButton("Для пакета задач") { controller.assignModel(model, ModelCategory.TEXT) }
-                if (ModelCategory.VIDEO in model.categories) SmallAssignButton("Для видео") { controller.assignModel(model, ModelCategory.VIDEO) }
-                if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) SmallAssignButton("Для озвучивания") { controller.assignModel(model, ModelCategory.SPEECH) }
-                if (ModelCategory.TRANSCRIPTION in model.categories) SmallAssignButton("Для распознавания") { controller.assignModel(model, ModelCategory.TRANSCRIPTION) }
-                if (ModelCategory.EMBEDDINGS in model.categories) SmallAssignButton("Для поиска по документам") { controller.assignModel(model, ModelCategory.EMBEDDINGS) }
-                if (ModelCategory.RERANK in model.categories) SmallAssignButton("Для точной сортировки") { controller.assignModel(model, ModelCategory.RERANK) }
-            }
         }
     }
 
