@@ -387,7 +387,21 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
     var price by remember { mutableStateOf(SimplePriceFilter.ALL) }
     var sortByCapabilities by remember { mutableStateOf(false) }
     var moreKindsOpen by remember { mutableStateOf(false) }
+    var filtersExpanded by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
+
+    LaunchedEffect(
+        listState.isScrollInProgress,
+        listState.firstVisibleItemIndex,
+        listState.firstVisibleItemScrollOffset
+    ) {
+        if (
+            listState.isScrollInProgress &&
+            (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 24)
+        ) {
+            filtersExpanded = false
+        }
+    }
 
     val mainKinds = remember {
         listOf(
@@ -456,8 +470,14 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
+            if (!filtersExpanded) {
+                TextButton(onClick = { filtersExpanded = true }) {
+                    Text("Фильтры")
+                }
+            }
         }
 
+        if (filtersExpanded) {
         Text(
             "Тип",
             modifier = Modifier.padding(start = 14.dp, top = 1.dp),
@@ -544,6 +564,14 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+        } else {
+            Text(
+                "Показано ${filtered.size} из ${state.catalog.size} · фильтры свёрнуты",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         LazyColumn(
             state = listState,
