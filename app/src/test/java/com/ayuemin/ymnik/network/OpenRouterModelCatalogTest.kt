@@ -122,6 +122,38 @@ class OpenRouterModelCatalogTest {
         assertEquals(200000, merged.contextLength)
     }
     @Test
+    fun parsesAutoRouterAsFirstClassChatModel() {
+        val info = OpenRouterModelCatalog.parse(
+            JsonParser.parseString(
+                """
+                {
+                  "id": "openrouter/auto",
+                  "name": "Auto Router",
+                  "context_length": 2000000,
+                  "architecture": {
+                    "input_modalities": ["text","image","audio","file","video"],
+                    "output_modalities": ["text","image"]
+                  },
+                  "pricing": {"prompt":"-1","completion":"-1"},
+                  "supported_parameters": ["reasoning","reasoning_effort","tool_choice","tools","web_search_options"]
+                }
+                """.trimIndent()
+            )
+        )!!
+
+        assertEquals("openrouter/auto", info.id)
+        assertEquals(2000000, info.contextLength)
+        assertTrue(ModelCategory.TEXT in info.categories)
+        assertTrue(info.accepts("file"))
+        assertTrue(info.accepts("video"))
+        assertTrue(info.outputs("image"))
+        assertTrue(info.supportsTools)
+        assertTrue(info.supportsReasoning)
+        assertEquals(null, info.promptPriceUsdPerMillion)
+        assertEquals(null, info.completionPriceUsdPerMillion)
+    }
+
+    @Test
     fun parsesCurrentReasoningEffortsIncludingMax() {
         val info = OpenRouterModelCatalog.parse(
             JsonParser.parseString(
