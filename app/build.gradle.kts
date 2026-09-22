@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.4 — persistent chat title
+// Umnik v1.19.11-rc.5 — unified settings and model catalog
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 147
-        versionName = "1.19.11-rc.4"
+        versionCode = 148
+        versionName = "1.19.11-rc.5"
     }
 
     buildFeatures {
