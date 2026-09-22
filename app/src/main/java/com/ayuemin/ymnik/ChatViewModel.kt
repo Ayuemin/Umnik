@@ -1940,7 +1940,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val modelId = _state.value.textModel
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
-        val keepReasoning = reasoningStillValid(info, effort)
+        val requestedReasoning = if (projectId == null) defaultReasoningEnabled() else _state.value.reasoningEnabled
+        val keepReasoning = requestedReasoning &&
+            info?.supportsReasoning != false &&
+            (info?.supportsReasoningEffort != true || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
         val newSkillIds = emptySet<String>()
         chatsRepository.save(next)
         val fixed = if (projectId != null) {
@@ -2009,10 +2012,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val retained = _state.value.chats.filterNot { old -> old.projectId == null && isBareEmptyChat(old) }
         val next = listOf(chat) + retained
         chatsRepository.save(next)
+        val guideModel = loadTextModelForProfile(profile)
+        val guideRuntime = ProjectChatRuntimeProfile(
+            modelId = guideModel,
+            webSearchEnabled = false,
+            reasoningEnabled = false,
+            reasoningEffort = globalDefaultReasoningEffort(),
+            tools = openRouterFeaturePrefs.tools().copy(webSearch = WebSearchMode.OFF),
+            skillIds = emptySet()
+        )
+        projectAutomation.saveProfile(chat.id, guideRuntime)
         prefs.edit()
             .putString("current_chat_id", chat.id)
             .putString("active_connection_profile", profile.id)
-            .putBoolean("reasoning_enabled", false)
             .apply()
         _state.value = _state.value.copy(
             chats = next,
@@ -2021,9 +2033,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             activeSkillIds = emptySet(),
             mode = ChatMode.TEXT,
             activeConnectionProfileId = profile.id,
-            textModel = loadTextModelForProfile(profile),
-            currentChatTextModel = null,
+            textModel = guideModel,
+            currentChatTextModel = guideRuntime.modelId,
+            reasoningEffort = guideRuntime.reasoningEffort,
             reasoningEnabled = false,
+            webSearchEnabled = false,
+            webSearchPreset = guideRuntime.tools.webSearchPreset,
             pendingAttachments = emptyList(),
             status = null
         )
@@ -2077,23 +2092,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             updatedAt = now
         )
         val chats = listOf(branch) + _state.value.chats
-        val modelId = branch.textModelOverride ?: _state.value.textModel
-        val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
-        val effort = preferredReasoningEffort(modelId, info)
-        val keepReasoning = reasoningStillValid(info, effort)
         val branchSkillIds = _state.value.activeSkillIds
 
         chatsRepository.save(chats)
         val sourceRuntime = projectAutomation.profile(source.id) ?: defaultRuntimeProfile(source)
-        projectAutomation.saveProfile(
-            branch.id,
-            sourceRuntime.copy(
-                modelId = branch.textModelOverride ?: sourceRuntime.modelId,
-                reasoningEffort = effort,
-                reasoningEnabled = keepReasoning,
-                skillIds = branchSkillIds
-            )
+        val branchRuntime = sourceRuntime.copy(
+            modelId = branch.textModelOverride ?: sourceRuntime.modelId,
+            skillIds = branchSkillIds
         )
+        projectAutomation.saveProfile(branch.id, branchRuntime)
         prefs.edit()
             .putString("current_chat_id", branch.id)
             .putStringSet(chatSkillsKey(branch.id), branchSkillIds)
@@ -2105,9 +2112,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = branchedMessages,
             activeSkillIds = branchSkillIds,
             mode = ChatMode.TEXT,
-            currentChatTextModel = branch.textModelOverride,
-            reasoningEffort = effort,
-            reasoningEnabled = keepReasoning,
+            currentChatTextModel = branchRuntime.modelId ?: branch.textModelOverride,
+            reasoningEffort = branchRuntime.reasoningEffort,
+            reasoningEnabled = branchRuntime.reasoningEnabled,
+            webSearchEnabled = branchRuntime.webSearchEnabled,
+            webSearchPreset = branchRuntime.tools.webSearchPreset,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -2145,9 +2154,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val switchPrefs = prefs.edit()
             .putString("current_chat_id", id)
         if (linkedAgentId == null) {
-            switchPrefs
-                .putString("active_connection_profile", profile.id)
-                .putString("reasoning_effort", effort.name)
+            switchPrefs.putString("active_connection_profile", profile.id)
         }
         switchPrefs.apply()
         _state.value = _state.value.copy(
@@ -2257,14 +2264,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val modelId = _state.value.textModel
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
-        val keepReasoning = reasoningStillValid(info, effort)
+        val keepReasoning = defaultReasoningEnabled() &&
+            info?.supportsReasoning != false &&
+            (info?.supportsReasoningEffort != true || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
+        val resetRuntime = defaultRuntimeProfile(chat).copy(
+            modelId = modelId,
+            reasoningEnabled = keepReasoning,
+            reasoningEffort = effort,
+            skillIds = emptySet()
+        )
 
         val resetChats = listOf(chat) + protectedAgentChats
         chatsRepository.save(resetChats)
+        projectAutomation.saveProfile(chat.id, resetRuntime)
         prefs.edit()
             .putString("current_chat_id", chat.id)
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
+            .putStringSet(chatSkillsKey(chat.id), emptySet())
             .apply()
 
         _state.value = _state.value.copy(
@@ -2273,9 +2288,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             messages = emptyList(),
             activeSkillIds = emptySet(),
             mode = ChatMode.TEXT,
-            currentChatTextModel = null,
-            reasoningEffort = effort,
-            reasoningEnabled = keepReasoning,
+            currentChatTextModel = resetRuntime.modelId,
+            reasoningEffort = resetRuntime.reasoningEffort,
+            reasoningEnabled = resetRuntime.reasoningEnabled,
+            webSearchEnabled = resetRuntime.webSearchEnabled,
+            webSearchPreset = resetRuntime.tools.webSearchPreset,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
