@@ -81,8 +81,10 @@ internal class OpenRouterRequestEnhancer(
             payload.add("tools", merged)
         }
 
-        if (apiKey.isNotBlank()) applyRag(payload, apiKey, baseUrl)
-
+        // Attachment RAG was intentionally removed from the user-facing product:
+        // small one-off files are sent directly, while large/reusable documents belong
+        // in the persistent knowledge base. Keep the legacy implementation below only
+        // for backward source compatibility; it is no longer invoked.
         val model = payload.string("model").orEmpty()
         if (model.endsWith(":batch", ignoreCase = true)) {
             if (apiKey.isBlank()) return Result(request = requestWithJson(request, payload))
