@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Info
@@ -257,6 +258,19 @@ internal fun SettingsExpander(
 }
 
 @Composable
+internal fun UmnikChevronIndicator(
+    icon: ImageVector,
+    contentDescription: String
+) {
+    Icon(
+        icon,
+        contentDescription = contentDescription,
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.size(24.dp)
+    )
+}
+
+@Composable
 internal fun SectionTitle(text: String) {
     Text(
         text,
@@ -316,6 +330,7 @@ internal fun UmnikModelIdField(
     value: String,
     onValueChange: (String) -> Unit,
     onPick: () -> Unit,
+    onApply: (() -> Unit)? = null,
     info: String? = null,
     modifier: Modifier = Modifier,
     singleLine: Boolean = true,
@@ -330,10 +345,19 @@ internal fun UmnikModelIdField(
         trailingIcon = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (!info.isNullOrBlank()) UmnikInfoHint(title = label, text = info)
+                if (onApply != null) {
+                    IconButton(onClick = onApply) {
+                        Icon(
+                            Icons.Outlined.Check,
+                            contentDescription = "Сохранить ID модели",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
                 IconButton(onClick = onPick) {
                     Icon(
                         Icons.Outlined.Search,
-                        contentDescription = "Выбрать модель в каталоге",
+                        contentDescription = "Открыть каталог моделей",
                         tint = MaterialTheme.colorScheme.primary
                     )
                 }
