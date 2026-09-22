@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
@@ -523,13 +524,15 @@ private fun AgentSettingsDialog(
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
                         Text("Режим поиска", fontWeight = FontWeight.SemiBold)
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            listOf(
-                                WebSearchPreset.ON_DEMAND,
-                                WebSearchPreset.FAST,
-                                WebSearchPreset.NORMAL,
-                                WebSearchPreset.DEEP
-                            ).forEach { preset ->
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(
+                                listOf(
+                                    WebSearchPreset.ON_DEMAND,
+                                    WebSearchPreset.FAST,
+                                    WebSearchPreset.NORMAL,
+                                    WebSearchPreset.DEEP
+                                )
+                            ) { preset ->
                                 FilterChip(
                                     selected = webSearchPreset == preset,
                                     onClick = { webSearchPreset = preset },
@@ -537,19 +540,15 @@ private fun AgentSettingsDialog(
                                 )
                             }
                         }
-                        Text("Сервис: ${webSearchEngineLabel(webSearchEngine)}", style = MaterialTheme.typography.bodySmall)
-                        TextButton(
-                            onClick = {
-                                webSearchEngine = when (webSearchEngine) {
-                                    WebSearchEngine.AUTO -> WebSearchEngine.NATIVE
-                                    WebSearchEngine.NATIVE -> WebSearchEngine.EXA
-                                    WebSearchEngine.EXA -> WebSearchEngine.PARALLEL
-                                    WebSearchEngine.PARALLEL -> WebSearchEngine.PERPLEXITY
-                                    WebSearchEngine.PERPLEXITY -> WebSearchEngine.AUTO
-                                }
+                        Text("Сервис поиска", fontWeight = FontWeight.SemiBold)
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(WebSearchEngine.entries) { engine ->
+                                FilterChip(
+                                    selected = webSearchEngine == engine,
+                                    onClick = { webSearchEngine = engine },
+                                    label = { Text(webSearchEngineLabel(engine)) }
+                                )
                             }
-                        ) {
-                            Text("Сменить сервис поиска")
                         }
                     }
                 }
