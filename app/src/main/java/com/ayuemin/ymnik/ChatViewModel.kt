@@ -264,6 +264,30 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun concurrentRequestLimit(): Int = RequestConcurrencyLimiter.configuredLimit(context)
 
+    fun defaultWebSearchEnabled(): Boolean = prefs.getBoolean("web_search", false)
+
+    fun setDefaultWebSearchEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("web_search", enabled).apply()
+        _state.value = _state.value.copy(
+            status = if (enabled)
+                "Поиск будет включён по умолчанию в новых чатах"
+            else
+                "Поиск будет выключен по умолчанию в новых чатах"
+        )
+    }
+
+    fun defaultReasoningEnabled(): Boolean = prefs.getBoolean("reasoning_enabled", false)
+
+    fun setDefaultReasoningEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean("reasoning_enabled", enabled).apply()
+        _state.value = _state.value.copy(
+            status = if (enabled)
+                "Размышление будет включено по умолчанию в новых чатах"
+            else
+                "Размышление будет выключено по умолчанию в новых чатах"
+        )
+    }
+
     fun setConcurrentRequestLimit(limit: Int) {
         if (_state.value.isLoading || RequestExecutionManager.hasActiveRequest()) return
         val clean = limit.coerceAtLeast(0)
