@@ -48,7 +48,7 @@ internal fun ExpandableSettingsHeader(
             Text(
                 title,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.primary
+                color = MaterialTheme.colorScheme.onSurface
             )
             Text(
                 subtitle,
@@ -59,7 +59,7 @@ internal fun ExpandableSettingsHeader(
         Icon(
             if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
             contentDescription = if (expanded) "Свернуть" else "Развернуть",
-            tint = MaterialTheme.colorScheme.primary,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp)
         )
     }
