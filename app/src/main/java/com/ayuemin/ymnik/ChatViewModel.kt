@@ -171,6 +171,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialImageModel = loadImageModelForProfile(initialImageProfile.id)
     private val initialImageAspectRatio = loadImageParameter("aspect_ratio", initialImageProfile.id, initialImageModel)
     private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
+    private val initialRuntime = projectAutomation.profile(initialChat.id) ?: ProjectChatRuntimeProfile(
+        modelId = initialChat.textModelOverride ?: loadTextModelForProfile(initialProfile),
+        webSearchEnabled = prefs.getBoolean("web_search", false),
+        reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
+        reasoningEffort = runCatching {
+            ReasoningEffort.valueOf(
+                prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name)
+                    ?: ReasoningEffort.MEDIUM.name
+            )
+        }.getOrDefault(ReasoningEffort.MEDIUM),
+        tools = openRouterFeaturePrefs.tools(),
+        skillIds = initialSkillIds
+    ).also { projectAutomation.saveProfile(initialChat.id, it) }
 
     private val _state = MutableStateFlow(
         UiState(
@@ -186,7 +199,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             activeConnectionProfileId = initialProfileId,
             disabledConnectionIds = initialDisabledConnectionIds,
             textModel = loadTextModelForProfile(initialProfile),
-            currentChatTextModel = initialChat.textModelOverride.takeIf { initialChat.connectionProfileId == null || initialChat.connectionProfileId == initialProfileId },
+            currentChatTextModel = initialRuntime.modelId,
             quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
             imageConnectionProfileId = initialImageProfileId,
             imageModel = initialImageModel,
@@ -201,13 +214,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val replyModel = prefs.getString("reply_speech_model", "").orEmpty().trim()
                 if (replyModel.isBlank()) "" else prefs.getString(replySpeechFormatKey(replyModel), "").orEmpty().trim()
             },
-            webSearchEnabled = projectAutomation.profile(initialChat.id)?.webSearchEnabled ?: prefs.getBoolean("web_search", false),
-            webSearchPreset = projectAutomation.profile(initialChat.id)?.tools?.webSearchPreset
-                ?: openRouterFeaturePrefs.tools().webSearchPreset,
-            reasoningEnabled = projectAutomation.profile(initialChat.id)?.reasoningEnabled ?: prefs.getBoolean("reasoning_enabled", false),
-            reasoningEffort = projectAutomation.profile(initialChat.id)?.reasoningEffort ?: runCatching {
-                ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
-            }.getOrDefault(ReasoningEffort.MEDIUM),
+            webSearchEnabled = initialRuntime.webSearchEnabled,
+            webSearchPreset = initialRuntime.tools.webSearchPreset,
+            reasoningEnabled = initialRuntime.reasoningEnabled,
+            reasoningEffort = initialRuntime.reasoningEffort,
             reasoningEffortsByModel = loadReasoningEffortsByModel(),
             userProfile = UserProfile(
                 name = prefs.getString("profile_name", "").orEmpty(),
@@ -1419,12 +1429,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
         val profile = _state.value.connectionProfiles.firstOrNull { it.id == profileId } ?: return
-        if (profile.id in _state.value.disabledConnectionIds) return
-        if (!isProfileConfigured(profile)) return
+        if (profile.id in _state.value.disabledConnectionIds || !isProfileConfigured(profile)) return
 
         val saved = prefs.edit()
             .putString(profilePrefKey("text_model", profile.id), clean)
-            .putString("active_connection_profile", profile.id)
             .commit()
         if (!saved) {
             _state.value = _state.value.copy(status = "Не удалось сохранить выбор модели")
@@ -1436,39 +1444,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value.activeConnectionProfileId == profile.id -> _state.value.availableTextModels
             else -> emptyList()
         }
-        val info = catalog.firstOrNull { it.id == clean }
-        val effort = preferredReasoningEffort(clean, info)
-        val keepReasoning = reasoningStillValid(info, effort)
-        val chats = _state.value.chats.map { chat ->
-            if (chat.id == _state.value.currentChatId) chat.copy(
-                connectionProfileId = profile.id,
-                textModelOverride = null,
-                mode = ChatMode.TEXT,
-                updatedAt = System.currentTimeMillis()
-            ) else chat
-        }
-        chatsRepository.save(chats)
-        prefs.edit()
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
-            .apply()
-
         _state.value = _state.value.copy(
-            chats = chats,
-            activeConnectionProfileId = profile.id,
             textModel = clean,
-            currentChatTextModel = null,
-            mode = ChatMode.TEXT,
-            availableTextModels = catalog,
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
-            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
-            reasoningEffort = effort,
-            reasoningEnabled = keepReasoning,
-            apiKeyConfigured = isProfileConfigured(profile),
-            status = "Сохранено · ${profile.name}: ${clean.substringAfterLast('/')} · текущий и новые чаты"
+            status = "Модель по умолчанию для новых чатов: ${clean.substringAfterLast('/')}"
         )
-        disableWebSearchForUnsupportedModel(_state.value.currentChatId, info)
-        refreshModelCapabilities()
         if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
 
@@ -1507,7 +1487,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value.modelCatalog.firstOrNull { it.id == clean }
         }
         val effort = preferredReasoningEffort(clean, info)
-        val keepReasoning = sameProfile && reasoningStillValid(info, effort)
+        val currentBefore = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val runtimeBefore = currentBefore?.let { projectAutomation.profile(it.id) ?: defaultRuntimeProfile(it) }
+        val keepReasoning = runtimeBefore?.reasoningEnabled == true &&
+            sameProfile && info?.supportsReasoning == true &&
+            (!info.supportsReasoningEffort || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
                 connectionProfileId = profile.id,
@@ -1613,7 +1597,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val info = _state.value.availableTextModels.firstOrNull { it.id == modelId }
             ?: _state.value.modelCatalog.firstOrNull { it.id == modelId }
         val effort = preferredReasoningEffort(modelId, info)
-        val keepReasoning = reasoningStillValid(info, effort)
+        val currentBefore = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val runtimeBefore = currentBefore?.let { projectAutomation.profile(it.id) ?: defaultRuntimeProfile(it) }
+        val keepReasoning = runtimeBefore?.reasoningEnabled == true &&
+            info?.supportsReasoning == true &&
+            (!info.supportsReasoningEffort || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
         val chats = _state.value.chats.map { chat ->
             if (chat.id == _state.value.currentChatId) chat.copy(
                 connectionProfileId = profile.id,
@@ -1629,7 +1617,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             projectAutomation.saveProfile(
                 currentChat.id,
                 runtime.copy(
-                    modelId = null,
+                    modelId = modelId,
                     reasoningEffort = effort,
                     reasoningEnabled = keepReasoning
                 )
@@ -1637,7 +1625,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         _state.value = _state.value.copy(
             chats = chats,
-            currentChatTextModel = null,
+            currentChatTextModel = modelId,
             mode = ChatMode.TEXT,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning
@@ -1942,7 +1930,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         } else {
             defaultRuntimeProfile(chat).copy(
-                modelId = null,
+                modelId = _state.value.textModel,
                 reasoningEffort = effort,
                 reasoningEnabled = keepReasoning,
                 skillIds = newSkillIds
@@ -1958,7 +1946,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatId = chat.id,
             messages = emptyList(),
             activeSkillIds = newSkillIds,
-            currentChatTextModel = null,
+            currentChatTextModel = fixed.modelId,
             reasoningEffort = fixed.reasoningEffort,
             reasoningEnabled = fixed.reasoningEnabled,
             webSearchEnabled = fixed.webSearchEnabled,
