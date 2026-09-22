@@ -12,9 +12,9 @@ class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels { ChatViewModel.Factory(applicationContext) }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         DiagnosticLog.installCrashHandler(applicationContext)
         DiagnosticLog.recordPreviousProcessExit(applicationContext)
-        super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent { UmnikV16Root(viewModel) }
     }
