@@ -643,7 +643,7 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        if (appState.quickTextModels.any { it.modelId == model.id })
+                                        if (appState.quickTextModels.any { it.substringAfter('\u001F') == model.id })
                                             "Удалить из дополнительных моделей чатов"
                                         else
                                             "Добавить в дополнительные модели чатов"
