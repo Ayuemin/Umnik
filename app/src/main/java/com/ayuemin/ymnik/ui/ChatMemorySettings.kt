@@ -66,15 +66,10 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             modeLabel(effectiveMode)
         },
         expanded = expanded,
-        onToggle = { expanded = !expanded }
+        onToggle = { expanded = !expanded },
+        info = "Режим определяет, сколько старой переписки отправляется модели. Исходная история чата всегда остаётся на телефоне."
     )
     if (!expanded) return
-
-    Text(
-        "Режим определяет, сколько старой переписки отправляется модели. Исходная история чата всегда остаётся на телефоне.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 
     ContextModeChoice(
         selected = overrideMode == null,
@@ -102,7 +97,11 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
         FilledTonalButton(
             onClick = { vm.rebuildChatMemory(chat.id) },
             enabled = !state.isLoading && !state.requestActive && effectiveMode != ChatContextMode.FULL,
@@ -112,6 +111,10 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             Spacer(Modifier.width(6.dp))
             Text("Перестроить")
         }
+        UmnikInfoHint(
+            title = "Перестроить память",
+            text = "Заново создаёт служебные конспекты и индекс старой переписки этого чата. Исходная переписка не меняется."
+        )
         TextButton(
             onClick = { vm.clearChatMemory(chat.id) },
             enabled = !state.isLoading && !state.requestActive,
@@ -119,12 +122,11 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
         ) {
             Text("Очистить память")
         }
+        UmnikInfoHint(
+            title = "Очистить память",
+            text = "Удаляет только служебные checkpoint-конспекты, embeddings и карточку состояния этого чата. Переписка и файлы остаются."
+        )
     }
-    Text(
-        "Очистка памяти не удаляет переписку. При удалении самого чата его checkpoint-конспекты, embeddings и карточка состояния удаляются автоматически.",
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant
-    )
 }
 
 @Composable
@@ -134,14 +136,18 @@ private fun ContextModeChoice(
     description: String,
     onClick: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        FilterChip(selected = selected, onClick = onClick, label = { Text(title) })
-        Text(
-            description,
-            modifier = Modifier.padding(start = 6.dp, top = 2.dp, bottom = 4.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        FilterChip(
+            selected = selected,
+            onClick = onClick,
+            label = { Text(title) },
+            modifier = Modifier.weight(1f)
         )
+        Spacer(Modifier.width(6.dp))
+        UmnikInfoHint(title = title, text = description)
     }
 }
 
@@ -182,27 +188,20 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     val requestedChunk = chunkTokens.toIntOrNull() ?: initial.chunkTokens
     val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
 
-    ElevatedCard(Modifier.fillMaxWidth()) {
+    UmnikPanel {
         ExpandableSettingsHeader(
             icon = Icons.Outlined.History,
             title = "Память и контекст",
             subtitle = "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
             expanded = expanded,
-            onToggle = { expanded = !expanded }
+            onToggle = { expanded = !expanded },
+            info = "Umnik не удаляет старую переписку. После заданного порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, компактный конспект и только релевантные старые фрагменты."
         )
-        if (!expanded) return@ElevatedCard
+        if (!expanded) return@UmnikPanel
         Column(
             Modifier.fillMaxWidth().padding(start = 14.dp, end = 14.dp, bottom = 14.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
-
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Гибридная память длинных чатов", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                UmnikInfoHint(
-                    title = "Гибридная память",
-                    text = "Umnik не удаляет старую переписку. После заданного порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, компактный конспект и только релевантные старые фрагменты."
-                )
-            }
 
             Text("Режим контекста по умолчанию", fontWeight = FontWeight.SemiBold)
             Text(
@@ -368,6 +367,11 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 Icon(Icons.Outlined.DeleteSweep, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Очистить память всех чатов")
+                Spacer(Modifier.width(6.dp))
+                UmnikInfoHint(
+                    title = "Очистить память всех чатов",
+                    text = "Удаляет только служебные конспекты, embeddings и карточки состояния всех чатов. Переписка, файлы и сами чаты не удаляются."
+                )
             }
         }
     }
@@ -401,15 +405,17 @@ private fun MemorySettingsExpander(
     title: String,
     subtitle: String,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    info: String? = null
 ) {
-    ElevatedCard(Modifier.fillMaxWidth()) {
+    UmnikPanel {
         ExpandableSettingsHeader(
             icon = Icons.Outlined.History,
             title = title,
             subtitle = subtitle,
             expanded = expanded,
-            onToggle = onToggle
+            onToggle = onToggle,
+            info = info
         )
     }
 }
