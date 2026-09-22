@@ -2655,7 +2655,10 @@ private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.g
     }
 }
 
-private fun markdownInline(source: String) = buildAnnotatedString {
+@Composable
+private fun markdownInline(source: String): androidx.compose.ui.text.AnnotatedString {
+    val codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
+    return buildAnnotatedString {
     val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
     var cursor = 0
     regex.findAll(source).forEach { match ->
@@ -2664,7 +2667,7 @@ private fun markdownInline(source: String) = buildAnnotatedString {
             match.groupValues[1].isNotEmpty() -> withStyle(
                 SpanStyle(
                     fontFamily = FontFamily.Monospace,
-                    background = androidx.compose.ui.graphics.Color.Gray.copy(alpha = 0.16f)
+                    background = codeBackground
                 )
             ) { append(match.groupValues[1]) }
             match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
@@ -2680,6 +2683,7 @@ private fun markdownInline(source: String) = buildAnnotatedString {
         cursor = match.range.last + 1
     }
     if (cursor < source.length) append(source.substring(cursor))
+    }
 }
 
 @Composable
@@ -2857,7 +2861,7 @@ private fun FullScreenImageViewer(
     ) {
         Surface(
             modifier = Modifier.fillMaxSize(),
-            color = Color.Black
+            color = MaterialTheme.colorScheme.surface
         ) {
             Box(Modifier.fillMaxSize()) {
                 ComposeImage(
@@ -2903,7 +2907,7 @@ private fun FullScreenImageViewer(
                     Icon(
                         Icons.Outlined.Close,
                         contentDescription = "Закрыть изображение",
-                        tint = Color.White
+                        tint = MaterialTheme.colorScheme.primary
                     )
                 }
             }
