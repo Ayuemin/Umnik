@@ -6,6 +6,8 @@ import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeChunk
 import com.ayuemin.ymnik.model.KnowledgeDocument
 import com.ayuemin.ymnik.model.KnowledgeHit
+import com.ayuemin.ymnik.model.KnowledgeIndexTask
+import com.ayuemin.ymnik.model.KnowledgeIndexTaskStatus
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
@@ -24,18 +26,273 @@ import kotlin.math.sqrt
 class KnowledgeBaseRepository(private val context: Context) {
     private val root = File(context.filesDir, "knowledge_base").apply { mkdirs() }
     private val manifest = AtomicJsonFile(File(root, "manifest.json"))
+    private val taskManifest = AtomicJsonFile(File(root, "index_tasks.json"))
     private val prefs = context.getSharedPreferences("knowledge_base", Context.MODE_PRIVATE)
     private val gson = Gson()
     private val documentsType = object : TypeToken<List<KnowledgeDocument>>() {}.type
     private val chunksType = object : TypeToken<List<KnowledgeChunk>>() {}.type
+    private val tasksType = object : TypeToken<List<KnowledgeIndexTask>>() {}.type
 
     @Volatile
     private var documents: List<KnowledgeDocument> = loadDocuments()
+
+    @Volatile
+    private var indexTasks: List<KnowledgeIndexTask> = loadTasks()
 
     fun documents(kind: KnowledgeOwnerKind, ownerId: String): List<KnowledgeDocument> =
         documents.filter { it.ownerKind == kind && it.ownerId == ownerId }.sortedByDescending { it.indexedAt }
 
     fun allDocuments(): List<KnowledgeDocument> = documents
+
+
+    fun reloadFromDisk() {
+        synchronized(this) {
+            documents = loadDocuments()
+            indexTasks = loadTasks()
+        }
+    }
+
+    fun indexTask(taskId: String): KnowledgeIndexTask? =
+        indexTasks.firstOrNull { it.id == taskId } ?: loadTasks().firstOrNull { it.id == taskId }
+
+    fun activeIndexTask(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeIndexTask? =
+        loadTasks().firstOrNull {
+            it.ownerKind == kind &&
+                it.ownerId == ownerId &&
+                it.status != KnowledgeIndexTaskStatus.FAILED
+        }
+
+    fun activeTaskLabels(): Map<String, String> = loadTasks()
+        .filter { it.status != KnowledgeIndexTaskStatus.FAILED }
+        .groupBy { "${it.ownerKind.name}::${it.ownerId}" }
+        .mapValues { (_, values) ->
+            values.maxByOrNull { it.updatedAt }?.let(::taskLabel).orEmpty()
+        }
+        .filterValues { it.isNotBlank() }
+
+    fun failedTaskMessage(kind: KnowledgeOwnerKind, ownerId: String): String? = loadTasks()
+        .filter {
+            it.ownerKind == kind &&
+                it.ownerId == ownerId &&
+                it.status == KnowledgeIndexTaskStatus.FAILED
+        }
+        .maxByOrNull { it.updatedAt }
+        ?.let { task -> "Индексация «${task.name}» остановлена: ${task.error ?: "неизвестная ошибка"}" }
+
+    suspend fun prepareIndexTask(
+        kind: KnowledgeOwnerKind,
+        ownerId: String,
+        attachment: PendingAttachment,
+        embeddingModelId: String,
+        connectionProfileId: String,
+        baseUrl: String
+    ): KnowledgeIndexTask = withContext(Dispatchers.IO) {
+        require(ownerId.isNotBlank()) { "Не выбран владелец базы знаний" }
+        require(embeddingModelId.isNotBlank()) { "Не выбрана embedding-модель" }
+        require(attachment.size <= MAX_SOURCE_BYTES || attachment.size <= 0L) {
+            "Файл для базы знаний должен быть не больше ${MAX_SOURCE_BYTES / 1024 / 1024} МБ"
+        }
+        require(activeIndexTask(kind, ownerId) == null) { "Для этой базы знаний уже выполняется индексация" }
+
+        val id = UUID.randomUUID().toString()
+        val dir = documentDir(kind, ownerId, id).apply { mkdirs() }
+        try {
+            val source = File(dir, "source${extensionFor(attachment.name)}")
+            copyAttachment(attachment, source)
+            require(source.length() <= MAX_SOURCE_BYTES) {
+                "Файл для базы знаний должен быть не больше ${MAX_SOURCE_BYTES / 1024 / 1024} МБ"
+            }
+            val task = KnowledgeIndexTask(
+                id = id,
+                ownerKind = kind,
+                ownerId = ownerId,
+                name = attachment.name,
+                mimeType = attachment.mimeType,
+                localPath = source.absolutePath,
+                size = source.length(),
+                embeddingModelId = embeddingModelId,
+                connectionProfileId = connectionProfileId,
+                baseUrl = baseUrl
+            )
+            upsertTask(task)
+            task
+        } catch (error: Throwable) {
+            dir.deleteRecursively()
+            throw error
+        }
+    }
+
+    suspend fun prepareReindexTask(
+        documentId: String,
+        embeddingModelId: String,
+        connectionProfileId: String,
+        baseUrl: String
+    ): KnowledgeIndexTask = withContext(Dispatchers.IO) {
+        val previous = (loadDocuments().firstOrNull { it.id == documentId }
+            ?: documents.firstOrNull { it.id == documentId })
+            ?: error("Документ базы знаний не найден")
+        require(activeIndexTask(previous.ownerKind, previous.ownerId) == null) {
+            "Для этой базы знаний уже выполняется индексация"
+        }
+        val oldSource = File(previous.localPath)
+        require(oldSource.isFile) { "Исходный файл «${previous.name}» не найден" }
+        val id = UUID.randomUUID().toString()
+        val dir = documentDir(previous.ownerKind, previous.ownerId, id).apply { mkdirs() }
+        try {
+            val source = File(dir, "source${extensionFor(previous.name)}")
+            oldSource.inputStream().buffered().use { input ->
+                source.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+            val task = KnowledgeIndexTask(
+                id = id,
+                ownerKind = previous.ownerKind,
+                ownerId = previous.ownerId,
+                name = previous.name,
+                mimeType = previous.mimeType,
+                localPath = source.absolutePath,
+                size = source.length(),
+                embeddingModelId = embeddingModelId,
+                connectionProfileId = connectionProfileId,
+                baseUrl = baseUrl,
+                replaceDocumentId = previous.id
+            )
+            upsertTask(task)
+            task
+        } catch (error: Throwable) {
+            dir.deleteRecursively()
+            throw error
+        }
+    }
+
+    suspend fun resumeIndexTask(
+        taskId: String,
+        apiKey: String,
+        embeddings: OpenRouterEmbeddingClient,
+        onProgress: (KnowledgeIndexTask) -> Unit = {}
+    ): KnowledgeDocument = withContext(Dispatchers.IO) {
+        var task = indexTask(taskId) ?: error("Задача индексации не найдена")
+        val source = File(task.localPath)
+        require(source.isFile) { "Исходный файл «${task.name}» не найден" }
+        val dir = source.parentFile ?: error("Не удалось открыть рабочую папку базы знаний")
+        val chunksFile = File(dir, CHUNKS_FILE)
+        val partialFile = File(dir, PARTIAL_VECTORS_FILE)
+
+        var chunks = if (chunksFile.isFile) readChunks(chunksFile) else emptyList()
+        if (chunks.isEmpty()) {
+            task = updateTask(task.copy(
+                status = KnowledgeIndexTaskStatus.PREPARING,
+                error = null,
+                updatedAt = System.currentTimeMillis()
+            ))
+            onProgress(task)
+            val sections = KnowledgeTextExtractor.extract(context, source, task.name, task.mimeType)
+            chunks = KnowledgeChunker.chunk(sections)
+            require(chunks.isNotEmpty()) { "В документе не найден текст для индексации" }
+            require(chunks.size <= MAX_CHUNKS_PER_DOCUMENT) {
+                "Документ слишком велик: ${chunks.size} фрагментов. Максимум сейчас $MAX_CHUNKS_PER_DOCUMENT"
+            }
+            writeChunks(chunksFile, chunks)
+        }
+
+        val persisted = partialVectorState(partialFile)
+        var done = persisted.first.coerceAtMost(chunks.size)
+        var dimension = persisted.second
+        task = updateTask(task.copy(
+            totalChunks = chunks.size,
+            completedChunks = done,
+            vectorDimension = dimension,
+            status = KnowledgeIndexTaskStatus.INDEXING,
+            error = null,
+            updatedAt = System.currentTimeMillis()
+        ))
+        onProgress(task)
+
+        while (done < chunks.size) {
+            val end = (done + EMBED_BATCH_SIZE).coerceAtMost(chunks.size)
+            val batch = chunks.subList(done, end)
+            val embedded = embeddings.embed(
+                apiKey = apiKey,
+                modelId = task.embeddingModelId,
+                inputs = batch.map { it.text },
+                inputType = "search_document",
+                baseUrl = task.baseUrl
+            )
+            require(embedded.size == batch.size && embedded.all { it.isNotEmpty() }) {
+                "Embedding-модель вернула неполный набор векторов"
+            }
+            val batchDimension = embedded.first().size
+            require(embedded.all { it.size == batchDimension }) {
+                "Embedding-модель вернула векторы разной размерности"
+            }
+            if (dimension != 0) require(dimension == batchDimension) {
+                "Размерность embedding изменилась во время индексации"
+            }
+            dimension = if (dimension == 0) batchDimension else dimension
+            appendPartialVectors(partialFile, embedded, dimension)
+            done += embedded.size
+            task = updateTask(task.copy(
+                totalChunks = chunks.size,
+                completedChunks = done,
+                vectorDimension = dimension,
+                status = KnowledgeIndexTaskStatus.INDEXING,
+                error = null,
+                updatedAt = System.currentTimeMillis()
+            ))
+            onProgress(task)
+        }
+
+        require(dimension > 0) { "Embedding-модель не создала индекс" }
+        finalizePartialVectors(partialFile, File(dir, VECTORS_FILE), chunks.size, dimension)
+        partialFile.delete()
+
+        val document = KnowledgeDocument(
+            id = task.id,
+            ownerKind = task.ownerKind,
+            ownerId = task.ownerId,
+            name = task.name,
+            mimeType = task.mimeType,
+            localPath = source.absolutePath,
+            size = source.length(),
+            embeddingModelId = task.embeddingModelId,
+            vectorDimension = dimension,
+            chunkCount = chunks.size,
+            charCount = chunks.sumOf { it.text.length },
+            indexedAt = System.currentTimeMillis()
+        )
+
+        val replaced = task.replaceDocumentId
+        val oldDocument = synchronized(this@KnowledgeBaseRepository) {
+            val latest = loadDocuments()
+            val old = replaced?.let { id -> latest.firstOrNull { it.id == id } }
+            val next = latest.filterNot { it.id == replaced || it.id == document.id } + document
+            saveDocuments(next)
+            documents = next
+            old
+        }
+        removeTask(task.id)
+        if (oldDocument != null && oldDocument.id != document.id) {
+            File(oldDocument.localPath).parentFile?.deleteRecursively()
+        }
+        document
+    }
+
+    fun markIndexTaskError(taskId: String, message: String, terminal: Boolean) {
+        val task = indexTask(taskId) ?: return
+        updateTask(task.copy(
+            status = if (terminal) KnowledgeIndexTaskStatus.FAILED else KnowledgeIndexTaskStatus.QUEUED,
+            error = message.take(700),
+            updatedAt = System.currentTimeMillis()
+        ))
+    }
+
+    fun retryFailedTask(taskId: String): KnowledgeIndexTask? {
+        val task = indexTask(taskId) ?: return null
+        return updateTask(task.copy(
+            status = KnowledgeIndexTaskStatus.QUEUED,
+            error = null,
+            updatedAt = System.currentTimeMillis()
+        ))
+    }
 
     fun settings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings = runCatching {
         prefs.getString(settingsKey(kind, ownerId), null)
@@ -289,6 +546,119 @@ class KnowledgeBaseRepository(private val context: Context) {
             .orEmpty()
     }.getOrDefault(emptyList())
 
+
+    private fun taskLabel(task: KnowledgeIndexTask): String {
+        val total = task.totalChunks
+        val done = task.completedChunks.coerceAtLeast(0)
+        val percent = if (total <= 0) 0 else (done * 100 / total).coerceIn(0, 100)
+        return when (task.status) {
+            KnowledgeIndexTaskStatus.QUEUED -> "В очереди: ${task.name}"
+            KnowledgeIndexTaskStatus.PREPARING -> "Подготавливаю ${task.name}…"
+            KnowledgeIndexTaskStatus.INDEXING ->
+                if (total > 0) "Индексирую ${task.name}: $percent% ($done/$total)"
+                else "Индексирую ${task.name}…"
+            KnowledgeIndexTaskStatus.FAILED -> "Ошибка индексации: ${task.name}"
+        }
+    }
+
+    private fun loadTasks(): List<KnowledgeIndexTask> = runCatching {
+        taskManifest.read { raw -> runCatching { gson.fromJson<List<KnowledgeIndexTask>>(raw, tasksType) }.isSuccess }
+            ?.let { gson.fromJson<List<KnowledgeIndexTask>>(it, tasksType) }
+            .orEmpty()
+    }.getOrDefault(emptyList()).also { indexTasks = it }
+
+    private fun saveTasks(value: List<KnowledgeIndexTask>) {
+        taskManifest.write(gson.toJson(value)) { raw ->
+            runCatching { gson.fromJson<List<KnowledgeIndexTask>>(raw, tasksType) }.isSuccess
+        }
+    }
+
+    private fun upsertTask(task: KnowledgeIndexTask): KnowledgeIndexTask = synchronized(this) {
+        val latest = loadTasks()
+        val next = latest.filterNot { it.id == task.id } + task
+        saveTasks(next)
+        indexTasks = next
+        task
+    }
+
+    private fun updateTask(task: KnowledgeIndexTask): KnowledgeIndexTask = upsertTask(task)
+
+    private fun removeTask(taskId: String) {
+        synchronized(this) {
+            val latest = loadTasks()
+            val next = latest.filterNot { it.id == taskId }
+            saveTasks(next)
+            indexTasks = next
+        }
+    }
+
+    private fun partialVectorState(file: File): Pair<Int, Int> {
+        if (!file.isFile || file.length() == 0L) return 0 to 0
+        return DataInputStream(FileInputStream(file).buffered()).use { input ->
+            val magic = input.readInt()
+            val version = input.readInt()
+            val dimension = input.readInt()
+            require(magic == PARTIAL_VECTOR_MAGIC && version == PARTIAL_VECTOR_VERSION && dimension > 0) {
+                "Повреждён checkpoint embeddings"
+            }
+            val payload = file.length() - PARTIAL_VECTOR_HEADER_BYTES
+            val vectorBytes = dimension.toLong() * 4L
+            require(payload >= 0L && payload % vectorBytes == 0L) { "Повреждён checkpoint embeddings" }
+            (payload / vectorBytes).toInt() to dimension
+        }
+    }
+
+    private fun appendPartialVectors(file: File, vectors: List<FloatArray>, dimension: Int) {
+        if (!file.exists()) {
+            DataOutputStream(FileOutputStream(file).buffered()).use { output ->
+                output.writeInt(PARTIAL_VECTOR_MAGIC)
+                output.writeInt(PARTIAL_VECTOR_VERSION)
+                output.writeInt(dimension)
+            }
+        } else {
+            val (_, savedDimension) = partialVectorState(file)
+            require(savedDimension == dimension) { "Размерность checkpoint embeddings не совпадает" }
+        }
+        FileOutputStream(file, true).use { stream ->
+            DataOutputStream(stream.buffered()).use { output ->
+                vectors.forEach { vector ->
+                    require(vector.size == dimension) { "Некорректная размерность embedding" }
+                    vector.forEach(output::writeFloat)
+                }
+                output.flush()
+            }
+            runCatching { stream.fd.sync() }
+        }
+    }
+
+    private fun finalizePartialVectors(partial: File, target: File, count: Int, dimension: Int) {
+        val (savedCount, savedDimension) = partialVectorState(partial)
+        require(savedCount == count && savedDimension == dimension) {
+            "Checkpoint embeddings не соответствует документу"
+        }
+        val temp = File(target.parentFile, "${target.name}.tmp")
+        DataOutputStream(FileOutputStream(temp).buffered()).use { output ->
+            output.writeInt(VECTOR_MAGIC)
+            output.writeInt(VECTOR_VERSION)
+            output.writeInt(count)
+            output.writeInt(dimension)
+            FileInputStream(partial).buffered().use { input ->
+                var remaining = PARTIAL_VECTOR_HEADER_BYTES
+                while (remaining > 0L) {
+                    val skipped = input.skip(remaining)
+                    require(skipped > 0L) { "Не удалось прочитать checkpoint embeddings" }
+                    remaining -= skipped
+                }
+                input.copyTo(output)
+            }
+        }
+        if (target.exists() && !target.delete()) error("Не удалось заменить индекс embeddings")
+        if (!temp.renameTo(target)) {
+            temp.copyTo(target, overwrite = true)
+            temp.delete()
+        }
+    }
+
     private fun writeVectors(file: File, vectors: List<FloatArray>, dimension: Int) {
         val temp = File(file.parentFile, "${file.name}.tmp")
         DataOutputStream(FileOutputStream(temp).buffered()).use { output ->
@@ -347,7 +717,11 @@ class KnowledgeBaseRepository(private val context: Context) {
         private const val MAX_TOTAL_HITS = 10
         private const val CHUNKS_FILE = "chunks.json"
         private const val VECTORS_FILE = "vectors.bin"
+        private const val PARTIAL_VECTORS_FILE = "vectors.partial"
         private const val VECTOR_MAGIC = 0x554D4B42
         private const val VECTOR_VERSION = 1
+        private const val PARTIAL_VECTOR_MAGIC = 0x554D4B50
+        private const val PARTIAL_VECTOR_VERSION = 1
+        private const val PARTIAL_VECTOR_HEADER_BYTES = 12L
     }
 }
