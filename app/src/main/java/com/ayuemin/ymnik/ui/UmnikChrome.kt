@@ -199,13 +199,32 @@ internal fun SettingsExpander(
     title: String,
     subtitle: String,
     expanded: Boolean,
-    onToggle: () -> Unit
+    onToggle: () -> Unit,
+    icon: ImageVector? = null,
+    info: String? = null
 ) {
     UmnikPanel(onClick = onToggle) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(UmnikPanelPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (icon != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    modifier = Modifier.size(40.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            icon,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Spacer(Modifier.width(11.dp))
+            }
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
@@ -219,6 +238,10 @@ internal fun SettingsExpander(
                 )
             }
             Spacer(Modifier.width(8.dp))
+            if (!info.isNullOrBlank()) {
+                UmnikInfoHint(title = title, text = info)
+                Spacer(Modifier.width(4.dp))
+            }
             Icon(
                 if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
                 contentDescription = if (expanded) "Свернуть" else "Развернуть",
