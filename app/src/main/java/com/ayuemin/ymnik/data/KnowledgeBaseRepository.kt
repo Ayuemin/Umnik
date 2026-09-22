@@ -266,7 +266,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         )
 
         val replaced = task.replaceDocumentId
-        val oldDocument = synchronized(this@KnowledgeBaseRepository) {
+        val oldDocument = synchronized(DOCUMENT_LOCK) {
             val latest = loadDocuments()
             val old = replaced?.let { id -> latest.firstOrNull { it.id == id } }
             val next = latest.filterNot { it.id == replaced || it.id == document.id } + document
@@ -376,8 +376,9 @@ class KnowledgeBaseRepository(private val context: Context) {
                 charCount = chunks.sumOf { it.text.length },
                 indexedAt = System.currentTimeMillis()
             )
-            synchronized(this@KnowledgeBaseRepository) {
-                documents = documents + document
+                        synchronized(DOCUMENT_LOCK) {
+                val latest = loadDocuments()
+                documents = latest + document
                 saveDocuments(documents)
             }
             document
@@ -420,8 +421,9 @@ class KnowledgeBaseRepository(private val context: Context) {
 
     fun deleteDocument(documentId: String): Boolean {
         val document = documents.firstOrNull { it.id == documentId } ?: return false
-        synchronized(this) {
-            val next = documents.filterNot { it.id == documentId }
+        synchronized(DOCUMENT_LOCK) {
+            val latest = loadDocuments()
+            val next = latest.filterNot { it.id == documentId }
             saveDocuments(next)
             documents = next
         }
@@ -432,9 +434,10 @@ class KnowledgeBaseRepository(private val context: Context) {
     fun deleteOwner(kind: KnowledgeOwnerKind, ownerId: String) {
         val owned = documents(kind, ownerId)
         if (owned.isNotEmpty()) {
-            synchronized(this) {
+            synchronized(DOCUMENT_LOCK) {
                 val ids = owned.map { it.id }.toSet()
-                val next = documents.filterNot { it.id in ids }
+                val latest = loadDocuments()
+                val next = latest.filterNot { it.id in ids }
                 saveDocuments(next)
                 documents = next
             }
@@ -578,7 +581,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         }
     }
 
-    private fun upsertTask(task: KnowledgeIndexTask): KnowledgeIndexTask = synchronized(this) {
+    private fun upsertTask(task: KnowledgeIndexTask): KnowledgeIndexTask = synchronized(TASK_LOCK) {
         val latest = loadTasks()
         val next = latest.filterNot { it.id == task.id } + task
         saveTasks(next)
@@ -589,7 +592,7 @@ class KnowledgeBaseRepository(private val context: Context) {
     private fun updateTask(task: KnowledgeIndexTask): KnowledgeIndexTask = upsertTask(task)
 
     private fun removeTask(taskId: String) {
-        synchronized(this) {
+        synchronized(TASK_LOCK) {
             val latest = loadTasks()
             val next = latest.filterNot { it.id == taskId }
             saveTasks(next)
@@ -716,6 +719,8 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     companion object {
+        private val TASK_LOCK = Any()
+        private val DOCUMENT_LOCK = Any()
         private const val MAX_SOURCE_BYTES = 25L * 1024L * 1024L
         private const val MAX_CHUNKS_PER_DOCUMENT = 6000
         private const val EMBED_BATCH_SIZE = 24
