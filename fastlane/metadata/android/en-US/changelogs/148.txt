@@ -1,0 +1,1 @@
+Unified model selection around the OpenRouter catalog, added visible model-ID copy/return actions, clarified reasoning and modern web-search settings, separated persistent knowledge-base retrieval from attachment RAG, and normalized settings icons/colors.
