@@ -783,6 +783,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun knowledgeFailure(kind: KnowledgeOwnerKind, ownerId: String): String? =
         knowledgeBase.failedTaskMessage(kind, ownerId)
 
+    fun retryKnowledgeIndexing(kind: KnowledgeOwnerKind, ownerId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val failed = knowledgeBase.failedIndexTask(kind, ownerId) ?: return
+        val task = knowledgeBase.retryFailedTask(failed.id) ?: return
+        KnowledgeIndexWorker.schedule(context, task)
+        refreshKnowledgeState("Повторная индексация продолжится с последнего checkpoint")
+    }
+
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
         knowledgeBase.saveSettings(kind, ownerId, settings)
