@@ -1,0 +1,1 @@
+Ordinary chats now keep their own model, search and reasoning settings. Global settings act as defaults for new chats, attachment RAG was removed in favor of direct files or the knowledge base, and advanced routing/memory controls were simplified.

@@ -254,6 +254,8 @@ private fun OpenRouterHubDialog(
     val appState by viewModel.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
     val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
+    val activeReturnLabel = returnLabel?.takeIf { page == HubPage.MODELS && it.isNotBlank() }
+    val returnFromModels: () -> Unit = onDismiss
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -291,13 +293,13 @@ private fun OpenRouterHubDialog(
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    if (page == HubPage.REPLY_SPEECH) "Отдельная модель и голос для кнопки OR" else if (settingsMode) "Каталог, маршрутизация и работа с документами" else "Результат возвращается в текущий чат",
+                                    if (page == HubPage.REPLY_SPEECH) "Отдельная модель и голос для кнопки OR" else if (settingsMode) "Каталог, маршрутизация и инструменты" else "Результат возвращается в текущий чат",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
-                                TextButton(onClick = onDismiss) {
+                            if (page == HubPage.MODELS && !activeReturnLabel.isNullOrBlank()) {
+                                TextButton(onClick = returnFromModels) {
                                     Icon(Icons.Outlined.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
                                     Spacer(Modifier.width(4.dp))
                                     Text("Вернуться")
@@ -318,18 +320,18 @@ private fun OpenRouterHubDialog(
                 }
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
-                    if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
+                    if (page == HubPage.MODELS && !activeReturnLabel.isNullOrBlank()) {
                         Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)) {
                             Row(
                                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "Каталог открыт из: $returnLabel",
+                                    "Каталог открыт из: $activeReturnLabel",
                                     modifier = Modifier.weight(1f),
                                     style = MaterialTheme.typography.bodySmall
                                 )
-                                TextButton(onClick = onDismiss) { Text("Вернуться") }
+                                TextButton(onClick = returnFromModels) { Text("Вернуться") }
                             }
                         }
                     }
@@ -341,7 +343,7 @@ private fun OpenRouterHubDialog(
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
-                        HubPage.TOOLS -> ToolsPage(state.tools, state.rag, controller)
+                        HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
                         HubPage.JOBS -> JobsPage(state, controller)
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller)
@@ -361,7 +363,7 @@ private fun HubPageBar(page: HubPage, onPage: (HubPage) -> Unit) {
     ) {
         item { HubPageChip("Модели", HubPage.MODELS, page, onPage) }
         item { HubPageChip("Маршрутизация", HubPage.ROUTING, page, onPage) }
-        item { HubPageChip("Инструменты и документы", HubPage.TOOLS, page, onPage) }
+        item { HubPageChip("Инструменты", HubPage.TOOLS, page, onPage) }
     }
 }
 
@@ -1195,6 +1197,7 @@ private fun SmallAssignButton(label: String, onClick: () -> Unit) {
 
 @Composable
 private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSettings) -> Unit) {
+    var advanced by remember { mutableStateOf(false) }
     var order by remember(value.providerOrder) { mutableStateOf(value.providerOrder.joinToString(", ")) }
     var only by remember(value.providerOnly) { mutableStateOf(value.providerOnly.joinToString(", ")) }
     var ignore by remember(value.providerIgnore) { mutableStateOf(value.providerIgnore.joinToString(", ")) }
@@ -1205,9 +1208,27 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
     var imagePrice by remember(value.maxImageUsd) { mutableStateOf(value.maxImageUsd?.toString().orEmpty()) }
     var requestPrice by remember(value.maxRequestUsd) { mutableStateOf(value.maxRequestUsd?.toString().orEmpty()) }
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         item {
-            Text("Стратегия провайдера", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "Маршрутизация OpenRouter",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                UmnikInfoHint(
+                    title = "Что это",
+                    text = "Одна и та же модель OpenRouter может работать через нескольких провайдеров. Обычно достаточно режима «Авто»: OpenRouter сам выберет подходящий маршрут. Эти настройки не выбирают платную модель за вас."
+                )
+            }
+        }
+        item {
+            Text("Стратегия", fontWeight = FontWeight.SemiBold)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(ProviderRouteStrategy.entries) { strategy ->
                     FilterChip(
@@ -1217,73 +1238,158 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
                     )
                 }
             }
-        }
-        item { ToggleRow("Разрешить fallback провайдера", value.allowProviderFallbacks) { save(value.copy(allowProviderFallbacks = it)) } }
-        item { ToggleRow("Требовать поддержку параметров", value.requireParameters) { save(value.copy(requireParameters = it)) } }
-        item { ToggleRow("Zero Data Retention", value.zeroDataRetention) { save(value.copy(zeroDataRetention = it)) } }
-        item { ToggleRow("Запретить сбор данных", value.denyDataCollection) { save(value.copy(denyDataCollection = it)) } }
-        item { CsvField("Приоритет провайдеров (order)", order) { order = it } }
-        item { CsvField("Разрешить только (only)", only) { only = it } }
-        item { CsvField("Исключить (ignore)", ignore) { ignore = it } }
-        item { CsvField("Квантизации", quantizations) { quantizations = it } }
-        item { CsvField("Fallback-модели", fallbacks) { fallbacks = it } }
-        item {
-            Text("Максимальная цена", fontWeight = FontWeight.SemiBold)
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                PriceField("Prompt / 1M", promptPrice, { promptPrice = it }, Modifier.weight(1f))
-                PriceField("Completion / 1M", completionPrice, { completionPrice = it }, Modifier.weight(1f))
-            }
-            Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                PriceField("Image", imagePrice, { imagePrice = it }, Modifier.weight(1f))
-                PriceField("Request", requestPrice, { requestPrice = it }, Modifier.weight(1f))
-            }
-        }
-        item {
-            Button(
-                onClick = {
-                    save(value.copy(
-                        providerOrder = csv(order),
-                        providerOnly = csv(only),
-                        providerIgnore = csv(ignore),
-                        quantizations = csv(quantizations),
-                        fallbackModels = csv(fallbacks),
-                        maxPromptUsdPerMillion = promptPrice.toDoubleOrNull(),
-                        maxCompletionUsdPerMillion = completionPrice.toDoubleOrNull(),
-                        maxImageUsd = imagePrice.toDoubleOrNull(),
-                        maxRequestUsd = requestPrice.toDoubleOrNull()
-                    ))
+            Text(
+                when (value.strategy) {
+                    ProviderRouteStrategy.AUTO -> "Рекомендуется большинству пользователей."
+                    ProviderRouteStrategy.CHEAPEST -> "OpenRouter предпочитает более дешёвый маршрут выбранной модели."
+                    ProviderRouteStrategy.HIGHEST_THROUGHPUT -> "OpenRouter предпочитает более высокую пропускную способность."
+                    ProviderRouteStrategy.LOWEST_LATENCY -> "OpenRouter предпочитает меньшую задержку."
                 },
-                modifier = Modifier.fillMaxWidth()
-            ) { Text("Сохранить маршрутизацию") }
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
         item {
-            Text("Эти параметры применяются к обычным запросам OpenRouter непосредственно перед отправкой. Для других подключений Umnik их не использует.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (advanced) "Скрыть расширенную маршрутизацию" else "Расширенная маршрутизация")
+            }
+        }
+        if (advanced) {
+            item {
+                ToggleRow(
+                    "Fallback провайдера",
+                    value.allowProviderFallbacks,
+                    "Если один провайдер выбранной модели недоступен, OpenRouter может попробовать другой. Модель при этом остаётся той же."
+                ) { save(value.copy(allowProviderFallbacks = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Требовать поддержку параметров",
+                    value.requireParameters,
+                    "Отсекает провайдеров, которые не поддерживают параметры запроса, например tools или reasoning."
+                ) { save(value.copy(requireParameters = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Zero Data Retention",
+                    value.zeroDataRetention,
+                    "Ограничивает маршруты вариантами, совместимыми с Zero Data Retention. Может уменьшить число доступных провайдеров."
+                ) { save(value.copy(zeroDataRetention = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Запретить сбор данных",
+                    value.denyDataCollection,
+                    "Передаёт OpenRouter ограничение data_collection=deny."
+                ) { save(value.copy(denyDataCollection = it)) }
+            }
+            item {
+                CsvField("Приоритет провайдеров", order, "ID провайдеров через запятую в желаемом порядке.") { order = it }
+            }
+            item {
+                CsvField("Разрешить только", only, "Белый список провайдеров. Если не знаете ID провайдера, оставьте пустым.") { only = it }
+            }
+            item {
+                CsvField("Исключить", ignore, "Чёрный список провайдеров.") { ignore = it }
+            }
+            item {
+                CsvField("Квантизации", quantizations, "Продвинутое ограничение backend-вариантов модели. Обычно оставляется пустым.") { quantizations = it }
+            }
+            item {
+                CsvField(
+                    "Fallback-модели",
+                    fallbacks,
+                    "Запасные модели через запятую. В отличие от fallback провайдера это уже разрешает сменить саму модель."
+                ) { fallbacks = it }
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Максимальная цена маршрута", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    UmnikInfoHint(
+                        title = "Ограничение цены",
+                        text = "Не выбирает модель автоматически, а только отсекает слишком дорогие маршруты уже выбранной модели. Слишком низкое значение может привести к ошибке запроса."
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    PriceField("Prompt / 1M", promptPrice, { promptPrice = it }, Modifier.weight(1f))
+                    PriceField("Completion / 1M", completionPrice, { completionPrice = it }, Modifier.weight(1f))
+                }
+                Spacer(Modifier.height(6.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                    PriceField("Image", imagePrice, { imagePrice = it }, Modifier.weight(1f))
+                    PriceField("Request", requestPrice, { requestPrice = it }, Modifier.weight(1f))
+                }
+            }
+            item {
+                Button(
+                    onClick = {
+                        save(
+                            value.copy(
+                                providerOrder = csv(order),
+                                providerOnly = csv(only),
+                                providerIgnore = csv(ignore),
+                                quantizations = csv(quantizations),
+                                fallbackModels = csv(fallbacks),
+                                maxPromptUsdPerMillion = promptPrice.toDoubleOrNull(),
+                                maxCompletionUsdPerMillion = completionPrice.toDoubleOrNull(),
+                                maxImageUsd = imagePrice.toDoubleOrNull(),
+                                maxRequestUsd = requestPrice.toDoubleOrNull()
+                            )
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Сохранить расширенные параметры") }
+            }
         }
     }
 }
 
 @Composable
-private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: OpenRouterHubController) {
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+private fun ToolsPage(
+    tools: ServerToolSettings,
+    controller: OpenRouterHubController,
+    viewModel: ChatViewModel
+) {
+    var advanced by remember { mutableStateOf(false) }
+    var defaultSearchEnabled by remember { mutableStateOf(viewModel.defaultWebSearchEnabled()) }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Инструменты обычного чата", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text(
+                    "Настройки новых чатов",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
                 UmnikInfoHint(
-                    title = "Инструменты обычного чата",
-                    text = "Это дополнительные возможности OpenRouter для обычного разговора: современный веб-поиск, чтение найденных страниц, дата и время, генерация изображений, Fusion и Shell. Включайте только нужное задаче."
+                    title = "Зачем это",
+                    text = "Здесь задаются значения по умолчанию для новых обычных чатов. Уже созданные чаты хранят свои настройки отдельно. Модель пользователь всегда выбирает сам."
                 )
             }
         }
         item {
+            ToggleRow(
+                "Поиск в новых чатах",
+                defaultSearchEnabled,
+                "Это только стартовое значение. После создания каждый чат хранит своё состояние поиска независимо от остальных."
+            ) {
+                defaultSearchEnabled = it
+                viewModel.setDefaultWebSearchEnabled(it)
+            }
+        }
+        item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Современный OpenRouter Web Search", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("Режим веб-поиска по умолчанию", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 UmnikInfoHint(
-                    title = "Современный веб-поиск",
-                    text = "Используется agentic Web Search OpenRouter. Старое значение ALWAYS поддерживается только для совместимости сохранённых настроек и трактуется как современный Auto."
+                    title = "Поиск для новых чатов",
+                    text = "Сам поиск включается или выключается в конкретном чате. Здесь задаётся только режим, который получит новый чат."
                 )
             }
-            Text("Режим по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchPreset.entries) { preset ->
                     FilterChip(
@@ -1295,85 +1401,63 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
             }
         }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                UmnikInfoHint(
-                    title = "Сервис интернет-поиска",
-                    text = "Auto использует встроенный поиск провайдера, когда он доступен, либо позволяет OpenRouter выбрать совместимый сервис. Можно явно выбрать Native, Exa, Parallel или Perplexity."
-                )
+            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (advanced) "Скрыть дополнительные инструменты" else "Дополнительные инструменты")
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(WebSearchEngine.entries) { engine ->
-                    FilterChip(
-                        selected = tools.webSearchEngine == engine,
-                        onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) },
-                        label = { Text(searchEngineLabel(engine)) }
+        }
+        if (advanced) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                    UmnikInfoHint(
+                        title = "Сервис поиска",
+                        text = "Auto подходит большинству пользователей. Ручной выбор нужен только если вы понимаете, какой поисковый backend хотите использовать."
                     )
                 }
-            }
-        }
-        item { ToggleRow("Открывать найденные веб-страницы", tools.webFetch) { controller.updateTools(tools.copy(webFetch = it)) } }
-        item { ToggleRow("Использовать текущие дату и время", tools.datetime) { controller.updateTools(tools.copy(datetime = it)) } }
-        item { ToggleRow("Разрешить модели создавать изображения как инструмент", tools.imageGeneration) { controller.updateTools(tools.copy(imageGeneration = it)) } }
-        item { ToggleRow("Fusion — объединять работу нескольких инструментов", tools.fusion) { controller.updateTools(tools.copy(fusion = it)) } }
-        item { ToggleRow("Разрешить Shell прямо в обычном чате", tools.shell) { controller.updateTools(tools.copy(shell = it)) } }
-
-        item {
-            HorizontalDivider()
-            Row(
-                modifier = Modifier.padding(top = 10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("RAG для прикреплённых файлов", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                UmnikInfoHint(
-                    title = "RAG для прикреплённых файлов",
-                    text = "Это отдельный механизм для текстовых файлов, прикреплённых к конкретному запросу. Он не является постоянной базой знаний чата или агента. База знаний индексируется заранее и имеет собственную настройку числа фрагментов."
-                )
-            }
-        }
-        item { ToggleRow("Включить RAG для прикреплённых файлов", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
-        item {
-            OutlinedTextField(
-                value = rag.embeddingModel,
-                onValueChange = { controller.updateRag(rag.copy(embeddingModel = it.trim())) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Embedding-модель для прикреплённых файлов") },
-                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
-                singleLine = true
-            )
-            Spacer(Modifier.height(8.dp))
-            OutlinedTextField(
-                value = rag.rerankModel,
-                onValueChange = { controller.updateRag(rag.copy(rerankModel = it.trim())) },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Rerank-модель (необязательно)") },
-                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
-                singleLine = true
-            )
-        }
-        item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Фрагментов из прикреплённых файлов: ${rag.topK}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-                UmnikInfoHint(
-                    title = "Количество фрагментов",
-                    text = "Эта цифра относится только к RAG для файлов текущего запроса. У постоянной базы знаний чата или агента есть отдельная настройка. Для обычных случаев достаточно 5."
-                )
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(3, 5, 8).forEach { value ->
-                    FilterChip(
-                        selected = rag.topK == value,
-                        onClick = { controller.updateRag(rag.copy(topK = value)) },
-                        label = { Text(value.toString()) }
-                    )
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    items(WebSearchEngine.entries) { engine ->
+                        FilterChip(
+                            selected = tools.webSearchEngine == engine,
+                            onClick = { controller.updateTools(tools.copy(webSearchEngine = engine)) },
+                            label = { Text(searchEngineLabel(engine)) }
+                        )
+                    }
                 }
             }
-            if (rag.topK !in setOf(3, 5, 8)) {
-                Text(
-                    "Сохранено прежнее значение: ${rag.topK}. Выберите 3, 5 или 8 для нового упрощённого режима.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            item {
+                ToggleRow(
+                    "Открывать найденные веб-страницы",
+                    tools.webFetch,
+                    "Разрешает модели дополнительно открыть найденную страницу и прочитать её содержимое."
+                ) { controller.updateTools(tools.copy(webFetch = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Текущие дата и время",
+                    tools.datetime,
+                    "Разрешает модели запросить актуальные дату и время как серверный инструмент."
+                ) { controller.updateTools(tools.copy(datetime = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Создание изображений как инструмент",
+                    tools.imageGeneration,
+                    "Позволяет совместимой модели вызвать генерацию изображения прямо в ходе разговора."
+                ) { controller.updateTools(tools.copy(imageGeneration = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Fusion",
+                    tools.fusion,
+                    "Продвинутый режим OpenRouter для объединения работы нескольких инструментов. Обычно не требуется."
+                ) { controller.updateTools(tools.copy(fusion = it)) }
+            }
+            item {
+                ToggleRow(
+                    "Shell",
+                    tools.shell,
+                    "Продвинутая возможность для задач с командами и рабочими файлами. Включайте только когда действительно нужна."
+                ) { controller.updateTools(tools.copy(shell = it)) }
             }
         }
     }
@@ -1889,16 +1973,34 @@ private fun CategoryModelPicker(
 }
 
 @Composable
-private fun ToggleRow(title: String, checked: Boolean, onChecked: (Boolean) -> Unit) {
+private fun ToggleRow(
+    title: String,
+    checked: Boolean,
+    info: String? = null,
+    onChecked: (Boolean) -> Unit
+) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(title, modifier = Modifier.weight(1f))
+        if (!info.isNullOrBlank()) {
+            UmnikInfoHint(title = title, text = info)
+            Spacer(Modifier.width(6.dp))
+        }
         Switch(checked = checked, onCheckedChange = onChecked)
     }
 }
 
 @Composable
-private fun CsvField(label: String, value: String, onValue: (String) -> Unit) {
-    OutlinedTextField(value, onValue, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true)
+private fun CsvField(label: String, value: String, info: String? = null, onValue: (String) -> Unit) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValue,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        trailingIcon = if (info.isNullOrBlank()) null else {
+            { UmnikInfoHint(title = label, text = info) }
+        },
+        singleLine = true
+    )
 }
 
 @Composable

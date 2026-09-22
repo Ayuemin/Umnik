@@ -1201,14 +1201,13 @@ private fun ReasoningSettingsCard(
     expanded: Boolean,
     onToggle: () -> Unit
 ) {
-    val currentId = state.currentChatTextModel ?: state.textModel
+    var defaultReasoningEnabled by remember { mutableStateOf(vm.defaultReasoningEnabled()) }
     val activeQuickModels = state.quickTextModels
         .filter { quickModelConnectionId(it, state.activeConnectionProfileId) == state.activeConnectionProfileId }
         .map(::quickModelId)
-    val modelIds = (listOf(currentId, state.textModel) + activeQuickModels)
+    val modelIds = (listOf(state.textModel) + activeQuickModels)
         .filter { it.isNotBlank() }
         .distinct()
-    val imageInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
 
     UmnikPanel {
         TextButton(
@@ -1232,9 +1231,9 @@ private fun ReasoningSettingsCard(
             }
             Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
-                Text("Сила размышления", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.Bold)
+                Text("Размышление по умолчанию", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.Bold)
                 Text(
-                    "Отдельная настройка для каждой дополнительной модели",
+                    "Стартовые настройки для новых чатов",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1243,8 +1242,8 @@ private fun ReasoningSettingsCard(
                 )
             }
             UmnikInfoHint(
-                title = "Сила размышления",
-                text = "Уровень reasoning задаётся отдельно для каждой модели. Более высокий уровень может улучшать сложные ответы, но обычно увеличивает время работы и стоимость. Если модель не поддерживает управление уровнем, она выберет режим сама."
+                title = "Размышление по умолчанию",
+                text = "Эти значения получают новые обычные чаты. Уже созданные чаты хранят свой переключатель и уровень отдельно. Более высокий уровень может увеличить время и стоимость ответа."
             )
             Spacer(Modifier.width(4.dp))
             Icon(
@@ -1259,6 +1258,26 @@ private fun ReasoningSettingsCard(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Размышление в новых чатах", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Только стартовое значение. После создания чат хранит своё состояние отдельно.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = defaultReasoningEnabled,
+                        onCheckedChange = {
+                            defaultReasoningEnabled = it
+                            vm.setDefaultReasoningEnabled(it)
+                        }
+                    )
+                }
                 if (state.availableTextModels.isEmpty()) {
                     Text(
                         "Сведения о возможностях моделей ещё не загружены.",
@@ -1269,31 +1288,16 @@ private fun ReasoningSettingsCard(
                 }
                 modelIds.forEach { id ->
                     val info = state.availableTextModels.firstOrNull { it.id == id }
-                    val selected = state.reasoningEffortsByModel[id]
-                        ?: if (id == currentId) state.reasoningEffort else ReasoningEffort.MEDIUM
+                    val selected = state.reasoningEffortsByModel[id] ?: ReasoningEffort.MEDIUM
                     ReasoningModelRow(
                         modelId = id,
                         info = info,
                         selected = selected,
-                        subtitle = when {
-                            id == currentId -> "Текущая модель чата"
-                            id == state.textModel -> "По умолчанию"
-                            else -> "Дополнительная модель"
-                        },
+                        subtitle = if (id == state.textModel) "Основная модель новых чатов" else "Дополнительная модель",
                         onSelect = { effort -> vm.setReasoningEffortForModel(id, effort) }
                     )
                 }
 
-                if (imageInfo?.supportsReasoning == true) {
-                    HorizontalDivider()
-                    ReasoningModelRow(
-                        modelId = state.imageModel,
-                        info = imageInfo,
-                        selected = null,
-                        subtitle = "Модель генерации изображений · возможности API",
-                        onSelect = null
-                    )
-                }
             }
         }
     }
