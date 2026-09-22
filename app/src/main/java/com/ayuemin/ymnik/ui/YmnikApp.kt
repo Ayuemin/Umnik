@@ -1775,7 +1775,7 @@ private fun ChatHeader(
                                         when {
                                             current -> "Текущая модель"
                                             currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
-                                            currentAgent != null -> "Быстрая модель агента"
+                                            currentAgent != null -> "Дополнительная модель агента"
                                             ref == defaultRef -> "Модель по умолчанию"
                                             else -> connection?.name ?: "OpenRouter"
                                         },
