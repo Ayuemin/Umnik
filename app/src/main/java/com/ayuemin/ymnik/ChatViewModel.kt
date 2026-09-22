@@ -171,19 +171,25 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialImageModel = loadImageModelForProfile(initialImageProfile.id)
     private val initialImageAspectRatio = loadImageParameter("aspect_ratio", initialImageProfile.id, initialImageModel)
     private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
-    private val initialRuntime = projectAutomation.profile(initialChat.id) ?: ProjectChatRuntimeProfile(
-        modelId = initialChat.textModelOverride ?: loadTextModelForProfile(initialProfile),
-        webSearchEnabled = prefs.getBoolean("web_search", false),
-        reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
-        reasoningEffort = runCatching {
-            ReasoningEffort.valueOf(
-                prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name)
-                    ?: ReasoningEffort.MEDIUM.name
-            )
-        }.getOrDefault(ReasoningEffort.MEDIUM),
-        tools = openRouterFeaturePrefs.tools(),
-        skillIds = initialSkillIds
-    ).also { projectAutomation.saveProfile(initialChat.id, it) }
+    private val initialRuntime = projectAutomation.profile(initialChat.id) ?: run {
+        val defaultSearchEnabled = prefs.getBoolean("web_search", false)
+        val defaultTools = openRouterFeaturePrefs.tools().copy(
+            webSearch = if (defaultSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+        )
+        ProjectChatRuntimeProfile(
+            modelId = initialChat.textModelOverride ?: loadTextModelForProfile(initialProfile),
+            webSearchEnabled = defaultSearchEnabled,
+            reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
+            reasoningEffort = runCatching {
+                ReasoningEffort.valueOf(
+                    prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name)
+                        ?: ReasoningEffort.MEDIUM.name
+                )
+            }.getOrDefault(ReasoningEffort.MEDIUM),
+            tools = defaultTools,
+            skillIds = initialSkillIds
+        )
+    }.also { projectAutomation.saveProfile(initialChat.id, it) }
 
     private val _state = MutableStateFlow(
         UiState(
@@ -268,6 +274,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun setDefaultWebSearchEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("web_search", enabled).apply()
+        val tools = openRouterFeaturePrefs.tools()
+        openRouterFeaturePrefs.saveTools(
+            tools.copy(webSearch = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF)
+        )
         _state.value = _state.value.copy(
             status = if (enabled)
                 "Поиск будет включён по умолчанию в новых чатах"
@@ -686,16 +696,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return projectAutomation.profile(chatId) ?: defaultRuntimeProfile(chat)
     }
 
-    private fun defaultRuntimeProfile(chat: ChatSession): ProjectChatRuntimeProfile = ProjectChatRuntimeProfile(
-        modelId = chat.textModelOverride ?: _state.value.textModel,
-        webSearchEnabled = prefs.getBoolean("web_search", false),
-        reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
-        reasoningEffort = runCatching {
-            ReasoningEffort.valueOf(prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name) ?: ReasoningEffort.MEDIUM.name)
-        }.getOrDefault(ReasoningEffort.MEDIUM),
-        tools = openRouterFeaturePrefs.tools(),
-        skillIds = skillIdsForChat(chat)
-    )
+    private fun defaultRuntimeProfile(chat: ChatSession): ProjectChatRuntimeProfile {
+        val defaultSearchEnabled = prefs.getBoolean("web_search", false)
+        val tools = openRouterFeaturePrefs.tools().copy(
+            webSearch = if (defaultSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+        )
+        return ProjectChatRuntimeProfile(
+            modelId = chat.textModelOverride ?: _state.value.textModel,
+            webSearchEnabled = defaultSearchEnabled,
+            reasoningEnabled = prefs.getBoolean("reasoning_enabled", false),
+            reasoningEffort = globalDefaultReasoningEffort(),
+            tools = tools,
+            skillIds = skillIdsForChat(chat)
+        )
+    }
 
     private fun runtimeProfile(chat: ChatSession): ProjectChatRuntimeProfile =
         projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat).also { projectAutomation.saveProfile(chat.id, it) }
@@ -1962,7 +1976,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 webSearchEnabled = _state.value.webSearchEnabled,
                 reasoningEnabled = _state.value.reasoningEnabled,
                 reasoningEffort = _state.value.reasoningEffort,
-                tools = openRouterFeaturePrefs.tools(),
+                tools = openRouterFeaturePrefs.tools().copy(
+                    webSearch = if (_state.value.webSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+                ),
                 skillIds = newSkillIds
             )
         } else {
