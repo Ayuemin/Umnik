@@ -195,11 +195,6 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (!info.isNullOrBlank()) {
-                Spacer(Modifier.width(6.dp))
-                UmnikInfoHint(title = title, text = info)
-                Spacer(Modifier.width(4.dp))
-            }
             UmnikChevronIndicator(
                 icon = Icons.Outlined.KeyboardArrowRight,
                 contentDescription = "Открыть"
@@ -240,7 +235,15 @@ private fun SettingsActionCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!info.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                UmnikInfoHint(title = title, text = info)
+                Spacer(Modifier.width(4.dp))
+            }
+            UmnikChevronIndicator(
+                icon = Icons.Outlined.KeyboardArrowRight,
+                contentDescription = "Открыть"
+            )
         }
     }
 }
