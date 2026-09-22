@@ -253,7 +253,22 @@ private fun OpenRouterHubDialog(
     val state by controller.state.collectAsState()
     val appState by viewModel.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
+    var returnPage by remember(initialPage) { mutableStateOf<HubPage?>(null) }
     val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
+    val showBack = settingsMode || returnPage != null || !returnLabel.isNullOrBlank()
+    val handleBack: () -> Unit = {
+        val target = returnPage
+        if (target != null) {
+            page = target
+            returnPage = null
+        } else {
+            onDismiss()
+        }
+    }
+    val openCatalog: () -> Unit = {
+        if (page != HubPage.MODELS) returnPage = page
+        page = HubPage.MODELS
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -268,8 +283,8 @@ private fun OpenRouterHubDialog(
                             modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (settingsMode) {
-                                IconButton(onClick = onDismiss) {
+                            if (showBack) {
+                                IconButton(onClick = handleBack) {
                                     Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
                                 }
                                 Spacer(Modifier.width(2.dp))
@@ -305,7 +320,7 @@ private fun OpenRouterHubDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (!settingsMode) {
+                            if (!showBack) {
                                 IconButton(onClick = onDismiss) {
                                     Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
                                 }
@@ -337,9 +352,9 @@ private fun OpenRouterHubDialog(
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
                         HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
-                        HubPage.JOBS -> JobsPage(state, controller)
-                        HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
-                        HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller)
+                        HubPage.JOBS -> JobsPage(state, controller, openCatalog)
+                        HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
+                        HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
                         HubPage.SHELL -> ShellPage(state, controller)
                     }
                 }
@@ -1496,7 +1511,11 @@ private data class BatchDraftTask(
 )
 
 @Composable
-private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
+private fun JobsPage(
+    state: OpenRouterHubState,
+    controller: OpenRouterHubController,
+    onOpenCatalog: () -> Unit
+) {
     val tasks = remember { mutableStateListOf(BatchDraftTask()) }
     var bulkInput by remember { mutableStateOf("") }
     var fileTargetIndex by remember { mutableStateOf<Int?>(null) }
@@ -1523,7 +1542,7 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
                 title = "Модель для пакетных задач",
                 current = state.media.batchModel,
                 models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
-                onSelect = { controller.assignModel(it, ModelCategory.TEXT) }
+                onOpenCatalog = onOpenCatalog
             )
         }
 
@@ -1679,7 +1698,12 @@ private fun JobsPage(state: OpenRouterHubState, controller: OpenRouterHubControl
 }
 
 @Composable
-private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubController, section: MediaSection) {
+private fun MediaPage(
+    state: OpenRouterHubState,
+    controller: OpenRouterHubController,
+    section: MediaSection,
+    onOpenCatalog: () -> Unit
+) {
     var videoPrompt by remember { mutableStateOf("") }
     val videoRefs = remember { mutableStateListOf<Uri>() }
     var speechText by remember { mutableStateOf("") }
@@ -1702,7 +1726,7 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                     title = "Модель видео",
                     current = state.media.videoModel,
                     models = state.catalog.filter { ModelCategory.VIDEO in it.categories },
-                    onSelect = { controller.assignModel(it, ModelCategory.VIDEO) }
+                    onOpenCatalog = onOpenCatalog
                 )
                 OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1721,7 +1745,7 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                     title = "Модель распознавания",
                     current = state.media.transcriptionModel,
                     models = state.catalog.filter { ModelCategory.TRANSCRIPTION in it.categories },
-                    onSelect = { controller.assignModel(it, ModelCategory.TRANSCRIPTION) }
+                    onOpenCatalog = onOpenCatalog
                 )
                 FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
                 if (state.transcription.isNotBlank()) {
@@ -1746,7 +1770,7 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
                     title = "Модель озвучивания",
                     current = state.media.speechModel,
                     models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
-                    onSelect = { controller.assignModel(it, ModelCategory.SPEECH) }
+                    onOpenCatalog = onOpenCatalog
                 )
                 if (state.media.speechModel.isNotBlank()) {
                     Text("Дополнительные параметры (необязательно)", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
@@ -1826,7 +1850,8 @@ private fun MediaPage(state: OpenRouterHubState, controller: OpenRouterHubContro
 private fun ReplySpeechPage(
     state: OpenRouterHubState,
     appState: UiState,
-    controller: OpenRouterHubController
+    controller: OpenRouterHubController,
+    onOpenCatalog: () -> Unit
 ) {
     val selected = state.catalog.firstOrNull { it.id == appState.openRouterSpeechModel }
     val voiceOptions = selected?.parameterValues("voice").orEmpty()
@@ -1852,7 +1877,7 @@ private fun ReplySpeechPage(
                 title = "Модель озвучивания ответов",
                 current = appState.openRouterSpeechModel,
                 models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
-                onSelect = controller::assignReplySpeechModel
+                onOpenCatalog = onOpenCatalog
             )
         }
         if (appState.openRouterSpeechModel.isNotBlank()) {
@@ -1966,7 +1991,7 @@ private fun CategoryModelPicker(
     title: String,
     current: String,
     models: List<ModelInfo>,
-    onSelect: (ModelInfo) -> Unit
+    onOpenCatalog: () -> Unit
 ) {
     Column(Modifier.fillMaxWidth()) {
         Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1982,11 +2007,7 @@ private fun CategoryModelPicker(
                 overflow = TextOverflow.Ellipsis
             )
             TextButton(
-                onClick = {
-                    AsyncJobEvents.requestHub("models-settings", title)
-                    @Suppress("UNUSED_EXPRESSION")
-                    onSelect
-                },
+                onClick = onOpenCatalog,
                 enabled = models.isNotEmpty()
             ) {
                 Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
