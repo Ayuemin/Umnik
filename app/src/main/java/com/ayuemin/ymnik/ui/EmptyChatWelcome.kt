@@ -26,13 +26,13 @@ internal fun EmptyChatWelcome(modifier: Modifier = Modifier) {
             painter = painterResource(R.drawable.ic_umnik_mark),
             contentDescription = null,
             modifier = Modifier.size(48.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
+            tint = MaterialTheme.colorScheme.primary
         )
         Spacer(Modifier.height(12.dp))
         Text(
             text = "Чем могу помочь?",
             style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
         )
     }
 }

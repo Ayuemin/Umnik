@@ -1908,8 +1908,9 @@ private fun ChatSearchBar(
 
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = UmnikPanelShape,
+        shape = UmnikFieldShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.78f)),
         tonalElevation = 0.dp
     ) {
         Row(
@@ -1920,7 +1921,7 @@ private fun ChatSearchBar(
                 Icons.Outlined.Search,
                 contentDescription = null,
                 modifier = Modifier.size(20.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                tint = MaterialTheme.colorScheme.primary
             )
             Box(
                 modifier = Modifier.weight(1f).padding(horizontal = 10.dp, vertical = 13.dp)
@@ -1954,13 +1955,27 @@ private fun ChatSearchBar(
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
             IconButton(onClick = onPrevious, enabled = resultCount > 0) {
-                Icon(Icons.Outlined.KeyboardArrowUp, contentDescription = "Предыдущее совпадение")
+                Icon(
+                    Icons.Outlined.KeyboardArrowUp,
+                    contentDescription = "Предыдущее совпадение",
+                    tint = if (resultCount > 0) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                )
             }
             IconButton(onClick = onNext, enabled = resultCount > 0) {
-                Icon(Icons.Outlined.KeyboardArrowDown, contentDescription = "Следующее совпадение")
+                Icon(
+                    Icons.Outlined.KeyboardArrowDown,
+                    contentDescription = "Следующее совпадение",
+                    tint = if (resultCount > 0) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                )
             }
             IconButton(onClick = onClose) {
-                Icon(Icons.Outlined.Close, contentDescription = "Закрыть поиск")
+                Icon(
+                    Icons.Outlined.Close,
+                    contentDescription = "Закрыть поиск",
+                    tint = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

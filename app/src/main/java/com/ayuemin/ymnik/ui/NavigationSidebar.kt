@@ -141,7 +141,8 @@ fun NavigationSidebar(
                         "Umnik",
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     UmnikCircleAction(
                         icon = Icons.Outlined.Search,
@@ -159,8 +160,19 @@ fun NavigationSidebar(
                         onValueChange = { query = it },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
                         singleLine = true,
-                        leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                        placeholder = { Text("Поиск по чатам") },
+                        leadingIcon = {
+                            Icon(
+                                Icons.Outlined.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        },
+                        placeholder = {
+                            Text(
+                                "Поиск по чатам",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
                         shape = UmnikFieldShape
                     )
                 }
