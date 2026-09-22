@@ -253,22 +253,9 @@ private fun OpenRouterHubDialog(
     val state by controller.state.collectAsState()
     val appState by viewModel.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
-    var internalReturnPage by remember { mutableStateOf<HubPage?>(null) }
     val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
-    val activeReturnLabel = when {
-        page == HubPage.MODELS && internalReturnPage == HubPage.TOOLS -> "Инструменты"
-        page == HubPage.MODELS && !returnLabel.isNullOrBlank() -> returnLabel
-        else -> null
-    }
-    val returnFromModels: () -> Unit = {
-        val destination = internalReturnPage
-        if (destination != null) {
-            page = destination
-            internalReturnPage = null
-        } else {
-            onDismiss()
-        }
-    }
+    val activeReturnLabel = returnLabel?.takeIf { page == HubPage.MODELS && it.isNotBlank() }
+    val returnFromModels: () -> Unit = onDismiss
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -321,15 +308,7 @@ private fun OpenRouterHubDialog(
                                 IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                             }
                         }
-                        if (settingsMode) {
-                            HubPageBar(
-                                page = page,
-                                onPage = {
-                                    page = it
-                                    if (it != HubPage.MODELS) internalReturnPage = null
-                                }
-                            )
-                        }
+                        if (settingsMode) HubPageBar(page = page, onPage = { page = it })
                         if (state.loading) {
                             LinearProgressIndicator(Modifier.fillMaxWidth())
                             state.operation?.let {
@@ -364,15 +343,7 @@ private fun OpenRouterHubDialog(
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
-                        HubPage.TOOLS -> ToolsPage(
-                            state.tools,
-                            state.rag,
-                            controller,
-                            onOpenModels = {
-                                internalReturnPage = HubPage.TOOLS
-                                page = HubPage.MODELS
-                            }
-                        )
+                        HubPage.TOOLS -> ToolsPage(state.tools, controller)
                         HubPage.JOBS -> JobsPage(state, controller)
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller)
@@ -1376,9 +1347,7 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
 @Composable
 private fun ToolsPage(
     tools: ServerToolSettings,
-    rag: RagSettings,
-    controller: OpenRouterHubController,
-    onOpenModels: () -> Unit
+    controller: OpenRouterHubController
 ) {
     var advanced by remember { mutableStateOf(false) }
 
