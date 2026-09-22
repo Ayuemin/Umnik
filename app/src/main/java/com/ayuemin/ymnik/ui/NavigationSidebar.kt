@@ -540,6 +540,38 @@ private fun RegularChatSettingsDialog(
     var role by remember(chat.id, chat.assignedRole) { mutableStateOf(chat.assignedRole.orEmpty()) }
     var prompt by remember(chat.id, chat.masterPrompt) { mutableStateOf(chat.masterPrompt.orEmpty()) }
     var favorite by remember(chat.id, chat.isFavorite) { mutableStateOf(chat.isFavorite) }
+    val runtime = vm.chatRuntimeProfile(chat.id)
+    val knowledgeSettings = vm.knowledgeSettings(KnowledgeOwnerKind.CHAT, chat.id)
+    val knowledgeCount = vm.knowledgeDocuments(KnowledgeOwnerKind.CHAT, chat.id).size
+    val modelLabel = runtime?.modelId
+        ?.substringAfterLast('/')
+        ?.ifBlank { "Не выбрана" }
+        ?: chat.textModelOverride?.substringAfterLast('/')?.ifBlank { "Не выбрана" }
+        ?: "По умолчанию"
+    val reasoningLabel = if (runtime?.reasoningEnabled == true) {
+        when (runtime.reasoningEffort.name) {
+            "MINIMAL" -> "Вкл · минимально"
+            "LOW" -> "Вкл · низко"
+            "MEDIUM" -> "Вкл · средне"
+            "HIGH" -> "Вкл · высоко"
+            "XHIGH" -> "Вкл · очень высоко"
+            "MAX" -> "Вкл · максимум"
+            else -> "Вкл"
+        }
+    } else {
+        "Выкл"
+    }
+    val searchLabel = if (runtime?.webSearchEnabled == true) {
+        when (runtime.tools.webSearchPreset.name) {
+            "ON_DEMAND" -> "Вкл · по запросу"
+            "FAST" -> "Вкл · быстрый"
+            "NORMAL" -> "Вкл · обычный"
+            "DEEP" -> "Вкл · глубокий"
+            else -> "Вкл"
+        }
+    } else {
+        "Выкл"
+    }
 
     FullScreenPanel(title = "Настройки чата", onBack = onDismiss) {
         LazyColumn(
@@ -607,6 +639,39 @@ private fun RegularChatSettingsDialog(
                 }
             }
             item {
+                UmnikPanel {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Возможности этого чата",
+                                modifier = Modifier.weight(1f),
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            UmnikInfoHint(
+                                title = "Возможности этого чата",
+                                text = "Каждый обычный чат хранит собственные модель, поиск, размышление, навыки, память и базу знаний. Общие настройки задают стартовые значения только для новых чатов. Быстро менять модель, поиск, размышление и навыки можно через + в самом чате."
+                            )
+                        }
+                        ChatCapabilityRow("Модель", modelLabel)
+                        ChatCapabilityRow("Размышление", reasoningLabel)
+                        ChatCapabilityRow("Поиск", searchLabel)
+                        ChatCapabilityRow("Навыки", (runtime?.skillIds?.size ?: 0).toString())
+                        ChatCapabilityRow(
+                            "База знаний",
+                            when {
+                                knowledgeCount == 0 -> "Нет источников"
+                                !knowledgeSettings.enabled -> "$knowledgeCount · выключена"
+                                else -> "$knowledgeCount · включена"
+                            }
+                        )
+                        ChatCapabilityRow("Постоянные файлы", chat.chatFiles.orEmpty().size.toString())
+                    }
+                }
+            }
+            item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
@@ -614,7 +679,7 @@ private fun RegularChatSettingsDialog(
                     Text("Что хранится здесь", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
                     UmnikInfoHint(
                         title = "Постоянные настройки чата",
-                        text = "Название, роль, мастер-инструкция, память и база знаний относятся к самому чату. Модель, размышление, веб-поиск, навыки и разовые вложения доступны из меню + текущего чата."
+                        text = "Название, роль, инструкция, модель, поиск, размышление, навыки, память, постоянные файлы и база знаний относятся к конкретному чату. Разовые вложения относятся только к сообщению."
                     )
                 }
             }
@@ -629,6 +694,27 @@ private fun RegularChatSettingsDialog(
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun ChatCapabilityRow(label: String, value: String) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
+        )
     }
 }
 
