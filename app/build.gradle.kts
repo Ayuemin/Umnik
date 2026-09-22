@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.10 — Auto Router, catalog search and UI polish
+// Umnik v1.19.11-rc.11 — deeper Auto Router stability and diagnostics
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 153
-        versionName = "1.19.11-rc.10"
+        versionCode = 154
+        versionName = "1.19.11-rc.11"
     }
 
     buildFeatures {
