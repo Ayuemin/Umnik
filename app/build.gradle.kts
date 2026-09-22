@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.6 — routing help and linked RAG model search
+// Umnik v1.19.11-rc.6 — simpler defaults and isolated chats
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
