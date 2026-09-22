@@ -20,6 +20,7 @@ import java.io.DataOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.RandomAccessFile
 import java.util.UUID
 import kotlin.math.sqrt
 
@@ -602,40 +603,57 @@ class KnowledgeBaseRepository(private val context: Context) {
 
     private fun partialVectorState(file: File): Pair<Int, Int> {
         if (!file.isFile || file.length() == 0L) return 0 to 0
-        return DataInputStream(FileInputStream(file).buffered()).use { input ->
-            val magic = input.readInt()
-            val version = input.readInt()
-            val dimension = input.readInt()
-            require(magic == PARTIAL_VECTOR_MAGIC && version == PARTIAL_VECTOR_VERSION && dimension > 0) {
-                "Повреждён checkpoint embeddings"
-            }
-            val payload = file.length() - PARTIAL_VECTOR_HEADER_BYTES
-            val vectorBytes = dimension.toLong() * 4L
-            require(payload >= 0L && payload % vectorBytes == 0L) { "Повреждён checkpoint embeddings" }
-            (payload / vectorBytes).toInt() to dimension
+        if (file.length() < PARTIAL_VECTOR_HEADER_BYTES) {
+            file.delete()
+            return 0 to 0
         }
+        val dimension = runCatching {
+            DataInputStream(FileInputStream(file).buffered()).use { input ->
+                val magic = input.readInt()
+                val version = input.readInt()
+                val savedDimension = input.readInt()
+                require(magic == PARTIAL_VECTOR_MAGIC && version == PARTIAL_VECTOR_VERSION && savedDimension > 0)
+                savedDimension
+            }
+        }.getOrElse {
+            file.delete()
+            return 0 to 0
+        }
+
+        val payload = file.length() - PARTIAL_VECTOR_HEADER_BYTES
+        val vectorBytes = dimension.toLong() * 4L
+        val completePayload = (payload / vectorBytes) * vectorBytes
+        if (completePayload != payload) {
+            // A process kill can interrupt the final vector write. Keep every complete
+            // vector and discard only the incomplete tail instead of restarting the book.
+            RandomAccessFile(file, "rw").use { raf ->
+                raf.setLength(PARTIAL_VECTOR_HEADER_BYTES + completePayload)
+                raf.fd.sync()
+            }
+        }
+        return (completePayload / vectorBytes).toInt() to dimension
     }
 
     private fun appendPartialVectors(file: File, vectors: List<FloatArray>, dimension: Int) {
+        require(vectors.all { it.size == dimension }) { "Некорректная размерность embedding" }
         if (!file.exists()) {
-            DataOutputStream(FileOutputStream(file).buffered()).use { output ->
-                output.writeInt(PARTIAL_VECTOR_MAGIC)
-                output.writeInt(PARTIAL_VECTOR_VERSION)
-                output.writeInt(dimension)
+            RandomAccessFile(file, "rw").use { raf ->
+                raf.setLength(0L)
+                raf.writeInt(PARTIAL_VECTOR_MAGIC)
+                raf.writeInt(PARTIAL_VECTOR_VERSION)
+                raf.writeInt(dimension)
+                raf.fd.sync()
             }
         } else {
             val (_, savedDimension) = partialVectorState(file)
             require(savedDimension == dimension) { "Размерность checkpoint embeddings не совпадает" }
         }
-        FileOutputStream(file, true).use { stream ->
-            DataOutputStream(stream.buffered()).use { output ->
-                vectors.forEach { vector ->
-                    require(vector.size == dimension) { "Некорректная размерность embedding" }
-                    vector.forEach(output::writeFloat)
-                }
-                output.flush()
-            }
-            runCatching { stream.fd.sync() }
+
+        RandomAccessFile(file, "rw").use { raf ->
+            raf.seek(raf.length())
+            vectors.forEach { vector -> vector.forEach(raf::writeFloat) }
+            // A checkpoint is considered committed only after the whole batch reaches storage.
+            raf.fd.sync()
         }
     }
 
