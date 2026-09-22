@@ -1517,11 +1517,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ) else chat
         }
         chatsRepository.save(chats)
-        prefs.edit()
-            .putString("active_connection_profile", profile.id)
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
-            .apply()
+        prefs.edit().putString("active_connection_profile", profile.id).apply()
+        val currentChat = chats.firstOrNull { it.id == _state.value.currentChatId }
+        val runtime = currentChat?.let { projectAutomation.profile(it.id) ?: defaultRuntimeProfile(it) }
+        if (currentChat != null && runtime != null) {
+            projectAutomation.saveProfile(
+                currentChat.id,
+                runtime.copy(
+                    modelId = clean,
+                    reasoningEffort = effort,
+                    reasoningEnabled = keepReasoning
+                )
+            )
+        }
         _state.value = _state.value.copy(
             chats = chats,
             activeConnectionProfileId = profile.id,
@@ -1530,7 +1538,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
             mode = ChatMode.TEXT,
             availableTextModels = if (sameProfile) _state.value.availableTextModels else emptyList(),
-            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) prefs.getBoolean("web_search", false) else false,
+            webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) runtime?.webSearchEnabled == true else false,
+            webSearchPreset = runtime?.tools?.webSearchPreset ?: _state.value.webSearchPreset,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning,
             apiKeyConfigured = isProfileConfigured(profile),
@@ -1614,10 +1623,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ) else chat
         }
         chatsRepository.save(chats)
-        prefs.edit()
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
-            .apply()
+        val currentChat = chats.firstOrNull { it.id == _state.value.currentChatId }
+        if (currentChat != null) {
+            val runtime = projectAutomation.profile(currentChat.id) ?: defaultRuntimeProfile(currentChat)
+            projectAutomation.saveProfile(
+                currentChat.id,
+                runtime.copy(
+                    modelId = null,
+                    reasoningEffort = effort,
+                    reasoningEnabled = keepReasoning
+                )
+            )
+        }
         _state.value = _state.value.copy(
             chats = chats,
             currentChatTextModel = null,
@@ -2055,11 +2072,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val branchSkillIds = _state.value.activeSkillIds
 
         chatsRepository.save(chats)
+        val sourceRuntime = projectAutomation.profile(source.id) ?: defaultRuntimeProfile(source)
+        projectAutomation.saveProfile(
+            branch.id,
+            sourceRuntime.copy(
+                modelId = branch.textModelOverride ?: sourceRuntime.modelId,
+                reasoningEffort = effort,
+                reasoningEnabled = keepReasoning,
+                skillIds = branchSkillIds
+            )
+        )
         prefs.edit()
             .putString("current_chat_id", branch.id)
             .putStringSet(chatSkillsKey(branch.id), branchSkillIds)
-            .putString("reasoning_effort", effort.name)
-            .putBoolean("reasoning_enabled", keepReasoning)
             .apply()
 
         _state.value = _state.value.copy(
