@@ -73,11 +73,9 @@ internal fun ExpandableSettingsHeader(
             UmnikInfoHint(title = title, text = info)
             Spacer(Modifier.width(4.dp))
         }
-        Icon(
-            if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-            contentDescription = if (expanded) "Свернуть" else "Развернуть",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(24.dp)
+        UmnikChevronIndicator(
+            icon = if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+            contentDescription = if (expanded) "Свернуть" else "Развернуть"
         )
     }
 }
