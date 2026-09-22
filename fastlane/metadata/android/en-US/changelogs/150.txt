@@ -1,0 +1,1 @@
+Settings UI polish: unified model selection through the OpenRouter catalog, direct speech and storage screens, video history beside generation, collapsible catalog filters, consistent memory/knowledge-base styling, and full palette theming across visible UI.
