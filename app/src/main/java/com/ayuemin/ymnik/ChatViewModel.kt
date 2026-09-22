@@ -1882,6 +1882,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chat.chatFiles.orEmpty().isEmpty() &&
             !chat.isFavorite &&
             chat.title == "Новый чат" &&
+            !chat.titlePinned &&
             chat.assignedRole.isNullOrBlank() &&
             chat.masterPrompt.isNullOrBlank() &&
             chat.textModelOverride.isNullOrBlank()
@@ -2244,9 +2245,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun updateChatProfile(id: String, title: String, role: String, masterPrompt: String) {
         if (_state.value.isLoading) return
+        val cleanTitle = title.trim().ifBlank { "Новый чат" }
         val chats = _state.value.chats.map { chat ->
             if (chat.id == id) chat.copy(
-                title = title.trim().ifBlank { "Новый чат" },
+                title = cleanTitle,
+                // Once the user explicitly changes the title, automatic naming must
+                // never overwrite it, including after clearing the conversation.
+                titlePinned = chat.titlePinned || cleanTitle != chat.title,
                 assignedRole = role.trim().takeIf { it.isNotBlank() },
                 masterPrompt = masterPrompt.trim().takeIf { it.isNotBlank() },
                 updatedAt = System.currentTimeMillis()
@@ -4088,7 +4093,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         val nextMessages = before + user
         val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }
-        val title = if (before.isEmpty()) makeChatTitle(clean, titleAttachments) else null
+        val title = if (
+            before.isEmpty() &&
+            currentChat?.title == "Новый чат" &&
+            currentChat.titlePinned.not()
+        ) {
+            makeChatTitle(clean, titleAttachments)
+        } else null
         val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
         chatsRepository.save(nextChats)
 
@@ -4647,8 +4658,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val now = System.currentTimeMillis()
         val chats = _state.value.chats.map { chat ->
             if (chat.id == chatId) chat.copy(
-                // Agent identity belongs to AgentProfile and must survive clearing its conversation.
-                title = linkedAgent?.name ?: "Новый чат",
+                // Clearing removes conversation data only. The chat identity and
+                // user configuration (title, role, master prompt) must survive.
+                title = linkedAgent?.name ?: chat.title,
                 messages = emptyList(),
                 chatFiles = emptyList(),
                 updatedAt = now
