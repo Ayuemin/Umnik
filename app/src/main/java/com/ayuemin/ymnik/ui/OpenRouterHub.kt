@@ -1264,21 +1264,23 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
 private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: OpenRouterHubController) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text("Инструменты обычного чата", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Эти возможности OpenRouter модель может использовать во время обычного разговора. Включайте только то, что действительно нужно задаче.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Инструменты обычного чата", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                UmnikInfoHint(
+                    title = "Инструменты обычного чата",
+                    text = "Это дополнительные возможности OpenRouter для обычного разговора: современный веб-поиск, чтение найденных страниц, дата и время, генерация изображений, Fusion и Shell. Включайте только нужное задаче."
+                )
+            }
         }
         item {
-            Text("Режим веб-поиска по умолчанию", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Включение поиска остаётся в текущем чате. Здесь задаётся режим, который будет предложен по умолчанию.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Современный OpenRouter Web Search", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Современный веб-поиск",
+                    text = "Используется agentic Web Search OpenRouter. Старое значение ALWAYS поддерживается только для совместимости сохранённых настроек и трактуется как современный Auto."
+                )
+            }
+            Text("Режим по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchPreset.entries) { preset ->
                     FilterChip(
@@ -1290,12 +1292,13 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
             }
         }
         item {
-            Text("Сервис интернет-поиска", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Auto использует встроенный поиск провайдера, когда он доступен, иначе OpenRouter выбирает совместимый сервис.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Сервис интернет-поиска",
+                    text = "Auto использует встроенный поиск провайдера, когда он доступен, либо позволяет OpenRouter выбрать совместимый сервис. Можно явно выбрать Native, Exa, Parallel или Perplexity."
+                )
+            }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchEngine.entries) { engine ->
                     FilterChip(
@@ -1314,35 +1317,49 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
 
         item {
             HorizontalDivider()
-            Text("Поиск по своим документам (RAG)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
-            Text(
-                "RAG сначала находит подходящие фрагменты ваших текстовых файлов, затем передаёт их основной модели. Модели Embeddings и Rerank выбираются во вкладке «Модели» общего каталога.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("RAG для прикреплённых файлов", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                UmnikInfoHint(
+                    title = "RAG для прикреплённых файлов",
+                    text = "Это отдельный механизм для текстовых файлов, прикреплённых к конкретному запросу. Он не является постоянной базой знаний чата или агента. База знаний индексируется заранее и имеет собственную настройку числа фрагментов."
+                )
+            }
         }
-        item { ToggleRow("Включить поиск по документам", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
+        item { ToggleRow("Включить RAG для прикреплённых файлов", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
         item {
             Text("Модель смыслового поиска", fontWeight = FontWeight.SemiBold)
-            Text(rag.embeddingModel.ifBlank { "Не выбрана — назначьте Embeddings-модель во вкладке «Модели»" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(rag.embeddingModel.ifBlank { "Не выбрана — скопируйте ID Embeddings-модели из вкладки «Модели»" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.height(8.dp))
             Text("Модель уточнения результатов", fontWeight = FontWeight.SemiBold)
             Text(rag.rerankModel.ifBlank { "Не выбрана — Rerank необязателен" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
-            Text("Сколько подходящих фрагментов передавать модели: ${rag.topK}", fontWeight = FontWeight.SemiBold)
-            Slider(
-                value = rag.topK.toFloat(),
-                onValueChange = { controller.updateRag(rag.copy(topK = it.toInt().coerceIn(1, 20))) },
-                valueRange = 1f..20f,
-                steps = 18
-            )
-            Text(
-                "Для небольшого PDF сначала попробуйте обычное прикрепление файла. RAG особенно полезен для набора больших текстовых материалов.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Фрагментов из прикреплённых файлов: ${rag.topK}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Количество фрагментов",
+                    text = "Эта цифра относится только к RAG для файлов текущего запроса. У постоянной базы знаний чата или агента есть отдельная настройка. Для обычных случаев достаточно 5."
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(3, 5, 8).forEach { value ->
+                    FilterChip(
+                        selected = rag.topK == value,
+                        onClick = { controller.updateRag(rag.copy(topK = value)) },
+                        label = { Text(value.toString()) }
+                    )
+                }
+            }
+            if (rag.topK !in setOf(3, 5, 8)) {
+                Text(
+                    "Сохранено прежнее значение: ${rag.topK}. Выберите 3, 5 или 8 для нового упрощённого режима.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }
