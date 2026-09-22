@@ -386,7 +386,7 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
     FilterChip(selected = selected == value, onClick = { onPage(value) }, label = { Text(label) })
 }
 
-private val modelSearchSeparators = Regex("""[^\\p{L}\\p{N}]+""")
+private val modelSearchSeparators = Regex("""[^\p{L}\p{N}]+""")
 
 internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean {
     val query = rawQuery.trim()
