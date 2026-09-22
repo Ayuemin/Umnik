@@ -253,8 +253,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var reasoningExpanded by remember { mutableStateOf(false) }
     var skillsLibraryExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
-    var openRouterSpeechExpanded by remember { mutableStateOf(false) }
-    var openRouterDocumentSpeechExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
@@ -608,7 +606,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                 }
 
                 item {
-                    ExpandableSettingsCard(
+                    SettingsActionCard(
                         title = "Озвучивание ответов OpenRouter",
                         subtitle = when {
                             state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
@@ -619,39 +617,27 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             }.joinToString(" · ")
                         },
                         icon = Icons.Outlined.VolumeUp,
-                        expanded = openRouterSpeechExpanded,
-                        onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded },
-                        info = "Эта модель озвучивает уже готовые ответы нейросети по кнопке OR под сообщением. Она не используется для режима «+ → Озвучить»."
-                    ) {
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Настроить модель и параметры")
+                        onClick = {
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                "reply-speech",
+                                "Модели"
+                            )
                         }
-                    }
+                    )
                 }
 
                 item {
-                    ExpandableSettingsCard(
+                    SettingsActionCard(
                         title = "Озвучивание текста и документов",
-                        subtitle = "Отдельная модель и параметры",
+                        subtitle = "Текст, документы, голос и формат",
                         icon = Icons.Outlined.Description,
-                        expanded = openRouterDocumentSpeechExpanded,
-                        onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded },
-                        info = "Отдельная настройка для режима «+ → Озвучить»: чтение введённого текста или документа. Не влияет на кнопку озвучивания готовых ответов."
-                    ) {
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Открыть настройки озвучивания")
+                        onClick = {
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                "speech",
+                                "Модели"
+                            )
                         }
-                    }
+                    )
                 }
 
                     }
