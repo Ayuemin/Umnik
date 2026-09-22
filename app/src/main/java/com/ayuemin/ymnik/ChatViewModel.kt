@@ -4256,6 +4256,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             "User message persisted; chat=${chatId.take(8)}; message=${user.id.take(8)}"
         )
 
+        try {
         val textModel = currentTextModelId()
         val autoRouter = isOpenRouterAuto(textModel)
         if (autoRouter) {
@@ -4588,6 +4589,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (isCurrentRequestGeneration(chatId, requestId)) {
                 activeRequestPending.remove(chatId)
             }
+        }
+        } catch (error: Exception) {
+            DiagnosticLog.record(
+                context,
+                "SEND_PREP",
+                "Preparation failed before request registration; chat=${chatId.take(8)}; model=${currentTextModelId()}",
+                error
+            )
+            val failedChats = chatsRepository.finishRequest(chatId, user.id, null)
+            _state.value = _state.value.copy(
+                messages = failedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                chats = failedChats,
+                pendingAttachments = (_state.value.pendingAttachments + pending).distinctBy { attachment -> attachment.uri },
+                requestActive = RequestExecutionManager.hasActiveRequest(),
+                busyLabel = null,
+                status = error.message?.takeIf { it.isNotBlank() }
+                    ?: "Не удалось подготовить запрос. Подробности записаны в диагностический лог."
+            )
         }
     }
 
