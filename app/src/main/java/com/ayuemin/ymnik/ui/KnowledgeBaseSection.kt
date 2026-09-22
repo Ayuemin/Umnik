@@ -76,17 +76,11 @@ fun KnowledgeBaseSection(
                 else -> "${documents.size} источн. · автопоиск включён"
             },
             expanded = expanded,
-            onToggle = { expanded = !expanded }
+            onToggle = { expanded = !expanded },
+            icon = Icons.Outlined.MenuBook,
+            info = "Книги и справочники индексируются один раз. При запросе Umnik автоматически находит подходящие фрагменты и добавляет только их в контекст модели. Полный документ заново не отправляется."
         )
         if (!expanded) return@Column
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Как работает база знаний", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            UmnikInfoHint(
-                title = "Как работает база знаний",
-                text = "Книги и справочники индексируются один раз. При запросе Umnik автоматически находит подходящие фрагменты и добавляет только их в контекст модели. Полный документ заново не отправляется."
-            )
-        }
 
         if (knowledgeTask != null) {
             ElevatedCard(Modifier.fillMaxWidth()) {
