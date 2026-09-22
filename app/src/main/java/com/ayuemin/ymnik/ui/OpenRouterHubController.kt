@@ -286,6 +286,24 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(status = null)
     }
 
+    fun setReplySpeechModelId(modelId: String) {
+        viewModel.setOpenRouterSpeechModel(modelId.trim())
+        mutableState.value = mutableState.value.copy(status = null)
+    }
+
+    fun setMediaSpeechModelId(modelId: String) {
+        val clean = modelId.trim()
+        val current = mutableState.value.media
+        val changed = current.speechModel != clean
+        val media = current.copy(
+            speechModel = clean,
+            voice = if (changed) "" else current.voice,
+            responseFormat = if (changed) null else current.responseFormat
+        )
+        featurePrefs.saveMedia(media)
+        mutableState.value = mutableState.value.copy(media = media, status = null)
+    }
+
     fun updateReplySpeechVoice(voice: String) {
         viewModel.setOpenRouterSpeechVoice(voice)
         mutableState.value = mutableState.value.copy(status = null)
