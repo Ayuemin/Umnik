@@ -4332,7 +4332,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     projectContextUsed = answerProjectContextUsed,
                     attachmentCount = answerAttachmentCount,
                     connectionName = profile.name,
-                    requestId = requestId
+                    requestId = requestId.toString()
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(
