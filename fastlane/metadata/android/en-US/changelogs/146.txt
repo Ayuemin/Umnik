@@ -1,0 +1,1 @@
+Answer metadata is now hidden behind a compact “About answer” panel. It includes model, provider, latency, tokens, cost and request context such as knowledge-base fragments, web search, reasoning, memory, skills and attachments.
