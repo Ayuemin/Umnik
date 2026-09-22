@@ -253,8 +253,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var reasoningExpanded by remember { mutableStateOf(false) }
     var skillsLibraryExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
-    var openRouterSpeechExpanded by remember { mutableStateOf(false) }
-    var openRouterDocumentSpeechExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
@@ -304,7 +302,17 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
             if (settingsCategory == null) {
                 SettingsCategory.entries.forEach { category ->
                     item(key = category.name) {
-                        SettingsCategoryCard(category = category, onClick = { settingsCategory = category })
+                        SettingsCategoryCard(
+                            category = category,
+                            onClick = {
+                                if (category == SettingsCategory.DATA) {
+                                    vm.refreshStorage()
+                                    storageOpen = true
+                                } else {
+                                    settingsCategory = category
+                                }
+                            }
+                        )
                     }
                     if (category == SettingsCategory.CONNECTION) {
                         item(key = "OPENROUTER_MODEL_CATALOG") {
@@ -312,7 +320,29 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                 title = "Каталог и модели OpenRouter",
                                 subtitle = "Поиск, фильтры, цены и назначение моделей",
                                 icon = Icons.Outlined.Search,
-                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings") }
+                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки") }
+                            )
+                        }
+                    }
+                    if (category == SettingsCategory.MODELS) {
+                        item(key = "OPENROUTER_REPLY_SPEECH") {
+                            SettingsActionCard(
+                                title = "Озвучивание ответов",
+                                subtitle = if (state.openRouterSpeechModel.isBlank()) {
+                                    "Модель не выбрана"
+                                } else {
+                                    state.openRouterSpeechModel.substringAfterLast('/')
+                                },
+                                icon = Icons.Outlined.VolumeUp,
+                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Настройки") }
+                            )
+                        }
+                        item(key = "OPENROUTER_DOCUMENT_SPEECH") {
+                            SettingsActionCard(
+                                title = "Озвучивание текста и документов",
+                                subtitle = "Создание аудио из текста или файла",
+                                icon = Icons.Outlined.Description,
+                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Настройки") }
                             )
                         }
                     }
@@ -366,21 +396,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Icon(Icons.Outlined.Refresh, contentDescription = null)
                             Spacer(Modifier.width(7.dp))
                             Text("Проверить подключение")
-                        }
-                        Spacer(Modifier.height(7.dp))
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("tools") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.Language, contentDescription = null)
-                            Spacer(Modifier.width(7.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Инструменты и веб-поиск", fontWeight = FontWeight.Medium)
-                                Text(
-                                    "Сервис поиска и расширенные параметры OpenRouter",
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            }
                         }
                         Spacer(Modifier.height(5.dp))
                         TextButton(
@@ -559,6 +574,18 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                         overflow = TextOverflow.Ellipsis
                                     )
                                 }
+                                TextButton(
+                                    onClick = {
+                                        com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                            "models-settings",
+                                            "Настройки моделей"
+                                        )
+                                    }
+                                ) {
+                                    Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Выбрать")
+                                }
                             }
                         }
                         Spacer(Modifier.height(7.dp))
@@ -588,53 +615,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         expanded = reasoningExpanded,
                         onToggle = { reasoningExpanded = !reasoningExpanded }
                     )
-                }
-
-                item {
-                    ExpandableSettingsCard(
-                        title = "Озвучивание ответов OpenRouter",
-                        subtitle = when {
-                            state.openRouterSpeechModel.isBlank() -> "Модель не выбрана"
-                            else -> buildList {
-                                add(state.openRouterSpeechModel.substringAfterLast('/'))
-                                if (state.openRouterSpeechVoice.isNotBlank()) add(state.openRouterSpeechVoice)
-                                add(state.openRouterSpeechResponseFormat.ifBlank { "Авто" }.uppercase())
-                            }.joinToString(" · ")
-                        },
-                        icon = Icons.Outlined.VolumeUp,
-                        expanded = openRouterSpeechExpanded,
-                        onToggle = { openRouterSpeechExpanded = !openRouterSpeechExpanded },
-                        info = "Эта модель озвучивает уже готовые ответы нейросети по кнопке OR под сообщением. Она не используется для режима «+ → Озвучить»."
-                    ) {
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Настроить модель и параметры")
-                        }
-                    }
-                }
-
-                item {
-                    ExpandableSettingsCard(
-                        title = "Озвучивание текста и документов",
-                        subtitle = "Отдельная модель и параметры",
-                        icon = Icons.Outlined.Description,
-                        expanded = openRouterDocumentSpeechExpanded,
-                        onToggle = { openRouterDocumentSpeechExpanded = !openRouterDocumentSpeechExpanded },
-                        info = "Отдельная настройка для режима «+ → Озвучить»: чтение введённого текста или документа. Не влияет на кнопку озвучивания готовых ответов."
-                    ) {
-                        FilledTonalButton(
-                            onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech") },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(Icons.Outlined.VolumeUp, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("Открыть настройки озвучивания")
-                        }
-                    }
                 }
 
                     }
