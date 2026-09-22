@@ -1683,30 +1683,6 @@ private fun JobsPage(
                 }
             }
         }
-        item {
-            HorizontalDivider()
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("Видео-задания", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                TextButton(
-                    onClick = controller::clearFinishedVideoHistory,
-                    enabled = state.videos.any { it.status.terminal }
-                ) { Text("Очистить") }
-            }
-        }
-        if (state.videos.isEmpty()) item { Text("Пока нет фоновых видео", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(state.videos, key = { it.id }) { job ->
-            UmnikPanel {
-                Column(Modifier.padding(12.dp)) {
-                    Text(job.modelId, fontWeight = FontWeight.SemiBold)
-                    Text(videoLabel(job.status), style = MaterialTheme.typography.bodySmall)
-                    Text(job.prompt, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    job.costUsd?.let { Text("Стоимость: ${formatUsdSmall(it)}", style = MaterialTheme.typography.bodySmall) }
-                }
-            }
-        }
     }
 
     if (clearHistoryConfirm) {
@@ -1737,6 +1713,7 @@ private fun MediaPage(
     var speechText by remember { mutableStateOf("") }
     var voice by remember(state.media.speechModel, state.media.voice) { mutableStateOf(state.media.voice) }
     var speechResponseFormat by remember(state.media.speechModel, state.media.responseFormat) { mutableStateOf(state.media.responseFormat.orEmpty()) }
+    var speechSettingsExpanded by remember { mutableStateOf(false) }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         videoRefs.clear(); videoRefs.addAll(uris.take(4))
     }
@@ -1762,6 +1739,45 @@ private fun MediaPage(
                     Button(onClick = { controller.submitVideo(videoPrompt, videoRefs.toList()); videoPrompt = ""; videoRefs.clear() }, enabled = state.media.videoModel.isNotBlank() && videoPrompt.isNotBlank() && !state.loading, modifier = Modifier.weight(1f)) { Text("Создать") }
                 }
                 Text("Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+            }
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("История видео", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                    TextButton(
+                        onClick = controller::clearFinishedVideoHistory,
+                        enabled = state.videos.any { it.status.terminal }
+                    ) { Text("Очистить") }
+                    TextButton(onClick = controller::refreshJobs) {
+                        Icon(Icons.Outlined.Refresh, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Обновить")
+                    }
+                }
+            }
+            if (state.videos.isEmpty()) {
+                item { Text("Пока нет видео-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            } else {
+                items(state.videos, key = { it.id }) { job ->
+                    UmnikPanel {
+                        Column(Modifier.padding(12.dp)) {
+                            Text(job.modelId, fontWeight = FontWeight.SemiBold)
+                            Text(videoLabel(job.status), style = MaterialTheme.typography.bodySmall)
+                            Text(
+                                job.prompt,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            job.costUsd?.let {
+                                Text("Стоимость: ${formatUsdSmall(it)}", style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                    }
+                }
             }
             if (section == MediaSection.ALL) item { HorizontalDivider() }
         }
@@ -1792,66 +1808,19 @@ private fun MediaPage(
         if (section == MediaSection.ALL || section == MediaSection.SPEECH) {
             item {
                 Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                val selectedSpeechModel = state.catalog.firstOrNull { it.id == state.media.speechModel }
-                val documentVoiceOptions = selectedSpeechModel?.parameterValues("voice").orEmpty()
-                CategoryModelPicker(
-                    title = "Модель озвучивания",
-                    current = state.media.speechModel,
-                    models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
-                    onOpenCatalog = onOpenCatalog
+                Text(
+                    "Введите текст или загрузите текстовый файл. Настройки модели и голоса находятся ниже и не мешают основной работе.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                if (state.media.speechModel.isNotBlank()) {
-                    Text("Дополнительные параметры (необязательно)", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
-                    Text(
-                        "Некоторым моделям нужен голос или конкретный формат, другим достаточно самой модели. «Авто» не передаёт лишний формат и учитывает известные ограничения Gemini/Voxtral.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        item {
-                            FilterChip(
-                                selected = voice.isBlank(),
-                                onClick = { voice = "" },
-                                label = { Text("Без голоса") }
-                            )
-                        }
-                        items(documentVoiceOptions) { option ->
-                            FilterChip(
-                                selected = voice == option,
-                                onClick = { voice = option },
-                                label = { Text(option, maxLines = 1) }
-                            )
-                        }
-                    }
-                    OutlinedTextField(
-                        voice,
-                        { voice = it },
-                        Modifier.fillMaxWidth().padding(top = 6.dp),
-                        label = { Text("Voice / ID голоса (необязательно)") },
-                        singleLine = true
-                    )
-                    Text("Формат ответа", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        items(listOf("" to "Авто", "mp3" to "MP3", "pcm" to "PCM")) { (value, label) ->
-                            FilterChip(
-                                selected = speechResponseFormat == value,
-                                onClick = { speechResponseFormat = value },
-                                label = { Text(label) }
-                            )
-                        }
-                    }
-                    FilledTonalButton(
-                        onClick = { controller.updateMedia(state.media.copy(voice = voice.trim(), responseFormat = speechResponseFormat.ifBlank { null })) },
-                        modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
-                    ) { Text("Сохранить параметры") }
-                }
-                OutlinedTextField(speechText, { speechText = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Текст для озвучивания") }, minLines = 3, maxLines = 8)
+                OutlinedTextField(
+                    speechText,
+                    { speechText = it },
+                    Modifier.fillMaxWidth().padding(top = 8.dp),
+                    label = { Text("Текст для озвучивания") },
+                    minLines = 3,
+                    maxLines = 8
+                )
                 FilledTonalButton(
                     onClick = { speechTextPicker.launch(arrayOf("text/*", "application/json", "application/xml", "text/csv", "text/markdown")) },
                     enabled = !state.loading,
@@ -1859,14 +1828,128 @@ private fun MediaPage(
                 ) { Text("Загрузить текстовый файл") }
                 Button(
                     onClick = {
-                        controller.updateMedia(state.media.copy(voice = voice.trim(), responseFormat = speechResponseFormat.ifBlank { null }))
+                        controller.updateMedia(
+                            state.media.copy(
+                                voice = voice.trim(),
+                                responseFormat = speechResponseFormat.ifBlank { null }
+                            )
+                        )
                         controller.synthesize(speechText)
                     },
                     enabled = state.media.speechModel.isNotBlank() && speechText.isNotBlank() && !state.loading,
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
                 ) { Text("Создать аудио") }
+                if (state.media.speechModel.isBlank()) {
+                    Text(
+                        "Для создания аудио сначала выберите модель в настройках ниже.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
                 state.speechFile?.let { file ->
-                    Text("Готово и добавлено в чат: ${file.name}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp))
+                    Text(
+                        "Готово и добавлено в чат: ${file.name}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+            }
+            item {
+                TextButton(
+                    onClick = { speechSettingsExpanded = !speechSettingsExpanded },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        if (speechSettingsExpanded) {
+                            "Скрыть настройки модели и голоса"
+                        } else {
+                            "Настройки модели и голоса · " +
+                                state.media.speechModel.substringAfterLast('/').ifBlank { "модель не выбрана" }
+                        }
+                    )
+                }
+            }
+            if (speechSettingsExpanded) {
+                item {
+                    val selectedSpeechModel = state.catalog.firstOrNull { it.id == state.media.speechModel }
+                    val documentVoiceOptions = selectedSpeechModel?.parameterValues("voice").orEmpty()
+                    CategoryModelPicker(
+                        title = "Модель озвучивания",
+                        current = state.media.speechModel,
+                        models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
+                        onOpenCatalog = onOpenCatalog
+                    )
+                    if (state.media.speechModel.isNotBlank()) {
+                        Text(
+                            "Голос и формат (необязательно)",
+                            modifier = Modifier.padding(top = 8.dp),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "Задавайте их только если этого требует выбранная модель.",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            UmnikInfoHint(
+                                title = "Голос и формат",
+                                text = "Некоторым моделям нужен конкретный голос или формат. Если модель работает без них, оставьте голос пустым, а формат — «Авто»."
+                            )
+                        }
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            item {
+                                FilterChip(
+                                    selected = voice.isBlank(),
+                                    onClick = { voice = "" },
+                                    label = { Text("Без голоса") }
+                                )
+                            }
+                            items(documentVoiceOptions) { option ->
+                                FilterChip(
+                                    selected = voice == option,
+                                    onClick = { voice = option },
+                                    label = { Text(option, maxLines = 1) }
+                                )
+                            }
+                        }
+                        OutlinedTextField(
+                            voice,
+                            { voice = it },
+                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                            label = { Text("Voice / ID голоса") },
+                            singleLine = true
+                        )
+                        Text("Формат ответа", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
+                        LazyRow(
+                            modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            items(listOf("" to "Авто", "mp3" to "MP3", "pcm" to "PCM")) { (value, label) ->
+                                FilterChip(
+                                    selected = speechResponseFormat == value,
+                                    onClick = { speechResponseFormat = value },
+                                    label = { Text(label) }
+                                )
+                            }
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                controller.updateMedia(
+                                    state.media.copy(
+                                        voice = voice.trim(),
+                                        responseFormat = speechResponseFormat.ifBlank { null }
+                                    )
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(top = 7.dp)
+                        ) { Text("Сохранить параметры") }
+                    }
                 }
             }
         }
