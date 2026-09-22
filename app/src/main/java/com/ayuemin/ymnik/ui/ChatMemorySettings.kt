@@ -235,12 +235,12 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 value = embeddingModel,
                 onValueChange = { embeddingModel = it.trim() },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Embedding-модель памяти") },
+                label = { Text("Модель поиска по памяти") },
                 trailingIcon = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         UmnikInfoHint(
-                            title = "Embedding-модель памяти",
-                            text = "Используется для смыслового поиска по старой переписке. Найдите Embeddings-модель в общем каталоге, скопируйте её ID и вставьте сюда."
+                            title = "Модель поиска по памяти",
+                            text = "Это Embeddings-модель OpenRouter для смыслового поиска по старой переписке. Конкретную модель Umnik не выбирает за вас: откройте каталог, сравните цену и скопируйте подходящий ID."
                         )
                         IconButton(
                             onClick = {
@@ -256,23 +256,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 },
                 singleLine = true
             )
-            when {
-                catalogState.loading -> Text(
-                    "Обновляю список Embeddings OpenRouter…",
-                    style = MaterialTheme.typography.bodySmall
-                )
-                detectedEmbeddingContext != null -> Text(
-                    "Окно выбранной Embedding-модели: $detectedEmbeddingContext токенов. Рабочий фрагмент: до $effectiveChunk токенов с запасом для токенизации.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                else -> Text(
-                    "OpenRouter не сообщил лимит этой модели. Umnik использует заданный размер фрагмента; при выборе модели из каталога лимит сохраняется автоматически.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             OutlinedTextField(
                 value = summaryModel,
                 onValueChange = { summaryModel = it.trim() },
@@ -299,32 +282,41 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 singleLine = true
             )
 
-            NumericMemoryField("Баланс: включить память после, токенов", autoThreshold) { autoThreshold = it }
-            NumericMemoryField("Эконом: включить память после, токенов", economyThreshold) { economyThreshold = it }
-            NumericMemoryField("Баланс: бюджет истории и памяти, токенов", autoBudget) { autoBudget = it }
-            NumericMemoryField("Эконом: бюджет истории и памяти, токенов", economyBudget) { economyBudget = it }
-            NumericMemoryField("Баланс: последних пар диалога", autoRecentPairs) { autoRecentPairs = it }
-            NumericMemoryField("Эконом: последних пар диалога", economyRecentPairs) { economyRecentPairs = it }
-            NumericMemoryField("Баланс: максимум найденных фрагментов", autoTopK) { autoTopK = it }
-            NumericMemoryField("Эконом: максимум найденных фрагментов", economyTopK) { economyTopK = it }
+
 
             TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (advanced) "Скрыть дополнительные параметры" else "Дополнительные параметры")
+                Text(if (advanced) "Скрыть расширенные параметры" else "Расширенные параметры памяти")
             }
             if (advanced) {
+                when {
+                    catalogState.loading -> Text(
+                        "Обновляю сведения о выбранной модели…",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    detectedEmbeddingContext != null -> Text(
+                        "Окно Embeddings-модели: $detectedEmbeddingContext токенов. Рабочий фрагмент: до $effectiveChunk токенов.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> Text(
+                        "OpenRouter не сообщил лимит этой модели. Umnik использует сохранённые безопасные параметры.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                NumericMemoryField("Баланс: включить память после, токенов", autoThreshold) { autoThreshold = it }
+                NumericMemoryField("Эконом: включить память после, токенов", economyThreshold) { economyThreshold = it }
+                NumericMemoryField("Баланс: бюджет истории и памяти, токенов", autoBudget) { autoBudget = it }
+                NumericMemoryField("Эконом: бюджет истории и памяти, токенов", economyBudget) { economyBudget = it }
+                NumericMemoryField("Баланс: последних пар диалога", autoRecentPairs) { autoRecentPairs = it }
+                NumericMemoryField("Эконом: последних пар диалога", economyRecentPairs) { economyRecentPairs = it }
+                NumericMemoryField("Баланс: максимум найденных фрагментов", autoTopK) { autoTopK = it }
+                NumericMemoryField("Эконом: максимум найденных фрагментов", economyTopK) { economyTopK = it }
                 NumericMemoryField("Размер checkpoint, токенов", checkpointTokens) { checkpointTokens = it }
                 NumericMemoryField("Желаемый размер фрагмента поиска, токенов", chunkTokens) { chunkTokens = it }
                 NumericMemoryField("Перекрытие соседних фрагментов, токенов", chunkOverlap) { chunkOverlap = it }
                 NumericMemoryField("Соседних фрагментов с каждой стороны (0–1)", neighborChunks) { neighborChunks = it }
-                Text(
-                    if (detectedEmbeddingContext != null) {
-                        "Адаптивный предел сейчас: $effectiveChunk токенов. Больший заданный размер автоматически уменьшается под окно выбранной Embedding-модели."
-                    } else {
-                        "Если каталог сообщает окно Embedding-модели, Umnik автоматически ограничивает размер фрагмента примерно 75% этого окна."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 OutlinedTextField(
                     value = minimumScore,
                     onValueChange = { minimumScore = it.filter { c -> c.isDigit() || c == '.' || c == '-' } },
@@ -333,11 +325,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                     singleLine = true
                 )
                 NumericMemoryField("Максимум общего конспекта, знаков", stateCardMaxChars) { stateCardMaxChars = it }
-                Text(
-                    "Хранилище памяти не ограничивается Umnik по размеру и находится отдельно от обычных файлов и базы знаний.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             FilledTonalButton(
