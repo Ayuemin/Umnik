@@ -1105,9 +1105,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
                     requestActive = snapshots.isNotEmpty(),
                     busyLabel = current?.label,
-                    status = latestError ?: _state.value.status,
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats()
+                    status = latestError ?: _state.value.status
                 )
             }
         }
@@ -3674,7 +3672,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val validIds = textInfos.map { it.id }.toSet()
                 pruneQuickTextModels(profile.id, validIds)
                 var selectedModel = loadTextModelForProfile(profile)
-                if (selectedModel !in validIds) {
+                if (selectedModel !in validIds && fallbackRouterInfo(selectedModel) == null) {
                     selectedModel = textInfos.firstOrNull()?.id.orEmpty()
                     if (selectedModel.isNotBlank()) {
                         prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
@@ -3683,8 +3681,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val activeChat = next.chats.firstOrNull { it.id == next.currentChatId }
                 val runtime = activeChat?.let(::runtimeProfile)
                 val requestedId = runtime?.modelId ?: activeChat?.textModelOverride
-                val effectiveId = requestedId?.takeIf { it in validIds } ?: selectedModel
-                val current = textInfos.firstOrNull { it.id == effectiveId }
+                val effectiveId = requestedId
+                    ?.takeIf { it in validIds || fallbackRouterInfo(it) != null }
+                    ?: selectedModel
+                val current = textInfos.firstOrNull { it.id == effectiveId } ?: fallbackRouterInfo(effectiveId)
                 val effort = normalizedReasoningEffort(
                     runtime?.reasoningEffort ?: preferredReasoningEffort(effectiveId, current),
                     current
@@ -3732,9 +3732,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun currentTextModelId(): String = _state.value.currentChatTextModel ?: _state.value.textModel
 
-    private fun currentTextModelInfo(): ModelInfo? =
-        _state.value.availableTextModels.firstOrNull { it.id == currentTextModelId() }
-            ?: _state.value.modelCatalog.firstOrNull { it.id == currentTextModelId() }
+    private fun fallbackRouterInfo(modelId: String): ModelInfo? = when (modelId) {
+        "openrouter/auto", "openrouter/auto-beta" -> ModelInfo(
+            id = modelId,
+            name = if (modelId.endsWith("-beta")) "Auto Router (Beta)" else "Auto Router",
+            inputModalities = setOf("text", "image", "audio", "file", "video"),
+            outputModalities = setOf("text", "image"),
+            supportedParameters = setOf("reasoning", "reasoning_effort", "tools", "tool_choice", "web_search_options"),
+            contextLength = 2_000_000
+        )
+        else -> null
+    }
+
+    private fun modelInfoForId(modelId: String): ModelInfo? =
+        _state.value.availableTextModels.firstOrNull { it.id == modelId }
+            ?: _state.value.modelCatalog.firstOrNull { it.id == modelId }
+            ?: fallbackRouterInfo(modelId)
+
+    private fun currentTextModelInfo(): ModelInfo? = modelInfoForId(currentTextModelId())
 
     private fun reasoningStillValid(info: ModelInfo?, effort: ReasoningEffort = _state.value.reasoningEffort): Boolean =
         _state.value.reasoningEnabled && info?.supportsReasoning == true &&
@@ -4133,6 +4148,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun send(text: String) {
+        DiagnosticLog.action(
+            context,
+            "send_pressed",
+            "chat=${_state.value.currentChatId.take(8)}; mode=${_state.value.mode}; model=${currentTextModelId()}; promptChars=${text.length}; pending=${_state.value.pendingAttachments.size}"
+        )
         val profile = if (_state.value.mode == ChatMode.IMAGE) imageConnectionProfile() else activeConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
             _state.value = _state.value.copy(status = "Подключение OpenRouter недоступно")
@@ -4227,8 +4247,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             pendingAttachments = emptyList(),
             requestActive = true,
             busyLabel = if (_state.value.mode == ChatMode.IMAGE) "Генерирую изображение…" else "Готовлю запрос…",
-            status = null,
-            storageStats = storageRepository.stats()
+            status = null
+        )
+        DiagnosticLog.record(
+            context,
+            "SEND",
+            "User message persisted; chat=${chatId.take(8)}; message=${user.id.take(8)}"
         )
 
         val textModel = currentTextModelId()
@@ -4267,8 +4291,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ?.let { agentConversations.agentIdForConversation(it.id) }
             ?.let { id -> _state.value.agents.firstOrNull { it.id == id } }
         val requestSkillIds = requestAgent?.skillIds ?: _state.value.activeSkillIds
-        val requestTextModelInfo = _state.value.availableTextModels.firstOrNull { it.id == textModel }
-            ?: _state.value.modelCatalog.firstOrNull { it.id == textModel }
+        val requestTextModelInfo = modelInfoForId(textModel)
         val requestWantsImageOutput = mode == ChatMode.TEXT &&
             requestTextModelInfo?.outputs("image") == true &&
             ChatOutputPolicy.wantsGeneratedImage(
