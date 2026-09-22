@@ -238,6 +238,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             customThemeColor = prefs.getInt("custom_theme_color", 0xFF6750A4.toInt()),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
+            knowledgeTasks = knowledgeBase.activeTaskLabels(),
             status = chatsRepository.loadError ?: projectsRepository.loadError ?: agentsRepository.loadError ?: agentConversations.loadError ?: skills.loadError ?: recoveredRequest
         )
     )
@@ -763,11 +764,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
+    private fun refreshKnowledgeState(status: String? = null) {
+        knowledgeBase.reloadFromDisk()
+        _state.update {
+            it.copy(
+                knowledgeTasks = knowledgeBase.activeTaskLabels(),
+                status = status ?: it.status
+            )
+        }
+    }
+
     fun knowledgeDocuments(kind: KnowledgeOwnerKind, ownerId: String): List<KnowledgeDocument> =
         knowledgeBase.documents(kind, ownerId)
 
     fun knowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings =
         knowledgeBase.settings(kind, ownerId)
+
+    fun knowledgeFailure(kind: KnowledgeOwnerKind, ownerId: String): String? =
+        knowledgeBase.failedTaskMessage(kind, ownerId)
 
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
@@ -798,18 +812,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         embeddingModelId: String
     ) {
         if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
-        if (knowledgeTaskLabel(kind, ownerId) != null) {
+        if (knowledgeTaskLabel(kind, ownerId) != null || knowledgeBase.activeIndexTask(kind, ownerId) != null) {
             _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
             return
         }
         val model = embeddingModelId.trim().ifBlank { knowledgeBase.settings(kind, ownerId).embeddingModelId }
         viewModelScope.launch {
-            setKnowledgeTask(kind, ownerId, "Подготавливаю базу знаний…")
+            setKnowledgeTask(kind, ownerId, "Сохраняю источник для фоновой индексации…")
             _state.update { it.copy(status = null) }
-            var success = 0
+            var queued = 0
             val errors = mutableListOf<String>()
             try {
-                val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
+                val (profileId, baseUrl) = knowledgeOpenRouterTaskConfig()
                 uris.forEachIndexed { index, uri ->
                     val label = uri.lastPathSegment?.substringAfterLast('/') ?: "документ ${index + 1}"
                     runCatching {
@@ -819,94 +833,74 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 (attachment.size <= 0L || it.size == attachment.size)
                         }
                         require(!duplicate) { "«${attachment.name}» уже есть в базе знаний" }
-                        setKnowledgeTask(
-                            kind,
-                            ownerId,
-                            "Индексирую ${index + 1} из ${uris.size}: ${attachment.name}"
-                        )
-                        knowledgeBase.index(
+                        val task = knowledgeBase.prepareIndexTask(
                             kind = kind,
                             ownerId = ownerId,
                             attachment = attachment,
                             embeddingModelId = model,
-                            apiKey = apiKey,
-                            baseUrl = baseUrl,
-                            embeddings = embeddingApi
-                        ) { done, total ->
-                            val percent = if (total <= 0) 0 else (done * 100 / total).coerceIn(0, 100)
-                            setKnowledgeTask(
-                                kind,
-                                ownerId,
-                                "Индексирую ${attachment.name}: $percent% ($done/$total)"
-                            )
-                        }
+                            connectionProfileId = profileId,
+                            baseUrl = baseUrl
+                        )
+                        KnowledgeIndexWorker.schedule(context, task)
                     }.onSuccess {
-                        success++
-                        touchKnowledgeOwner(kind, ownerId, null)
+                        queued++
                     }.onFailure { error ->
-                        errors += "$label: ${error.message ?: "ошибка индексации"}"
-                        DiagnosticLog.record(context, "KNOWLEDGE", "index failed owner=${kind.name}:$ownerId file=$label", error)
+                        errors += "$label: ${error.message ?: "ошибка подготовки"}"
+                        DiagnosticLog.record(context, "KNOWLEDGE", "queue failed owner=${kind.name}:$ownerId file=$label", error)
                     }
                 }
             } catch (error: Throwable) {
                 errors += error.message ?: "Не удалось запустить индексацию"
-                DiagnosticLog.record(context, "KNOWLEDGE", "index setup failed owner=${kind.name}:$ownerId", error)
+                DiagnosticLog.record(context, "KNOWLEDGE", "queue setup failed owner=${kind.name}:$ownerId", error)
             } finally {
-                setKnowledgeTask(kind, ownerId, null)
-                _state.update {
-                    it.copy(
-                        status = when {
-                            errors.isEmpty() -> "База знаний обновлена: добавлено $success"
-                            success > 0 -> "Добавлено $success. Ошибки: ${errors.take(2).joinToString("; ")}"
-                            else -> errors.take(2).joinToString("; ").ifBlank { "Не удалось обновить базу знаний" }
-                        }
-                    )
-                }
+                refreshKnowledgeState(
+                    when {
+                        queued > 0 && errors.isEmpty() -> "Индексация запущена в фоне. Можно погасить экран или перейти в другой чат."
+                        queued > 0 -> "В очередь добавлено $queued. Ошибки: ${errors.take(2).joinToString("; ")}"
+                        else -> errors.take(2).joinToString("; ").ifBlank { "Не удалось добавить источник знаний" }
+                    }
+                )
             }
         }
     }
 
     fun reindexKnowledgeDocument(documentId: String, embeddingModelId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
+        knowledgeBase.reloadFromDisk()
         val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
-        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null) {
+        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null ||
+            knowledgeBase.activeIndexTask(document.ownerKind, document.ownerId) != null
+        ) {
             _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
             return
         }
         val model = embeddingModelId.trim().ifBlank { document.embeddingModelId }
         viewModelScope.launch {
-            setKnowledgeTask(document.ownerKind, document.ownerId, "Переиндексирую ${document.name}…")
-            _state.update { it.copy(status = null) }
+            setKnowledgeTask(document.ownerKind, document.ownerId, "Готовлю переиндексацию ${document.name}…")
             try {
-                val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
-                knowledgeBase.reindex(
+                val (profileId, baseUrl) = knowledgeOpenRouterTaskConfig()
+                val task = knowledgeBase.prepareReindexTask(
                     documentId = documentId,
                     embeddingModelId = model,
-                    apiKey = apiKey,
-                    baseUrl = baseUrl,
-                    embeddings = embeddingApi
-                ) { done, total ->
-                    val percent = if (total <= 0) 0 else (done * 100 / total).coerceIn(0, 100)
-                    setKnowledgeTask(
-                        document.ownerKind,
-                        document.ownerId,
-                        "Переиндексирую ${document.name}: $percent% ($done/$total)"
-                    )
-                }
-                touchKnowledgeOwner(document.ownerKind, document.ownerId, "«${document.name}» переиндексирован")
+                    connectionProfileId = profileId,
+                    baseUrl = baseUrl
+                )
+                KnowledgeIndexWorker.schedule(context, task)
+                refreshKnowledgeState("Переиндексация запущена в фоне")
             } catch (error: Throwable) {
-                DiagnosticLog.record(context, "KNOWLEDGE", "reindex failed document=$documentId", error)
-                _state.update { it.copy(status = error.message ?: "Не удалось переиндексировать документ") }
-            } finally {
-                setKnowledgeTask(document.ownerKind, document.ownerId, null)
+                DiagnosticLog.record(context, "KNOWLEDGE", "reindex queue failed document=$documentId", error)
+                refreshKnowledgeState(error.message ?: "Не удалось запустить переиндексацию")
             }
         }
     }
 
     fun deleteKnowledgeDocument(documentId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
+        knowledgeBase.reloadFromDisk()
         val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
-        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null) {
+        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null ||
+            knowledgeBase.activeIndexTask(document.ownerKind, document.ownerId) != null
+        ) {
             _state.update { it.copy(status = "Дождитесь завершения индексации этой базы знаний") }
             return
         }
@@ -944,6 +938,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 )
             }
         }
+    }
+
+    private fun knowledgeOpenRouterTaskConfig(): Pair<String, String> {
+        val profile = _state.value.connectionProfiles
+            .firstOrNull { it.type == ProviderType.OPENROUTER && isProfileConfigured(it) }
+            ?: openRouterProfile()
+        require(isProfileConfigured(profile)) {
+            "Для базы знаний нужен API-ключ OpenRouter: embeddings создаются через OpenRouter, а индекс хранится локально."
+        }
+        val apiKey = secrets.getProfileApiKey(profile.id).orEmpty()
+        require(apiKey.isNotBlank()) { "Не сохранён API-ключ OpenRouter для базы знаний" }
+        return profile.id to effectiveTextBaseUrl(profile)
     }
 
     private fun knowledgeOpenRouterCredentials(): Pair<String, String> {
@@ -1025,6 +1031,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats()
                 )
+            }
+        }
+        viewModelScope.launch {
+            AsyncJobEvents.sequence.collect {
+                refreshKnowledgeState()
             }
         }
         refreshProviderUsage()
