@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.9 — editable model IDs and UI consistency
+// Umnik v1.19.11-rc.9 — editable model IDs, UI consistency and Auto Router stability
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
