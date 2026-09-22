@@ -49,6 +49,7 @@ import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeDocument
+import com.ayuemin.ymnik.model.KnowledgeIndexTask
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.JobWorkspace
 import com.ayuemin.ymnik.model.ModelInfo
@@ -829,6 +830,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             setKnowledgeTask(kind, ownerId, "Сохраняю источник для фоновой индексации…")
             _state.update { it.copy(status = null) }
             var queued = 0
+            val preparedTasks = mutableListOf<KnowledgeIndexTask>()
             val errors = mutableListOf<String>()
             try {
                 val (profileId, baseUrl) = knowledgeOpenRouterTaskConfig()
@@ -841,7 +843,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 (attachment.size <= 0L || it.size == attachment.size)
                         }
                         require(!duplicate) { "«${attachment.name}» уже есть в базе знаний" }
-                        val task = knowledgeBase.prepareIndexTask(
+                        knowledgeBase.prepareIndexTask(
                             kind = kind,
                             ownerId = ownerId,
                             attachment = attachment,
@@ -849,14 +851,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             connectionProfileId = profileId,
                             baseUrl = baseUrl
                         )
-                        KnowledgeIndexWorker.schedule(context, task)
-                    }.onSuccess {
+                    }.onSuccess { task ->
+                        preparedTasks += task
                         queued++
                     }.onFailure { error ->
                         errors += "$label: ${error.message ?: "ошибка подготовки"}"
                         DiagnosticLog.record(context, "KNOWLEDGE", "queue failed owner=${kind.name}:$ownerId file=$label", error)
                     }
                 }
+                preparedTasks.forEach { task -> KnowledgeIndexWorker.schedule(context, task) }
             } catch (error: Throwable) {
                 errors += error.message ?: "Не удалось запустить индексацию"
                 DiagnosticLog.record(context, "KNOWLEDGE", "queue setup failed owner=${kind.name}:$ownerId", error)
