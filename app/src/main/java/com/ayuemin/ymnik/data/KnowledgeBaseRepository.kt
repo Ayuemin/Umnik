@@ -99,7 +99,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         require(attachment.size <= MAX_SOURCE_BYTES || attachment.size <= 0L) {
             "Файл для базы знаний должен быть не больше ${MAX_SOURCE_BYTES / 1024 / 1024} МБ"
         }
-                val id = UUID.randomUUID().toString()
+        val id = UUID.randomUUID().toString()
         val dir = documentDir(kind, ownerId, id).apply { mkdirs() }
         try {
             val source = File(dir, "source${extensionFor(attachment.name)}")
