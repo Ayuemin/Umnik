@@ -1202,6 +1202,7 @@ private fun ReasoningSettingsCard(
     onToggle: () -> Unit
 ) {
     val currentId = state.currentChatTextModel ?: state.textModel
+    var defaultReasoningEnabled by remember { mutableStateOf(vm.defaultReasoningEnabled()) }
     val activeQuickModels = state.quickTextModels
         .filter { quickModelConnectionId(it, state.activeConnectionProfileId) == state.activeConnectionProfileId }
         .map(::quickModelId)
@@ -1259,6 +1260,26 @@ private fun ReasoningSettingsCard(
                 modifier = Modifier.fillMaxWidth().padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Размышление в новых чатах", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "Только стартовое значение. После создания чат хранит своё состояние отдельно.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = defaultReasoningEnabled,
+                        onCheckedChange = {
+                            defaultReasoningEnabled = it
+                            vm.setDefaultReasoningEnabled(it)
+                        }
+                    )
+                }
                 if (state.availableTextModels.isEmpty()) {
                     Text(
                         "Сведения о возможностях моделей ещё не загружены.",
