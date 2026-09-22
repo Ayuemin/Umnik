@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.10 — Auto Router, catalog search and UI polish
+// Umnik v1.19.11-rc.10 — Auto Router, catalog search and UI polish; validated
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
