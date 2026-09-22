@@ -15,6 +15,7 @@ import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -168,8 +169,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     var neighborChunks by remember(initial.neighborChunks) { mutableStateOf(initial.neighborChunks.toString()) }
     var minimumScore by remember(initial.minimumScore) { mutableStateOf(String.format(Locale.US, "%.2f", initial.minimumScore)) }
     var stateCardMaxChars by remember(initial.stateCardMaxChars) { mutableStateOf(initial.stateCardMaxChars.toString()) }
-    var embeddingMenu by remember { mutableStateOf(false) }
-    var summaryMenu by remember { mutableStateOf(false) }
 
     val catalog = remember(context, vm) { OpenRouterHubController(context, vm) }
     val catalogState by catalog.state.collectAsState()
@@ -177,12 +176,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     LaunchedEffect(expanded) {
         if (expanded && catalogState.catalog.isEmpty() && !catalogState.loading) catalog.refreshCatalog()
     }
-    val embeddingChoices = (listOf(embeddingModel, ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL) +
-        catalogState.catalog.filter { ModelCategory.EMBEDDINGS in it.categories }.map { it.id })
-        .filter(String::isNotBlank).distinct()
-    val textChoices = (listOf(summaryModel, state.currentChatTextModel.orEmpty(), state.textModel, "openrouter/auto") +
-        state.availableTextModels.filter { ModelCategory.TEXT in it.categories && !it.isBatch }.map { it.id })
-        .filter(String::isNotBlank).distinct()
     val selectedEmbeddingInfo = catalogState.catalog.firstOrNull { it.id == embeddingModel }
     val detectedEmbeddingContext = selectedEmbeddingInfo?.contextLength
         ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
@@ -203,11 +196,13 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
             verticalArrangement = Arrangement.spacedBy(9.dp)
         ) {
 
-            Text(
-                "Umnik не удаляет старую переписку. После порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, краткая карточка состояния и только релевантные старые фрагменты.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Гибридная память длинных чатов", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Гибридная память",
+                    text = "Umnik не удаляет старую переписку. После заданного порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, компактный конспект и только релевантные старые фрагменты."
+                )
+            }
 
             Text("Режим контекста по умолчанию", fontWeight = FontWeight.SemiBold)
             Text(
@@ -236,22 +231,31 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 )
             }
 
-            Text("Embedding-модель", fontWeight = FontWeight.SemiBold)
-            Box {
-                FilledTonalButton(
-                    onClick = { embeddingMenu = true },
-                    enabled = !state.isLoading && !state.requestActive,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(embeddingModel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                DropdownMenu(expanded = embeddingMenu, onDismissRequest = { embeddingMenu = false }) {
-                    embeddingChoices.forEach { id ->
-                        DropdownMenuItem(
-                            text = { Text(id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                            onClick = { embeddingModel = id; embeddingMenu = false }
+            OutlinedTextField(
+                value = embeddingModel,
+                onValueChange = { embeddingModel = it.trim() },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Embedding-модель памяти") },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        UmnikInfoHint(
+                            title = "Embedding-модель памяти",
+                            text = "Используется для смыслового поиска по старой переписке. Найдите Embeddings-модель в общем каталоге, скопируйте её ID и вставьте сюда."
                         )
+                        IconButton(
+                            onClick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Память и контекст"
+                                )
+                            }
+                        ) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Найти Embeddings-модель в каталоге")
+                        }
                     }
-                }
-            }
+                },
+                singleLine = true
+            )
             when {
                 catalogState.loading -> Text(
                     "Обновляю список Embeddings OpenRouter…",
@@ -269,28 +273,29 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 )
             }
 
-            Text("Модель конспекта", fontWeight = FontWeight.SemiBold)
-            Box {
-                FilledTonalButton(
-                    onClick = { summaryMenu = true },
-                    enabled = !state.isLoading && !state.requestActive,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text(summaryModel, maxLines = 1, overflow = TextOverflow.Ellipsis) }
-                DropdownMenu(expanded = summaryMenu, onDismissRequest = { summaryMenu = false }) {
-                    textChoices.forEach { id ->
-                        DropdownMenuItem(
-                            text = { Text(id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                            onClick = { summaryModel = id; summaryMenu = false }
-                        )
-                    }
-                }
-            }
             OutlinedTextField(
                 value = summaryModel,
-                onValueChange = { summaryModel = it },
+                onValueChange = { summaryModel = it.trim() },
                 modifier = Modifier.fillMaxWidth(),
-                label = { Text("Model ID конспекта") },
-                supportingText = { Text("Обычная текстовая модель OpenRouter; можно указать ID вручную.") },
+                label = { Text("Модель конспекта") },
+                trailingIcon = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        UmnikInfoHint(
+                            title = "Модель конспекта",
+                            text = "Обычная текстовая модель OpenRouter, которая сжимает длинную историю в компактный конспект. Найдите модель в общем каталоге и вставьте её ID."
+                        )
+                        IconButton(
+                            onClick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Память и контекст"
+                                )
+                            }
+                        ) {
+                            Icon(Icons.Outlined.Search, contentDescription = "Найти модель конспекта в каталоге")
+                        }
+                    }
+                },
                 singleLine = true
             )
 
