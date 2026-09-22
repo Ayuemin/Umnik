@@ -343,7 +343,7 @@ private fun OpenRouterHubDialog(
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
-                        HubPage.TOOLS -> ToolsPage(state.tools, controller)
+                        HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
                         HubPage.JOBS -> JobsPage(state, controller)
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller)
@@ -1347,9 +1347,11 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
 @Composable
 private fun ToolsPage(
     tools: ServerToolSettings,
-    controller: OpenRouterHubController
+    controller: OpenRouterHubController,
+    viewModel: ChatViewModel
 ) {
     var advanced by remember { mutableStateOf(false) }
+    var defaultSearchEnabled by remember { mutableStateOf(viewModel.defaultWebSearchEnabled()) }
 
     LazyColumn(
         Modifier.fillMaxSize(),
@@ -1368,6 +1370,16 @@ private fun ToolsPage(
                     title = "Зачем это",
                     text = "Здесь задаются значения по умолчанию для новых обычных чатов. Уже созданные чаты хранят свои настройки отдельно. Модель пользователь всегда выбирает сам."
                 )
+            }
+        }
+        item {
+            ToggleRow(
+                "Поиск в новых чатах",
+                defaultSearchEnabled,
+                "Это только стартовое значение. После создания каждый чат хранит своё состояние поиска независимо от остальных."
+            ) {
+                defaultSearchEnabled = it
+                viewModel.setDefaultWebSearchEnabled(it)
             }
         }
         item {
