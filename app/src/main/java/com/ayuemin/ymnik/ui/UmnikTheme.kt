@@ -50,11 +50,11 @@ private fun harmonizeVisiblePalette(source: ColorScheme, dark: Boolean): ColorSc
     return if (dark) {
         source.copy(
             background = lerp(primary, Color.Black, 0.95f),
-            onBackground = lerp(primary, Color.White, 0.68f),
+            onBackground = lerp(primary, Color.White, 0.86f),
             surface = lerp(primary, Color.Black, 0.94f),
-            onSurface = lerp(primary, Color.White, 0.68f),
+            onSurface = lerp(primary, Color.White, 0.86f),
             surfaceVariant = lerp(primary, Color.Black, 0.76f),
-            onSurfaceVariant = lerp(primary, Color.White, 0.50f),
+            onSurfaceVariant = lerp(primary, Color.White, 0.68f),
             outline = lerp(primary, Color.Gray, 0.44f),
             outlineVariant = lerp(primary, Color.Black, 0.50f),
             surfaceContainerLowest = lerp(primary, Color.Black, 0.96f),
@@ -67,11 +67,11 @@ private fun harmonizeVisiblePalette(source: ColorScheme, dark: Boolean): ColorSc
     } else {
         source.copy(
             background = lerp(primary, Color.White, 0.985f),
-            onBackground = lerp(primary, Color.Black, 0.72f),
+            onBackground = lerp(primary, Color.Black, 0.86f),
             surface = lerp(primary, Color.White, 0.985f),
-            onSurface = lerp(primary, Color.Black, 0.72f),
+            onSurface = lerp(primary, Color.Black, 0.86f),
             surfaceVariant = lerp(primary, Color.White, 0.88f),
-            onSurfaceVariant = lerp(primary, Color.Black, 0.57f),
+            onSurfaceVariant = lerp(primary, Color.Black, 0.70f),
             outline = lerp(primary, Color.Gray, 0.54f),
             outlineVariant = lerp(primary, Color.White, 0.66f),
             surfaceContainerLowest = lerp(primary, Color.White, 0.995f),

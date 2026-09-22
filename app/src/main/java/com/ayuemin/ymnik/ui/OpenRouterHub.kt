@@ -468,14 +468,21 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 onValueChange = { query = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-                placeholder = { Text("Название модели или ID") }
+                leadingIcon = {
+                    Icon(
+                        Icons.Outlined.Search,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                },
+                placeholder = { Text("Название модели или ID") },
+                shape = UmnikFieldShape
             )
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
             if (!filtersExpanded) {
-                TextButton(onClick = { filtersExpanded = true }) {
+                FilledTonalButton(onClick = { filtersExpanded = true }) {
                     Text("Фильтры")
                 }
             }

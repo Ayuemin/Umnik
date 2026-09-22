@@ -424,26 +424,15 @@ private fun AgentSettingsDialog(
                 )
             }
             item {
-                OutlinedTextField(
+                UmnikModelIdField(
+                    label = "Дополнительные модели чатов",
                     value = quickModelsText,
                     onValueChange = { quickModelsText = it },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Дополнительные модели чатов") },
-                    trailingIcon = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            UmnikInfoHint(
-                                title = "Дополнительные модели чатов",
-                                text = "Необязательно. Дополнительные модели для переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке."
-                            )
-                            IconButton(
-                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
-                            ) {
-                                Icon(Icons.Outlined.Search, contentDescription = "Открыть каталог моделей")
-                            }
-                        }
-                    },
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") },
+                    info = "Необязательно. Дополнительные модели для переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке.",
+                    singleLine = false,
                     minLines = 2,
-                    shape = UmnikFieldShape
+                    maxLines = 4
                 )
             }
             item {

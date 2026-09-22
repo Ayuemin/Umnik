@@ -450,7 +450,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         }
                         if (defaultChatModelExpanded) {
                             if (state.textModel != "openrouter/auto") {
-                                TextButton(
+                                OutlinedButton(
                                     onClick = { vm.selectDefaultTextModel("openrouter", "openrouter/auto") },
                                     modifier = Modifier.fillMaxWidth()
                                 ) { Text("Сбросить модель чата на Auto") }
@@ -970,7 +970,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                 Text("Сохранить", maxLines = 1)
                             }
                         }
-                        TextButton(
+                        OutlinedButton(
                             onClick = {
                                 vm.clearDiagnosticLog()
                                 diagnosticLogBytes = 0L
@@ -1357,8 +1357,15 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
             onValueChange = { query = it },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
             singleLine = true,
-            leadingIcon = { Icon(Icons.Outlined.Search, contentDescription = null) },
-            placeholder = { Text("Найти файл") }
+            leadingIcon = {
+                Icon(
+                    Icons.Outlined.Search,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary
+                )
+            },
+            placeholder = { Text("Найти файл") },
+            shape = UmnikFieldShape
         )
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp),

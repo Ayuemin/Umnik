@@ -100,7 +100,7 @@ fun KnowledgeBaseSection(
         }
 
         if (knowledgeTask == null && knowledgeFailure != null) {
-            ElevatedCard(Modifier.fillMaxWidth()) {
+            UmnikPanel {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -184,7 +184,7 @@ fun KnowledgeBaseSection(
             Text("Источников пока нет", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             documents.forEach { document ->
-                ElevatedCard(Modifier.fillMaxWidth()) {
+                UmnikPanel {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
