@@ -1330,11 +1330,23 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
         }
         item { ToggleRow("Включить RAG для прикреплённых файлов", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
         item {
-            Text("Модель смыслового поиска", fontWeight = FontWeight.SemiBold)
-            Text(rag.embeddingModel.ifBlank { "Не выбрана — скопируйте ID Embeddings-модели из вкладки «Модели»" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = rag.embeddingModel,
+                onValueChange = { controller.updateRag(rag.copy(embeddingModel = it.trim())) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Embedding-модель для прикреплённых файлов") },
+                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
+                singleLine = true
+            )
             Spacer(Modifier.height(8.dp))
-            Text("Модель уточнения результатов", fontWeight = FontWeight.SemiBold)
-            Text(rag.rerankModel.ifBlank { "Не выбрана — Rerank необязателен" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = rag.rerankModel,
+                onValueChange = { controller.updateRag(rag.copy(rerankModel = it.trim())) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Rerank-модель (необязательно)") },
+                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
+                singleLine = true
+            )
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
