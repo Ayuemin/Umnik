@@ -11,6 +11,8 @@ internal object AsyncJobEvents {
 
     private val mutableHubRequest = MutableStateFlow<String?>(null)
     val hubRequest: StateFlow<String?> = mutableHubRequest
+    private val mutableHubReturnLabel = MutableStateFlow<String?>(null)
+    val hubReturnLabel: StateFlow<String?> = mutableHubReturnLabel
 
     private val mutableSpeechRequest = MutableStateFlow<OpenRouterSpeechRequest?>(null)
     val speechRequest: StateFlow<OpenRouterSpeechRequest?> = mutableSpeechRequest
@@ -19,12 +21,14 @@ internal object AsyncJobEvents {
         mutableSequence.value = mutableSequence.value + 1L
     }
 
-    fun requestHub(page: String) {
+    fun requestHub(page: String, returnLabel: String? = null) {
+        mutableHubReturnLabel.value = returnLabel?.trim()?.takeIf { it.isNotBlank() }
         mutableHubRequest.value = page.trim().lowercase().ifBlank { "models" }
     }
 
     fun consumeHubRequest() {
         mutableHubRequest.value = null
+        mutableHubReturnLabel.value = null
     }
 
     fun requestSpeech(chatId: String, text: String) {
