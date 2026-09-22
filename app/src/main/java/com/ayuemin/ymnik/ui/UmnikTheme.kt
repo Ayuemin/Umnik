@@ -70,6 +70,10 @@ private fun baseLight(
     onTertiary = lerp(tertiary, Color.White, 0.96f),
     tertiaryContainer = lerp(tertiary, Color.White, 0.84f),
     onTertiaryContainer = lerp(tertiary, Color.Black, 0.76f),
+    error = lerp(primary, Color.Black, 0.18f),
+    onError = lerp(primary, Color.White, 0.97f),
+    errorContainer = lerp(primary, Color.White, 0.78f),
+    onErrorContainer = lerp(primary, Color.Black, 0.80f),
     background = lerp(primary, Color.White, 0.975f),
     onBackground = lerp(primary, Color.Black, 0.86f),
     surface = lerp(primary, Color.White, 0.965f),
@@ -83,7 +87,11 @@ private fun baseLight(
     surfaceContainerLow = lerp(primary, Color.White, 0.965f),
     surfaceContainer = lerp(primary, Color.White, 0.94f),
     surfaceContainerHigh = lerp(primary, Color.White, 0.91f),
-    surfaceContainerHighest = lerp(primary, Color.White, 0.87f)
+    surfaceContainerHighest = lerp(primary, Color.White, 0.87f),
+    inverseSurface = lerp(primary, Color.Black, 0.82f),
+    inverseOnSurface = lerp(primary, Color.White, 0.92f),
+    inversePrimary = lerp(primary, Color.White, 0.48f),
+    scrim = lerp(primary, Color.Black, 0.94f)
 )
 
 private fun baseDark(
@@ -105,6 +113,10 @@ private fun baseDark(
     onTertiary = lerp(tertiary, Color.Black, 0.90f),
     tertiaryContainer = lerp(tertiary, Color.Black, 0.60f),
     onTertiaryContainer = lerp(tertiary, Color.White, 0.84f),
+    error = lerp(primary, Color.White, 0.30f),
+    onError = lerp(primary, Color.Black, 0.92f),
+    errorContainer = lerp(primary, Color.Black, 0.50f),
+    onErrorContainer = lerp(primary, Color.White, 0.86f),
     background = lerp(primary, Color.Black, 0.90f),
     onBackground = lerp(primary, Color.White, 0.86f),
     surface = lerp(primary, Color.Black, 0.885f),
@@ -118,7 +130,11 @@ private fun baseDark(
     surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
     surfaceContainer = lerp(primary, Color.Black, 0.82f),
     surfaceContainerHigh = lerp(primary, Color.Black, 0.77f),
-    surfaceContainerHighest = lerp(primary, Color.Black, 0.72f)
+    surfaceContainerHighest = lerp(primary, Color.Black, 0.72f),
+    inverseSurface = lerp(primary, Color.White, 0.86f),
+    inverseOnSurface = lerp(primary, Color.Black, 0.88f),
+    inversePrimary = lerp(primary, Color.Black, 0.42f),
+    scrim = lerp(primary, Color.Black, 0.96f)
 )
 
 private fun customLight(primary: Color) = baseLight(
