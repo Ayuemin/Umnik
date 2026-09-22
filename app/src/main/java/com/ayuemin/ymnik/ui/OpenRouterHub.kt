@@ -1324,9 +1324,11 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
             )
         }
         item {
-            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (advanced) "Скрыть расширенную маршрутизацию" else "Расширенная маршрутизация")
-            }
+            UmnikInlineExpander(
+                title = "Расширенная маршрутизация",
+                expanded = advanced,
+                onToggle = { advanced = !advanced }
+            )
         }
         if (advanced) {
             item {
@@ -1475,9 +1477,11 @@ private fun ToolsPage(
             }
         }
         item {
-            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (advanced) "Скрыть дополнительные инструменты" else "Дополнительные инструменты")
-            }
+            UmnikInlineExpander(
+                title = "Дополнительные инструменты",
+                expanded = advanced,
+                onToggle = { advanced = !advanced }
+            )
         }
         if (advanced) {
             item {
@@ -1861,19 +1865,12 @@ private fun MediaPage(
                 }
             }
             item {
-                TextButton(
-                    onClick = { speechSettingsExpanded = !speechSettingsExpanded },
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        if (speechSettingsExpanded) {
-                            "Скрыть настройки модели и голоса"
-                        } else {
-                            "Настройки модели и голоса · " +
-                                state.media.speechModel.substringAfterLast('/').ifBlank { "модель не выбрана" }
-                        }
-                    )
-                }
+                UmnikInlineExpander(
+                    title = "Настройки модели и голоса",
+                    subtitle = state.media.speechModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    expanded = speechSettingsExpanded,
+                    onToggle = { speechSettingsExpanded = !speechSettingsExpanded }
+                )
             }
             if (speechSettingsExpanded) {
                 item {
@@ -2108,29 +2105,14 @@ private fun CategoryModelPicker(
     models: List<ModelInfo>,
     onOpenCatalog: () -> Unit
 ) {
-    Column(Modifier.fillMaxWidth()) {
-        Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                current.ifBlank { if (models.isEmpty()) "Нет подходящих моделей" else "Не выбрана" },
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
-            TextButton(
-                onClick = onOpenCatalog,
-                enabled = models.isNotEmpty()
-            ) {
-                Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("Выбрать в каталоге")
-            }
-        }
-    }
+    UmnikModelPickerCard(
+        title = title,
+        current = current,
+        onPick = onOpenCatalog,
+        enabled = models.isNotEmpty(),
+        emptyLabel = if (models.isEmpty()) "Нет подходящих моделей" else "Не выбрана",
+        actionLabel = "Выбрать"
+    )
 }
 
 @Composable

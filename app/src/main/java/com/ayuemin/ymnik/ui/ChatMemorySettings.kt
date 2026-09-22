@@ -115,7 +115,7 @@ fun ChatContextSettingsSection(chat: ChatSession, state: UiState, vm: ChatViewMo
             title = "Перестроить память",
             text = "Заново создаёт служебные конспекты и индекс старой переписки этого чата. Исходная переписка не меняется."
         )
-        TextButton(
+        FilledTonalButton(
             onClick = { vm.clearChatMemory(chat.id) },
             enabled = !state.isLoading && !state.requestActive,
             modifier = Modifier.weight(1f)
@@ -230,62 +230,38 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 )
             }
 
-            OutlinedTextField(
+            UmnikModelIdField(
+                label = "Модель поиска по памяти",
                 value = embeddingModel,
                 onValueChange = { embeddingModel = it.trim() },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Модель поиска по памяти") },
-                trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        UmnikInfoHint(
-                            title = "Модель поиска по памяти",
-                            text = "Это Embeddings-модель OpenRouter для смыслового поиска по старой переписке. Конкретную модель Umnik не выбирает за вас: откройте каталог, сравните цену и скопируйте подходящий ID."
-                        )
-                        IconButton(
-                            onClick = {
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                                    "models-settings",
-                                    "Память и контекст"
-                                )
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Search, contentDescription = "Найти Embeddings-модель в каталоге")
-                        }
-                    }
+                onPick = {
+                    com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                        "models-settings",
+                        "Память и контекст"
+                    )
                 },
-                singleLine = true
+                info = "Это Embeddings-модель OpenRouter для смыслового поиска по старой переписке. Конкретную модель Umnik не выбирает за вас: откройте каталог, сравните цену и скопируйте подходящий ID."
             )
-            OutlinedTextField(
+            UmnikModelIdField(
+                label = "Модель конспекта",
                 value = summaryModel,
                 onValueChange = { summaryModel = it.trim() },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Модель конспекта") },
-                trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        UmnikInfoHint(
-                            title = "Модель конспекта",
-                            text = "Обычная текстовая модель OpenRouter, которая сжимает длинную историю в компактный конспект. Найдите модель в общем каталоге и вставьте её ID."
-                        )
-                        IconButton(
-                            onClick = {
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                                    "models-settings",
-                                    "Память и контекст"
-                                )
-                            }
-                        ) {
-                            Icon(Icons.Outlined.Search, contentDescription = "Найти модель конспекта в каталоге")
-                        }
-                    }
+                onPick = {
+                    com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                        "models-settings",
+                        "Память и контекст"
+                    )
                 },
-                singleLine = true
+                info = "Обычная текстовая модель OpenRouter, которая сжимает длинную историю в компактный конспект. Найдите модель в общем каталоге и вставьте её ID."
             )
 
 
 
-            TextButton(onClick = { advanced = !advanced }, modifier = Modifier.fillMaxWidth()) {
-                Text(if (advanced) "Скрыть расширенные параметры" else "Расширенные параметры памяти")
-            }
+            UmnikInlineExpander(
+                title = "Расширенные параметры памяти",
+                expanded = advanced,
+                onToggle = { advanced = !advanced }
+            )
             if (advanced) {
                 when {
                     catalogState.loading -> Text(
@@ -359,7 +335,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Сохранить настройки памяти") }
 
-            TextButton(
+            FilledTonalButton(
                 onClick = { confirmClear = true },
                 enabled = !state.isLoading && !state.requestActive,
                 modifier = Modifier.fillMaxWidth()

@@ -442,7 +442,8 @@ private fun AgentSettingsDialog(
                             }
                         }
                     },
-                    minLines = 2
+                    minLines = 2,
+                    shape = UmnikFieldShape
                 )
             }
             item {
@@ -716,7 +717,7 @@ private fun AgentSettingsDialog(
 
             if (agent.kind == AgentKind.SPECIALIST) {
                 item {
-                    TextButton(
+                    OutlinedButton(
                         onClick = { deleteConfirm = true },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -794,20 +795,12 @@ private fun ModelField(
     onPick: () -> Unit,
     info: String? = null
 ) {
-    OutlinedTextField(
+    UmnikModelIdField(
+        label = label,
         value = value,
         onValueChange = onValueChange,
-        modifier = Modifier.fillMaxWidth(),
-        label = { Text(label) },
-        trailingIcon = {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (info != null) UmnikInfoHint(title = label, text = info)
-                IconButton(onClick = onPick) {
-                    Icon(Icons.Outlined.Search, contentDescription = "Найти модель в каталоге")
-                }
-            }
-        },
-        singleLine = true
+        onPick = onPick,
+        info = info
     )
 }
 
@@ -971,7 +964,7 @@ private fun SimpleProjectSettingsDialog(
                 }
             }
             item {
-                TextButton(
+                OutlinedButton(
                     onClick = { deleteConfirm = true },
                     modifier = Modifier.fillMaxWidth()
                 ) {

@@ -324,28 +324,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             )
                         }
                     }
-                    if (category == SettingsCategory.MODELS) {
-                        item(key = "OPENROUTER_REPLY_SPEECH") {
-                            SettingsActionCard(
-                                title = "Озвучивание ответов",
-                                subtitle = if (state.openRouterSpeechModel.isBlank()) {
-                                    "Модель не выбрана"
-                                } else {
-                                    state.openRouterSpeechModel.substringAfterLast('/')
-                                },
-                                icon = Icons.Outlined.VolumeUp,
-                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Настройки") }
-                            )
-                        }
-                        item(key = "OPENROUTER_DOCUMENT_SPEECH") {
-                            SettingsActionCard(
-                                title = "Озвучивание текста и документов",
-                                subtitle = "Создание аудио из текста или файла",
-                                icon = Icons.Outlined.Description,
-                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Настройки") }
-                            )
-                        }
-                    }
                 }
             } else {
                 when (settingsCategory) {
@@ -398,17 +376,11 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Text("Проверить подключение")
                         }
                         Spacer(Modifier.height(5.dp))
-                        TextButton(
-                            onClick = { connectionAdvancedExpanded = !connectionAdvancedExpanded },
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                if (connectionAdvancedExpanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = null
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text("Технические настройки OpenRouter")
-                        }
+                        UmnikInlineExpander(
+                            title = "Технические настройки OpenRouter",
+                            expanded = connectionAdvancedExpanded,
+                            onToggle = { connectionAdvancedExpanded = !connectionAdvancedExpanded }
+                        )
                         if (connectionAdvancedExpanded) {
                             Text(
                                 "Адрес API фиксирован на официальном OpenRouter. Здесь можно только вручную ограничить размер контекста для моделей, где это необходимо.",
@@ -554,40 +526,16 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         onToggle = { imageModelsExpanded = !imageModelsExpanded },
                         info = "Модель и параметры, которые используются режимом генерации изображений. Эти настройки не меняют обычную текстовую модель чата."
                     ) {
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = UmnikItemShape,
-                            color = MaterialTheme.colorScheme.surfaceContainerHigh
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Outlined.Image, contentDescription = null)
-                                Spacer(Modifier.width(8.dp))
-                                Column(Modifier.weight(1f)) {
-                                    Text("Модель изображений", fontWeight = FontWeight.Medium)
-                                    Text(
-                                        state.imageModel.ifBlank { "Не выбрана" },
-                                        style = MaterialTheme.typography.bodySmall,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                TextButton(
-                                    onClick = {
-                                        com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                                            "models-settings",
-                                            "Настройки моделей"
-                                        )
-                                    }
-                                ) {
-                                    Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Выбрать")
-                                }
+                        UmnikModelPickerCard(
+                            title = "Модель изображений",
+                            current = state.imageModel,
+                            onPick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Модели"
+                                )
                             }
-                        }
+                        )
                         Spacer(Modifier.height(7.dp))
                         FilledTonalButton(
                             onClick = { imageParametersOpen = true },
@@ -614,6 +562,28 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         vm = vm,
                         expanded = reasoningExpanded,
                         onToggle = { reasoningExpanded = !reasoningExpanded }
+                    )
+                }
+
+                item {
+                    SettingsActionCard(
+                        title = "Озвучивание ответов",
+                        subtitle = if (state.openRouterSpeechModel.isBlank()) {
+                            "Модель не выбрана"
+                        } else {
+                            state.openRouterSpeechModel.substringAfterLast('/')
+                        },
+                        icon = Icons.Outlined.VolumeUp,
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Модели") }
+                    )
+                }
+
+                item {
+                    SettingsActionCard(
+                        title = "Озвучивание текста и документов",
+                        subtitle = "Создание аудио из текста или файла",
+                        icon = Icons.Outlined.Description,
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Модели") }
                     )
                 }
 

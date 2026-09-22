@@ -48,6 +48,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -95,7 +96,7 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
             Text("Новый чат")
         }
 
-        TextButton(
+        OutlinedButton(
             onClick = { clearAllConfirm = true },
             enabled = !state.isLoading && chats.isNotEmpty(),
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp)

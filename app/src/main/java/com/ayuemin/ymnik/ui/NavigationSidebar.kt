@@ -593,16 +593,10 @@ private fun RegularChatSettingsDialog(
                 }
             }
             item {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text("Что хранится здесь", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    UmnikInfoHint(
-                        title = "Постоянные настройки чата",
-                        text = "Название, роль, инструкция, модель, поиск, размышление, навыки, память, постоянные файлы и база знаний относятся к конкретному чату. Разовые вложения относятся только к сообщению."
-                    )
-                }
+                SettingTitleWithInfo(
+                    title = "Что хранят настройки этого чата",
+                    info = "Название, роль, инструкция, модель, поиск, размышление, навыки, память, постоянные файлы и база знаний относятся к конкретному чату. Часть перечисленных возможностей также доступна через кнопку «+» в самом чате. Разовые вложения относятся только к сообщению."
+                )
             }
             item { ChatContextSettingsSection(chat, state, vm) }
             item {

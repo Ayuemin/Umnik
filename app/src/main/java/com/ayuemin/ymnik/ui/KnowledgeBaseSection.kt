@@ -83,7 +83,7 @@ fun KnowledgeBaseSection(
         if (!expanded) return@Column
 
         if (knowledgeTask != null) {
-            ElevatedCard(Modifier.fillMaxWidth()) {
+            UmnikPanel {
                 Column(
                     modifier = Modifier.fillMaxWidth().padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -127,30 +127,17 @@ fun KnowledgeBaseSection(
             Switch(checked = enabled, onCheckedChange = { enabled = it })
         }
 
-        OutlinedTextField(
+        UmnikModelIdField(
+            label = "Embedding-модель",
             value = modelId,
             onValueChange = { modelId = it.trim() },
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text("Embedding-модель") },
-            trailingIcon = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    UmnikInfoHint(
-                        title = "Embedding-модель",
-                        text = "Это модель для новых и переиндексируемых источников. Каждый уже готовый источник сохраняет ту Embeddings-модель, которой был проиндексирован. Поэтому в одной базе технически могут одновременно работать несколько Embeddings-моделей: при каждом вопросе Umnik делает отдельный embedding запроса для каждой используемой модели. Для скорости и более однородной оценки релевантности лучше по возможности держать одну модель на базу и переиндексировать старые источники после смены."
-                    )
-                    IconButton(
-                        onClick = {
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                                "models-settings",
-                                if (kind == KnowledgeOwnerKind.AGENT) "Настройки агента" else "Настройки чата"
-                            )
-                        }
-                    ) {
-                        Icon(Icons.Outlined.Search, contentDescription = "Найти Embeddings-модель в каталоге")
-                    }
-                }
+            onPick = {
+                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                    "models-settings",
+                    if (kind == KnowledgeOwnerKind.AGENT) "Настройки агента" else "Настройки чата"
+                )
             },
-            singleLine = true
+            info = "Это модель для новых и переиндексируемых источников. Каждый уже готовый источник сохраняет ту Embeddings-модель, которой был проиндексирован. Поэтому в одной базе технически могут одновременно работать несколько Embeddings-моделей: при каждом вопросе Umnik делает отдельный embedding запроса для каждой используемой модели. Для скорости и более однородной оценки релевантности лучше по возможности держать одну модель на базу и переиндексировать старые источники после смены."
         )
 
         if (indexedEmbeddingModels.size > 1) {
