@@ -20,6 +20,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Extension
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowRight
@@ -161,7 +162,7 @@ private enum class SettingsCategory(val title: String, val subtitle: String) {
 private fun settingsCategoryIcon(category: SettingsCategory): ImageVector = when (category) {
     SettingsCategory.CONNECTION -> Icons.Outlined.Language
     SettingsCategory.MODELS -> Icons.Outlined.TextFields
-    SettingsCategory.CONTEXT -> Icons.Outlined.Description
+    SettingsCategory.CONTEXT -> Icons.Outlined.History
     SettingsCategory.INTERFACE -> Icons.Outlined.Palette
     SettingsCategory.DATA -> Icons.Outlined.Storage
     SettingsCategory.ABOUT -> Icons.Outlined.Settings
@@ -180,7 +181,7 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                 modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(settingsCategoryIcon(category), contentDescription = null, modifier = Modifier.size(21.dp))
+                    Icon(settingsCategoryIcon(category), contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -216,7 +217,7 @@ private fun SettingsActionCard(
                 modifier = Modifier.size(42.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp))
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(Modifier.width(12.dp))
@@ -438,7 +439,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         icon = Icons.Outlined.TextFields,
                         expanded = modelsExpanded,
                         onToggle = { modelsExpanded = !modelsExpanded },
-                        info = "Здесь задаются уже выбранные модели приложения: чат по умолчанию, быстрые модели, генерация изображений и параметры размышления. Поиск и назначение моделей вынесены в отдельный пункт «Каталог и модели OpenRouter» на главном экране настроек."
+                        info = "Здесь задаются уже выбранные модели приложения: основная модель чатов по умолчанию, дополнительные модели чатов, генерация изображений и параметры размышления. Поиск и назначение моделей вынесены в отдельный пункт «Каталог и модели OpenRouter» на главном экране настроек."
                     ) {
                         FilledTonalButton(
                             onClick = { defaultChatModelExpanded = !defaultChatModelExpanded },
@@ -447,7 +448,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Icon(Icons.Outlined.TextFields, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Чат по умолчанию", fontWeight = FontWeight.Medium)
+                                Text("Основная модель чатов по умолчанию", fontWeight = FontWeight.Medium)
                                 Text(
                                     state.textModel,
                                     style = MaterialTheme.typography.bodySmall,
@@ -484,7 +485,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Icon(Icons.Outlined.SwapHoriz, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Column(Modifier.weight(1f)) {
-                                Text("Быстрые модели", fontWeight = FontWeight.Medium)
+                                Text("Дополнительные модели чатов", fontWeight = FontWeight.Medium)
                                 Text(
                                     if (state.quickTextModels.isEmpty()) "Не выбраны" else "Выбрано: ${state.quickTextModels.size}",
                                     style = MaterialTheme.typography.bodySmall
@@ -498,7 +499,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         if (quickModelsExpanded) {
                             if (state.quickTextModels.isEmpty()) {
                                 Text(
-                                    "Быстрые модели добавляются в «Каталог и модели OpenRouter».",
+                                    "Дополнительные модели чатов добавляются в «Каталог и модели OpenRouter».",
                                     modifier = Modifier.padding(horizontal = 8.dp, vertical = 7.dp),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -883,8 +884,21 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             modifier = Modifier.fillMaxWidth(),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                         ) {
-                            Icon(Icons.Outlined.Storage, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Outlined.Storage,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(11.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Хранилище Umnik", fontWeight = FontWeight.Bold)
                                 Text(
@@ -910,8 +924,21 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             modifier = Modifier.fillMaxWidth(),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
                         ) {
-                            Icon(Icons.Outlined.Description, contentDescription = null)
-                            Spacer(Modifier.width(10.dp))
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                                modifier = Modifier.size(40.dp)
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        Icons.Outlined.Description,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.primary
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(11.dp))
                             Column(Modifier.weight(1f)) {
                                 Text("Памятка Umnik", fontWeight = FontWeight.Bold)
                                 Text("Краткое руководство", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1134,7 +1161,7 @@ private fun ExpandableSettingsCard(
                 modifier = Modifier.size(40.dp)
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
                 }
             }
             Spacer(Modifier.width(11.dp))
@@ -1189,12 +1216,25 @@ private fun ReasoningSettingsCard(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Icon(Icons.Outlined.Psychology, contentDescription = null)
-            Spacer(Modifier.width(10.dp))
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Outlined.Psychology,
+                        contentDescription = null,
+                        modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
                 Text("Сила размышления", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.Bold)
                 Text(
-                    "Отдельная настройка для каждой быстрой модели",
+                    "Отдельная настройка для каждой дополнительной модели",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1238,7 +1278,7 @@ private fun ReasoningSettingsCard(
                         subtitle = when {
                             id == currentId -> "Текущая модель чата"
                             id == state.textModel -> "По умолчанию"
-                            else -> "Быстрая модель"
+                            else -> "Дополнительная модель"
                         },
                         onSelect = { effort -> vm.setReasoningEffortForModel(id, effort) }
                     )

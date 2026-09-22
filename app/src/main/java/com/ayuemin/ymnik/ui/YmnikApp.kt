@@ -804,7 +804,7 @@ onBranch = if (message.role == "assistant") {
                                 Icon(
                                     Icons.Outlined.Add,
                                     contentDescription = "Добавить и инструменты",
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    tint = MaterialTheme.colorScheme.primary
                                 )
                             }
                             if (!imagePromptMode && activeSkillCount > 0) {
@@ -1338,7 +1338,7 @@ private fun ComposerSectionHeader(
         modifier = Modifier.fillMaxWidth(),
         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 10.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(9.dp))
         Text(label, modifier = Modifier.weight(1f), textAlign = TextAlign.Start)
         Icon(if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown, contentDescription = if (expanded) "Свернуть" else "Развернуть", modifier = Modifier.size(20.dp))
@@ -1359,7 +1359,7 @@ private fun CompactComposerTool(
         modifier = modifier,
         contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
     ) {
-        Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp))
+        Icon(icon, contentDescription = null, modifier = Modifier.size(17.dp), tint = MaterialTheme.colorScheme.primary)
         Spacer(Modifier.width(5.dp))
         Text(label, style = MaterialTheme.typography.labelMedium, maxLines = 1)
     }

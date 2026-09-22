@@ -57,7 +57,7 @@ internal fun UmnikCircleAction(
         modifier = modifier.size(44.dp),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+        contentColor = MaterialTheme.colorScheme.primary,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         tonalElevation = 0.dp,
         shadowElevation = 0.dp
@@ -67,8 +67,8 @@ internal fun UmnikCircleAction(
                 icon,
                 contentDescription = contentDescription,
                 modifier = Modifier.size(22.dp),
-                tint = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                tint = if (enabled) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
             )
         }
     }

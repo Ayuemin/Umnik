@@ -33,7 +33,9 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
@@ -130,8 +132,10 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     var open by remember { mutableStateOf(false) }
     var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
     var requestedMediaSection by remember { mutableStateOf(MediaSection.ALL) }
+    var requestedReturnLabel by remember { mutableStateOf<String?>(null) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
+    val hubReturnLabel by AsyncJobEvents.hubReturnLabel.collectAsState()
     val speechRequest by AsyncJobEvents.speechRequest.collectAsState()
     val appState by viewModel.state.collectAsState()
 
@@ -156,6 +160,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     }
 
     LaunchedEffect(hubRequest) {
+        if (hubRequest != null) requestedReturnLabel = hubReturnLabel
         when (hubRequest) {
             "jobs", "batch" -> {
                 requestedPage = HubPage.JOBS
@@ -224,7 +229,14 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     UmnikTheme(appState.themeChoice, appState.customThemeColor) {
         YmnikApp(viewModel)
         if (open) {
-            OpenRouterHubDialog(controller = controller, viewModel = viewModel, initialPage = requestedPage, initialMediaSection = requestedMediaSection, onDismiss = { open = false })
+            OpenRouterHubDialog(
+                controller = controller,
+                viewModel = viewModel,
+                initialPage = requestedPage,
+                initialMediaSection = requestedMediaSection,
+                returnLabel = requestedReturnLabel,
+                onDismiss = { open = false; requestedReturnLabel = null }
+            )
         }
     }
 }
@@ -235,6 +247,7 @@ private fun OpenRouterHubDialog(
     viewModel: ChatViewModel,
     initialPage: HubPage,
     initialMediaSection: MediaSection,
+    returnLabel: String?,
     onDismiss: () -> Unit
 ) {
     val state by controller.state.collectAsState()
@@ -283,7 +296,15 @@ private fun OpenRouterHubDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
+                            if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
+                                TextButton(onClick = onDismiss) {
+                                    Icon(Icons.Outlined.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Вернуться")
+                                }
+                            } else {
+                                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
+                            }
                         }
                         if (settingsMode) HubPageBar(page = page, onPage = { page = it })
                         if (state.loading) {
@@ -297,6 +318,21 @@ private fun OpenRouterHubDialog(
                 }
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
+                    if (page == HubPage.MODELS && !returnLabel.isNullOrBlank()) {
+                        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    "Каталог открыт из: $returnLabel",
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                                TextButton(onClick = onDismiss) { Text("Вернуться") }
+                            }
+                        }
+                    }
                     state.status?.let { status ->
                         Surface(color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)) {
                             Text(status, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
@@ -582,6 +618,14 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                         )
                     }
                 }
+                TextButton(
+                    onClick = { copyToClipboard(context, model.id) },
+                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Копировать", style = MaterialTheme.typography.labelSmall)
+                }
                 Box {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
                         Text("⋮", style = MaterialTheme.typography.titleLarge)
@@ -595,41 +639,22 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             }
                         )
                         if (ModelCategory.TEXT in model.categories && !model.isBatch) {
-                            DropdownMenuItem(text = { Text("Выбрать для чата") }, onClick = { menuOpen = false; controller.useAsTextModel(model) })
-                            DropdownMenuItem(text = { Text("Добавить / убрать из быстрых") }, onClick = { menuOpen = false; controller.toggleQuickTextModel(model) })
-                            if (appState.textModel == model.id) {
-                                DropdownMenuItem(text = { Text("Сбросить чат на OpenRouter Auto") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TEXT) })
-                            }
+                            DropdownMenuItem(
+                                text = { Text("Основная модель чатов по умолчанию") },
+                                onClick = { menuOpen = false; controller.useAsTextModel(model) }
+                            )
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        if (appState.quickTextModels.any { it.substringAfter('\u001F') == model.id })
+                                            "Удалить из дополнительных моделей чатов"
+                                        else
+                                            "Добавить в дополнительные модели чатов"
+                                    )
+                                },
+                                onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
+                            )
                         }
-                        if (model.isBatch) {
-                            DropdownMenuItem(text = { Text("Выбрать для пакетных задач") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) })
-                            if (hubState.media.batchModel == model.id) DropdownMenuItem(text = { Text("Снять с пакетных задач") }, onClick = { menuOpen = false; controller.clearBatchModel() })
-                        }
-                        if (ModelCategory.IMAGE in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для создания изображений") }, onClick = { menuOpen = false; controller.useAsImageModel(model) })
-                            if (appState.imageModel == model.id) DropdownMenuItem(text = { Text("Снять с изображений") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.IMAGE) })
-                        }
-                        if (ModelCategory.VIDEO in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для видео") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.VIDEO) })
-                            if (hubState.media.videoModel == model.id) DropdownMenuItem(text = { Text("Снять с видео") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.VIDEO) })
-                        }
-                        if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для озвучивания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.SPEECH) })
-                            if (hubState.media.speechModel == model.id) DropdownMenuItem(text = { Text("Снять с озвучивания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.SPEECH) })
-                        }
-                        if (ModelCategory.TRANSCRIPTION in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для распознавания") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TRANSCRIPTION) })
-                            if (hubState.media.transcriptionModel == model.id) DropdownMenuItem(text = { Text("Снять с распознавания") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.TRANSCRIPTION) })
-                        }
-                        if (ModelCategory.EMBEDDINGS in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для поиска по документам") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.EMBEDDINGS) })
-                            if (hubState.rag.embeddingModel == model.id) DropdownMenuItem(text = { Text("Снять с поиска по документам") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.EMBEDDINGS) })
-                        }
-                        if (ModelCategory.RERANK in model.categories) {
-                            DropdownMenuItem(text = { Text("Выбрать для точной сортировки") }, onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.RERANK) })
-                            if (hubState.rag.rerankModel == model.id) DropdownMenuItem(text = { Text("Снять с точной сортировки") }, onClick = { menuOpen = false; controller.clearAssignedModel(ModelCategory.RERANK) })
-                        }
-                        DropdownMenuItem(text = { Text("Копировать ID модели") }, onClick = { menuOpen = false; copyToClipboard(context, model.id) })
                     }
                 }
             }
@@ -689,17 +714,6 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 Text(priceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Spacer(Modifier.height(6.dp))
-            Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (ModelCategory.TEXT in model.categories && !model.isBatch) SmallAssignButton("Использовать в чате") { controller.useAsTextModel(model) }
-                if (ModelCategory.IMAGE in model.categories) SmallAssignButton("Для изображений") { controller.useAsImageModel(model) }
-                if (model.isBatch) SmallAssignButton("Для пакета задач") { controller.assignModel(model, ModelCategory.TEXT) }
-                if (ModelCategory.VIDEO in model.categories) SmallAssignButton("Для видео") { controller.assignModel(model, ModelCategory.VIDEO) }
-                if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) SmallAssignButton("Для озвучивания") { controller.assignModel(model, ModelCategory.SPEECH) }
-                if (ModelCategory.TRANSCRIPTION in model.categories) SmallAssignButton("Для распознавания") { controller.assignModel(model, ModelCategory.TRANSCRIPTION) }
-                if (ModelCategory.EMBEDDINGS in model.categories) SmallAssignButton("Для поиска по документам") { controller.assignModel(model, ModelCategory.EMBEDDINGS) }
-                if (ModelCategory.RERANK in model.categories) SmallAssignButton("Для точной сортировки") { controller.assignModel(model, ModelCategory.RERANK) }
-            }
         }
     }
 
@@ -1253,21 +1267,23 @@ private fun RoutingPage(value: ProviderRoutingSettings, save: (ProviderRoutingSe
 private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: OpenRouterHubController) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text("Инструменты обычного чата", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Эти возможности OpenRouter модель может использовать во время обычного разговора. Включайте только то, что действительно нужно задаче.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Инструменты обычного чата", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                UmnikInfoHint(
+                    title = "Инструменты обычного чата",
+                    text = "Это дополнительные возможности OpenRouter для обычного разговора: современный веб-поиск, чтение найденных страниц, дата и время, генерация изображений, Fusion и Shell. Включайте только нужное задаче."
+                )
+            }
         }
         item {
-            Text("Режим веб-поиска по умолчанию", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Включение поиска остаётся в текущем чате. Здесь задаётся режим, который будет предложен по умолчанию.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Современный OpenRouter Web Search", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Современный веб-поиск",
+                    text = "Используется agentic Web Search OpenRouter. Старое значение ALWAYS поддерживается только для совместимости сохранённых настроек и трактуется как современный Auto."
+                )
+            }
+            Text("Режим по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchPreset.entries) { preset ->
                     FilterChip(
@@ -1279,12 +1295,13 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
             }
         }
         item {
-            Text("Сервис интернет-поиска", fontWeight = FontWeight.SemiBold)
-            Text(
-                "Auto использует встроенный поиск провайдера, когда он доступен, иначе OpenRouter выбирает совместимый сервис.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Сервис интернет-поиска",
+                    text = "Auto использует встроенный поиск провайдера, когда он доступен, либо позволяет OpenRouter выбрать совместимый сервис. Можно явно выбрать Native, Exa, Parallel или Perplexity."
+                )
+            }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(WebSearchEngine.entries) { engine ->
                     FilterChip(
@@ -1303,35 +1320,61 @@ private fun ToolsPage(tools: ServerToolSettings, rag: RagSettings, controller: O
 
         item {
             HorizontalDivider()
-            Text("Поиск по своим документам (RAG)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 10.dp))
-            Text(
-                "RAG сначала находит подходящие фрагменты ваших текстовых файлов, затем передаёт их основной модели. Модели Embeddings и Rerank выбираются во вкладке «Модели» общего каталога.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
+            Row(
+                modifier = Modifier.padding(top = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("RAG для прикреплённых файлов", modifier = Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                UmnikInfoHint(
+                    title = "RAG для прикреплённых файлов",
+                    text = "Это отдельный механизм для текстовых файлов, прикреплённых к конкретному запросу. Он не является постоянной базой знаний чата или агента. База знаний индексируется заранее и имеет собственную настройку числа фрагментов."
+                )
+            }
         }
-        item { ToggleRow("Включить поиск по документам", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
+        item { ToggleRow("Включить RAG для прикреплённых файлов", rag.enabled) { controller.updateRag(rag.copy(enabled = it)) } }
         item {
-            Text("Модель смыслового поиска", fontWeight = FontWeight.SemiBold)
-            Text(rag.embeddingModel.ifBlank { "Не выбрана — назначьте Embeddings-модель во вкладке «Модели»" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = rag.embeddingModel,
+                onValueChange = { controller.updateRag(rag.copy(embeddingModel = it.trim())) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Embedding-модель для прикреплённых файлов") },
+                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
+                singleLine = true
+            )
             Spacer(Modifier.height(8.dp))
-            Text("Модель уточнения результатов", fontWeight = FontWeight.SemiBold)
-            Text(rag.rerankModel.ifBlank { "Не выбрана — Rerank необязателен" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            OutlinedTextField(
+                value = rag.rerankModel,
+                onValueChange = { controller.updateRag(rag.copy(rerankModel = it.trim())) },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Rerank-модель (необязательно)") },
+                placeholder = { Text("Скопируйте ID во вкладке «Модели»") },
+                singleLine = true
+            )
         }
         item {
-            Text("Сколько подходящих фрагментов передавать модели: ${rag.topK}", fontWeight = FontWeight.SemiBold)
-            Slider(
-                value = rag.topK.toFloat(),
-                onValueChange = { controller.updateRag(rag.copy(topK = it.toInt().coerceIn(1, 20))) },
-                valueRange = 1f..20f,
-                steps = 18
-            )
-            Text(
-                "Для небольшого PDF сначала попробуйте обычное прикрепление файла. RAG особенно полезен для набора больших текстовых материалов.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Фрагментов из прикреплённых файлов: ${rag.topK}", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                UmnikInfoHint(
+                    title = "Количество фрагментов",
+                    text = "Эта цифра относится только к RAG для файлов текущего запроса. У постоянной базы знаний чата или агента есть отдельная настройка. Для обычных случаев достаточно 5."
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf(3, 5, 8).forEach { value ->
+                    FilterChip(
+                        selected = rag.topK == value,
+                        onClick = { controller.updateRag(rag.copy(topK = value)) },
+                        label = { Text(value.toString()) }
+                    )
+                }
+            }
+            if (rag.topK !in setOf(3, 5, 8)) {
+                Text(
+                    "Сохранено прежнее значение: ${rag.topK}. Выберите 3, 5 или 8 для нового упрощённого режима.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

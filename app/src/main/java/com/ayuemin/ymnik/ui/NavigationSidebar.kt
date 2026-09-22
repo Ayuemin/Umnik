@@ -290,7 +290,7 @@ fun NavigationSidebar(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
+                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(10.dp))
                         Text("Настройки", maxLines = 1, fontWeight = FontWeight.Medium)
                     }
@@ -607,11 +607,16 @@ private fun RegularChatSettingsDialog(
                 }
             }
             item {
-                Text(
-                    "Модель, размышление, веб-поиск, навыки и разовые вложения остаются в меню + текущего чата. Здесь хранятся постоянные настройки самого чата.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Что хранится здесь", modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                    UmnikInfoHint(
+                        title = "Постоянные настройки чата",
+                        text = "Название, роль, мастер-инструкция, память и база знаний относятся к самому чату. Модель, размышление, веб-поиск, навыки и разовые вложения доступны из меню + текущего чата."
+                    )
+                }
             }
             item { ChatContextSettingsSection(chat, state, vm) }
             item {

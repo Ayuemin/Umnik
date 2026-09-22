@@ -1376,7 +1376,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ).apply()
         _state.value = _state.value.copy(
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
-            status = if (!alreadySelected) "Модель добавлена в быстрые · ${profile.name}" else "Модель убрана из быстрых"
+            status = if (!alreadySelected) "Модель добавлена в дополнительные модели чатов · ${profile.name}" else "Модель убрана из дополнительных моделей чатов"
         )
     }
 
