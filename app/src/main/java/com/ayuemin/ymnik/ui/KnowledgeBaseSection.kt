@@ -146,7 +146,7 @@ fun KnowledgeBaseSection(
                         onClick = {
                             com.ayuemin.ymnik.AsyncJobEvents.requestHub(
                                 "models-settings",
-                                $returnExpr
+                                if (kind == KnowledgeOwnerKind.AGENT) "Настройки агента" else "Настройки чата"
                             )
                         }
                     ) {
