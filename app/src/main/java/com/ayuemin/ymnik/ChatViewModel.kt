@@ -657,6 +657,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             ?: false
     fun projectChatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? = projectAutomation.profile(chatId)
 
+    fun chatRuntimeProfile(chatId: String): ProjectChatRuntimeProfile? {
+        val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return null
+        return projectAutomation.profile(chatId) ?: defaultRuntimeProfile(chat)
+    }
+
     private fun defaultRuntimeProfile(chat: ChatSession): ProjectChatRuntimeProfile = ProjectChatRuntimeProfile(
         modelId = chat.textModelOverride ?: _state.value.textModel,
         webSearchEnabled = prefs.getBoolean("web_search", false),
