@@ -83,7 +83,8 @@ private fun baseLight(
     surfaceContainerLow = lerp(primary, Color.White, 0.965f),
     surfaceContainer = lerp(primary, Color.White, 0.94f),
     surfaceContainerHigh = lerp(primary, Color.White, 0.91f),
-    surfaceContainerHighest = lerp(primary, Color.White, 0.87f)
+    surfaceContainerHighest = lerp(primary, Color.White, 0.87f),
+    scrim = lerp(primary, Color.Black, 0.82f)
 )
 
 private fun baseDark(
@@ -118,7 +119,8 @@ private fun baseDark(
     surfaceContainerLow = lerp(primary, Color.Black, 0.86f),
     surfaceContainer = lerp(primary, Color.Black, 0.82f),
     surfaceContainerHigh = lerp(primary, Color.Black, 0.77f),
-    surfaceContainerHighest = lerp(primary, Color.Black, 0.72f)
+    surfaceContainerHighest = lerp(primary, Color.Black, 0.72f),
+    scrim = lerp(primary, Color.Black, 0.82f)
 )
 
 private fun customLight(primary: Color) = baseLight(
