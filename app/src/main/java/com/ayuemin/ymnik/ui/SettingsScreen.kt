@@ -153,7 +153,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
 
 private enum class SettingsCategory(val title: String, val subtitle: String) {
     CONNECTION("Подключение", "API-ключ OpenRouter"),
-    MODELS("Модели", "Чат, изображения, reasoning и речь"),
+    MODELS("Модели", "Чаты, изображения, размышление и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
     DATA("Данные", "Локальное хранилище и файлы"),
@@ -422,12 +422,12 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     SettingsCategory.MODELS -> {
                 item {
                     ExpandableSettingsCard(
-                        title = "Модели",
+                        title = "Модели чатов",
                         subtitle = state.textModel.substringAfterLast('/'),
                         icon = Icons.Outlined.TextFields,
                         expanded = modelsExpanded,
                         onToggle = { modelsExpanded = !modelsExpanded },
-                        info = "Здесь задаются уже выбранные модели приложения: основная модель чатов по умолчанию, дополнительные модели чатов, генерация изображений и параметры размышления. Поиск и назначение моделей вынесены в отдельный пункт «Каталог и модели OpenRouter» на главном экране настроек."
+                        info = "Здесь задаются основная модель новых чатов и дополнительные модели для быстрого переключения. Генерация изображений, размышление и озвучивание находятся отдельными блоками ниже. Новые модели добавляются через «Каталог и модели OpenRouter»."
                     ) {
                         FilledTonalButton(
                             onClick = { defaultChatModelExpanded = !defaultChatModelExpanded },
@@ -1101,43 +1101,14 @@ private fun ExpandableSettingsCard(
     content: @Composable () -> Unit
 ) {
     UmnikPanel {
-        TextButton(
-            onClick = onToggle,
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = UmnikPanelPadding
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(icon, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.primary)
-                }
-            }
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.SemiBold)
-                Text(
-                    subtitle,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            if (info != null) {
-                Spacer(Modifier.width(6.dp))
-                UmnikInfoHint(title = title, text = info)
-                Spacer(Modifier.width(4.dp))
-            }
-            Icon(
-                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = if (expanded) "Свернуть" else "Развернуть",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        ExpandableSettingsHeader(
+            icon = icon,
+            title = title,
+            subtitle = subtitle,
+            expanded = expanded,
+            onToggle = onToggle,
+            info = info
+        )
         if (expanded) {
             HorizontalDivider(color = umnikDividerColor())
             Column(Modifier.padding(16.dp)) { content() }
@@ -1161,47 +1132,14 @@ private fun ReasoningSettingsCard(
         .distinct()
 
     UmnikPanel {
-        TextButton(
-            onClick = onToggle,
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                modifier = Modifier.size(40.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        Icons.Outlined.Psychology,
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Spacer(Modifier.width(11.dp))
-            Column(Modifier.weight(1f)) {
-                Text("Размышление по умолчанию", modifier = Modifier.fillMaxWidth(), fontWeight = FontWeight.Bold)
-                Text(
-                    "Стартовые настройки для новых чатов",
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            UmnikInfoHint(
-                title = "Размышление по умолчанию",
-                text = "Эти значения получают новые обычные чаты. Уже созданные чаты хранят свой переключатель и уровень отдельно. Более высокий уровень может увеличить время и стоимость ответа."
-            )
-            Spacer(Modifier.width(4.dp))
-            Icon(
-                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                contentDescription = if (expanded) "Свернуть" else "Развернуть"
-            )
-        }
+        ExpandableSettingsHeader(
+            icon = Icons.Outlined.Psychology,
+            title = "Размышление по умолчанию",
+            subtitle = "Стартовые настройки для новых чатов",
+            expanded = expanded,
+            onToggle = onToggle,
+            info = "Эти значения получают новые обычные чаты. Уже созданные чаты хранят свой переключатель и уровень отдельно. Более высокий уровень может увеличить время и стоимость ответа."
+        )
 
         if (expanded) {
             HorizontalDivider()
