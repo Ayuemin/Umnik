@@ -3537,29 +3537,41 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onSuccess { infos ->
                 _state.value = when (mode) {
                     ChatMode.TEXT -> {
-                        run {
-                            val validIds = infos.map { it.id }.toSet()
-                            pruneQuickTextModels(profile.id, validIds)
-                            clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
-                        }
+                        val validIds = infos.map { it.id }.toSet()
+                        pruneQuickTextModels(profile.id, validIds)
                         var selectedModel = loadTextModelForProfile(profile)
-                        if (profile.type != ProviderType.OPENROUTER && infos.none { it.id == selectedModel }) {
+                        if (selectedModel !in validIds) {
                             selectedModel = infos.firstOrNull()?.id.orEmpty()
                             if (selectedModel.isNotBlank()) {
                                 prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
                             }
                         }
-                        val effectiveId = _state.value.currentChatTextModel?.takeIf { id -> infos.any { it.id == id } } ?: selectedModel
+
+                        val activeChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+                        val runtime = activeChat?.let(::runtimeProfile)
+                        val requestedId = runtime?.modelId ?: activeChat?.textModelOverride
+                        val effectiveId = requestedId?.takeIf { it in validIds } ?: selectedModel
                         val current = infos.firstOrNull { it.id == effectiveId }
-                        val effort = preferredReasoningEffort(effectiveId, current)
-                        val keepReasoning = reasoningStillValid(current, effort)
-                        prefs.edit()
-                            .putString("reasoning_effort", effort.name)
-                            .putBoolean("reasoning_enabled", keepReasoning)
-                            .apply()
+                        val effort = normalizedReasoningEffort(
+                            runtime?.reasoningEffort ?: preferredReasoningEffort(effectiveId, current),
+                            current
+                        )
+                        val keepReasoning = runtime?.reasoningEnabled == true &&
+                            current?.supportsReasoning != false &&
+                            (current?.supportsReasoningEffort != true || current.reasoningEfforts.isEmpty() || effort.apiValue in current.reasoningEfforts)
+                        if (activeChat != null && runtime != null) {
+                            projectAutomation.saveProfile(
+                                activeChat.id,
+                                runtime.copy(
+                                    modelId = effectiveId,
+                                    reasoningEffort = effort,
+                                    reasoningEnabled = keepReasoning
+                                )
+                            )
+                        }
                         _state.value.copy(
                             textModel = selectedModel,
-                            currentChatTextModel = _state.value.currentChatTextModel?.takeIf { id -> infos.any { it.id == id } },
+                            currentChatTextModel = effectiveId,
                             availableTextModels = infos,
                             reasoningEffort = effort,
                             reasoningEnabled = keepReasoning,
@@ -3633,29 +3645,40 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
             var next = _state.value
             if (textInfos != null) {
-                run {
-                    val validIds = textInfos.map { it.id }.toSet()
-                    pruneQuickTextModels(profile.id, validIds)
-                    clearCurrentChatModelOverrideIfInvalid(profile.id, validIds)
-                    next = _state.value
-                }
+                val validIds = textInfos.map { it.id }.toSet()
+                pruneQuickTextModels(profile.id, validIds)
                 var selectedModel = loadTextModelForProfile(profile)
-                if (profile.type != ProviderType.OPENROUTER && textInfos.none { it.id == selectedModel }) {
+                if (selectedModel !in validIds) {
                     selectedModel = textInfos.firstOrNull()?.id.orEmpty()
-                    if (selectedModel.isNotBlank()) prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
+                    if (selectedModel.isNotBlank()) {
+                        prefs.edit().putString(profilePrefKey("text_model", profile.id), selectedModel).apply()
+                    }
                 }
-                val effectiveId = next.currentChatTextModel?.takeIf { id -> textInfos.any { it.id == id } } ?: selectedModel
-                val current = textInfos.firstOrNull { it.id == effectiveId }
                 val activeChat = next.chats.firstOrNull { it.id == next.currentChatId }
-                val fixed = activeChat?.takeIf { it.projectId != null }?.let { projectAutomation.profile(it.id) }
-                val effort = fixed?.reasoningEffort ?: preferredReasoningEffort(effectiveId, current)
-                val keepReasoning = fixed?.reasoningEnabled ?: reasoningStillValid(current, effort)
-                if (fixed == null) {
-                    prefs.edit().putString("reasoning_effort", effort.name).putBoolean("reasoning_enabled", keepReasoning).apply()
+                val runtime = activeChat?.let(::runtimeProfile)
+                val requestedId = runtime?.modelId ?: activeChat?.textModelOverride
+                val effectiveId = requestedId?.takeIf { it in validIds } ?: selectedModel
+                val current = textInfos.firstOrNull { it.id == effectiveId }
+                val effort = normalizedReasoningEffort(
+                    runtime?.reasoningEffort ?: preferredReasoningEffort(effectiveId, current),
+                    current
+                )
+                val keepReasoning = runtime?.reasoningEnabled == true &&
+                    current?.supportsReasoning != false &&
+                    (current?.supportsReasoningEffort != true || current.reasoningEfforts.isEmpty() || effort.apiValue in current.reasoningEfforts)
+                if (activeChat != null && runtime != null) {
+                    projectAutomation.saveProfile(
+                        activeChat.id,
+                        runtime.copy(
+                            modelId = effectiveId,
+                            reasoningEffort = effort,
+                            reasoningEnabled = keepReasoning
+                        )
+                    )
                 }
                 next = next.copy(
                     textModel = selectedModel,
-                    currentChatTextModel = next.currentChatTextModel?.takeIf { id -> textInfos.any { it.id == id } },
+                    currentChatTextModel = effectiveId,
                     availableTextModels = textInfos,
                     reasoningEffort = effort,
                     reasoningEnabled = keepReasoning
