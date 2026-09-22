@@ -617,11 +617,13 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                         )
                     }
                 }
-                IconButton(
+                TextButton(
                     onClick = { copyToClipboard(context, model.id) },
-                    modifier = Modifier.size(34.dp)
+                    contentPadding = PaddingValues(horizontal = 7.dp, vertical = 4.dp)
                 ) {
-                    Icon(Icons.Outlined.ContentCopy, contentDescription = "Копировать ID модели", modifier = Modifier.size(18.dp))
+                    Icon(Icons.Outlined.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Копировать", style = MaterialTheme.typography.labelSmall)
                 }
                 Box {
                     IconButton(onClick = { menuOpen = true }, modifier = Modifier.size(34.dp)) {
