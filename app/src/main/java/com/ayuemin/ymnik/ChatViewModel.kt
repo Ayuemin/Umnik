@@ -85,6 +85,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -746,6 +747,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
 
+    private fun knowledgeTaskKey(kind: KnowledgeOwnerKind, ownerId: String): String =
+        "${kind.name}::$ownerId"
+
+    fun knowledgeTaskLabel(kind: KnowledgeOwnerKind, ownerId: String): String? =
+        _state.value.knowledgeTasks[knowledgeTaskKey(kind, ownerId)]
+
+    private fun setKnowledgeTask(kind: KnowledgeOwnerKind, ownerId: String, label: String?) {
+        val key = knowledgeTaskKey(kind, ownerId)
+        _state.update { current ->
+            val next = current.knowledgeTasks.toMutableMap().apply {
+                if (label == null) remove(key) else put(key, label)
+            }
+            current.copy(knowledgeTasks = next)
+        }
+    }
+
     fun knowledgeDocuments(kind: KnowledgeOwnerKind, ownerId: String): List<KnowledgeDocument> =
         knowledgeBase.documents(kind, ownerId)
 
@@ -781,9 +798,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         embeddingModelId: String
     ) {
         if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
+        if (knowledgeTaskLabel(kind, ownerId) != null) {
+            _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
+            return
+        }
         val model = embeddingModelId.trim().ifBlank { knowledgeBase.settings(kind, ownerId).embeddingModelId }
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, busyLabel = "Подготавливаю базу знаний…", status = null)
+            setKnowledgeTask(kind, ownerId, "Подготавливаю базу знаний…")
+            _state.update { it.copy(status = null) }
             var success = 0
             val errors = mutableListOf<String>()
             try {
@@ -797,8 +819,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 (attachment.size <= 0L || it.size == attachment.size)
                         }
                         require(!duplicate) { "«${attachment.name}» уже есть в базе знаний" }
-                        _state.value = _state.value.copy(
-                            busyLabel = "Индексирую ${index + 1} из ${uris.size}: ${attachment.name}"
+                        setKnowledgeTask(
+                            kind,
+                            ownerId,
+                            "Индексирую ${index + 1} из ${uris.size}: ${attachment.name}"
                         )
                         knowledgeBase.index(
                             kind = kind,
@@ -810,8 +834,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             embeddings = embeddingApi
                         ) { done, total ->
                             val percent = if (total <= 0) 0 else (done * 100 / total).coerceIn(0, 100)
-                            _state.value = _state.value.copy(
-                                busyLabel = "Индексирую ${attachment.name}: $percent% ($done/$total)"
+                            setKnowledgeTask(
+                                kind,
+                                ownerId,
+                                "Индексирую ${attachment.name}: $percent% ($done/$total)"
                             )
                         }
                     }.onSuccess {
@@ -826,15 +852,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 errors += error.message ?: "Не удалось запустить индексацию"
                 DiagnosticLog.record(context, "KNOWLEDGE", "index setup failed owner=${kind.name}:$ownerId", error)
             } finally {
-                _state.value = _state.value.copy(
-                    isLoading = false,
-                    busyLabel = null,
-                    status = when {
-                        errors.isEmpty() -> "База знаний обновлена: добавлено $success"
-                        success > 0 -> "Добавлено $success. Ошибки: ${errors.take(2).joinToString("; ")}"
-                        else -> errors.take(2).joinToString("; ").ifBlank { "Не удалось обновить базу знаний" }
-                    }
-                )
+                setKnowledgeTask(kind, ownerId, null)
+                _state.update {
+                    it.copy(
+                        status = when {
+                            errors.isEmpty() -> "База знаний обновлена: добавлено $success"
+                            success > 0 -> "Добавлено $success. Ошибки: ${errors.take(2).joinToString("; ")}"
+                            else -> errors.take(2).joinToString("; ").ifBlank { "Не удалось обновить базу знаний" }
+                        }
+                    )
+                }
             }
         }
     }
@@ -842,9 +869,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun reindexKnowledgeDocument(documentId: String, embeddingModelId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
+        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null) {
+            _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
+            return
+        }
         val model = embeddingModelId.trim().ifBlank { document.embeddingModelId }
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, busyLabel = "Переиндексирую ${document.name}…", status = null)
+            setKnowledgeTask(document.ownerKind, document.ownerId, "Переиндексирую ${document.name}…")
+            _state.update { it.copy(status = null) }
             try {
                 val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
                 knowledgeBase.reindex(
@@ -855,14 +887,18 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     embeddings = embeddingApi
                 ) { done, total ->
                     val percent = if (total <= 0) 0 else (done * 100 / total).coerceIn(0, 100)
-                    _state.value = _state.value.copy(busyLabel = "Переиндексирую ${document.name}: $percent%")
+                    setKnowledgeTask(
+                        document.ownerKind,
+                        document.ownerId,
+                        "Переиндексирую ${document.name}: $percent% ($done/$total)"
+                    )
                 }
                 touchKnowledgeOwner(document.ownerKind, document.ownerId, "«${document.name}» переиндексирован")
             } catch (error: Throwable) {
                 DiagnosticLog.record(context, "KNOWLEDGE", "reindex failed document=$documentId", error)
-                _state.value = _state.value.copy(status = error.message ?: "Не удалось переиндексировать документ")
+                _state.update { it.copy(status = error.message ?: "Не удалось переиндексировать документ") }
             } finally {
-                _state.value = _state.value.copy(isLoading = false, busyLabel = null)
+                setKnowledgeTask(document.ownerKind, document.ownerId, null)
             }
         }
     }
@@ -870,6 +906,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun deleteKnowledgeDocument(documentId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
+        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null) {
+            _state.update { it.copy(status = "Дождитесь завершения индексации этой базы знаний") }
+            return
+        }
         if (knowledgeBase.deleteDocument(documentId)) {
             touchKnowledgeOwner(document.ownerKind, document.ownerId, "«${document.name}» удалён из базы знаний")
         }
