@@ -196,7 +196,7 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                 )
             }
             UmnikChevronIndicator(
-                icon = trailingIcon,
+                icon = Icons.Outlined.KeyboardArrowRight,
                 contentDescription = "Открыть"
             )
         }
@@ -242,7 +242,7 @@ private fun SettingsActionCard(
                 Spacer(Modifier.width(4.dp))
             }
             UmnikChevronIndicator(
-                icon = Icons.Outlined.KeyboardArrowRight,
+                icon = trailingIcon,
                 contentDescription = "Открыть"
             )
         }
