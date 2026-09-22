@@ -256,6 +256,8 @@ private fun OpenRouterHubDialog(
     var catalogReturnPage by remember { mutableStateOf<HubPage?>(null) }
     var catalogReturnLabel by remember { mutableStateOf<String?>(null) }
     val settingsMode = page == HubPage.MODELS || page == HubPage.ROUTING || page == HubPage.TOOLS
+    val openedFromSettings = !returnLabel.isNullOrBlank()
+    val showBackArrow = settingsMode || openedFromSettings
     val activeReturnLabel = (catalogReturnLabel ?: returnLabel)?.takeIf { page == HubPage.MODELS && it.isNotBlank() }
     val openCatalogFrom: (HubPage, String) -> Unit = { from, label ->
         catalogReturnPage = from
@@ -292,7 +294,7 @@ private fun OpenRouterHubDialog(
                             modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            if (settingsMode) {
+                            if (showBackArrow) {
                                 IconButton(onClick = backFromHub) {
                                     Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
                                 }
@@ -326,7 +328,7 @@ private fun OpenRouterHubDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (!settingsMode) {
+                            if (!showBackArrow) {
                                 IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                             }
                         }
