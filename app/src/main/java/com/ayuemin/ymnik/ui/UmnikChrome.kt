@@ -18,9 +18,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.KeyboardArrowDown
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -33,6 +37,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -40,7 +45,7 @@ import java.util.Locale
 
 internal val UmnikPanelShape = RoundedCornerShape(22.dp)
 internal val UmnikItemShape = RoundedCornerShape(16.dp)
-internal val UmnikFieldShape = RoundedCornerShape(28.dp)
+internal val UmnikFieldShape = RoundedCornerShape(18.dp)
 internal val UmnikPanelPadding = PaddingValues(horizontal = 16.dp, vertical = 14.dp)
 
 @Composable
@@ -260,6 +265,132 @@ internal fun SectionTitle(text: String) {
         fontWeight = FontWeight.SemiBold,
         color = MaterialTheme.colorScheme.onSurfaceVariant
     )
+}
+
+@Composable
+internal fun UmnikInlineExpander(
+    title: String,
+    expanded: Boolean,
+    onToggle: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null
+) {
+    Surface(
+        onClick = onToggle,
+        modifier = modifier.fillMaxWidth(),
+        shape = UmnikItemShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            Spacer(Modifier.width(8.dp))
+            Icon(
+                if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                contentDescription = if (expanded) "Свернуть" else "Развернуть",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+@Composable
+internal fun UmnikModelIdField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onPick: () -> Unit,
+    info: String? = null,
+    modifier: Modifier = Modifier,
+    singleLine: Boolean = true,
+    minLines: Int = 1,
+    maxLines: Int = if (singleLine) 1 else 4
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = modifier.fillMaxWidth(),
+        label = { Text(label) },
+        trailingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (!info.isNullOrBlank()) UmnikInfoHint(title = label, text = info)
+                IconButton(onClick = onPick) {
+                    Icon(
+                        Icons.Outlined.Search,
+                        contentDescription = "Выбрать модель в каталоге",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        },
+        singleLine = singleLine,
+        minLines = minLines,
+        maxLines = maxLines,
+        shape = UmnikFieldShape
+    )
+}
+
+@Composable
+internal fun UmnikModelPickerCard(
+    title: String,
+    current: String,
+    onPick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    emptyLabel: String = "Не выбрана",
+    actionLabel: String = "Выбрать",
+    info: String? = null
+) {
+    Surface(
+        modifier = modifier.fillMaxWidth(),
+        shape = UmnikItemShape,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 11.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(title, fontWeight = FontWeight.Medium)
+                Text(
+                    current.ifBlank { emptyLabel },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            if (!info.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                UmnikInfoHint(title = title, text = info)
+            }
+            Spacer(Modifier.width(8.dp))
+            FilledTonalButton(onClick = onPick, enabled = enabled) {
+                Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(5.dp))
+                Text(actionLabel)
+            }
+        }
+    }
 }
 
 internal fun projectDate(timestamp: Long): String =

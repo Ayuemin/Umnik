@@ -22,7 +22,7 @@ fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () ->
     val dark = isSystemInDarkTheme()
     val context = LocalContext.current
 
-    val colors = when (choice) {
+    val baseColors = when (choice) {
         ThemeChoice.DYNAMIC -> when {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && dark -> dynamicDarkColorScheme(context)
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
@@ -36,6 +36,8 @@ fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () ->
         ThemeChoice.AMBER -> if (dark) amberDark() else amberLight()
     }
 
+    val colors = harmonizeVisiblePalette(baseColors, dark)
+
     MaterialTheme(
         colorScheme = colors,
         shapes = UmnikShapes,
@@ -43,9 +45,48 @@ fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () ->
     )
 }
 
+private fun harmonizeVisiblePalette(source: ColorScheme, dark: Boolean): ColorScheme {
+    val primary = source.primary
+    return if (dark) {
+        source.copy(
+            background = lerp(primary, Color.Black, 0.95f),
+            onBackground = lerp(primary, Color.White, 0.68f),
+            surface = lerp(primary, Color.Black, 0.94f),
+            onSurface = lerp(primary, Color.White, 0.68f),
+            surfaceVariant = lerp(primary, Color.Black, 0.76f),
+            onSurfaceVariant = lerp(primary, Color.White, 0.50f),
+            outline = lerp(primary, Color.Gray, 0.44f),
+            outlineVariant = lerp(primary, Color.Black, 0.50f),
+            surfaceContainerLowest = lerp(primary, Color.Black, 0.96f),
+            surfaceContainerLow = lerp(primary, Color.Black, 0.90f),
+            surfaceContainer = lerp(primary, Color.Black, 0.84f),
+            surfaceContainerHigh = lerp(primary, Color.Black, 0.78f),
+            surfaceContainerHighest = lerp(primary, Color.Black, 0.70f),
+            scrim = lerp(primary, Color.Black, 0.84f)
+        )
+    } else {
+        source.copy(
+            background = lerp(primary, Color.White, 0.985f),
+            onBackground = lerp(primary, Color.Black, 0.72f),
+            surface = lerp(primary, Color.White, 0.985f),
+            onSurface = lerp(primary, Color.Black, 0.72f),
+            surfaceVariant = lerp(primary, Color.White, 0.88f),
+            onSurfaceVariant = lerp(primary, Color.Black, 0.57f),
+            outline = lerp(primary, Color.Gray, 0.54f),
+            outlineVariant = lerp(primary, Color.White, 0.66f),
+            surfaceContainerLowest = lerp(primary, Color.White, 0.995f),
+            surfaceContainerLow = lerp(primary, Color.White, 0.96f),
+            surfaceContainer = lerp(primary, Color.White, 0.92f),
+            surfaceContainerHigh = lerp(primary, Color.White, 0.87f),
+            surfaceContainerHighest = lerp(primary, Color.White, 0.82f),
+            scrim = lerp(primary, Color.Black, 0.82f)
+        )
+    }
+}
+
 private val UmnikShapes = Shapes(
-    extraSmall = RoundedCornerShape(12.dp),
-    small = RoundedCornerShape(16.dp),
+    extraSmall = RoundedCornerShape(18.dp),
+    small = RoundedCornerShape(18.dp),
     medium = RoundedCornerShape(20.dp),
     large = RoundedCornerShape(24.dp),
     extraLarge = RoundedCornerShape(28.dp)
