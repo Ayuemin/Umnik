@@ -20,10 +20,12 @@ import androidx.compose.material.icons.outlined.ChatBubbleOutline
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -52,6 +54,9 @@ import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.Project
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.UiState
+import com.ayuemin.ymnik.model.WebSearchPreset
+import com.ayuemin.ymnik.model.WebSearchMode
+import com.ayuemin.ymnik.model.WebSearchEngine
 
 /**
  * First visible slice of the agent-first project architecture.
@@ -294,7 +299,8 @@ private fun AgentSettingsDialog(
     var reasoningEnabled by remember(agent.id) { mutableStateOf(agent.reasoningEnabled) }
     var reasoningEffort by remember(agent.id) { mutableStateOf(agent.reasoningEffort) }
     var webSearch by remember(agent.id) { mutableStateOf(agent.webSearchEnabled) }
-    var pickerTarget by remember(agent.id) { mutableStateOf<ModelPickerTarget?>(null) }
+    var webSearchPreset by remember(agent.id) { mutableStateOf(agent.tools.webSearchPreset) }
+    var webSearchEngine by remember(agent.id) { mutableStateOf(agent.tools.webSearchEngine) }
     var deleteConfirm by remember(agent.id) { mutableStateOf(false) }
     var skillEditorOpen by remember(agent.id) { mutableStateOf(false) }
     var skillName by remember(agent.id) { mutableStateOf("") }
@@ -320,6 +326,11 @@ private fun AgentSettingsDialog(
     fun ref(modelId: String): AgentModelRef? =
         modelId.trim().takeIf { it.isNotBlank() }?.let { AgentModelRef("openrouter", it) }
 
+    val selectedPrimaryInfo = state.modelCatalog.firstOrNull { it.id == primaryModel }
+        ?: state.availableTextModels.firstOrNull { it.id == primaryModel }
+    val supportedReasoningEfforts = selectedPrimaryInfo?.reasoningEfforts.orEmpty()
+    val reasoningKnownUnsupported = selectedPrimaryInfo != null && !selectedPrimaryInfo.supportsReasoning
+
     fun buildProfile(): AgentProfile = agent.copy(
         name = name.trim().ifBlank {
             if (agent.kind == AgentKind.ORCHESTRATOR) "Оркестратор" else "Агент"
@@ -337,9 +348,14 @@ private fun AgentSettingsDialog(
         contextModel = ref(contextModel),
         memoryEmbeddingModel = ref(memoryEmbedding),
         knowledgeBase = agent.knowledgeBase,
-        reasoningEnabled = reasoningEnabled,
+        reasoningEnabled = reasoningEnabled && !reasoningKnownUnsupported,
         reasoningEffort = reasoningEffort,
-        webSearchEnabled = webSearch
+        webSearchEnabled = webSearch,
+        tools = agent.tools.copy(
+            webSearch = if (webSearch) WebSearchMode.AUTO else WebSearchMode.OFF,
+            webSearchPreset = webSearchPreset,
+            webSearchEngine = webSearchEngine
+        )
     )
 
     FullScreenPanel(
@@ -403,7 +419,7 @@ private fun AgentSettingsDialog(
                     info = "Обязательная модель, которая отвечает в чате агента и выполняет его основные задачи.",
                     value = primaryModel,
                     onValueChange = { primaryModel = it },
-                    onPick = { pickerTarget = ModelPickerTarget.PRIMARY }
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
                 )
             }
             item {
@@ -411,12 +427,19 @@ private fun AgentSettingsDialog(
                     value = quickModelsText,
                     onValueChange = { quickModelsText = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Быстрые модели") },
+                    label = { Text("Дополнительные модели чатов") },
                     trailingIcon = {
-                        UmnikInfoHint(
-                            title = "Быстрые модели",
-                            text = "Необязательно. Дополнительные модели для быстрого переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке."
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            UmnikInfoHint(
+                                title = "Дополнительные модели чатов",
+                                text = "Необязательно. Дополнительные модели для переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке."
+                            )
+                            IconButton(
+                                onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
+                            ) {
+                                Icon(Icons.Outlined.Search, contentDescription = "Открыть каталог моделей")
+                            }
+                        }
                     },
                     minLines = 2
                 )
@@ -427,22 +450,16 @@ private fun AgentSettingsDialog(
                     info = "Необязательно. Используется для обработки и сжатия длинного контекста агента. Если оставить пустым, Umnik использует основную модель.",
                     value = contextModel,
                     onValueChange = { contextModel = it },
-                    onPick = { pickerTarget = ModelPickerTarget.CONTEXT }
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
                 )
             }
             item {
-                OutlinedTextField(
+                ModelField(
+                    label = "Модель поиска по памяти",
+                    info = "Необязательно. Embeddings-модель OpenRouter превращает память агента в смысловой индекс и помогает находить подходящие фрагменты прошлых разговоров. Если оставить пустым, Umnik работает с полным контекстом без такого отбора.",
                     value = memoryEmbedding,
                     onValueChange = { memoryEmbedding = it.trim() },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Модель поиска по памяти") },
-                    trailingIcon = {
-                        UmnikInfoHint(
-                            title = "Модель поиска по памяти",
-                            text = "Необязательно. Embeddings-модель OpenRouter превращает память агента в смысловой индекс и помогает находить подходящие фрагменты прошлых разговоров. Если оставить пустым, Umnik работает с полным контекстом без такого отбора."
-                        )
-                    },
-                    singleLine = true
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
                 )
             }
 
@@ -451,48 +468,91 @@ private fun AgentSettingsDialog(
             item {
                 ToggleSettingRow(
                     title = "Размышление",
-                    subtitle = "Настройка действует только для этого агента",
-                    info = "Разрешает модели использовать дополнительное внутреннее рассуждение, если выбранная модель это поддерживает. Обычно повышает качество сложных задач, но может увеличить время и стоимость ответа.",
-                    checked = reasoningEnabled,
-                    onCheckedChange = { reasoningEnabled = it }
+                    subtitle = when {
+                        selectedPrimaryInfo == null -> "Поддержка уточнится после загрузки каталога"
+                        reasoningKnownUnsupported -> "Выбранная модель не поддерживает размышление"
+                        selectedPrimaryInfo.supportsReasoningEffort && supportedReasoningEfforts.isNotEmpty() ->
+                            "Доступно: " + supportedReasoningEfforts.joinToString(" · ")
+                        selectedPrimaryInfo.supportsReasoningEffort -> "Уровень поддерживается моделью"
+                        else -> "Модель поддерживает reasoning без выбора уровня"
+                    },
+                    info = "Umnik показывает только уровни, заявленные выбранной моделью в каталоге OpenRouter. Выбранный уровень подсвечен.",
+                    checked = reasoningEnabled && !reasoningKnownUnsupported,
+                    onCheckedChange = { if (!reasoningKnownUnsupported) reasoningEnabled = it }
                 )
             }
-            if (reasoningEnabled) {
+            if (reasoningEnabled && !reasoningKnownUnsupported && selectedPrimaryInfo?.supportsReasoningEffort == true) {
                 item {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        ReasoningEffort.entries.forEach { effort ->
-                            val selected = reasoningEffort == effort
-                            OutlinedButton(
-                                onClick = { reasoningEffort = effort },
-                                modifier = Modifier.weight(1f)
-                            ) {
-                                Text(
-                                    when (effort) {
-                                        ReasoningEffort.MINIMAL -> "Min"
-                                        ReasoningEffort.LOW -> "Low"
-                                        ReasoningEffort.MEDIUM -> "Med"
-                                        ReasoningEffort.HIGH -> "High"
-                                        ReasoningEffort.XHIGH -> "XH"
-                                        ReasoningEffort.MAX -> "Max"
-                                    },
-                                    fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal
+                        ReasoningEffort.entries
+                            .filter { supportedReasoningEfforts.isEmpty() || it.apiValue in supportedReasoningEfforts }
+                            .forEach { effort ->
+                                FilterChip(
+                                    selected = reasoningEffort == effort,
+                                    onClick = { reasoningEffort = effort },
+                                    label = {
+                                        Text(
+                                            when (effort) {
+                                                ReasoningEffort.MINIMAL -> "Min"
+                                                ReasoningEffort.LOW -> "Low"
+                                                ReasoningEffort.MEDIUM -> "Med"
+                                                ReasoningEffort.HIGH -> "High"
+                                                ReasoningEffort.XHIGH -> "XH"
+                                                ReasoningEffort.MAX -> "Max"
+                                            }
+                                        )
+                                    }
                                 )
                             }
-                        }
                     }
                 }
             }
             item {
                 ToggleSettingRow(
                     title = "Поиск в сети",
-                    subtitle = "Только для этого агента",
-                    info = "Разрешает агенту обращаться к веб-поиску через возможности выбранной модели, когда для ответа нужны свежие или внешние данные.",
+                    subtitle = if (webSearch) "Современный OpenRouter Web Search · ${webSearchPresetLabel(webSearchPreset)}" else "Выключен",
+                    info = "Используется современный agentic Web Search OpenRouter. Старый режим поиска здесь не включается.",
                     checked = webSearch,
                     onCheckedChange = { webSearch = it }
                 )
+            }
+            if (webSearch) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                        Text("Режим поиска", fontWeight = FontWeight.SemiBold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            listOf(
+                                WebSearchPreset.ON_DEMAND,
+                                WebSearchPreset.FAST,
+                                WebSearchPreset.NORMAL,
+                                WebSearchPreset.DEEP
+                            ).forEach { preset ->
+                                FilterChip(
+                                    selected = webSearchPreset == preset,
+                                    onClick = { webSearchPreset = preset },
+                                    label = { Text(webSearchPresetLabel(preset)) }
+                                )
+                            }
+                        }
+                        Text("Сервис: ${webSearchEngineLabel(webSearchEngine)}", style = MaterialTheme.typography.bodySmall)
+                        TextButton(
+                            onClick = {
+                                webSearchEngine = when (webSearchEngine) {
+                                    WebSearchEngine.AUTO -> WebSearchEngine.NATIVE
+                                    WebSearchEngine.NATIVE -> WebSearchEngine.EXA
+                                    WebSearchEngine.EXA -> WebSearchEngine.PARALLEL
+                                    WebSearchEngine.PARALLEL -> WebSearchEngine.PERPLEXITY
+                                    WebSearchEngine.PERPLEXITY -> WebSearchEngine.AUTO
+                                }
+                            }
+                        ) {
+                            Text("Сменить сервис поиска")
+                        }
+                    }
+                }
             }
 
             item { AgentSettingsSectionTitle("Навыки") }
@@ -668,24 +728,6 @@ private fun AgentSettingsDialog(
         }
     }
 
-    pickerTarget?.let { target ->
-        AgentModelPickerDialog(
-            state = state,
-            title = when (target) {
-                ModelPickerTarget.PRIMARY -> "Основная модель"
-                ModelPickerTarget.CONTEXT -> "Модель контекста"
-            },
-            onDismiss = { pickerTarget = null },
-            onSelect = { id ->
-                when (target) {
-                    ModelPickerTarget.PRIMARY -> primaryModel = id
-                    ModelPickerTarget.CONTEXT -> contextModel = id
-                }
-                pickerTarget = null
-            }
-        )
-    }
-
     if (skillEditorOpen) {
         AlertDialog(
             onDismissRequest = { skillEditorOpen = false },
@@ -817,23 +859,36 @@ private fun ModelField(
     onPick: () -> Unit,
     info: String? = null
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlinedTextField(
-            value = value,
-            onValueChange = onValueChange,
-            modifier = Modifier.fillMaxWidth(),
-            label = { Text(label) },
-            trailingIcon = if (info != null) {
-                { UmnikInfoHint(title = label, text = info) }
-            } else {
-                null
-            },
-            singleLine = true
-        )
-        OutlinedButton(onClick = onPick) {
-            Text("Выбрать из каталога")
-        }
-    }
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text(label) },
+        trailingIcon = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (info != null) UmnikInfoHint(title = label, text = info)
+                IconButton(onClick = onPick) {
+                    Icon(Icons.Outlined.Search, contentDescription = "Найти модель в каталоге")
+                }
+            }
+        },
+        singleLine = true
+    )
+}
+
+private fun webSearchPresetLabel(value: WebSearchPreset): String = when (value) {
+    WebSearchPreset.ON_DEMAND -> "По запросу"
+    WebSearchPreset.FAST -> "Быстрый"
+    WebSearchPreset.NORMAL -> "Обычный"
+    WebSearchPreset.DEEP -> "Глубокий"
+}
+
+private fun webSearchEngineLabel(value: WebSearchEngine): String = when (value) {
+    WebSearchEngine.AUTO -> "Авто"
+    WebSearchEngine.NATIVE -> "OpenRouter Native"
+    WebSearchEngine.EXA -> "Exa"
+    WebSearchEngine.PARALLEL -> "Parallel"
+    WebSearchEngine.PERPLEXITY -> "Perplexity"
 }
 
 @Composable
