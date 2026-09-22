@@ -195,7 +195,15 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Icon(Icons.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (!info.isNullOrBlank()) {
+                Spacer(Modifier.width(6.dp))
+                UmnikInfoHint(title = title, text = info)
+                Spacer(Modifier.width(4.dp))
+            }
+            UmnikChevronIndicator(
+                icon = Icons.Outlined.KeyboardArrowRight,
+                contentDescription = "Открыть"
+            )
         }
     }
 }
@@ -205,7 +213,8 @@ private fun SettingsActionCard(
     title: String,
     subtitle: String,
     icon: ImageVector,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    info: String? = null
 ) {
     UmnikPanel(onClick = onClick) {
         Row(
@@ -250,6 +259,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var defaultChatModelExpanded by remember { mutableStateOf(false) }
     var quickModelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
+    var imageModelId by remember(state.imageModel) { mutableStateOf(state.imageModel) }
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var skillsLibraryExpanded by remember { mutableStateOf(false) }
@@ -527,14 +537,26 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         onToggle = { imageModelsExpanded = !imageModelsExpanded },
                         info = "Модель и параметры, которые используются режимом генерации изображений. Эти настройки не меняют обычную текстовую модель чата."
                     ) {
-                        UmnikModelPickerCard(
-                            title = "Модель изображений",
-                            current = state.imageModel,
+                        UmnikModelIdField(
+                            label = "ID модели изображений",
+                            value = imageModelId,
+                            onValueChange = { imageModelId = it },
                             onPick = {
                                 com.ayuemin.ymnik.AsyncJobEvents.requestHub(
                                     "models-settings",
                                     "Модели"
                                 )
+                            },
+                            onApply = {
+                                val clean = imageModelId.trim()
+                                if (clean.isBlank()) {
+                                    vm.clearImageModel()
+                                } else {
+                                    val profileId = state.imageConnectionProfileId.ifBlank {
+                                        state.connectionProfiles.first().id
+                                    }
+                                    vm.selectImageModel(profileId, clean)
+                                }
                             }
                         )
                         Spacer(Modifier.height(7.dp))
@@ -575,7 +597,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             state.openRouterSpeechModel.substringAfterLast('/')
                         },
                         icon = Icons.Outlined.VolumeUp,
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Модели") }
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Модели") },
+                        info = "Отдельная модель, голос и формат для кнопки OR под ответами. Эти параметры не влияют на озвучивание текста и документов."
                     )
                 }
 
@@ -584,7 +607,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         title = "Озвучивание текста и документов",
                         subtitle = "Создание аудио из текста или файла",
                         icon = Icons.Outlined.Description,
-                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Модели") }
+                        onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Модели") },
+                        info = "Создаёт отдельный аудиофайл из введённого текста или текстового документа и возвращает результат в текущий чат."
                     )
                 }
 
