@@ -288,10 +288,12 @@ private fun OpenRouterHubDialog(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             if (showBack) {
-                                IconButton(onClick = handleBack) {
-                                    Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
-                                }
-                                Spacer(Modifier.width(2.dp))
+                                UmnikCircleAction(
+                                    icon = Icons.Outlined.ArrowBack,
+                                    contentDescription = "Назад",
+                                    onClick = handleBack
+                                )
+                                Spacer(Modifier.width(6.dp))
                             }
                             Column(Modifier.weight(1f)) {
                                 Text(
@@ -1726,6 +1728,7 @@ private fun MediaPage(
     var videoPrompt by remember { mutableStateOf("") }
     val videoRefs = remember { mutableStateListOf<Uri>() }
     var speechText by remember { mutableStateOf("") }
+    var speechModelId by remember(state.media.speechModel) { mutableStateOf(state.media.speechModel) }
     var voice by remember(state.media.speechModel, state.media.voice) { mutableStateOf(state.media.voice) }
     var speechResponseFormat by remember(state.media.speechModel, state.media.responseFormat) { mutableStateOf(state.media.responseFormat.orEmpty()) }
     var speechSettingsExpanded by remember { mutableStateOf(false) }
@@ -1824,7 +1827,7 @@ private fun MediaPage(
             item {
                 Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Text(
-                    "Введите текст или загрузите текстовый файл. Настройки модели и голоса находятся ниже и не мешают основной работе.",
+                    "Введите текст или загрузите текстовый файл.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1883,30 +1886,19 @@ private fun MediaPage(
                 item {
                     val selectedSpeechModel = state.catalog.firstOrNull { it.id == state.media.speechModel }
                     val documentVoiceOptions = selectedSpeechModel?.parameterValues("voice").orEmpty()
-                    CategoryModelPicker(
-                        title = "Модель озвучивания",
-                        current = state.media.speechModel,
-                        models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
-                        onOpenCatalog = onOpenCatalog
+                    UmnikModelIdField(
+                        label = "ID модели озвучивания",
+                        value = speechModelId,
+                        onValueChange = { speechModelId = it },
+                        onPick = onOpenCatalog,
+                        onApply = { controller.setMediaSpeechModelId(speechModelId) },
+                        info = "Можно вставить ID модели OpenRouter вручную или открыть каталог значком поиска."
                     )
                     if (state.media.speechModel.isNotBlank()) {
-                        Text(
-                            "Голос и формат (необязательно)",
-                            modifier = Modifier.padding(top = 8.dp),
-                            fontWeight = FontWeight.SemiBold
+                        SettingTitleWithInfo(
+                            title = "Голос и формат (необязательно)",
+                            info = "Некоторым моделям нужен конкретный голос или формат. Если модель работает без них, оставьте голос пустым, а формат — «Авто»."
                         )
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "Задавайте их только если этого требует выбранная модель.",
-                                modifier = Modifier.weight(1f),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            UmnikInfoHint(
-                                title = "Голос и формат",
-                                text = "Некоторым моделям нужен конкретный голос или формат. Если модель работает без них, оставьте голос пустым, а формат — «Авто»."
-                            )
-                        }
                         LazyRow(
                             modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1927,13 +1919,23 @@ private fun MediaPage(
                             }
                         }
                         OutlinedTextField(
-                            voice,
-                            { voice = it },
-                            Modifier.fillMaxWidth().padding(top = 6.dp),
+                            value = voice,
+                            onValueChange = { voice = it },
+                            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
                             label = { Text("Voice / ID голоса") },
+                            trailingIcon = {
+                                UmnikInfoHint(
+                                    title = "ID голоса",
+                                    text = "ID или название голоса смотрите на странице выбранной модели на сайте OpenRouter. Если Umnik получил список voice из каталога модели, готовые варианты показаны выше."
+                                )
+                            },
                             singleLine = true
                         )
-                        Text("Формат ответа", modifier = Modifier.padding(top = 8.dp), fontWeight = FontWeight.SemiBold)
+                        SettingTitleWithInfo(
+                            title = "Формат ответа",
+                            info = "Оставьте «Авто», если модель не требует конкретный формат. Umnik автоматически оборачивает PCM в WAV для воспроизведения на Android.",
+                            modifier = Modifier.padding(top = 8.dp)
+                        )
                         LazyRow(
                             modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -1974,6 +1976,9 @@ private fun ReplySpeechPage(
 ) {
     val selected = state.catalog.firstOrNull { it.id == appState.openRouterSpeechModel }
     val voiceOptions = selected?.parameterValues("voice").orEmpty()
+    var replySpeechModelId by remember(appState.openRouterSpeechModel) {
+        mutableStateOf(appState.openRouterSpeechModel)
+    }
     var manualVoice by remember(appState.openRouterSpeechModel, appState.openRouterSpeechVoice) {
         mutableStateOf(appState.openRouterSpeechVoice)
     }
@@ -1984,28 +1989,26 @@ private fun ReplySpeechPage(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
-            Text("Кнопка OR под ответами", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Эти настройки не влияют на режим «+ → Озвучить». Достаточно выбрать модель; голос и формат задаются только если они нужны выбранному провайдеру.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            SettingTitleWithInfo(
+                title = "Кнопка OR под ответами",
+                info = "Эти настройки относятся только к кнопке OR под ответами и не влияют на озвучивание текста и документов. Голос и формат задавайте только если они нужны выбранной модели."
             )
         }
         item {
-            CategoryModelPicker(
-                title = "Модель озвучивания ответов",
-                current = appState.openRouterSpeechModel,
-                models = state.catalog.filter { ModelCategory.SPEECH in it.categories || ModelCategory.AUDIO in it.categories },
-                onOpenCatalog = onOpenCatalog
+            UmnikModelIdField(
+                label = "ID модели озвучивания ответов",
+                value = replySpeechModelId,
+                onValueChange = { replySpeechModelId = it },
+                onPick = onOpenCatalog,
+                onApply = { controller.setReplySpeechModelId(replySpeechModelId) },
+                info = "Можно вставить ID модели OpenRouter вручную или открыть каталог значком поиска."
             )
         }
         if (appState.openRouterSpeechModel.isNotBlank()) {
             item {
-                Text("Голос (необязательно)", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Если у модели есть голос по умолчанию, оставьте «Не задавать». Если OpenRouter требует voice, выберите вариант из списка или введите ID вручную.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                SettingTitleWithInfo(
+                    title = "Голос (необязательно)",
+                    info = "Если у модели есть голос по умолчанию, оставьте «Не задавать». Если OpenRouter требует voice, выберите готовый вариант или введите ID вручную."
                 )
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -2038,6 +2041,12 @@ private fun ReplySpeechPage(
                     modifier = Modifier.fillMaxWidth().padding(top = 7.dp),
                     label = { Text("ID голоса") },
                     placeholder = { Text("Оставьте пустым, если голос не нужен") },
+                    trailingIcon = {
+                        UmnikInfoHint(
+                            title = "ID голоса",
+                            text = "ID или название голоса смотрите на странице выбранной модели на сайте OpenRouter. Если OpenRouter сообщает готовые варианты voice, Umnik показывает их выше."
+                        )
+                    },
                     singleLine = true
                 )
                 FilledTonalButton(
@@ -2046,11 +2055,9 @@ private fun ReplySpeechPage(
                 ) { Text(if (manualVoice.isBlank()) "Сохранить без голоса" else "Сохранить голос") }
             }
             item {
-                Text("Формат ответа", fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Авто: для Gemini TTS используется PCM, для Voxtral TTS — MP3, а неизвестным моделям Umnik не навязывает формат. Если провайдер вернёт однозначную ошибку формата, Auto один раз повторит запрос с требуемым MP3/PCM.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                SettingTitleWithInfo(
+                    title = "Формат ответа",
+                    info = "Авто выбирает подходящий формат для известных TTS-моделей и не навязывает его неизвестным. При однозначной ошибке формата Umnik один раз повторит запрос с требуемым MP3/PCM."
                 )
                 LazyRow(
                     modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
@@ -2064,12 +2071,7 @@ private fun ReplySpeechPage(
                         )
                     }
                 }
-                Text(
-                    "PCM Umnik автоматически оборачивает в WAV для воспроизведения на Android.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 5.dp)
-                )
+
             }
         }
     }
