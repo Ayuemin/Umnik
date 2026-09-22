@@ -1473,10 +1473,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value.activeConnectionProfileId == profile.id -> _state.value.availableTextModels
             else -> emptyList()
         }
+        val currentChat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+        val updateEmptyCurrent = currentChat != null && currentChat.projectId == null && isBareEmptyChat(currentChat)
+        if (updateEmptyCurrent && currentChat != null) {
+            val runtime = projectAutomation.profile(currentChat.id) ?: defaultRuntimeProfile(currentChat)
+            projectAutomation.saveProfile(currentChat.id, runtime.copy(modelId = clean))
+        }
         _state.value = _state.value.copy(
             textModel = clean,
+            currentChatTextModel = if (updateEmptyCurrent) clean else _state.value.currentChatTextModel,
             quickTextModels = loadAllQuickTextModels(_state.value.connectionProfiles, _state.value.disabledConnectionIds),
-            status = "Модель по умолчанию для новых чатов: ${clean.substringAfterLast('/')}"
+            status = if (updateEmptyCurrent)
+                "Модель выбрана для текущего пустого чата и новых чатов: ${clean.substringAfterLast('/')}"
+            else
+                "Модель по умолчанию для новых чатов: ${clean.substringAfterLast('/')}"
         )
         if (profile.type == ProviderType.OPENROUTER) refreshProviderUsage()
     }
