@@ -1,0 +1,1 @@
+Manual chat titles are now preserved: the first message no longer overwrites a renamed chat, and clearing a chat no longer resets its title. Role and master instructions remain intact.
