@@ -31,7 +31,8 @@ internal fun ExpandableSettingsHeader(
     subtitle: String,
     expanded: Boolean,
     onToggle: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    info: String? = null
 ) {
     Row(
         modifier = modifier
@@ -66,6 +67,11 @@ internal fun ExpandableSettingsHeader(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+        }
+        if (!info.isNullOrBlank()) {
+            Spacer(Modifier.width(6.dp))
+            UmnikInfoHint(title = title, text = info)
+            Spacer(Modifier.width(4.dp))
         }
         Icon(
             if (expanded) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
