@@ -196,7 +196,7 @@ private fun SettingsCategoryCard(category: SettingsCategory, onClick: () -> Unit
                 )
             }
             UmnikChevronIndicator(
-                icon = Icons.Outlined.KeyboardArrowRight,
+                icon = trailingIcon,
                 contentDescription = "Открыть"
             )
         }
@@ -209,7 +209,8 @@ private fun SettingsActionCard(
     subtitle: String,
     icon: ImageVector,
     onClick: () -> Unit,
-    info: String? = null
+    info: String? = null,
+    trailingIcon: ImageVector = Icons.Outlined.KeyboardArrowRight
 ) {
     UmnikPanel(onClick = onClick) {
         Row(
@@ -601,7 +602,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         },
                         icon = Icons.Outlined.VolumeUp,
                         onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("reply-speech", "Модели") },
-                        info = "Отдельная модель, голос и формат для кнопки OR под ответами. Эти параметры не влияют на озвучивание текста и документов."
+                        info = "Отдельная модель, голос и формат для кнопки OR под ответами. Эти параметры не влияют на озвучивание текста и документов.",
+                        trailingIcon = Icons.Outlined.KeyboardArrowDown
                     )
                 }
 
@@ -611,7 +613,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         subtitle = "Создание аудио из текста или файла",
                         icon = Icons.Outlined.Description,
                         onClick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Модели") },
-                        info = "Создаёт отдельный аудиофайл из введённого текста или текстового документа и возвращает результат в текущий чат."
+                        info = "Создаёт отдельный аудиофайл из введённого текста или текстового документа и возвращает результат в текущий чат.",
+                        trailingIcon = Icons.Outlined.KeyboardArrowDown
                     )
                 }
 
@@ -893,36 +896,15 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     }
                     SettingsCategory.ABOUT -> {
                 item {
-                    UmnikPanel {
-                        TextButton(
-                            onClick = {
-                                vm.openUsageGuide()
-                                onBack()
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
-                        ) {
-                            Surface(
-                                shape = CircleShape,
-                                color = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        Icons.Outlined.Description,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            Spacer(Modifier.width(11.dp))
-                            Column(Modifier.weight(1f)) {
-                                Text("Памятка Umnik", fontWeight = FontWeight.Bold)
-                                Text("Краткое руководство", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            }
+                    SettingsActionCard(
+                        title = "Памятка Umnik",
+                        subtitle = "Краткое руководство",
+                        icon = Icons.Outlined.Description,
+                        onClick = {
+                            vm.openUsageGuide()
+                            onBack()
                         }
-                    }
+                    )
                 }
 
                 item {
