@@ -139,11 +139,12 @@ class KnowledgeIndexWorker(context: Context, params: WorkerParameters) : Corouti
         private const val CHANNEL_ID = "umnik_knowledge_index"
         private const val NOTIFICATION_ID_BASE = 6400
         private const val MAX_RETRIES = 5
-        private fun uniqueName(taskId: String) = "umnik-knowledge-index-$taskId"
+        private fun uniqueName(ownerKey: String) =
+            "umnik-knowledge-index-" + ownerKey.replace(Regex("[^A-Za-z0-9._-]"), "_").take(120)
 
-        fun schedule(context: Context, taskId: String, replace: Boolean = false) {
+        fun schedule(context: Context, task: KnowledgeIndexTask) {
             val request = OneTimeWorkRequestBuilder<KnowledgeIndexWorker>()
-                .setInputData(workDataOf(KEY_TASK_ID to taskId))
+                .setInputData(workDataOf(KEY_TASK_ID to task.id))
                 .setConstraints(
                     Constraints.Builder()
                         .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -153,14 +154,11 @@ class KnowledgeIndexWorker(context: Context, params: WorkerParameters) : Corouti
                 .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
                 .build()
             WorkManager.getInstance(context.applicationContext).enqueueUniqueWork(
-                uniqueName(taskId),
-                if (replace) ExistingWorkPolicy.REPLACE else ExistingWorkPolicy.KEEP,
+                uniqueName("${task.ownerKind.name}::${task.ownerId}"),
+                ExistingWorkPolicy.APPEND_OR_REPLACE,
                 request
             )
         }
 
-        fun cancel(context: Context, taskId: String) {
-            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(uniqueName(taskId))
-        }
     }
 }
