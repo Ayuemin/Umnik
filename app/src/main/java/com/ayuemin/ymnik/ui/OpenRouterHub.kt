@@ -270,6 +270,10 @@ private fun OpenRouterHubDialog(
         page = HubPage.MODELS
     }
 
+    LaunchedEffect(page) {
+        controller.clearStatus()
+    }
+
     Dialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
