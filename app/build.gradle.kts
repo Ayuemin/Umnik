@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.7 — UI polish and direct settings
+// Umnik v1.19.11-rc.8 — unified interface audit and palette
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 150
-        versionName = "1.19.11-rc.7"
+        versionCode = 151
+        versionName = "1.19.11-rc.8"
     }
 
     buildFeatures {
