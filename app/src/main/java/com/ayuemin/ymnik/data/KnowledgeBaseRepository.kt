@@ -66,18 +66,25 @@ class KnowledgeBaseRepository(private val context: Context) {
         .filter { it.status != KnowledgeIndexTaskStatus.FAILED }
         .groupBy { "${it.ownerKind.name}::${it.ownerId}" }
         .mapValues { (_, values) ->
-            values.maxByOrNull { it.updatedAt }?.let(::taskLabel).orEmpty()
+            val visible = values
+                .filter { it.status == KnowledgeIndexTaskStatus.INDEXING || it.status == KnowledgeIndexTaskStatus.PREPARING }
+                .maxByOrNull { it.updatedAt }
+                ?: values.minByOrNull { it.createdAt }
+            visible?.let(::taskLabel).orEmpty()
         }
         .filterValues { it.isNotBlank() }
 
-    fun failedTaskMessage(kind: KnowledgeOwnerKind, ownerId: String): String? = loadTasks()
+    fun failedIndexTask(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeIndexTask? = loadTasks()
         .filter {
             it.ownerKind == kind &&
                 it.ownerId == ownerId &&
                 it.status == KnowledgeIndexTaskStatus.FAILED
         }
         .maxByOrNull { it.updatedAt }
-        ?.let { task -> "Индексация «${task.name}» остановлена: ${task.error ?: "неизвестная ошибка"}" }
+
+    fun failedTaskMessage(kind: KnowledgeOwnerKind, ownerId: String): String? =
+        failedIndexTask(kind, ownerId)
+            ?.let { task -> "Индексация «${task.name}» остановлена: ${task.error ?: "неизвестная ошибка"}" }
 
     suspend fun prepareIndexTask(
         kind: KnowledgeOwnerKind,
