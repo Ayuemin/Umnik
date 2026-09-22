@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.11 — deeper Auto Router stability and diagnostics
+// Umnik v1.19.11-rc.11 — deeper Auto Router stability and diagnostics; release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
