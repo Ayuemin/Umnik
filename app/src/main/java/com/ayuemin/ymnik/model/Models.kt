@@ -362,9 +362,6 @@ data class ChatMessage(
 data class ChatSession(
     val id: String,
     val title: String,
-    // True only after the user explicitly changes the title. Old stored chats
-    // deserialize as false, so their existing behaviour remains compatible.
-    val titlePinned: Boolean = false,
     val messages: List<ChatMessage> = emptyList(),
     val projectId: String? = null,
     val mode: ChatMode? = null,
@@ -374,6 +371,9 @@ data class ChatSession(
     val isFavorite: Boolean = false,
     val assignedRole: String? = null,
     val masterPrompt: String? = null,
+    // True only after the user explicitly changes the title. Old stored chats
+    // deserialize as false, so their existing behaviour remains compatible.
+    val titlePinned: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
 )
