@@ -2651,6 +2651,7 @@ private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.g
     }
 }
 
+@Composable
 private fun markdownInline(source: String) = buildAnnotatedString {
     val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
     var cursor = 0
