@@ -73,7 +73,7 @@ fun KnowledgeBaseSection(
                 knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
                 documents.isEmpty() -> "Нет источников"
                 !enabled -> "${documents.size} источн. · автопоиск выключен"
-                else -> "${documents.size} источн. · RAG включён"
+                else -> "${documents.size} источн. · автопоиск включён"
             },
             expanded = expanded,
             onToggle = { expanded = !expanded }
