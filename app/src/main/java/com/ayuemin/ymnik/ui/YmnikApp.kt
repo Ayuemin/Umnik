@@ -1108,12 +1108,16 @@ onBranch = if (message.role == "assistant") {
                     )
                     if (skillsExpanded) {
                         Text(
-                            "Выберите навыки для текущего обычного чата.",
+                            "Выберите навыки для текущего чата.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         if (state.skills.isEmpty()) {
-                            Text("Навыков пока нет.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "Навыков пока нет. Добавьте их в общих настройках.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         } else {
                             ComposerSkillList(
                                 skills = state.skills,
