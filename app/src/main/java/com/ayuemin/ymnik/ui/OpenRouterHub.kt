@@ -254,8 +254,6 @@ private fun OpenRouterHubDialog(
     val appState by viewModel.state.collectAsState()
     var page by remember(initialPage) { mutableStateOf(initialPage) }
     val settingsMode = initialPage == HubPage.MODELS || initialPage == HubPage.ROUTING || initialPage == HubPage.TOOLS
-    val activeReturnLabel = returnLabel?.takeIf { page == HubPage.MODELS && it.isNotBlank() }
-    val returnFromModels: () -> Unit = onDismiss
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -267,45 +265,50 @@ private fun OpenRouterHubDialog(
                 topBar = {
                     Column {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, end = 6.dp, top = 12.dp, bottom = 8.dp),
+                            modifier = Modifier.fillMaxWidth().padding(start = 6.dp, end = 6.dp, top = 12.dp, bottom = 8.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
+                            if (settingsMode) {
+                                IconButton(onClick = onDismiss) {
+                                    Icon(Icons.Outlined.ArrowBack, contentDescription = "Назад")
+                                }
+                                Spacer(Modifier.width(2.dp))
+                            }
                             Column(Modifier.weight(1f)) {
                                 Text(
-                                    if (page == HubPage.REPLY_SPEECH) {
-                                        "Озвучивание ответов"
-                                    } else if (settingsMode) {
-                                        "OpenRouter: модели и настройки"
-                                    } else {
-                                        when (page) {
-                                            HubPage.JOBS -> "Пакетные и фоновые задачи"
-                                            HubPage.MEDIA -> when (initialMediaSection) {
-                                                MediaSection.VIDEO -> "Создание видео"
-                                                MediaSection.TRANSCRIPTION -> "Распознавание речи"
-                                                MediaSection.SPEECH -> "Озвучивание текста и документов"
-                                                MediaSection.ALL -> "Медиа"
-                                            }
-                                            HubPage.SHELL -> "OpenRouter Shell"
-                                            else -> "OpenRouter"
+                                    when (page) {
+                                        HubPage.MODELS -> "Каталог и модели OpenRouter"
+                                        HubPage.ROUTING -> "Маршрутизация OpenRouter"
+                                        HubPage.TOOLS -> "Инструменты OpenRouter"
+                                        HubPage.JOBS -> "Пакетные задачи"
+                                        HubPage.MEDIA -> when (initialMediaSection) {
+                                            MediaSection.VIDEO -> "Создание видео"
+                                            MediaSection.TRANSCRIPTION -> "Распознавание речи"
+                                            MediaSection.SPEECH -> "Озвучивание текста и документов"
+                                            MediaSection.ALL -> "Медиа"
                                         }
+                                        HubPage.REPLY_SPEECH -> "Озвучивание ответов"
+                                        HubPage.SHELL -> "OpenRouter Shell"
                                     },
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    if (page == HubPage.REPLY_SPEECH) "Отдельная модель и голос для кнопки OR" else if (settingsMode) "Каталог, маршрутизация и инструменты" else "Результат возвращается в текущий чат",
+                                    when (page) {
+                                        HubPage.MODELS -> "Поиск, фильтры, цены и назначение моделей"
+                                        HubPage.ROUTING -> "Правила выбора провайдера"
+                                        HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
+                                        HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
+                                        else -> "Результат возвращается в текущий чат"
+                                    },
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            if (page == HubPage.MODELS && !activeReturnLabel.isNullOrBlank()) {
-                                TextButton(onClick = returnFromModels) {
-                                    Icon(Icons.Outlined.ArrowBack, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Вернуться")
+                            if (!settingsMode) {
+                                IconButton(onClick = onDismiss) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
                                 }
-                            } else {
-                                IconButton(onClick = onDismiss) { Icon(Icons.Outlined.Close, contentDescription = "Закрыть") }
                             }
                         }
                         if (settingsMode) HubPageBar(page = page, onPage = { page = it })
@@ -320,25 +323,15 @@ private fun OpenRouterHubDialog(
                 }
             ) { padding ->
                 Column(Modifier.fillMaxSize().padding(padding)) {
-                    if (page == HubPage.MODELS && !activeReturnLabel.isNullOrBlank()) {
-                        Surface(color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 7.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    "Каталог открыт из: $activeReturnLabel",
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                                TextButton(onClick = returnFromModels) { Text("Вернуться") }
-                            }
-                        }
-                    }
                     state.status?.let { status ->
-                        Surface(color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)) {
-                            Text(status, modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall)
-                        }
+                        Text(
+                            status,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
@@ -655,6 +648,40 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                                     )
                                 },
                                 onClick = { menuOpen = false; controller.toggleQuickTextModel(model) }
+                            )
+                        }
+                        if (model.isBatch && ModelCategory.TEXT in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать для пакетных задач") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) }
+                            )
+                        }
+                        if (ModelCategory.IMAGE in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать для генерации изображений") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.IMAGE) }
+                            )
+                        }
+                        if (ModelCategory.VIDEO in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать для создания видео") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.VIDEO) }
+                            )
+                        }
+                        if (ModelCategory.TRANSCRIPTION in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать для распознавания речи") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TRANSCRIPTION) }
+                            )
+                        }
+                        if (ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать для озвучивания текста") },
+                                onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.SPEECH) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Использовать для озвучивания ответов") },
+                                onClick = { menuOpen = false; controller.assignReplySpeechModel(model) }
                             )
                         }
                     }
@@ -1941,32 +1968,30 @@ private fun CategoryModelPicker(
     models: List<ModelInfo>,
     onSelect: (ModelInfo) -> Unit
 ) {
-    var open by remember(title, current) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Text(title, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Box(Modifier.fillMaxWidth().padding(top = 4.dp)) {
-            FilledTonalButton(
-                onClick = { open = true },
-                enabled = models.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                current.ifBlank { if (models.isEmpty()) "Нет подходящих моделей" else "Не выбрана" },
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            TextButton(
+                onClick = {
+                    AsyncJobEvents.requestHub("models-settings", title)
+                    @Suppress("UNUSED_EXPRESSION")
+                    onSelect
+                },
+                enabled = models.isNotEmpty()
             ) {
-                Text(
-                    current.ifBlank { if (models.isEmpty()) "Нет подходящих моделей" else "Выбрать модель" },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) {
-                models.sortedBy { it.id }.take(160).forEach { model ->
-                    DropdownMenuItem(
-                        text = { Text(model.id, maxLines = 2, overflow = TextOverflow.Ellipsis) },
-                        onClick = {
-                            open = false
-                            onSelect(model)
-                        }
-                    )
-                }
+                Icon(Icons.Outlined.Search, contentDescription = null, modifier = Modifier.size(17.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Выбрать в каталоге")
             }
         }
     }
