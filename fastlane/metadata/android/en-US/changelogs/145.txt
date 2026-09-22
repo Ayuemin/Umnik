@@ -1,0 +1,1 @@
+Knowledge indexing now runs as persistent background work and resumes from saved embedding checkpoints instead of restarting the whole document. FB2 support and R8 remain enabled.
