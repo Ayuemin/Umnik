@@ -1720,18 +1720,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun setReasoningEnabled(enabled: Boolean) {
         DiagnosticLog.action(context, "reasoning_toggle", "enabled=$enabled; model=${currentTextModelId()}; effort=${_state.value.reasoningEffort.name}")
+        var effort = _state.value.reasoningEffort
         if (enabled) {
             val info = currentTextModelInfo()
-            val effort = preferredReasoningEffort(currentTextModelId(), info)
             if (info?.supportsReasoning != true) {
                 _state.value = _state.value.copy(status = "Выбранная модель не поддерживает размышление")
                 return
             }
-            if (info.supportsReasoningEffort && info.reasoningEfforts.isNotEmpty() && effort.apiValue !in info.reasoningEfforts) {
-                _state.value = _state.value.copy(status = "Выбранная сила размышления не поддерживается этой моделью")
-                return
-            }
-            _state.value = _state.value.copy(reasoningEffort = effort)
+            effort = normalizedReasoningEffort(effort, info)
         }
         val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
         val current = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
@@ -1739,16 +1735,30 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chat.id,
             current.copy(
                 reasoningEnabled = enabled,
-                reasoningEffort = _state.value.reasoningEffort
+                reasoningEffort = effort
             )
         )
-        _state.value = _state.value.copy(reasoningEnabled = enabled)
+        _state.value = _state.value.copy(
+            reasoningEnabled = enabled,
+            reasoningEffort = effort
+        )
     }
 
+    /** Changes reasoning only for the current chat. */
     fun setReasoningEffort(effort: ReasoningEffort) {
-        setReasoningEffortForModel(currentTextModelId(), effort)
+        val modelId = currentTextModelId()
+        val info = currentTextModelInfo()
+        if (info?.supportsReasoningEffort == true && info.reasoningEfforts.isNotEmpty() && effort.apiValue !in info.reasoningEfforts) {
+            _state.value = _state.value.copy(status = "${reasoningEffortName(effort)} не поддерживается моделью ${modelId.substringAfter('/')}")
+            return
+        }
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
+        val current = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+        projectAutomation.saveProfile(chat.id, current.copy(reasoningEffort = effort))
+        _state.value = _state.value.copy(reasoningEffort = effort)
     }
 
+    /** Default effort for a model in newly created chats; existing chats are not changed. */
     fun setReasoningEffortForModel(modelId: String, effort: ReasoningEffort) {
         val clean = modelId.trim()
         if (clean.isBlank()) return
@@ -1762,25 +1772,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
         val nextMap = _state.value.reasoningEffortsByModel + (clean to effort)
         prefs.edit().putString("reasoning_efforts_by_model_json", gson.toJson(nextMap)).apply()
-
-        if (clean == currentTextModelId()) {
-            val keepReasoning = reasoningStillValid(info, effort)
-            val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-            if (chat != null) {
-                val current = projectAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
-                projectAutomation.saveProfile(
-                    chat.id,
-                    current.copy(reasoningEffort = effort, reasoningEnabled = keepReasoning)
-                )
-            }
-            _state.value = _state.value.copy(
-                reasoningEffortsByModel = nextMap,
-                reasoningEffort = effort,
-                reasoningEnabled = keepReasoning
-            )
-        } else {
-            _state.value = _state.value.copy(reasoningEffortsByModel = nextMap)
-        }
+        _state.value = _state.value.copy(
+            reasoningEffortsByModel = nextMap,
+            status = "Уровень по умолчанию для новых чатов сохранён"
+        )
     }
 
     fun saveUserProfile(name: String, gender: String, age: String, occupation: String, note: String) {
@@ -3679,8 +3674,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value.reasoningEnabled && info?.supportsReasoning == true &&
             (!info.supportsReasoningEffort || info.reasoningEfforts.isEmpty() || effort.apiValue in info.reasoningEfforts)
 
-    private fun preferredReasoningEffort(modelId: String, info: ModelInfo?): ReasoningEffort {
-        val configured = _state.value.reasoningEffortsByModel[modelId] ?: _state.value.reasoningEffort
+    private fun globalDefaultReasoningEffort(): ReasoningEffort = runCatching {
+        ReasoningEffort.valueOf(
+            prefs.getString("reasoning_effort", ReasoningEffort.MEDIUM.name)
+                ?: ReasoningEffort.MEDIUM.name
+        )
+    }.getOrDefault(ReasoningEffort.MEDIUM)
+
+    private fun normalizedReasoningEffort(configured: ReasoningEffort, info: ModelInfo?): ReasoningEffort {
         if (info?.supportsReasoningEffort != true || info.reasoningEfforts.isEmpty()) return configured
         if (configured.apiValue in info.reasoningEfforts) return configured
         val fallbackOrder = listOf(
@@ -3693,6 +3694,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         return fallbackOrder.firstOrNull { it.apiValue in info.reasoningEfforts } ?: configured
     }
+
+    private fun preferredReasoningEffort(modelId: String, info: ModelInfo?): ReasoningEffort =
+        normalizedReasoningEffort(
+            _state.value.reasoningEffortsByModel[modelId] ?: globalDefaultReasoningEffort(),
+            info
+        )
 
     private fun reasoningEffortName(effort: ReasoningEffort): String = when (effort) {
         ReasoningEffort.MINIMAL -> "Минимальная сила"
