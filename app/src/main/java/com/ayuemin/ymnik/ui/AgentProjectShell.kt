@@ -680,13 +680,15 @@ private fun AgentSettingsDialog(
                 )
             }
 
-            item { AgentSettingsSectionTitle("Локальная среда") }
             item {
-                Text(
-                    "Навыки, файлы, база знаний, память и разговоры хранятся в локальной папке этого агента и не наследуются другими агентами.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    AgentSettingsSectionTitle("Локальная среда")
+                    Spacer(Modifier.weight(1f))
+                    UmnikInfoHint(
+                        title = "Локальная среда агента",
+                        text = "Навыки, файлы, база знаний, память и разговоры хранятся в локальной папке этого агента и не наследуются другими агентами."
+                    )
+                }
             }
 
             item {
