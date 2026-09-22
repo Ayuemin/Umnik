@@ -4322,7 +4322,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     inputTokens = result.inputTokens,
                     outputTokens = result.outputTokens,
                     responseDurationMs = (System.currentTimeMillis() - answerStartedAt).coerceAtLeast(0L),
-                    knowledgeHitCount = answerKnowledgeHitCount.takeIf { it > 0 },
+                    knowledgeHitCount = if (mode == ChatMode.TEXT) answerKnowledgeHitCount else null,
                     knowledgeSources = answerKnowledgeSources.takeIf { it.isNotEmpty() },
                     webSearchEnabled = answerWebSearchEnabled,
                     reasoningEnabled = answerReasoningEnabled,
