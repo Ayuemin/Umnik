@@ -57,6 +57,7 @@ fun KnowledgeBaseSection(
     val documents = vm.knowledgeDocuments(kind, ownerId)
     val knowledgeTask = vm.knowledgeTaskLabel(kind, ownerId)
     val knowledgeFailure = vm.knowledgeFailure(kind, ownerId)
+    val indexedEmbeddingModels = documents.map { it.embeddingModelId }.filter { it.isNotBlank() }.distinct()
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
     var modelId by remember(ownerId, current.embeddingModelId) { mutableStateOf(current.embeddingModelId) }
@@ -141,7 +142,7 @@ fun KnowledgeBaseSection(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     UmnikInfoHint(
                         title = "Embedding-модель",
-                        text = "ID Embeddings-модели OpenRouter. Она применяется к новым и переиндексируемым источникам. Уже готовые индексы продолжают работать со своей моделью."
+                        text = "Это модель для новых и переиндексируемых источников. Каждый уже готовый источник сохраняет ту Embeddings-модель, которой был проиндексирован. Поэтому в одной базе технически могут одновременно работать несколько Embeddings-моделей: при каждом вопросе Umnik делает отдельный embedding запроса для каждой используемой модели. Для скорости и более однородной оценки релевантности лучше по возможности держать одну модель на базу и переиндексировать старые источники после смены."
                     )
                     IconButton(
                         onClick = {
@@ -157,6 +158,21 @@ fun KnowledgeBaseSection(
             },
             singleLine = true
         )
+
+        if (indexedEmbeddingModels.size > 1) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "В готовых индексах используются ${indexedEmbeddingModels.size} Embeddings-модели",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+                UmnikInfoHint(
+                    title = "Несколько Embeddings-моделей",
+                    text = "Umnik умеет искать по таким источникам: запрос отдельно преобразуется каждой моделью, а результаты затем объединяются. Это добавляет сетевые запросы и может сделать оценки релевантности менее однородными. Если это не было задумано специально, переиндексируйте старые источники текущей моделью."
+                )
+            }
+        }
 
         Text("Фрагментов в запрос: $topK", fontWeight = FontWeight.SemiBold)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
