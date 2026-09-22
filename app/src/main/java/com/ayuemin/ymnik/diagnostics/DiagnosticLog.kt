@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik.diagnostics
 
+import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
 import android.os.SystemClock
@@ -20,12 +21,91 @@ object DiagnosticLog {
     private const val MAX_BYTES = 8L * 1024L * 1024L
     private const val TRIM_TO_BYTES = 6L * 1024L * 1024L
     private const val FILE_NAME = "umnik-diagnostic.log"
+    private const val KEY_LAST_EXIT_TIMESTAMP = "diagnostic_last_exit_timestamp"
     private val sequence = AtomicLong(0L)
     @Volatile private var sessionId: String = "process-${UUID.randomUUID().toString().take(8)}"
+    @Volatile private var crashHandlerInstalled: Boolean = false
 
     fun isEnabled(context: Context): Boolean =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_ENABLED, false)
+
+
+    fun installCrashHandler(context: Context) {
+        if (crashHandlerInstalled) return
+        synchronized(this) {
+            if (crashHandlerInstalled) return
+            val app = context.applicationContext
+            val previous = Thread.getDefaultUncaughtExceptionHandler()
+            Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+                runCatching {
+                    record(
+                        app,
+                        "UNCAUGHT",
+                        "thread=${thread.name}; id=${thread.id}",
+                        throwable
+                    )
+                }
+                previous?.uncaughtException(thread, throwable)
+            }
+            crashHandlerInstalled = true
+        }
+    }
+
+    fun recordPreviousProcessExit(context: Context) {
+        if (!isEnabled(context) || Build.VERSION.SDK_INT < 30) return
+        val app = context.applicationContext
+        val prefs = app.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val lastSeen = prefs.getLong(KEY_LAST_EXIT_TIMESTAMP, 0L)
+        val info = runCatching {
+            app.getSystemService(ActivityManager::class.java)
+                .getHistoricalProcessExitReasons(app.packageName, 0, 5)
+                .maxByOrNull { it.timestamp }
+        }.getOrNull() ?: return
+        if (info.timestamp <= lastSeen) return
+        prefs.edit().putLong(KEY_LAST_EXIT_TIMESTAMP, info.timestamp).apply()
+        record(
+            app,
+            "PROCESS_EXIT",
+            buildString {
+                append("previous process; reason=")
+                append(info.reason)
+                append("(")
+                append(exitReasonLabel(info.reason))
+                append("); status=")
+                append(info.status)
+                append("; importance=")
+                append(info.importance)
+                append("; timestamp=")
+                append(info.timestamp)
+                info.description?.takeIf { it.isNotBlank() }?.let {
+                    append("; description=")
+                    append(it.take(500))
+                }
+            }
+        )
+    }
+
+    private fun exitReasonLabel(reason: Int): String = when (reason) {
+        0 -> "UNKNOWN"
+        1 -> "EXIT_SELF"
+        2 -> "SIGNALED"
+        3 -> "LOW_MEMORY"
+        4 -> "CRASH"
+        5 -> "CRASH_NATIVE"
+        6 -> "ANR"
+        7 -> "INITIALIZATION_FAILURE"
+        8 -> "PERMISSION_CHANGE"
+        9 -> "EXCESSIVE_RESOURCE_USAGE"
+        10 -> "USER_REQUESTED"
+        11 -> "USER_STOPPED"
+        12 -> "DEPENDENCY_DIED"
+        13 -> "OTHER"
+        14 -> "FREEZER"
+        15 -> "PACKAGE_STATE_CHANGE"
+        16 -> "PACKAGE_UPDATED"
+        else -> "REASON_$reason"
+    }
 
     @Synchronized
     fun setEnabled(context: Context, enabled: Boolean) {
