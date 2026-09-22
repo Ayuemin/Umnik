@@ -290,7 +290,7 @@ fun NavigationSidebar(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp))
+                        Icon(Icons.Outlined.Settings, contentDescription = null, modifier = Modifier.size(21.dp), tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(10.dp))
                         Text("Настройки", maxLines = 1, fontWeight = FontWeight.Medium)
                     }
