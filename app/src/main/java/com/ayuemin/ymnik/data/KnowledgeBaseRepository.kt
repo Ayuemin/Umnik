@@ -376,7 +376,7 @@ class KnowledgeBaseRepository(private val context: Context) {
                 charCount = chunks.sumOf { it.text.length },
                 indexedAt = System.currentTimeMillis()
             )
-                        synchronized(DOCUMENT_LOCK) {
+            synchronized(DOCUMENT_LOCK) {
                 val latest = loadDocuments()
                 documents = latest + document
                 saveDocuments(documents)
