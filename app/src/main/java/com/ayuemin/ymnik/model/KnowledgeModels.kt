@@ -42,7 +42,10 @@ data class KnowledgeHit(
     val documentName: String,
     val text: String,
     val page: Int? = null,
-    val score: Double
+    val score: Double,
+    val ordinal: Int = -1,
+    val semanticScore: Double? = null,
+    val lexicalScore: Double? = null
 )
 
 
