@@ -16,7 +16,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -159,18 +158,12 @@ fun KnowledgeBaseSection(
                         Column(Modifier.weight(1f)) {
                             Text(document.name, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${document.chunkCount} фрагм. · ${knowledgeSize(document.size)} · ${document.embeddingModelId.substringAfterLast('/')}",
+                                "${document.chunkCount} фрагм. · ${knowledgeSize(document.size)}",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 2,
                                 overflow = TextOverflow.Ellipsis
                             )
-                        }
-                        IconButton(
-                            onClick = { vm.reindexKnowledgeDocument(document.id) },
-                            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
-                        ) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "Переиндексировать")
                         }
                         IconButton(
                             onClick = { vm.deleteKnowledgeDocument(document.id) },
