@@ -32,7 +32,7 @@ data class ChatMemoryGlobalSettings(
     companion object {
         const val CURRENT_SCHEMA_VERSION = 3
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
-        const val DEFAULT_SUMMARY_MODEL = "openrouter/auto"
+        const val DEFAULT_SUMMARY_MODEL = ""
     }
 }
 
