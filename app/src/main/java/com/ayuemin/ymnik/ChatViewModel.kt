@@ -1203,10 +1203,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 error
             )
         }.getOrElse { error ->
-            throw IllegalStateException(
-                "Системная модель не смогла подготовить запрос к базе знаний. Проверьте её выбор в Настройки → Модели.",
-                error
-            )
+            val detail = error.message.orEmpty()
+            val friendly = when {
+                "OpenRouter 429" in detail ->
+                    "Системная модель временно ограничена провайдером (429). Попробуйте позже или выберите другую системную модель."
+                Regex("OpenRouter 5\\d\\d").containsMatchIn(detail) ->
+                    "Провайдер системной модели временно недоступен. Попробуйте ещё раз или выберите другую системную модель."
+                detail.contains("JSON", ignoreCase = true) ||
+                    detail.contains("поисковый запрос", ignoreCase = true) ->
+                    "Системная модель вернула неподходящий служебный ответ. Попробуйте другую системную модель."
+                else ->
+                    "Не удалось выполнить системную модель: " +
+                        detail.take(180).ifBlank { "неизвестная ошибка" }
+            }
+            throw IllegalStateException(friendly, error)
         }.also { plan ->
             DiagnosticLog.record(
                 context,
