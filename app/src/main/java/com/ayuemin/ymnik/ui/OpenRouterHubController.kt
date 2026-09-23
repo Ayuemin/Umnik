@@ -24,7 +24,6 @@ import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ProviderType
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.model.VideoJob
@@ -51,7 +50,6 @@ data class OpenRouterHubState(
     val catalog: List<ModelInfo> = emptyList(),
     val routing: ProviderRoutingSettings = ProviderRoutingSettings(),
     val tools: ServerToolSettings = ServerToolSettings(),
-    val rag: RagSettings = RagSettings(),
     val media: OpenRouterMediaSettings = OpenRouterMediaSettings(),
     val batches: List<BatchJob> = emptyList(),
     val videos: List<VideoJob> = emptyList(),
@@ -86,7 +84,6 @@ class OpenRouterHubController(
         OpenRouterHubState(
             routing = featurePrefs.routing(),
             tools = featurePrefs.tools(),
-            rag = featurePrefs.rag(),
             media = featurePrefs.media(),
             batches = batchRepository.list(),
             videos = videoRepository.list()
@@ -146,12 +143,6 @@ class OpenRouterHubController(
     fun updateTools(value: ServerToolSettings) {
         featurePrefs.saveTools(value)
         mutableState.value = mutableState.value.copy(tools = value, status = null)
-    }
-
-    fun updateRag(value: RagSettings) {
-        val clean = value.copy(topK = value.topK.coerceIn(1, 30))
-        featurePrefs.saveRag(clean)
-        mutableState.value = mutableState.value.copy(rag = clean, status = "Настройки RAG сохранены")
     }
 
     fun updateMedia(value: OpenRouterMediaSettings) {
@@ -229,14 +220,13 @@ class OpenRouterHubController(
                 mutableState.value = mutableState.value.copy(media = media, status = null)
             }
             ModelCategory.EMBEDDINGS -> {
-                val rag = mutableState.value.rag.copy(embeddingModel = model.id)
-                featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = null)
+                viewModel.setEmbeddingModel(model.id)
+                mutableState.value = mutableState.value.copy(status = null)
             }
             ModelCategory.RERANK -> {
-                val rag = mutableState.value.rag.copy(rerankModel = model.id)
-                featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = null)
+                mutableState.value = mutableState.value.copy(
+                    status = "Отдельная Rerank-модель сейчас не используется"
+                )
             }
         }
     }
@@ -266,12 +256,14 @@ class OpenRouterHubController(
                 featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель распознавания снята")
             }
             ModelCategory.EMBEDDINGS -> {
-                val rag = mutableState.value.rag.copy(embeddingModel = "")
-                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Embedding-модель снята")
+                mutableState.value = mutableState.value.copy(
+                    status = "Embeddings-модель задаётся глобально в Настройки → Модели"
+                )
             }
             ModelCategory.RERANK -> {
-                val rag = mutableState.value.rag.copy(rerankModel = "")
-                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Rerank-модель снята")
+                mutableState.value = mutableState.value.copy(
+                    status = "Отдельная Rerank-модель сейчас не используется"
+                )
             }
         }
     }
