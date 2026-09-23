@@ -2095,6 +2095,8 @@ private fun MessageCard(
             message.costUsd != null ||
             message.responseDurationMs != null ||
             message.knowledgeHitCount != null ||
+            message.knowledgeSearchAttempted != null ||
+            message.knowledgeBaseOnly != null ||
             message.webSearchEnabled != null ||
             message.reasoningEnabled != null ||
             message.memoryContextUsed != null ||
@@ -2287,6 +2289,8 @@ private fun AnswerInfoSheet(
 ) {
     var technicalOpen by remember(message.id) { mutableStateOf(false) }
     val knowledgeCount = message.knowledgeHitCount
+    val knowledgeSearchAttempted = message.knowledgeSearchAttempted == true
+    val knowledgeBaseOnly = message.knowledgeBaseOnly == true
     val sources = message.knowledgeSources.orEmpty()
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -2329,6 +2333,8 @@ private fun AnswerInfoSheet(
 
             if (
                 knowledgeCount != null ||
+                message.knowledgeSearchAttempted != null ||
+                message.knowledgeBaseOnly != null ||
                 message.webSearchEnabled != null ||
                 message.reasoningEnabled != null ||
                 message.memoryContextUsed != null ||
@@ -2338,11 +2344,23 @@ private fun AnswerInfoSheet(
             ) {
                 Spacer(Modifier.height(8.dp))
                 AnswerInfoSectionTitle("Контекст")
-                knowledgeCount?.let { count ->
-                    AnswerInfoRow(
-                        "База знаний",
-                        if (count > 0) "Использована · $count фрагм." else "Фрагменты не добавлялись"
-                    )
+                if (knowledgeCount != null || knowledgeSearchAttempted || knowledgeBaseOnly) {
+                    val knowledgeStatus = when {
+                        knowledgeSearchAttempted && (knowledgeCount ?: 0) > 0 ->
+                            "База участвовала · подобрано ${knowledgeCount ?: 0} фрагм."
+                        knowledgeSearchAttempted ->
+                            "Поиск выполнен · подходящего не найдено"
+                        knowledgeBaseOnly ->
+                            "Запрошена, но база недоступна или выключена"
+                        (knowledgeCount ?: 0) > 0 ->
+                            "База участвовала · подобрано ${knowledgeCount ?: 0} фрагм."
+                        else ->
+                            "Фрагменты не добавлялись"
+                    }
+                    AnswerInfoRow("База знаний", knowledgeStatus)
+                    if (knowledgeBaseOnly) {
+                        AnswerInfoRow("Режим базы", "Только по загруженным документам")
+                    }
                     if (sources.isNotEmpty()) {
                         Column(
                             modifier = Modifier.padding(start = 12.dp, bottom = 4.dp),
