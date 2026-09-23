@@ -46,6 +46,8 @@ class KnowledgeHybridRankerTest {
         assertTrue(!KnowledgeHybridRanker.passesRelevanceGate(0.25, 0.0))
         assertTrue(KnowledgeHybridRanker.passesRelevanceGate(0.45, 0.0))
         assertTrue(KnowledgeHybridRanker.passesRelevanceGate(0.36, 2.2))
-        assertTrue(KnowledgeHybridRanker.passesRelevanceGate(0.30, 7.0))
+        assertTrue(!KnowledgeHybridRanker.passesRelevanceGate(0.426, 0.0))
+        assertTrue(!KnowledgeHybridRanker.passesRelevanceGate(0.30, 7.0))
+        assertTrue(!KnowledgeHybridRanker.passesRelevanceGate(0.274, 6.21))
     }
 }
