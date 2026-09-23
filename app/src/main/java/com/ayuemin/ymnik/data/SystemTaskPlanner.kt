@@ -57,17 +57,11 @@ internal class SystemTaskPlanner(
             ${currentQuery.take(12000)}
         """.trimIndent()
 
-        val result = (apiOverride ?: api).chat(
+        val result = (apiOverride ?: api).internalText(
             apiKey = apiKey,
             model = modelId,
-            history = emptyList(),
             prompt = prompt,
-            attachments = emptyList(),
             systemPrompt = "Ты служебный модуль Umnik. Верни только требуемый JSON без Markdown и пояснений.",
-            webSearchEnabled = false,
-            reasoningEnabled = false,
-            reasoningEffort = null,
-            toolsEnabled = false,
             baseUrl = baseUrl,
             modelInfo = ModelInfo(modelId)
         )
