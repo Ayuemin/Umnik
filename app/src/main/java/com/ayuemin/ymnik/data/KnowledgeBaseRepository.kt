@@ -800,7 +800,6 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     private fun sanitizeSettings(value: KnowledgeBaseSettings): KnowledgeBaseSettings = value.copy(
-        embeddingModelId = value.embeddingModelId.trim().ifBlank { KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL },
         topK = value.topK.coerceIn(2, 4)
     )
 
