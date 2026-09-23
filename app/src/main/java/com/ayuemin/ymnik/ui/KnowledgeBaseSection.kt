@@ -123,7 +123,7 @@ fun KnowledgeBaseSection(
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Использовать автоматически", Modifier.weight(1f))
+            Text("Использовать базу знаний", Modifier.weight(1f))
             Switch(checked = enabled, onCheckedChange = { enabled = it })
         }
 
