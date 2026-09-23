@@ -132,7 +132,6 @@ fun KnowledgeBaseSection(
                     kind,
                     ownerId,
                     KnowledgeBaseSettings(
-                        embeddingModelId = vm.globalEmbeddingModelId(),
                         enabled = enabled,
                         topK = KnowledgeBaseSettings.DEFAULT_TOP_K
                     )
