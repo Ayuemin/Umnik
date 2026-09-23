@@ -28,7 +28,7 @@ object OrchestratorCodec {
             OrchestratorAction(
                 id = obj.string("id").ifBlank { UUID.randomUUID().toString() },
                 type = type,
-                specialistId = obj.string("specialistId").ifBlank { null },
+                specialistId = obj.string("specialistId").ifBlank { obj.string("agentId") }.ifBlank { null },
                 taskId = obj.string("taskId").ifBlank { null },
                 objective = obj.string("objective"),
                 assignmentInstruction = obj.string("assignmentInstruction"),
