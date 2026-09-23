@@ -177,6 +177,17 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(status = null)
     }
 
+    fun useAsSystemModel(model: ModelInfo) {
+        if (ModelCategory.TEXT !in model.categories || model.isBatch) {
+            mutableState.value = mutableState.value.copy(
+                status = "Для системных задач нужна обычная текстовая модель"
+            )
+            return
+        }
+        viewModel.setSystemModel(model.id)
+        mutableState.value = mutableState.value.copy(status = null)
+    }
+
     fun useAsImageModel(model: ModelInfo) {
         if (ModelCategory.IMAGE !in model.categories) {
             mutableState.value = mutableState.value.copy(status = "Эта модель не генерирует изображения")
