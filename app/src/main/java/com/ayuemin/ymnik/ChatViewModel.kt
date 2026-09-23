@@ -1002,19 +1002,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
-        val globalSettings = settings
-        knowledgeBase.saveSettings(kind, ownerId, globalSettings)
-        if (kind == KnowledgeOwnerKind.AGENT) {
-            agent(ownerId)?.let { profile ->
-                saveAgent(
-                    profile.copy(
-                        knowledgeBase = profile.knowledgeBase.copy(
-                            enabled = globalSettings.enabled
-                        )
-                    )
-                )
-            }
-        }
+        knowledgeBase.saveSettings(kind, ownerId, settings)
         touchKnowledgeOwner(kind, ownerId, "Настройки базы знаний сохранены")
     }
 
