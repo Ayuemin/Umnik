@@ -9,6 +9,7 @@ import com.ayuemin.ymnik.model.ChatMemoryHit
 import com.ayuemin.ymnik.model.ChatMemorySnapshot
 import com.ayuemin.ymnik.model.ChatMemoryStats
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.DataInputStream
@@ -35,6 +36,20 @@ class ChatMemoryRepository(private val context: Context) {
     fun saveSettings(value: ChatMemoryGlobalSettings) {
         prefs.edit().putString(KEY_SETTINGS, gson.toJson(sanitize(value))).apply()
     }
+
+    fun legacyEmbeddingModelId(): String = legacyModelId("embeddingModelId")
+
+    fun legacySummaryModelId(): String = legacyModelId("summaryModelId")
+
+    private fun legacyModelId(field: String): String = runCatching {
+        val raw = prefs.getString(KEY_SETTINGS, null).orEmpty()
+        if (raw.isBlank()) return@runCatching ""
+        JsonParser.parseString(raw).asJsonObject
+            .get(field)
+            ?.asString
+            ?.trim()
+            .orEmpty()
+    }.getOrDefault("")
 
     /**
      * Agent conversations may have a fully isolated memory/context profile.
@@ -87,6 +102,8 @@ class ChatMemoryRepository(private val context: Context) {
     fun appendCheckpoint(
         chatId: String,
         settings: ChatMemoryGlobalSettings,
+        embeddingModelId: String,
+        summaryModelId: String,
         checkpoint: ChatMemoryCheckpoint,
         chunks: List<ChatMemoryChunk>,
         vectors: List<FloatArray>,
@@ -95,15 +112,17 @@ class ChatMemoryRepository(private val context: Context) {
     ): ChatMemorySnapshot {
         require(chunks.size == vectors.size) { "Число фрагментов памяти и embeddings не совпадает" }
         val clean = sanitize(settings)
+        val cleanEmbeddingModelId = embeddingModelId.trim()
+        val cleanSummaryModelId = summaryModelId.trim()
         val current = snapshot(chatId)?.takeIf {
-            it.embeddingModelId == clean.embeddingModelId &&
+            it.embeddingModelId == cleanEmbeddingModelId &&
                 it.chunkTokens == clean.chunkTokens &&
                 it.chunkOverlapTokens == clean.chunkOverlapTokens &&
                 it.embeddingContextTokens == clean.embeddingContextTokens
         } ?: ChatMemorySnapshot(
             chatId = chatId,
-            embeddingModelId = clean.embeddingModelId,
-            summaryModelId = clean.summaryModelId,
+            embeddingModelId = cleanEmbeddingModelId,
+            summaryModelId = cleanSummaryModelId,
             chunkTokens = clean.chunkTokens,
             chunkOverlapTokens = clean.chunkOverlapTokens,
             embeddingContextTokens = clean.embeddingContextTokens
@@ -116,7 +135,7 @@ class ChatMemoryRepository(private val context: Context) {
             chunk.copy(vectorDimension = vector.size)
         }
         val next = current.copy(
-            summaryModelId = clean.summaryModelId,
+            summaryModelId = cleanSummaryModelId,
             stateCard = stateCard.take(clean.stateCardMaxChars),
             checkpoints = current.checkpoints + checkpoint,
             chunks = current.chunks + storedChunks,
@@ -135,21 +154,25 @@ class ChatMemoryRepository(private val context: Context) {
     fun appendIndexedChunks(
         chatId: String,
         settings: ChatMemoryGlobalSettings,
+        embeddingModelId: String,
+        summaryModelId: String,
         chunks: List<ChatMemoryChunk>,
         vectors: List<FloatArray>,
         fingerprints: Map<String, String>
     ): ChatMemorySnapshot {
         require(chunks.size == vectors.size) { "Число фрагментов памяти и embeddings не совпадает" }
         val clean = sanitize(settings)
+        val cleanEmbeddingModelId = embeddingModelId.trim()
+        val cleanSummaryModelId = summaryModelId.trim()
         val current = snapshot(chatId)?.takeIf {
-            it.embeddingModelId == clean.embeddingModelId &&
+            it.embeddingModelId == cleanEmbeddingModelId &&
                 it.chunkTokens == clean.chunkTokens &&
                 it.chunkOverlapTokens == clean.chunkOverlapTokens &&
                 it.embeddingContextTokens == clean.embeddingContextTokens
         } ?: ChatMemorySnapshot(
             chatId = chatId,
-            embeddingModelId = clean.embeddingModelId,
-            summaryModelId = clean.summaryModelId,
+            embeddingModelId = cleanEmbeddingModelId,
+            summaryModelId = cleanSummaryModelId,
             chunkTokens = clean.chunkTokens,
             chunkOverlapTokens = clean.chunkOverlapTokens,
             embeddingContextTokens = clean.embeddingContextTokens
@@ -162,7 +185,7 @@ class ChatMemoryRepository(private val context: Context) {
             chunk.copy(vectorDimension = vector.size)
         }
         val next = current.copy(
-            summaryModelId = clean.summaryModelId,
+            summaryModelId = cleanSummaryModelId,
             chunks = current.chunks + storedChunks,
             indexedFingerprints = current.indexedFingerprints + fingerprints,
             updatedAt = System.currentTimeMillis()
@@ -333,16 +356,12 @@ class ChatMemoryRepository(private val context: Context) {
         }
         val overlap = if (legacyV2) 80 else value.chunkOverlapTokens.coerceIn(0, 1_000)
         val neighbors = if (legacyV2) 1 else value.neighborChunks.coerceIn(0, 1)
-        val embeddingId = runCatching { value.embeddingModelId }.getOrNull()?.trim().orEmpty()
-        val summaryId = runCatching { value.summaryModelId }.getOrNull()?.trim().orEmpty()
         val autoBudget = if (legacyV3 || value.autoContextBudgetTokens <= 0) 16_000 else value.autoContextBudgetTokens
         val economyBudget = if (legacyV3 || value.economyContextBudgetTokens <= 0) 6_000 else value.economyContextBudgetTokens
         val autoHits = if (legacyV3 || value.autoTopK <= 0) 3 else value.autoTopK
         val economyHits = if (legacyV3 || value.economyTopK <= 0) 2 else value.economyTopK
         return value.copy(
             schemaVersion = ChatMemoryGlobalSettings.CURRENT_SCHEMA_VERSION,
-            embeddingModelId = embeddingId.ifBlank { ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL },
-            summaryModelId = summaryId.ifBlank { ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL },
             defaultContextMode = defaultMode,
             autoThresholdTokens = autoThreshold,
             economyThresholdTokens = economyThreshold,
