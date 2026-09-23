@@ -789,7 +789,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
-    fun chatMemorySettings()    fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
+    fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
 
     fun saveChatMemorySettings(settings: ChatMemoryGlobalSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
