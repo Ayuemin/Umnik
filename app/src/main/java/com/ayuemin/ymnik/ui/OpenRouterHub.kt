@@ -83,7 +83,6 @@ import com.ayuemin.ymnik.model.ModelUniversality
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.VideoJobStatus
