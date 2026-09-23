@@ -153,7 +153,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
 
 private enum class SettingsCategory(val title: String, val subtitle: String) {
     CONNECTION("Подключение", "API-ключ OpenRouter"),
-    MODELS("Модели", "Чаты, изображения, размышление и речь"),
+    MODELS("Модели", "Чаты, системная, Embeddings, изображения и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
     DATA("Данные", "Локальное хранилище и файлы"),
@@ -260,6 +260,10 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var settingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var storageOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
+    var systemModelExpanded by remember { mutableStateOf(false) }
+    var embeddingModelExpanded by remember { mutableStateOf(false) }
+    var systemModelId by remember(state.systemModel) { mutableStateOf(state.systemModel) }
+    var embeddingModelId by remember(state.embeddingModel) { mutableStateOf(state.embeddingModel) }
     var defaultChatModelExpanded by remember { mutableStateOf(false) }
     var quickModelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
@@ -528,6 +532,56 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             }
                         }
 
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Системная модель",
+                        subtitle = state.systemModel.substringAfterLast('/').ifBlank { "Не выбрана" },
+                        icon = Icons.Outlined.Psychology,
+                        expanded = systemModelExpanded,
+                        onToggle = { systemModelExpanded = !systemModelExpanded },
+                        info = "Общая служебная текстовая модель Umnik. Она не отвечает пользователю напрямую: понимает естественные запросы к базе знаний, связывает короткие продолжения с предыдущим вопросом, определяет режим «только по документам» и делает служебные конспекты длинных чатов. Обычно для этих задач достаточно дешёвой небольшой модели; можно выбрать и бесплатную, если она стабильно следует инструкциям. Пока системная модель не выбрана, база знаний не запускается."
+                    ) {
+                        UmnikModelIdField(
+                            label = "ID системной модели",
+                            value = systemModelId,
+                            onValueChange = { systemModelId = it },
+                            onPick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Модели"
+                                )
+                            },
+                            onApply = { vm.setSystemModel(systemModelId) },
+                            info = "Используется только для внутренних коротких текстовых операций Umnik. Основную модель чата эта настройка не меняет."
+                        )
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Embeddings-модель",
+                        subtitle = state.embeddingModel.substringAfterLast('/').ifBlank { "Не выбрана" },
+                        icon = Icons.Outlined.Search,
+                        expanded = embeddingModelExpanded,
+                        onToggle = { embeddingModelExpanded = !embeddingModelExpanded },
+                        info = "Одна общая Embeddings-модель используется базой знаний и смысловой памятью чатов и агентов. Обычно её выбирают один раз и не меняют. Если позже модель исчезнет из каталога или заметно подорожает, можно выбрать другую. Важно: при сохранении другой Embeddings-модели все существующие векторные индексы становятся несовместимыми, поэтому Umnik автоматически запускает переиндексацию всех документов и перестраивает служебную память. Это может занять время и потребовать дополнительных запросов к OpenRouter."
+                    ) {
+                        UmnikModelIdField(
+                            label = "ID Embeddings-модели",
+                            value = embeddingModelId,
+                            onValueChange = { embeddingModelId = it },
+                            onPick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Модели"
+                                )
+                            },
+                            onApply = { vm.setEmbeddingModel(embeddingModelId) },
+                            info = "Меняйте эту модель только осознанно: сразу после сохранения новой модели Umnik автоматически переиндексирует всё, что зависит от embeddings."
+                        )
                     }
                 }
 
