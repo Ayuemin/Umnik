@@ -903,7 +903,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         onClick = {
                             vm.openUsageGuide()
                             onBack()
-                        }
+                        },
+                        trailingIcon = Icons.Outlined.KeyboardArrowDown
                     )
                 }
 
