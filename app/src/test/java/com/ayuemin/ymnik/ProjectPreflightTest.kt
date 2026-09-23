@@ -5,6 +5,8 @@ import com.ayuemin.ymnik.model.AgentModelRef
 import com.ayuemin.ymnik.model.AgentProfile
 import com.ayuemin.ymnik.model.ConnectionProfile
 import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.KnowledgeDocument
+import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.ProviderType
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -37,9 +39,11 @@ class ProjectPreflightTest {
             profiles = listOf(profile),
             disabledConnectionIds = emptySet(),
             hasApiKey = { true },
+            systemModelId = "",
             filesForAgent = { emptyList() },
             skillIdsForAgent = { emptySet() },
             knowledgeForAgent = { emptyList() },
+            knowledgeEnabledForAgent = { false },
             fileExists = { true }
         )
 
@@ -56,9 +60,11 @@ class ProjectPreflightTest {
             profiles = listOf(profile),
             disabledConnectionIds = emptySet(),
             hasApiKey = { true },
+            systemModelId = "",
             filesForAgent = { emptyList() },
             skillIdsForAgent = { emptySet() },
             knowledgeForAgent = { emptyList() },
+            knowledgeEnabledForAgent = { false },
             fileExists = { true }
         )
 
@@ -75,13 +81,82 @@ class ProjectPreflightTest {
             profiles = listOf(profile),
             disabledConnectionIds = emptySet(),
             hasApiKey = { false },
+            systemModelId = "",
             filesForAgent = { emptyList() },
             skillIdsForAgent = { emptySet() },
             knowledgeForAgent = { emptyList() },
+            knowledgeEnabledForAgent = { false },
             fileExists = { true }
         )
 
         assertFalse(report.ready)
         assertTrue(report.blockers.any { it.message.contains("API-ключ") })
     }
+    @Test
+    fun blocksKnowledgeBaseWithoutSystemModel() {
+        val document = KnowledgeDocument(
+            id = "doc",
+            ownerKind = KnowledgeOwnerKind.AGENT,
+            ownerId = "writer",
+            name = "book.txt",
+            mimeType = "text/plain",
+            localPath = "/tmp/book.txt",
+            size = 10,
+            embeddingModelId = "test/embed",
+            vectorDimension = 3,
+            chunkCount = 1,
+            charCount = 10
+        )
+        val report = ProjectPreflight.inspect(
+            project = Project("project", "Test"),
+            orchestrator = agent("orchestrator", AgentKind.ORCHESTRATOR),
+            specialists = listOf(agent("writer", AgentKind.SPECIALIST)),
+            profiles = listOf(profile),
+            disabledConnectionIds = emptySet(),
+            hasApiKey = { true },
+            systemModelId = "",
+            filesForAgent = { emptyList() },
+            skillIdsForAgent = { emptySet() },
+            knowledgeForAgent = { agentId -> if (agentId == "writer") listOf(document) else emptyList() },
+            knowledgeEnabledForAgent = { agentId -> agentId == "writer" },
+            fileExists = { true }
+        )
+
+        assertFalse(report.ready)
+        assertTrue(report.blockers.any { it.message.contains("системная модель") })
+    }
+
+    @Test
+    fun disabledKnowledgeBaseDoesNotRequireSystemModel() {
+        val document = KnowledgeDocument(
+            id = "doc",
+            ownerKind = KnowledgeOwnerKind.AGENT,
+            ownerId = "writer",
+            name = "book.txt",
+            mimeType = "text/plain",
+            localPath = "/tmp/book.txt",
+            size = 10,
+            embeddingModelId = "test/embed",
+            vectorDimension = 3,
+            chunkCount = 1,
+            charCount = 10
+        )
+        val report = ProjectPreflight.inspect(
+            project = Project("project", "Test"),
+            orchestrator = agent("orchestrator", AgentKind.ORCHESTRATOR),
+            specialists = listOf(agent("writer", AgentKind.SPECIALIST)),
+            profiles = listOf(profile),
+            disabledConnectionIds = emptySet(),
+            hasApiKey = { true },
+            systemModelId = "",
+            filesForAgent = { emptyList() },
+            skillIdsForAgent = { emptySet() },
+            knowledgeForAgent = { agentId -> if (agentId == "writer") listOf(document) else emptyList() },
+            knowledgeEnabledForAgent = { false },
+            fileExists = { true }
+        )
+
+        assertTrue(report.ready)
+    }
+
 }
