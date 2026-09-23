@@ -1,7 +1,6 @@
 package com.ayuemin.ymnik.ui
 
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -12,18 +11,11 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.History
-import androidx.compose.material.icons.outlined.KeyboardArrowDown
-import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Refresh
-import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -40,13 +32,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatContextMode
 import com.ayuemin.ymnik.model.ChatMemoryGlobalSettings
 import com.ayuemin.ymnik.model.ChatSession
-import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.UiState
 import java.util.Locale
 
@@ -309,7 +299,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                         )
                     )
                 },
-                enabled = embeddingModel.isNotBlank() && summaryModel.isNotBlank() && !state.isLoading && !state.requestActive,
+                enabled = embeddingModel.isNotBlank() && !state.isLoading && !state.requestActive,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Сохранить настройки памяти") }
 
