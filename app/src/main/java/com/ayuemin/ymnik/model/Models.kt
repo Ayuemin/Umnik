@@ -348,6 +348,8 @@ data class ChatMessage(
     val responseDurationMs: Long? = null,
     val knowledgeHitCount: Int? = null,
     val knowledgeSources: List<String>? = null,
+    val knowledgeSearchAttempted: Boolean? = null,
+    val knowledgeBaseOnly: Boolean? = null,
     val webSearchEnabled: Boolean? = null,
     val reasoningEnabled: Boolean? = null,
     val reasoningEffort: String? = null,
