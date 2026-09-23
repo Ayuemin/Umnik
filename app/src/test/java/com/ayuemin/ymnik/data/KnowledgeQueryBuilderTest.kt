@@ -34,6 +34,16 @@ class KnowledgeQueryBuilderTest {
     }
 
     @Test
+    fun doesNotTreatStandaloneBookQuestionAsFollowUp() {
+        val history = listOf(
+            ChatMessage("u1", "user", "что такое психология?")
+        )
+        val current = "Что в учебнике говорится о возрастных кризисах?"
+
+        assertEquals(current, KnowledgeQueryBuilder.build(current, history))
+    }
+
+    @Test
     fun ignoresAssistantWhenLookingForPreviousTopic() {
         val history = listOf(
             ChatMessage("u1", "user", "определение психологии"),
