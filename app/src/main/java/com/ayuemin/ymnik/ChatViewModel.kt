@@ -975,7 +975,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         knowledgeBase.documents(kind, ownerId)
 
     fun knowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings =
-        knowledgeBase.settings(kind, ownerId)
+        knowledgeBase.settings(kind, ownerId).copy(embeddingModelId = _state.value.embeddingModel)
 
     fun knowledgeFailure(kind: KnowledgeOwnerKind, ownerId: String): String? =
         knowledgeBase.failedTaskMessage(kind, ownerId)
@@ -990,18 +990,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
-        knowledgeBase.saveSettings(kind, ownerId, settings)
+        val globalSettings = settings.copy(embeddingModelId = _state.value.embeddingModel)
+        knowledgeBase.saveSettings(kind, ownerId, globalSettings)
         if (kind == KnowledgeOwnerKind.AGENT) {
             agent(ownerId)?.let { profile ->
                 saveAgent(
                     profile.copy(
                         knowledgeBase = profile.knowledgeBase.copy(
-                            enabled = settings.enabled,
-                            embeddingModel = settings.embeddingModelId
+                            enabled = globalSettings.enabled,
+                            embeddingModel = _state.value.embeddingModel
                                 .trim()
                                 .takeIf { it.isNotBlank() }
                                 ?.let { AgentModelRef("openrouter", it) },
-                            topK = settings.topK
+                            topK = globalSettings.topK
                         )
                     )
                 )
@@ -1013,15 +1014,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun addKnowledgeDocuments(
         kind: KnowledgeOwnerKind,
         ownerId: String,
-        uris: List<Uri>,
-        embeddingModelId: String
+        uris: List<Uri>
     ) {
         if (_state.value.isLoading || _state.value.requestActive || uris.isEmpty()) return
+        if (!systemModelConfigured()) {
+            _state.update {
+                it.copy(status = "Сначала выберите системную модель: Настройки → Модели → Системная модель")
+            }
+            return
+        }
         if (knowledgeTaskLabel(kind, ownerId) != null || knowledgeBase.activeIndexTask(kind, ownerId) != null) {
             _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
             return
         }
-        val model = embeddingModelId.trim().ifBlank { knowledgeBase.settings(kind, ownerId).embeddingModelId }
+        val model = _state.value.embeddingModel
         viewModelScope.launch {
             setKnowledgeTask(kind, ownerId, "Сохраняю источник для фоновой индексации…")
             _state.update { it.copy(status = null) }
@@ -1071,7 +1077,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun reindexKnowledgeDocument(documentId: String, embeddingModelId: String) {
+    fun reindexKnowledgeDocument(documentId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         knowledgeBase.reloadFromDisk()
         val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
@@ -1081,7 +1087,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
             return
         }
-        val model = embeddingModelId.trim().ifBlank { document.embeddingModelId }
+        val model = _state.value.embeddingModel
         viewModelScope.launch {
             setKnowledgeTask(document.ownerKind, document.ownerId, "Готовлю переиндексацию ${document.name}…")
             try {
