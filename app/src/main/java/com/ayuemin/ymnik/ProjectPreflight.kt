@@ -68,9 +68,11 @@ internal object ProjectPreflight {
         profiles: List<ConnectionProfile>,
         disabledConnectionIds: Set<String>,
         hasApiKey: (String) -> Boolean,
+        systemModelId: String,
         filesForAgent: (String) -> List<ChatFile>,
         skillIdsForAgent: (String) -> Set<String>,
         knowledgeForAgent: (String) -> List<KnowledgeDocument>,
+        knowledgeEnabledForAgent: (String) -> Boolean,
         fileExists: (String) -> Boolean
     ): ProjectPreflightReport {
         val issues = mutableListOf<ProjectPreflightIssue>()
@@ -137,6 +139,16 @@ internal object ProjectPreflight {
             }
         }
 
+        val agentsUsingKnowledge = allAgents.filter { agent ->
+            knowledgeEnabledForAgent(agent.id) && knowledgeForAgent(agent.id).isNotEmpty()
+        }
+        if (agentsUsingKnowledge.isNotEmpty() && systemModelId.isBlank()) {
+            blocking(
+                "Для баз знаний агентов не выбрана системная модель.",
+                "Откройте Настройки → Модели → Системная модель."
+            )
+        }
+
         allAgents.forEach { agent ->
             val existingSkills = skillIdsForAgent(agent.id)
             val missingSkills = agent.skillIds - existingSkills
@@ -165,6 +177,7 @@ internal object ProjectPreflight {
         val fingerprintParts = buildList {
             add(project.id)
             add(project.updatedAt.toString())
+            add("system:$systemModelId")
             allAgents.sortedBy { it.id }.forEach { agent ->
                 add(agent.id)
                 add(agent.updatedAt.toString())
@@ -174,6 +187,7 @@ internal object ProjectPreflight {
                 filesForAgent(agent.id).sortedBy { it.id }.forEach { file ->
                     add("f:${file.id}:${file.size}:${fileExists(file.localPath)}")
                 }
+                add("knowledgeEnabled:${knowledgeEnabledForAgent(agent.id)}")
                 knowledgeForAgent(agent.id).sortedBy { it.id }.forEach { doc ->
                     add("k:${doc.id}:${doc.chunkCount}:${fileExists(doc.localPath)}")
                 }
