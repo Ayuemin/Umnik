@@ -2733,7 +2733,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 appendLine()
                 appendLine("RESULT_ID=" + result.id)
                 appendLine("TASK_ID=" + result.taskId)
-                appendLine("АГЕНТ=" + (worker?.name ?: result.specialistId))
+                appendLine("СПЕЦИАЛИСТ=" + (worker?.name ?: result.specialistId))
                 appendLine("ТЕКСТ:")
                 appendLine(result.outputText.take(18000))
             }
@@ -5344,12 +5344,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 appendLine(specialist.instruction)
             }
             appendLine("Это независимый специалист. Не используй общие инструкции, навыки, память или базу знаний других чатов и команды, если они не были явно переданы в текущем рабочем пакете.")
-            appendLine("===== КОНЕЦ ПРОФИЛЯ АГЕНТА =====")
+            appendLine("===== КОНЕЦ ПРОФИЛЯ СПЕЦИАЛИСТА =====")
         }
         if (team != null && specialist == null) {
-            appendLine("\n===== ПРОЕКТ: ${team.name} =====")
+            appendLine("\n===== КОМАНДА: ${team.name} =====")
             appendLine("Команда — только кабинет. Рабочие инструкции, навыки, файлы и знания принадлежат конкретным специалистам.")
-            appendLine("===== КОНЕЦ ПРОЕКТА =====")
+            appendLine("===== КОНЕЦ КОМАНДЫ =====")
         }
         if (specialist == null && chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")

@@ -31,6 +31,7 @@ internal data class KnowledgeRetrievalResult(
 )
 
 class KnowledgeBaseRepository(private val context: Context) {
+    private val specialistsRoot = LegacyDomainStorageMigration.migrateDirectory(context, "agents", "specialists")
     private val root = File(context.filesDir, "knowledge_base").apply { mkdirs() }
     private val manifest = AtomicJsonFile(File(root, "manifest.json"))
     private val taskManifest = AtomicJsonFile(File(root, "index_tasks.json"))
@@ -841,7 +842,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
         if (!document.localPath.startsWith(legacyPrefix)) return document
         val relative = document.localPath.removePrefix(legacyPrefix)
-        return document.copy(localPath = File(File(context.filesDir, "specialists"), relative).absolutePath)
+        return document.copy(localPath = File(specialistsRoot, relative).absolutePath)
     }
 
     private fun migrateLegacyTaskPath(task: KnowledgeIndexTask): KnowledgeIndexTask {
@@ -849,12 +850,12 @@ class KnowledgeBaseRepository(private val context: Context) {
         val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
         if (!task.localPath.startsWith(legacyPrefix)) return task
         val relative = task.localPath.removePrefix(legacyPrefix)
-        return task.copy(localPath = File(File(context.filesDir, "specialists"), relative).absolutePath)
+        return task.copy(localPath = File(specialistsRoot, relative).absolutePath)
     }
 
     private fun documentDir(kind: KnowledgeOwnerKind, ownerId: String, documentId: String): File =
         if (kind == KnowledgeOwnerKind.SPECIALIST) {
-            File(context.filesDir, "specialists/${safe(ownerId)}/knowledge/${safe(documentId)}")
+            File(specialistsRoot, "${safe(ownerId)}/knowledge/${safe(documentId)}")
         } else {
             File(root, safe(documentId))
         }

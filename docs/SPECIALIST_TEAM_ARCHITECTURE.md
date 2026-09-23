@@ -204,7 +204,7 @@ TaskDispatcher
 
 ```text
 CALL_SPECIALIST
-agent = researcher
+specialistId = researcher
 objective = "Проверь факты"
 inputs = [user_material, analyst_result]
 expected_output = "список подтверждённых фактов"

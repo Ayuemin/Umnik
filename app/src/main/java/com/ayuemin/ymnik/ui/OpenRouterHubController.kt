@@ -659,9 +659,9 @@ class OpenRouterHubController(
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
         if (team != null) {
-            appendLine("\n===== ПРОЕКТ: ${team.name} =====")
+            appendLine("\n===== КОМАНДА: ${team.name} =====")
             appendLine("Команда — только кабинет; рабочие настройки принадлежат специалистам.")
-            appendLine("===== КОНЕЦ ПРОЕКТА =====")
+            appendLine("===== КОНЕЦ КОМАНДЫ =====")
         }
         if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
