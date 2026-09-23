@@ -173,7 +173,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     }
     val selectedEmbeddingInfo = catalogState.catalog.firstOrNull { it.id == embeddingModel }
     val detectedEmbeddingContext = selectedEmbeddingInfo?.contextLength
-        ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
+        ?: initial.embeddingContextTokens
     val requestedChunk = chunkTokens.toIntOrNull() ?: initial.chunkTokens
     val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
 
@@ -268,11 +268,9 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 onClick = {
                     val catalogLimit = catalogState.catalog.firstOrNull { it.id == embeddingModel }?.contextLength
                     val savedLimit = catalogLimit
-                        ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
+                        ?: initial.embeddingContextTokens
                     vm.saveChatMemorySettings(
                         ChatMemoryGlobalSettings(
-                            embeddingModelId = state.embeddingModel,
-                            summaryModelId = state.systemModel,
                             defaultContextMode = defaultMode,
                             autoThresholdTokens = autoThreshold.toIntOrNull() ?: initial.autoThresholdTokens,
                             economyThresholdTokens = economyThreshold.toIntOrNull() ?: initial.economyThresholdTokens,
