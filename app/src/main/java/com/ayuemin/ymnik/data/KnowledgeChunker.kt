@@ -42,6 +42,18 @@ internal object KnowledgeChunker {
         return result
     }
 
+    internal fun isLikelyEncodedBlob(text: String): Boolean {
+        val token = text
+            .split(Regex("\\s+"))
+            .maxByOrNull { it.length }
+            .orEmpty()
+        if (token.length < 256) return false
+        val encodedChars = token.count { ch ->
+            ch.isLetterOrDigit() || ch == '+' || ch == '/' || ch == '=' || ch == '_' || ch == '-'
+        }
+        return encodedChars.toDouble() / token.length.toDouble() >= 0.97
+    }
+
     private fun normalize(text: String): String = text
         .replace('\u0000', ' ')
         .replace("\r\n", "\n")
