@@ -530,9 +530,18 @@ class KnowledgeBaseRepository(private val context: Context) {
             )
         }
 
-        val finalHits = result.sortedByDescending { it.score }
+        val dedupedHits = result.sortedByDescending { it.score }
             .distinctBy { "${it.documentId}:${it.text.hashCode()}" }
-            .take(MAX_TOTAL_HITS)
+        // Final invariant before anything can reach the main model. This intentionally
+        // repeats the minimum semantic floor so a purely lexical coincidence can never
+        // survive selection/diversification even if ranking rules change later.
+        val finalRelevantHits = dedupedHits.filter { hit ->
+            val semantic = hit.semanticScore ?: 0.0
+            val lexical = hit.lexicalScore ?: 0.0
+            semantic >= 0.45 || (semantic >= 0.34 && lexical >= 2.0)
+        }
+        thresholdDropped += dedupedHits.size - finalRelevantHits.size
+        val finalHits = finalRelevantHits.take(MAX_TOTAL_HITS)
 
         KnowledgeRetrievalResult(
             hits = finalHits,
