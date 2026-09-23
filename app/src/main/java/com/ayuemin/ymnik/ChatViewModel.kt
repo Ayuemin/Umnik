@@ -659,6 +659,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(status = "Системная модель обязательна для базы знаний и служебных текстовых задач")
             return
         }
+        _state.value.modelCatalog.firstOrNull { it.id == clean }?.let { known ->
+            if (ModelCategory.TEXT !in known.categories || known.isBatch) {
+                _state.value = _state.value.copy(status = "Для системных задач выберите обычную текстовую модель")
+                return
+            }
+        }
         prefs.edit().putString("system_model_id", clean).apply()
         _state.value = _state.value.copy(
             systemModel = clean,
@@ -672,6 +678,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (clean.isBlank()) {
             _state.value = _state.value.copy(status = "Выберите Embeddings-модель")
             return
+        }
+        _state.value.modelCatalog.firstOrNull { it.id == clean }?.let { known ->
+            if (ModelCategory.EMBEDDINGS !in known.categories) {
+                _state.value = _state.value.copy(status = "Выбранная модель не является Embeddings-моделью")
+                return
+            }
         }
         if (clean == _state.value.embeddingModel) {
             _state.value = _state.value.copy(status = "Embeddings-модель уже выбрана")
