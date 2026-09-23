@@ -17,16 +17,9 @@ data class AgentModelRef(
     val modelId: String
 )
 
-/**
- * Knowledge-base settings belong to one agent.
- *
- * The KB embedding model is intentionally separate from the agent memory embedding
- * model. Changing it requires rebuilding that agent's vector index.
- */
+/** Agent-owned knowledge-base state. Helper model selection is global for Umnik. */
 data class AgentKnowledgeBaseProfile(
     val enabled: Boolean = true,
-    val embeddingModel: AgentModelRef? = null,
-    val topK: Int = 5,
     val indexGeneration: Long = 0L
 )
 
@@ -41,16 +34,10 @@ data class AgentProfile(
     /** Main reasoning/writing model for this agent. */
     val primaryModel: AgentModelRef? = null,
 
-    /** Cheap/fast helper models owned by this agent, not inherited from chat settings. */
+    /** Additional chat models available for this agent's conversations. */
     val quickModels: List<AgentModelRef> = emptyList(),
 
-    /** Optional model used for context compression/summarisation inside this agent. */
-    val contextModel: AgentModelRef? = null,
-
-    /** Optional embedding model for the agent's own semantic memory. */
-    val memoryEmbeddingModel: AgentModelRef? = null,
-
-    /** Agent-owned knowledge base and its own embedding configuration. */
+    /** Agent-owned knowledge base. System and embedding models are global. */
     val knowledgeBase: AgentKnowledgeBaseProfile = AgentKnowledgeBaseProfile(),
 
     val reasoningEnabled: Boolean = false,
