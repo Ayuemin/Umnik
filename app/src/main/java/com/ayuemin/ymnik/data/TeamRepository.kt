@@ -18,7 +18,8 @@ class TeamRepository(context: Context) {
         private set
 
     fun list(): List<Team> = runCatching {
-        atomic.read(::validJson)?.let { gson.fromJson<List<Team>>(it, type) } ?: emptyList()
+        val current = atomic.read(::validJson)?.let(::decode).orEmpty()
+        mergeLegacyMetadata(current)
     }.onSuccess {
         loadError = null
     }.onFailure {
@@ -35,6 +36,41 @@ class TeamRepository(context: Context) {
     fun deleteLegacyTeamFiles(teamId: String) {
         File(root, safeId(teamId)).deleteRecursively()
     }
+
+    private fun mergeLegacyMetadata(current: List<Team>): List<Team> {
+        val legacyFile = File(root, "projects.json")
+        if (!legacyMetadataExists(legacyFile)) return current
+        val legacy = runCatching {
+            AtomicJsonFile(legacyFile).read(::validJson)?.let(::decode).orEmpty()
+        }.getOrNull() ?: return current
+
+        val legacyById = legacy.associateBy(Team::id)
+        val currentIds = current.mapTo(hashSetOf(), Team::id)
+        val merged = current.map { item ->
+            legacyById[item.id]?.takeIf { it.updatedAt > item.updatedAt } ?: item
+        } + legacy.filterNot { it.id in currentIds }
+
+        if (merged != current) {
+            atomic.write(gson.toJson(merged), ::validJson)
+        }
+        deleteLegacyMetadataFiles(legacyFile)
+        return merged
+    }
+
+    private fun decode(json: String): List<Team> = gson.fromJson(json, type)
+
+    private fun legacyMetadataExists(file: File): Boolean = legacyMetadataFiles(file).any(File::exists)
+
+    private fun deleteLegacyMetadataFiles(file: File) {
+        legacyMetadataFiles(file).forEach { it.delete() }
+    }
+
+    private fun legacyMetadataFiles(file: File): List<File> = listOf(
+        file,
+        File(file.path + ".bak"),
+        File(file.parentFile, "${file.name}.lastgood"),
+        File(file.parentFile, "${file.name}.lastgood.bak")
+    )
 
     private fun validJson(json: String): Boolean = runCatching {
         gson.fromJson<List<Team>>(json, type) != null
