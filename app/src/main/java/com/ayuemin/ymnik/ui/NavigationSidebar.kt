@@ -65,7 +65,7 @@ import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
-import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.Team
 import com.ayuemin.ymnik.model.UiState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -78,9 +78,9 @@ fun NavigationSidebar(
     vm: ChatViewModel,
     onDismiss: () -> Unit,
     onNewChat: () -> Unit,
-    onOpenProjects: () -> Unit,
-    onCreateProject: () -> Unit,
-    onOpenProject: (String) -> Unit,
+    onOpenTeams: () -> Unit,
+    onCreateTeam: () -> Unit,
+    onOpenTeam: (String) -> Unit,
     onOpenSkills: () -> Unit,
     onOpenSettings: () -> Unit,
     onClearChat: () -> Unit
@@ -101,12 +101,12 @@ fun NavigationSidebar(
         keyboardController?.hide()
     }
 
-    val projects = state.projects.sortedWith(
-        compareByDescending<Project> { it.isFavorite }.thenByDescending { it.updatedAt }
+    val teams = state.teams.sortedWith(
+        compareByDescending<Team> { it.isFavorite }.thenByDescending { it.updatedAt }
     )
     val normalized = query.trim()
     val filteredChats = state.chats
-        .filter { it.projectId == null }
+        .filter { it.teamId == null }
         .sortedByDescending { it.updatedAt }
         .filter { chat ->
             normalized.isBlank() || chat.title.contains(normalized, ignoreCase = true)
@@ -185,28 +185,28 @@ fun NavigationSidebar(
                 ) {
                     item {
                         FilledTonalButton(
-                            onClick = onCreateProject,
+                            onClick = onCreateTeam,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 4.dp),
                             shape = UmnikFieldShape
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(7.dp))
-                            Text("Создать проект")
+                            Text("Создать команда")
                         }
                     }
-                    item { SidebarSectionTitle("Проекты") }
-                    if (projects.isEmpty()) {
+                    item { SidebarSectionTitle("Команды") }
+                    if (teams.isEmpty()) {
                         item {
                             Text(
-                                "Проектов пока нет",
+                                "Команд пока нет",
                                 modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     } else {
-                        items(projects, key = { "project-${it.id}" }) { project ->
-                            SidebarProjectRow(project, state, vm) { onOpenProject(project.id) }
+                        items(teams, key = { "team-${it.id}" }) { team ->
+                            SidebarTeamRow(team, state, vm) { onOpenTeam(team.id) }
                         }
                     }
 
@@ -394,18 +394,18 @@ private fun SidebarSectionTitle(text: String) {
 }
 
 @Composable
-private fun SidebarProjectRow(
-    project: Project,
+private fun SidebarTeamRow(
+    team: Team,
     state: UiState,
     vm: ChatViewModel,
     onOpen: () -> Unit
 ) {
-    val count = state.chats.count { it.projectId == project.id }
-    val activeProjectId = state.chats.firstOrNull { it.id == state.currentChatId }?.projectId
+    val count = state.chats.count { it.teamId == team.id }
+    val activeTeamId = state.chats.firstOrNull { it.id == state.currentChatId }?.teamId
     Surface(
         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
         shape = UmnikItemShape,
-        color = if (activeProjectId == project.id)
+        color = if (activeTeamId == team.id)
             MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.45f)
         else Color.Transparent
     ) {
@@ -417,10 +417,10 @@ private fun SidebarProjectRow(
             ) {
                 Column(Modifier.fillMaxWidth()) {
                     Text(
-                        project.name,
+                        team.name,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        fontWeight = if (activeProjectId == project.id) FontWeight.SemiBold else FontWeight.Medium
+                        fontWeight = if (activeTeamId == team.id) FontWeight.SemiBold else FontWeight.Medium
                     )
                     Text(
                         "$count чатов",
@@ -430,12 +430,12 @@ private fun SidebarProjectRow(
                 }
             }
             IconButton(
-                onClick = { vm.setProjectFavorite(project.id, !project.isFavorite) },
+                onClick = { vm.setTeamFavorite(team.id, !team.isFavorite) },
                 modifier = Modifier.size(38.dp)
             ) {
                 Icon(
-                    if (project.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                    contentDescription = if (project.isFavorite) "Открепить проект" else "Закрепить проект",
+                    if (team.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                    contentDescription = if (team.isFavorite) "Открепить команда" else "Закрепить команда",
                     modifier = Modifier.size(20.dp)
                 )
             }
@@ -455,7 +455,7 @@ private fun SidebarChatRow(
     onRename: () -> Unit
 ) {
     var actionsOpen by remember(chat.id) { mutableStateOf(false) }
-    val projectName = chat.projectId?.let { id -> state.projects.firstOrNull { it.id == id }?.name }
+    val teamName = chat.teamId?.let { id -> state.teams.firstOrNull { it.id == id }?.name }
     Surface(
         modifier = Modifier
             .fillMaxWidth()
@@ -483,7 +483,7 @@ private fun SidebarChatRow(
                 Text(
                     buildString {
                         if (vm.isChatRequestActive(chat.id)) append("Отвечает · ")
-                        if (projectName != null) append("$projectName · ")
+                        if (teamName != null) append("$teamName · ")
                         append(sidebarDate(chat.updatedAt))
                     },
                     maxLines = 1,

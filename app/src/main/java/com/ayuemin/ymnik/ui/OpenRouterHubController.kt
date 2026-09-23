@@ -345,12 +345,12 @@ class OpenRouterHubController(
             runCatching {
                 val appState = viewModel.state.value
                 val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
+                val team = chat?.teamId?.let { id -> appState.teams.firstOrNull { it.id == id } }
                 val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
                 // Batch API не принимает обычные file/image parts. Текстовые файлы
                 // конкретной задачи безопасно встраиваются только в её prompt.
                 val fileContexts = withContext(Dispatchers.IO) { filesPerPrompt.map(::batchTextContext) }
-                val system = buildSystemPrompt(chat, project)
+                val system = buildSystemPrompt(chat, team)
                 val requests = prompts.mapIndexed { index, prompt ->
                     val inlineFiles = fileContexts[index]
                     val promptWithFiles = if (inlineFiles.isBlank()) prompt else "$prompt\n\n===== ФАЙЛЫ ЭТОЙ ЗАДАЧИ =====\n$inlineFiles"
@@ -375,7 +375,7 @@ class OpenRouterHubController(
                     remoteId = snapshot.remoteId,
                     connectionProfileId = profile.id,
                     chatId = chat?.id,
-                    projectId = project?.id,
+                    teamId = team?.id,
                     modelId = model,
                     baseModelId = model.removeSuffix(":batch"),
                     title = "Batch · ${requests.size} заданий",
@@ -423,13 +423,13 @@ class OpenRouterHubController(
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
                 val chatId = viewModel.state.value.currentChatId
-                val projectId = viewModel.state.value.chats.firstOrNull { it.id == chatId }?.projectId
+                val teamId = viewModel.state.value.chats.firstOrNull { it.id == chatId }?.teamId
                 val job = VideoJob(
                     id = UUID.randomUUID().toString(),
                     remoteId = snapshot.id,
                     connectionProfileId = profile.id,
                     chatId = chatId,
-                    projectId = projectId,
+                    teamId = teamId,
                     modelId = model,
                     prompt = prompt,
                     status = snapshot.status,
@@ -599,13 +599,13 @@ class OpenRouterHubController(
                 }
                 val appState = viewModel.state.value
                 val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
+                val team = chat?.teamId?.let { id -> appState.teams.firstOrNull { it.id == id } }
                 val result = responsesClient.respond(
                     apiKey = key,
                     model = model,
                     history = chat?.messages.orEmpty(),
                     prompt = prompt,
-                    systemPrompt = buildSystemPrompt(chat, project),
+                    systemPrompt = buildSystemPrompt(chat, team),
                     tools = mutableState.value.tools.copy(shell = true),
                     routing = mutableState.value.routing,
                     shellFileIds = uploadedIds,
@@ -640,14 +640,14 @@ class OpenRouterHubController(
 
     private fun buildSystemPrompt(
         chat: com.ayuemin.ymnik.model.ChatSession?,
-        project: com.ayuemin.ymnik.model.Project?
+        team: com.ayuemin.ymnik.model.Team?
     ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         val appState = viewModel.state.value
         val profile = appState.userProfile
         val useProfile = !profile.isEmpty() &&
             appState.userProfileScope == UserProfileScope.CHATS &&
-            project == null
+            team == null
         if (useProfile) {
             appendLine("\n===== КРАТКО О ПОЛЬЗОВАТЕЛЕ =====")
             if (profile.name.isNotBlank()) appendLine("Имя: ${profile.name}")
@@ -655,12 +655,12 @@ class OpenRouterHubController(
             if (profile.age.isNotBlank()) appendLine("Возраст: ${profile.age}")
             if (profile.occupation.isNotBlank()) appendLine("Род занятий: ${profile.occupation}")
             if (profile.note.isNotBlank()) appendLine("Предпочтение в общении: ${profile.note}")
-            appendLine("Используй эти сведения только когда они полезны. Явный запрос и инструкции проекта важнее профиля.")
+            appendLine("Используй эти сведения только когда они полезны. Явный запрос и инструкции команды важнее профиля.")
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
-        if (project != null) {
-            appendLine("\n===== ПРОЕКТ: ${project.name} =====")
-            appendLine("Проект — только кабинет; рабочие настройки принадлежат агентам.")
+        if (team != null) {
+            appendLine("\n===== ПРОЕКТ: ${team.name} =====")
+            appendLine("Команда — только кабинет; рабочие настройки принадлежат специалистам.")
             appendLine("===== КОНЕЦ ПРОЕКТА =====")
         }
         if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {

@@ -66,7 +66,7 @@ import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
-import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.Team
 import com.ayuemin.ymnik.model.UiState
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -77,7 +77,7 @@ fun ChatsHubDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Unit) {
     var editorId by remember { mutableStateOf<String?>(null) }
     var deleteTarget by remember { mutableStateOf<ChatSession?>(null) }
     var clearAllConfirm by remember { mutableStateOf(false) }
-    val chats = state.chats.filter { it.projectId == null }
+    val chats = state.chats.filter { it.teamId == null }
         .sortedWith(compareByDescending<ChatSession> { it.isFavorite }.thenByDescending { it.updatedAt })
     val favorites = chats.filter { it.isFavorite }
     val others = chats.filterNot { it.isFavorite }
@@ -176,7 +176,7 @@ private fun ChatHubRow(
     onEdit: () -> Unit,
     onDelete: () -> Unit
 ) {
-    val projectName = chat.projectId?.let { id -> state.projects.firstOrNull { it.id == id }?.name }
+    val teamName = chat.teamId?.let { id -> state.teams.firstOrNull { it.id == id }?.name }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         TextButton(
             onClick = {
@@ -195,8 +195,8 @@ private fun ChatHubRow(
                 )
                 Text(
                     buildString {
-                        if (projectName != null) append("$projectName · ")
-                        append("${chat.messages.size} сообщ. · ${projectDate(chat.updatedAt)}")
+                        if (teamName != null) append("$teamName · ")
+                        append("${chat.messages.size} сообщ. · ${teamDate(chat.updatedAt)}")
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -282,33 +282,33 @@ private fun ChatProfileDialog(chat: ChatSession, state: UiState, vm: ChatViewMod
 }
 
 @Composable
-fun ProjectsDialog(
+fun TeamsDialog(
     state: UiState,
     vm: ChatViewModel,
     onDismiss: () -> Unit,
-    initialProjectId: String? = null,
+    initialTeamId: String? = null,
     startCreate: Boolean = false,
-    onAgentConversationOpened: ((projectId: String, chatId: String) -> Unit)? = null
+    onSpecialistConversationOpened: ((teamId: String, chatId: String) -> Unit)? = null
 ) {
-    var openProjectId by remember(initialProjectId) { mutableStateOf(initialProjectId) }
+    var openTeamId by remember(initialTeamId) { mutableStateOf(initialTeamId) }
     var createOpen by remember(startCreate) { mutableStateOf(startCreate) }
-    val projects = state.projects.sortedWith(compareByDescending<Project> { it.isFavorite }.thenByDescending { it.updatedAt })
-    val favorites = projects.filter { it.isFavorite }
-    val others = projects.filterNot { it.isFavorite }
+    val teams = state.teams.sortedWith(compareByDescending<Team> { it.isFavorite }.thenByDescending { it.updatedAt })
+    val favorites = teams.filter { it.isFavorite }
+    val others = teams.filterNot { it.isFavorite }
 
-    FullScreenPanel(title = "Проекты", onBack = onDismiss) {
+    FullScreenPanel(title = "Команды", onBack = onDismiss) {
         FilledTonalButton(
             onClick = { createOpen = true },
             modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
             Icon(Icons.Outlined.Add, contentDescription = null)
             Spacer(Modifier.width(8.dp))
-            Text("Новый проект")
+            Text("Новый команда")
         }
 
-        if (projects.isEmpty()) {
+        if (teams.isEmpty()) {
             Text(
-                "Проект — это кабинет: Оркестратор управляет независимыми агентами, а каждый агент хранит свои настройки и знания.",
+                "Команда — это кабинет: Оркестратор управляет независимыми специалистами, а каждый специалист хранит свои настройки и знания.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(20.dp)
             )
@@ -319,14 +319,14 @@ fun ProjectsDialog(
             ) {
                 if (favorites.isNotEmpty()) {
                     item { SectionTitle("Избранные") }
-                    items(favorites, key = { it.id }) { project ->
-                        ProjectRow(project, state, vm) { openProjectId = project.id }
+                    items(favorites, key = { it.id }) { team ->
+                        TeamRow(team, state, vm) { openTeamId = team.id }
                     }
                 }
                 if (others.isNotEmpty()) {
-                    item { SectionTitle(if (favorites.isEmpty()) "Все проекты" else "Остальные") }
-                    items(others, key = { it.id }) { project ->
-                        ProjectRow(project, state, vm) { openProjectId = project.id }
+                    item { SectionTitle(if (favorites.isEmpty()) "Все команды" else "Остальные") }
+                    items(others, key = { it.id }) { team ->
+                        TeamRow(team, state, vm) { openTeamId = team.id }
                     }
                 }
             }
@@ -334,25 +334,25 @@ fun ProjectsDialog(
     }
 
     if (createOpen) {
-        SimpleProjectCreateDialog(
+        SimpleTeamCreateDialog(
             onDismiss = { createOpen = false },
             onCreate = { name, favorite ->
-                openProjectId = vm.createProject(name = name, favorite = favorite)
+                openTeamId = vm.createTeam(name = name, favorite = favorite)
                 createOpen = false
             }
         )
     }
 
-    state.projects.firstOrNull { it.id == openProjectId }?.let { project ->
-        AgentProjectDetailDialog(
-            project = project,
+    state.teams.firstOrNull { it.id == openTeamId }?.let { team ->
+        SpecialistTeamDetailDialog(
+            team = team,
             state = state,
             vm = vm,
-            onDismiss = { openProjectId = null },
+            onDismiss = { openTeamId = null },
             onConversationOpened = { chatId ->
-                openProjectId = null
-                if (onAgentConversationOpened != null) {
-                    onAgentConversationOpened(project.id, chatId)
+                openTeamId = null
+                if (onSpecialistConversationOpened != null) {
+                    onSpecialistConversationOpened(team.id, chatId)
                 } else {
                     vm.switchChat(chatId)
                     onDismiss()
@@ -363,9 +363,9 @@ fun ProjectsDialog(
 }
 
 @Composable
-private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOpen: () -> Unit) {
-    val agentCount = state.agents.count {
-        it.projectId == project.id && it.kind == com.ayuemin.ymnik.model.AgentKind.SPECIALIST
+private fun TeamRow(team: Team, state: UiState, vm: ChatViewModel, onOpen: () -> Unit) {
+    val specialistCount = state.specialists.count {
+        it.teamId == team.id && it.kind == com.ayuemin.ymnik.model.SpecialistKind.SPECIALIST
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         TextButton(
@@ -374,18 +374,18 @@ private fun ProjectRow(project: Project, state: UiState, vm: ChatViewModel, onOp
             contentPadding = PaddingValues(horizontal = 8.dp, vertical = 11.dp)
         ) {
             Column(Modifier.fillMaxWidth()) {
-                Text(project.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(team.name, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    "$agentCount агентов · Оркестратор",
+                    "$specialistCount специалистов · Оркестратор",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-        IconButton(onClick = { vm.setProjectFavorite(project.id, !project.isFavorite) }) {
+        IconButton(onClick = { vm.setTeamFavorite(team.id, !team.isFavorite) }) {
             Icon(
-                if (project.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                contentDescription = if (project.isFavorite) "Убрать из избранного" else "В избранное"
+                if (team.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
+                contentDescription = if (team.isFavorite) "Убрать из избранного" else "В избранное"
             )
         }
     }

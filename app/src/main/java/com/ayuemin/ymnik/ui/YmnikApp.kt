@@ -296,12 +296,12 @@ private fun ChatScreen(
     var text by remember(state.currentChatId) { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var sidebarOpen by remember { mutableStateOf(false) }
-    var projectsOpen by remember { mutableStateOf(false) }
-    var selectedProjectId by remember { mutableStateOf<String?>(null) }
-    var createProjectDirect by remember { mutableStateOf(false) }
-    var projectNavigationOriginChatId by remember { mutableStateOf<String?>(null) }
-    var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
-    var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
+    var teamsOpen by remember { mutableStateOf(false) }
+    var selectedTeamId by remember { mutableStateOf<String?>(null) }
+    var createTeamDirect by remember { mutableStateOf(false) }
+    var teamNavigationOriginChatId by remember { mutableStateOf<String?>(null) }
+    var teamsOpenedFromSidebar by remember { mutableStateOf(false) }
+    var specialistChatReturnTeamId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var reasoningModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
@@ -311,8 +311,8 @@ private fun ChatScreen(
     var chatSearchResultPosition by remember(state.currentChatId) { mutableIntStateOf(-1) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
     var skillsExpanded by remember { mutableStateOf(false) }
-    var projectToolsExpanded by remember { mutableStateOf(false) }
-    var projectSkillsExpanded by remember { mutableStateOf(false) }
+    var teamToolsExpanded by remember { mutableStateOf(false) }
+    var teamSkillsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
@@ -347,7 +347,7 @@ private fun ChatScreen(
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true
     val webSearchAvailable = !imagePromptMode && openRouterProfile && textModelInfo?.supportsTools == true
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
-    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
+    val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
     val chatSearchMatches = remember(state.messages, chatSearchQuery) {
         chatSearchMatchIndices(state.messages, chatSearchQuery)
     }
@@ -367,16 +367,16 @@ private fun ChatScreen(
         chatSearchQuery = ""
     }
     BackHandler(
-        enabled = currentAgentId != null &&
-            agentChatReturnProjectId != null &&
+        enabled = currentSpecialistId != null &&
+            specialistChatReturnTeamId != null &&
             !sidebarOpen &&
-            !projectsOpen &&
+            !teamsOpen &&
             !chatSearchOpen
     ) {
-        selectedProjectId = agentChatReturnProjectId
-        agentChatReturnProjectId = null
-        createProjectDirect = false
-        projectsOpen = true
+        selectedTeamId = specialistChatReturnTeamId
+        specialistChatReturnTeamId = null
+        createTeamDirect = false
+        teamsOpen = true
     }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
@@ -406,11 +406,11 @@ private fun ChatScreen(
             }
         }
     }
-    val currentProject = currentChat?.projectId
-        ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
+    val currentTeam = currentChat?.teamId
+        ?.let { teamId -> state.teams.firstOrNull { it.id == teamId } }
     val activeSkillCount = state.activeSkillIds.size
-    val projectAvailableSkills = emptyList<com.ayuemin.ymnik.model.Skill>()
-    val activeProjectSkillCount = 0
+    val teamAvailableSkills = emptyList<com.ayuemin.ymnik.model.Skill>()
+    val activeTeamSkillCount = 0
 
     fun startVoiceRecording() {
         if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode) return
@@ -923,7 +923,7 @@ onBranch = if (message.role == "assistant") {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
                             imagePromptMode -> Text("Опишите изображение")
-                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
+                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу команде обычным языком")
                         }
                     },
                     shape = UmnikFieldShape,
@@ -942,28 +942,28 @@ onBranch = if (message.role == "assistant") {
           vm.createChat()
           sidebarOpen = false
       },
-      onOpenProjects = {
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          selectedProjectId = null
-          createProjectDirect = false
-          projectsOpen = true
+      onOpenTeams = {
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          selectedTeamId = null
+          createTeamDirect = false
+          teamsOpen = true
           sidebarOpen = false
       },
-      onCreateProject = {
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          selectedProjectId = null
-          createProjectDirect = true
-          projectsOpen = true
+      onCreateTeam = {
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          selectedTeamId = null
+          createTeamDirect = true
+          teamsOpen = true
           sidebarOpen = false
       },
-      onOpenProject = { projectId ->
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          createProjectDirect = false
-          selectedProjectId = projectId
-          projectsOpen = true
+      onOpenTeam = { teamId ->
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          createTeamDirect = false
+          selectedTeamId = teamId
+          teamsOpen = true
           sidebarOpen = false
       },
       onOpenSkills = {
@@ -1032,7 +1032,7 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                if (!imagePromptMode && currentAgentId == null) {
+                if (!imagePromptMode && currentSpecialistId == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1058,7 +1058,7 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
-                if (currentAgentId == null) {
+                if (currentSpecialistId == null) {
                     ComposerSectionHeader(
                         icon = Icons.Outlined.Storage,
                         label = "Инструменты OpenRouter",
@@ -1100,7 +1100,7 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
-                if (currentAgentId == null) {
+                if (currentSpecialistId == null) {
                     ComposerSectionHeader(
                         icon = Icons.Outlined.Extension,
                         label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
@@ -1129,8 +1129,8 @@ onBranch = if (message.role == "assistant") {
                     }
                 }
 
-                // Project stages and shared project skills were removed in the agent-first architecture.
-                // Agent-owned tools/skills are configured inside the agent itself.
+                // Team stages and shared team skills were removed in the specialist-first architecture.
+                // Specialist-owned tools/skills are configured inside the specialist itself.
             }
         }
     }
@@ -1212,31 +1212,31 @@ onBranch = if (message.role == "assistant") {
         )
     }
 
-    if (projectsOpen) {
-        ProjectsDialog(
+    if (teamsOpen) {
+        TeamsDialog(
             state = state,
             vm = vm,
             onDismiss = {
-                projectsOpen = false
-                selectedProjectId = null
-                createProjectDirect = false
-                if (projectsOpenedFromSidebar) {
-                    val origin = projectNavigationOriginChatId
+                teamsOpen = false
+                selectedTeamId = null
+                createTeamDirect = false
+                if (teamsOpenedFromSidebar) {
+                    val origin = teamNavigationOriginChatId
                     if (origin != null && state.chats.any { it.id == origin }) {
                         vm.switchChat(origin)
                     }
-                    projectsOpenedFromSidebar = false
-                    projectNavigationOriginChatId = null
+                    teamsOpenedFromSidebar = false
+                    teamNavigationOriginChatId = null
                     sidebarOpen = true
                 }
             },
-            initialProjectId = selectedProjectId,
-            startCreate = createProjectDirect,
-            onAgentConversationOpened = { projectId, _ ->
-                agentChatReturnProjectId = projectId
-                projectsOpen = false
-                selectedProjectId = null
-                createProjectDirect = false
+            initialTeamId = selectedTeamId,
+            startCreate = createTeamDirect,
+            onSpecialistConversationOpened = { teamId, _ ->
+                specialistChatReturnTeamId = teamId
+                teamsOpen = false
+                selectedTeamId = null
+                createTeamDirect = false
             }
         )
     }
@@ -1638,24 +1638,24 @@ private fun ChatHeader(
     var overflowOpen by remember { mutableStateOf(false) }
     var modelMenuOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
-    var clearAgentChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
+    var clearSpecialistChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
-    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
-    val currentAgent = state.agents.firstOrNull { it.id == currentAgentId }
+    val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
+    val currentSpecialist = state.specialists.firstOrNull { it.id == currentSpecialistId }
     val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
     val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
-    val agentRefs = currentAgent?.let { agent ->
+    val specialistRefs = currentSpecialist?.let { specialist ->
         buildList {
-            agent.primaryModel?.let { add(quickModelRef(it.connectionProfileId, it.modelId)) }
-            agent.quickModels.forEach { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+            specialist.primaryModel?.let { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+            specialist.quickModels.forEach { add(quickModelRef(it.connectionProfileId, it.modelId)) }
         }
     }.orEmpty()
-    val quickCandidates = if (currentAgent != null) {
-        (listOf(currentRef) + agentRefs)
+    val quickCandidates = if (currentSpecialist != null) {
+        (listOf(currentRef) + specialistRefs)
             .filter { quickModelId(it).isNotBlank() }
             .distinct()
     } else {
@@ -1666,7 +1666,7 @@ private fun ChatHeader(
     val chatTitle = currentChat?.title
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: currentAgent?.name
+        ?: currentSpecialist?.name
         ?: "Новый чат"
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
@@ -1676,7 +1676,7 @@ private fun ChatHeader(
         ) {
             UmnikCircleAction(
                 icon = Icons.Outlined.Menu,
-                contentDescription = "Открыть проекты и историю",
+                contentDescription = "Открыть команды и историю",
                 onClick = onOpenSidebar
             )
 
@@ -1763,7 +1763,7 @@ private fun ChatHeader(
                         enabled = currentChat != null && !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
                         onClick = {
                             overflowOpen = false
-                            clearAgentChatConfirm = true
+                            clearSpecialistChatConfirm = true
                         }
                     )
                 }
@@ -1795,8 +1795,8 @@ private fun ChatHeader(
                                     Text(
                                         when {
                                             current -> "Текущая модель"
-                                            currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
-                                            currentAgent != null -> "Дополнительная модель агента"
+                                            currentSpecialist != null && currentSpecialist.primaryModel?.modelId == id -> "Основная модель специалиста"
+                                            currentSpecialist != null -> "Дополнительная модель специалиста"
                                             ref == defaultRef -> "Модель по умолчанию"
                                             else -> connection?.name ?: "OpenRouter"
                                         },
@@ -1812,8 +1812,8 @@ private fun ChatHeader(
                                 else Spacer(Modifier.size(24.dp))
                             },
                             onClick = {
-                                if (currentAgent != null) {
-                                    vm.selectAgentQuickModel(currentAgent.id, ref)
+                                if (currentSpecialist != null) {
+                                    vm.selectSpecialistQuickModel(currentSpecialist.id, ref)
                                 } else if (ref == defaultRef) {
                                     vm.useDefaultTextModelForChat()
                                 } else {
@@ -1828,15 +1828,15 @@ private fun ChatHeader(
         }
     }
 
-    if (clearAgentChatConfirm && currentChat != null) {
+    if (clearSpecialistChatConfirm && currentChat != null) {
         AlertDialog(
-            onDismissRequest = { clearAgentChatConfirm = false },
+            onDismissRequest = { clearSpecialistChatConfirm = false },
             title = { Text("Очистить переписку?") },
             text = {
                 Text(
-                    if (currentAgent != null) {
+                    if (currentSpecialist != null) {
                         "История разговора и временный контекст будут удалены. " +
-                            "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+                            "Инструкция, модель, навыки, постоянные файлы и база знаний специалиста останутся."
                     } else {
                         "История разговора и временные файлы контекста текущего чата будут удалены."
                     }
@@ -1844,12 +1844,12 @@ private fun ChatHeader(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    clearAgentChatConfirm = false
+                    clearSpecialistChatConfirm = false
                     vm.clearChat()
                 }) { Text("Очистить") }
             },
             dismissButton = {
-                TextButton(onClick = { clearAgentChatConfirm = false }) { Text("Отмена") }
+                TextButton(onClick = { clearSpecialistChatConfirm = false }) { Text("Отмена") }
             }
         )
     }
@@ -2101,7 +2101,7 @@ private fun MessageCard(
             message.reasoningEnabled != null ||
             message.memoryContextUsed != null ||
             message.activeSkillCount != null ||
-            message.projectContextUsed != null ||
+            message.teamContextUsed != null ||
             message.attachmentCount != null ||
             !message.connectionName.isNullOrBlank() ||
             !message.requestId.isNullOrBlank()
@@ -2339,7 +2339,7 @@ private fun AnswerInfoSheet(
                 message.reasoningEnabled != null ||
                 message.memoryContextUsed != null ||
                 message.activeSkillCount != null ||
-                message.projectContextUsed != null ||
+                message.teamContextUsed != null ||
                 message.attachmentCount != null
             ) {
                 Spacer(Modifier.height(8.dp))
@@ -2389,8 +2389,8 @@ private fun AnswerInfoSheet(
                 message.activeSkillCount?.let {
                     AnswerInfoRow("Навыки", if (it > 0) "$it активн." else "Не использовались")
                 }
-                message.projectContextUsed?.let {
-                    AnswerInfoRow("Проект", if (it) "Контекст проекта добавлен" else "Без проекта")
+                message.teamContextUsed?.let {
+                    AnswerInfoRow("Команда", if (it) "Контекст команды добавлен" else "Без команды")
                 }
                 message.attachmentCount?.let {
                     AnswerInfoRow("Вложения", if (it > 0) "$it" else "Нет")
