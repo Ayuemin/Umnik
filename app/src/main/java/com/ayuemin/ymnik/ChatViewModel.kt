@@ -26,6 +26,7 @@ import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
 import com.ayuemin.ymnik.data.SystemTaskPlanner
+import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
@@ -4599,62 +4600,101 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         answerAttachmentCount = allAttachments.size
-                        val knowledgeMode = KnowledgeIntent.mode(clean)
-                        val knowledgeBaseOnly = knowledgeMode == KnowledgeRequestMode.BASE_ONLY
-                        answerKnowledgeBaseOnly = knowledgeBaseOnly.takeIf { it }
-                        val knowledgeQuery = KnowledgeQueryBuilder.build(clean, before)
-                        if (knowledgeQuery != clean.take(12000)) {
-                            DiagnosticLog.record(
-                                context,
-                                "KNOWLEDGE",
-                                "contextual follow-up query expanded; currentChars=${clean.length}; queryChars=${knowledgeQuery.length}"
-                            )
-                        }
-                        val knowledgeContext = if (requestAgent == null) {
-                            knowledgeSystemContext(
-                                currentProject,
-                                currentChat,
-                                knowledgeQuery,
-                                baseOnly = knowledgeBaseOnly,
-                                onSearchAttempted = {
-                                    answerKnowledgeSearchAttempted = true
-                                    answerKnowledgeHitCount = 0
-                                },
-                                onRetrieved = { count, sources ->
-                                    answerKnowledgeHitCount = count
-                                    answerKnowledgeSources = sources
-                                }
-                            )
-                        } else {
-                            knowledgeSystemContext(
-                                project = null,
-                                chat = null,
-                                query = knowledgeQuery,
-                                agentId = requestAgent.id,
-                                baseOnly = knowledgeBaseOnly,
-                                onSearchAttempted = {
-                                    answerKnowledgeSearchAttempted = true
-                                    answerKnowledgeHitCount = 0
-                                },
-                                onRetrieved = { count, sources ->
-                                    answerKnowledgeHitCount = count
-                                    answerKnowledgeSources = sources
-                                }
-                            )
-                        }
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
+                        val knowledgeOwners = if (requestAgent != null) {
+                            listOf(KnowledgeOwnerKind.AGENT to requestAgent.id)
+                        } else {
+                            currentChat?.id?.let { listOf(KnowledgeOwnerKind.CHAT to it) }.orEmpty()
+                        }
+                        val knowledgeAvailable = knowledgeOwners.isNotEmpty() &&
+                            knowledgeBase.hasEnabledKnowledge(knowledgeOwners)
                         require(profile.type == ProviderType.OPENROUTER) { "Umnik использует только OpenRouter" }
                         network.call(profileId = profile.id, recoverable = true) { requestApi ->
                             network.updatePhase("Готовлю контекст…")
+
+                            var knowledgeContext = ""
+                            if (knowledgeAvailable && systemModelConfigured() && memoryCredentials != null) {
+                                val plan = runCatching {
+                                    systemTaskPlanner.planKnowledgeQuery(
+                                        apiKey = memoryCredentials.first,
+                                        baseUrl = memoryCredentials.second,
+                                        modelId = _state.value.systemModel,
+                                        currentQuery = clean,
+                                        history = before,
+                                        apiOverride = requestApi
+                                    )
+                                }.onFailure { error ->
+                                    DiagnosticLog.record(
+                                        context,
+                                        "KNOWLEDGE",
+                                        "system planner failed; fallback=local",
+                                        error
+                                    )
+                                }.getOrElse {
+                                    SystemKnowledgePlan(
+                                        baseOnly = KnowledgeIntent.mode(clean) == KnowledgeRequestMode.BASE_ONLY,
+                                        searchQuery = KnowledgeQueryBuilder.build(clean, before)
+                                    )
+                                }
+
+                                answerKnowledgeBaseOnly = plan.baseOnly.takeIf { it }
+                                DiagnosticLog.record(
+                                    context,
+                                    "KNOWLEDGE",
+                                    "plan mode=${if (plan.baseOnly) "base_only" else "normal"}; " +
+                                        "queryRewritten=${plan.searchQuery != clean.take(12000)}; " +
+                                        "currentChars=${clean.length}; queryChars=${plan.searchQuery.length}"
+                                )
+
+                                knowledgeContext = if (requestAgent == null) {
+                                    knowledgeSystemContext(
+                                        currentProject,
+                                        currentChat,
+                                        plan.searchQuery,
+                                        baseOnly = plan.baseOnly,
+                                        onSearchAttempted = {
+                                            answerKnowledgeSearchAttempted = true
+                                            answerKnowledgeHitCount = 0
+                                        },
+                                        onRetrieved = { count, sources ->
+                                            answerKnowledgeHitCount = count
+                                            answerKnowledgeSources = sources
+                                        }
+                                    )
+                                } else {
+                                    knowledgeSystemContext(
+                                        project = null,
+                                        chat = null,
+                                        query = plan.searchQuery,
+                                        agentId = requestAgent.id,
+                                        baseOnly = plan.baseOnly,
+                                        onSearchAttempted = {
+                                            answerKnowledgeSearchAttempted = true
+                                            answerKnowledgeHitCount = 0
+                                        },
+                                        onRetrieved = { count, sources ->
+                                            answerKnowledgeHitCount = count
+                                            answerKnowledgeSources = sources
+                                        }
+                                    )
+                                }
+                            } else if (knowledgeAvailable && !systemModelConfigured()) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "KNOWLEDGE",
+                                    "skipped; system model not configured"
+                                )
+                            }
+
                             val preparedContext = chatMemoryManager.prepare(
-                            chat = currentChat,
-                            fullHistory = before,
-                            query = clean,
-                            apiKey = memoryCredentials?.first,
-                            baseUrl = memoryCredentials?.second,
-                            embeddingModelId = _state.value.embeddingModel,
-                            systemModelId = _state.value.systemModel,
-                            apiOverride = requestApi
+                                chat = currentChat,
+                                fullHistory = before,
+                                query = clean,
+                                apiKey = memoryCredentials?.first,
+                                baseUrl = memoryCredentials?.second,
+                                embeddingModelId = _state.value.embeddingModel,
+                                systemModelId = _state.value.systemModel,
+                                apiOverride = requestApi
                             )
                             answerMemoryContextUsed = preparedContext.systemContext.isNotBlank()
                             requestApi.chat(
