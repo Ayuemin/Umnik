@@ -99,5 +99,4 @@ internal fun parseSystemKnowledgePlan(rawText: String): SystemKnowledgePlan {
         baseOnly = mode == "base_only",
         searchQuery = query
     )
-    }
 }
