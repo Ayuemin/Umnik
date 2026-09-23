@@ -9,10 +9,11 @@ enum class KnowledgeOwnerKind {
 data class KnowledgeBaseSettings(
     val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
     val enabled: Boolean = true,
-    val topK: Int = 5
+    val topK: Int = DEFAULT_TOP_K
 ) {
     companion object {
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
+        const val DEFAULT_TOP_K = 4
     }
 }
 
