@@ -764,6 +764,10 @@ onBranch = if (message.role == "assistant") {
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            UmnikInfoHint(
+                                title = "Изолированная генерация изображения",
+                                text = "Этот режим использует отдельно выбранную модель изображений и отдельный промпт. Обычная чат-модель и история диалога в запрос генерации не подмешиваются; готовое изображение возвращается в текущий чат."
+                            )
                             IconButton(
                                 onClick = { imagePromptMode = false },
                                 enabled = !requestActiveHere
@@ -983,8 +987,6 @@ onBranch = if (message.role == "assistant") {
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 18.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Добавить", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1002,7 +1004,7 @@ onBranch = if (message.role == "assistant") {
                     )
                     ComposerActionTile(
                         icon = Icons.Outlined.CameraAlt,
-                        label = "Быстрое фото",
+                        label = "Камера",
                         enabled = !state.isLoading && cameraAvailable,
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -1020,7 +1022,7 @@ onBranch = if (message.role == "assistant") {
                     )
                     ComposerActionTile(
                         icon = Icons.Outlined.Image,
-                        label = "Создать изображение",
+                        label = "Создать",
                         enabled = !state.isLoading && imageConnectionAvailable && state.imageModel.isNotBlank(),
                         modifier = Modifier.weight(1f),
                         onClick = {
@@ -1037,8 +1039,7 @@ onBranch = if (message.role == "assistant") {
                     ) {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
-                            label = "Размышление",
-                            subtitle = reasoningEffortUiLabel(state.reasoningEffort),
+                            label = reasoningEffortCompactLabel(state.reasoningEffort),
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
@@ -1047,8 +1048,7 @@ onBranch = if (message.role == "assistant") {
                         )
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
-                            label = "Поиск",
-                            subtitle = webSearchPresetUiLabel(state.webSearchPreset),
+                            label = webSearchPresetCompactLabel(state.webSearchPreset),
                             checked = state.webSearchEnabled,
                             enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
@@ -1313,6 +1313,22 @@ private fun reasoningEffortUiLabel(effort: ReasoningEffort): String = when (effo
     ReasoningEffort.HIGH -> "Высокий"
     ReasoningEffort.XHIGH -> "Очень высокий"
     ReasoningEffort.MAX -> "Максимальный"
+}
+
+private fun reasoningEffortCompactLabel(effort: ReasoningEffort): String = when (effort) {
+    ReasoningEffort.MINIMAL -> "Минимум"
+    ReasoningEffort.LOW -> "Низкий"
+    ReasoningEffort.MEDIUM -> "Средний"
+    ReasoningEffort.HIGH -> "Высокий"
+    ReasoningEffort.XHIGH -> "Очень высокий"
+    ReasoningEffort.MAX -> "Максимум"
+}
+
+private fun webSearchPresetCompactLabel(preset: WebSearchPreset): String = when (preset) {
+    WebSearchPreset.ON_DEMAND -> "Необходимый"
+    WebSearchPreset.FAST -> "Быстрый"
+    WebSearchPreset.NORMAL -> "Обычный"
+    WebSearchPreset.DEEP -> "Глубокий"
 }
 
 private fun webSearchPresetUiLabel(preset: WebSearchPreset): String = when (preset) {
