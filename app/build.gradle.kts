@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.12 — composer polish and guide refresh
+// Umnik v1.19.11-rc.12 — composer polish and guide refresh; release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
