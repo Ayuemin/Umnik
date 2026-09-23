@@ -61,7 +61,6 @@ fun KnowledgeBaseSection(
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
     var modelId by remember(ownerId, current.embeddingModelId) { mutableStateOf(current.embeddingModelId) }
-    var topK by remember(ownerId, current.topK) { mutableStateOf(current.topK) }
     val addDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.addKnowledgeDocuments(kind, ownerId, uris, modelId)
     }
@@ -155,23 +154,16 @@ fun KnowledgeBaseSection(
             }
         }
 
-        Text("Фрагментов в запрос: $topK", fontWeight = FontWeight.SemiBold)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(3, 5, 8).forEach { value ->
-                FilterChip(
-                    selected = topK == value,
-                    onClick = { topK = value },
-                    label = { Text(value.toString()) }
-                )
-            }
-        }
-
         FilledTonalButton(
             onClick = {
                 vm.saveKnowledgeSettings(
                     kind,
                     ownerId,
-                    KnowledgeBaseSettings(modelId, enabled, topK)
+                    KnowledgeBaseSettings(
+                        embeddingModelId = modelId,
+                        enabled = enabled,
+                        topK = KnowledgeBaseSettings.DEFAULT_TOP_K
+                    )
                 )
             },
             enabled = modelId.isNotBlank() && !state.isLoading && !state.requestActive,
