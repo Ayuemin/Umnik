@@ -173,6 +173,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         ?: defaultOpenRouterProfile()
     private val initialImageModel = loadImageModelForProfile(initialImageProfile.id)
     private val initialEmbeddingModel = loadGlobalEmbeddingModel()
+    private val initialSystemModel = loadGlobalSystemModel()
     private val initialImageAspectRatio = loadImageParameter("aspect_ratio", initialImageProfile.id, initialImageModel)
     private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
     private val initialRuntime = projectAutomation.profile(initialChat.id) ?: run {
@@ -209,7 +210,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             activeConnectionProfileId = initialProfileId,
             disabledConnectionIds = initialDisabledConnectionIds,
             textModel = loadTextModelForProfile(initialProfile),
-            systemModel = prefs.getString("system_model_id", "").orEmpty().trim(),
+            systemModel = initialSystemModel,
             embeddingModel = initialEmbeddingModel,
             currentChatTextModel = initialRuntime.modelId,
             quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
@@ -277,13 +278,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .map { it.embeddingModelId.trim() }
             .filter { it.isNotBlank() }
             .distinct()
-        val legacyMemoryModel = chatMemory.settings().embeddingModelId.trim()
+        val legacyMemoryModel = chatMemory.legacyEmbeddingModelId().trim()
         val migrated = when {
             documentModels.size == 1 -> documentModels.first()
             legacyMemoryModel.isNotBlank() -> legacyMemoryModel
             else -> KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL
         }
         prefs.edit().putString("embedding_model_id", migrated).apply()
+        return migrated
+    }
+
+    private fun loadGlobalSystemModel(): String {
+        prefs.getString("system_model_id", null)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+
+        val legacy = chatMemory.legacySummaryModelId().trim()
+        val migrated = legacy.takeIf {
+            it.isNotBlank() && !it.equals("openrouter/auto", ignoreCase = true)
+        }.orEmpty()
+        if (migrated.isNotBlank()) {
+            prefs.edit().putString("system_model_id", migrated).apply()
+        }
         return migrated
     }
 
@@ -562,8 +579,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chatMemory.saveSettingsForChat(
                 chatId,
                 ChatMemoryGlobalSettings(
-                    embeddingModelId = _state.value.embeddingModel,
-                    summaryModelId = _state.value.systemModel,
                     defaultContextMode = ChatContextMode.AUTO
                 )
             )
@@ -670,6 +685,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
 
         prefs.edit().putString("embedding_model_id", clean).apply()
+        val knownContext = _state.value.modelCatalog.firstOrNull { it.id == clean }?.contextLength
+        chatMemory.saveSettings(
+            chatMemory.settings().copy(embeddingContextTokens = knownContext)
+        )
         _state.value = _state.value.copy(
             embeddingModel = clean,
             status = "Embeddings-модель сохранена. Запускаю переиндексацию…"
