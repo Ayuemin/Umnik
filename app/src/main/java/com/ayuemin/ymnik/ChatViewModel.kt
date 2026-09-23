@@ -1073,36 +1073,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    fun reindexKnowledgeDocument(documentId: String) {
-        if (_state.value.isLoading || _state.value.requestActive) return
-        knowledgeBase.reloadFromDisk()
-        val document = knowledgeBase.allDocuments().firstOrNull { it.id == documentId } ?: return
-        if (knowledgeTaskLabel(document.ownerKind, document.ownerId) != null ||
-            knowledgeBase.activeIndexTask(document.ownerKind, document.ownerId) != null
-        ) {
-            _state.update { it.copy(status = "Для этой базы знаний уже выполняется индексация") }
-            return
-        }
-        val model = _state.value.embeddingModel
-        viewModelScope.launch {
-            setKnowledgeTask(document.ownerKind, document.ownerId, "Готовлю переиндексацию ${document.name}…")
-            try {
-                val (profileId, baseUrl) = knowledgeOpenRouterTaskConfig()
-                val task = knowledgeBase.prepareReindexTask(
-                    documentId = documentId,
-                    embeddingModelId = model,
-                    connectionProfileId = profileId,
-                    baseUrl = baseUrl
-                )
-                KnowledgeIndexWorker.schedule(context, task)
-                refreshKnowledgeState("Переиндексация запущена в фоне")
-            } catch (error: Throwable) {
-                DiagnosticLog.record(context, "KNOWLEDGE", "reindex queue failed document=$documentId", error)
-                refreshKnowledgeState(error.message ?: "Не удалось запустить переиндексацию")
-            }
-        }
-    }
-
     fun deleteKnowledgeDocument(documentId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         knowledgeBase.reloadFromDisk()
