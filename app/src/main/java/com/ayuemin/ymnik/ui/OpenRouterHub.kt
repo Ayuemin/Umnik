@@ -721,6 +721,10 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                                 onClick = { menuOpen = false; controller.useAsTextModel(model) }
                             )
                             DropdownMenuItem(
+                                text = { Text("Использовать как системную модель") },
+                                onClick = { menuOpen = false; controller.useAsSystemModel(model) }
+                            )
+                            DropdownMenuItem(
                                 text = {
                                     Text(
                                         if (appState.quickTextModels.any { it.substringAfter('\u001F') == model.id })
@@ -736,6 +740,15 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             DropdownMenuItem(
                                 text = { Text("Использовать для пакетных задач") },
                                 onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) }
+                            )
+                        }
+                        if (ModelCategory.EMBEDDINGS in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать как Embeddings-модель") },
+                                onClick = {
+                                    menuOpen = false
+                                    controller.assignModel(model, ModelCategory.EMBEDDINGS)
+                                }
                             )
                         }
                         if (ModelCategory.IMAGE in model.categories) {
