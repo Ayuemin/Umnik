@@ -97,7 +97,6 @@ class ChatMemoryRepository(private val context: Context) {
         val clean = sanitize(settings)
         val current = snapshot(chatId)?.takeIf {
             it.embeddingModelId == clean.embeddingModelId &&
-                it.summaryModelId == clean.summaryModelId &&
                 it.chunkTokens == clean.chunkTokens &&
                 it.chunkOverlapTokens == clean.chunkOverlapTokens &&
                 it.embeddingContextTokens == clean.embeddingContextTokens
@@ -117,6 +116,7 @@ class ChatMemoryRepository(private val context: Context) {
             chunk.copy(vectorDimension = vector.size)
         }
         val next = current.copy(
+            summaryModelId = clean.summaryModelId,
             stateCard = stateCard.take(clean.stateCardMaxChars),
             checkpoints = current.checkpoints + checkpoint,
             chunks = current.chunks + storedChunks,
@@ -143,7 +143,6 @@ class ChatMemoryRepository(private val context: Context) {
         val clean = sanitize(settings)
         val current = snapshot(chatId)?.takeIf {
             it.embeddingModelId == clean.embeddingModelId &&
-                it.summaryModelId == clean.summaryModelId &&
                 it.chunkTokens == clean.chunkTokens &&
                 it.chunkOverlapTokens == clean.chunkOverlapTokens &&
                 it.embeddingContextTokens == clean.embeddingContextTokens
@@ -163,6 +162,7 @@ class ChatMemoryRepository(private val context: Context) {
             chunk.copy(vectorDimension = vector.size)
         }
         val next = current.copy(
+            summaryModelId = clean.summaryModelId,
             chunks = current.chunks + storedChunks,
             indexedFingerprints = current.indexedFingerprints + fingerprints,
             updatedAt = System.currentTimeMillis()
