@@ -25,6 +25,7 @@ import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
 import com.ayuemin.ymnik.data.StorageRepository
+import com.ayuemin.ymnik.data.SystemTaskPlanner
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
@@ -122,6 +123,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val storageRepository = StorageRepository(context)
     private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
+    private val systemTaskPlanner = SystemTaskPlanner(api)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
     private val gson = Gson()
     private val recoveredRequest = RequestExecutionManager.recoverInterrupted(context)
@@ -208,6 +210,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             activeConnectionProfileId = initialProfileId,
             disabledConnectionIds = initialDisabledConnectionIds,
             textModel = loadTextModelForProfile(initialProfile),
+            systemModel = prefs.getString("system_model_id", "").orEmpty().trim(),
+            embeddingModel = prefs.getString(
+                "embedding_model_id",
+                KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL
+            ).orEmpty().trim().ifBlank { KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL },
             currentChatTextModel = initialRuntime.modelId,
             quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
             imageConnectionProfileId = initialImageProfileId,
