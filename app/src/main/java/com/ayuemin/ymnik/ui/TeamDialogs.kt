@@ -344,7 +344,7 @@ fun TeamsDialog(
     }
 
     state.teams.firstOrNull { it.id == openTeamId }?.let { team ->
-        SpecialistTeamDetailDialog(
+        TeamDetailDialog(
             team = team,
             state = state,
             vm = vm,

@@ -2,7 +2,7 @@ package com.ayuemin.ymnik.model
 
 internal fun userProfileApplies(
     scope: UserProfileScope,
-    inProject: Boolean,
-    isAgent: Boolean
+    inTeam: Boolean,
+    isSpecialist: Boolean
 ): Boolean =
-    scope == UserProfileScope.CHATS && !inProject && !isAgent
+    scope == UserProfileScope.CHATS && !inTeam && !isSpecialist

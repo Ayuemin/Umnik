@@ -5337,7 +5337,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
         if (specialist != null) {
-            appendLine("\n===== АГЕНТ: ${specialist.name} =====")
+            appendLine("\n===== СПЕЦИАЛИСТ: ${specialist.name} =====")
             if (specialist.role.isNotBlank()) appendLine("Роль: ${specialist.role}")
             if (specialist.instruction.isNotBlank()) {
                 appendLine("Личная инструкция специалиста:")

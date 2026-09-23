@@ -65,7 +65,7 @@ import com.ayuemin.ymnik.model.WebSearchEngine
  * The team is only a room. All working configuration lives on SpecialistProfile.
  */
 @Composable
-fun SpecialistTeamDetailDialog(
+fun TeamDetailDialog(
     team: Team,
     state: UiState,
     vm: ChatViewModel,
@@ -75,9 +75,9 @@ fun SpecialistTeamDetailDialog(
     var editingSpecialistId by remember(team.id) { mutableStateOf<String?>(null) }
     var teamSettingsOpen by remember(team.id) { mutableStateOf(false) }
 
-    val specialists = state.specialists.filter { it.teamId == team.id }
-    val orchestrator = specialists.firstOrNull { it.kind == SpecialistKind.ORCHESTRATOR }
-    val specialists = specialists.filter { it.kind == SpecialistKind.SPECIALIST }.sortedBy { it.name.lowercase() }
+    val teamMembers = state.specialists.filter { it.teamId == team.id }
+    val orchestrator = teamMembers.firstOrNull { it.kind == SpecialistKind.ORCHESTRATOR }
+    val specialists = teamMembers.filter { it.kind == SpecialistKind.SPECIALIST }.sortedBy { it.name.lowercase() }
 
     FullScreenPanel(title = team.name, onBack = onDismiss) {
         LazyColumn(
