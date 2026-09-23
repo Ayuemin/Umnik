@@ -483,7 +483,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun createSpecialist(teamId: String, name: String = "Новый специалист"): String {
-        require(_state.value.teams.any { it.id == teamId }) { "Команда не найден" }
+        require(_state.value.teams.any { it.id == teamId }) { "Команда не найдена" }
         val specialist = specialistsRepository.createSpecialist(teamId, name)
         _state.value = _state.value.copy(
             specialists = specialistsRepository.list(),
@@ -493,7 +493,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun saveSpecialist(profile: SpecialistProfile) {
-        require(_state.value.teams.any { it.id == profile.teamId }) { "Команда не найден" }
+        require(_state.value.teams.any { it.id == profile.teamId }) { "Команда не найдена" }
         val saved = specialistsRepository.upsert(profile)
         syncSpecialistConversationSnapshots(saved)
         _state.value = _state.value.copy(
@@ -503,7 +503,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     /**
-     * Opens the primary conversation of an specialist.
+     * Opens the primary conversation of a specialist.
      *
      * ChatSession is only a temporary message-store adapter here. SpecialistProfile remains
      * the source of truth for personality and runtime settings.
@@ -2672,7 +2672,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Ты НЕ МОЖЕШЬ менять постоянную модель, навыки, память, базу знаний, reasoning или личную инструкцию другого специалиста.")
         appendLine("Если специалист уже сделал работу, используй его результат по resultId. Не выдумывай, что он сделал то, чего нет в результате.")
         appendLine("Для обычной передачи результата следующему специалисту укажи его ID в inputResultIds. TRANSFER_WORK для этого не нужен.")
-        appendLine("Если несколько поручений НЕ зависят друг от друга, можешь запустить их одновременно: верни подряд несколько CALL_AGENT с одинаковым непустым parallelGroup, например \"research-1\".")
+        appendLine("Если несколько поручений НЕ зависят друг от друга, можешь запустить их одновременно: верни подряд несколько CALL_SPECIALIST с одинаковым непустым parallelGroup, например \"research-1\".")
         appendLine("Действия с одинаковым parallelGroup должны идти рядом. Не помещай в одну параллельную группу два поручения одному и тому же специалисту.")
         appendLine("Если результат одного специалиста нужен другому, не запускай их параллельно: дождись результата и выбери следующего специалиста в следующем решении.")
         appendLine("Если результат слабый, используй REQUEST_REVISION и укажи taskId предыдущего поручения.")
@@ -2700,7 +2700,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("  \"actions\": [")
         appendLine("    {")
         appendLine("      \"id\": \"любая уникальная строка\",")
-        appendLine("      \"type\": \"CALL_AGENT\",")
+        appendLine("      \"type\": \"CALL_SPECIALIST\",")
         appendLine("      \"specialistId\": \"точный specialistId\",")
         appendLine("      \"taskId\": null,")
         appendLine("      \"objective\": \"цель поручения\",")
@@ -2713,7 +2713,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("    }")
         appendLine("  ]")
         appendLine("}")
-        appendLine("Допустимые type: CALL_AGENT, REQUEST_REVISION, ASK_USER, CANCEL_TASK, COMPLETE_JOB.")
+        appendLine("Допустимые type: CALL_SPECIALIST, REQUEST_REVISION, ASK_USER, CANCEL_TASK, COMPLETE_JOB.")
         appendLine("Чтобы передать все исходные вложения пользователя специалисту, добавь строку USER в inputFileIds.")
         appendLine("Для ASK_USER заполни userReply и не ставь completed=true.")
         appendLine("Если completed=false, обязательно верни хотя бы одно допустимое действие; пустой actions недопустим.")
@@ -3145,7 +3145,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
             DiagnosticLog.record(
                 context,
-                "AGENT",
+                "SPECIALIST",
                 "COMPLETE specialist=" + worker.name +
                     "; task=" + packageData.id.take(8) +
                     "; result=" + result.id.take(8) +
@@ -3162,8 +3162,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         workspace: JobWorkspace,
         action: OrchestratorAction
     ): SpecialistTaskPackage = when (action.type) {
-        OrchestratorActionType.CALL_AGENT -> {
-            val targetId = action.specialistId ?: error("CALL_AGENT без specialistId")
+        OrchestratorActionType.CALL_SPECIALIST -> {
+            val targetId = action.specialistId ?: error("CALL_SPECIALIST без specialistId")
             SpecialistTaskPackage(
                 id = UUID.randomUUID().toString(),
                 workspaceId = workspace.id,
@@ -3272,7 +3272,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
             DiagnosticLog.record(
                 context,
-                "AGENT",
+                "SPECIALIST",
                 "FAILED specialist=" + target.name +
                     "; task=" + packageData.id.take(8) +
                     "; reason=" + (error.message ?: error::class.java.simpleName)
@@ -3640,7 +3640,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
 
                     val executable = decision.actions.filter {
-                        it.type == OrchestratorActionType.CALL_AGENT ||
+                        it.type == OrchestratorActionType.CALL_SPECIALIST ||
                             it.type == OrchestratorActionType.REQUEST_REVISION
                     }
                     workspace = executeSpecialistOfficeActions(

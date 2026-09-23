@@ -8,7 +8,7 @@ package com.ayuemin.ymnik.model
  * employees.
  */
 enum class OrchestratorActionType {
-    CALL_AGENT,
+    CALL_SPECIALIST,
     REQUEST_REVISION,
     TRANSFER_WORK,
     CANCEL_TASK,
@@ -32,7 +32,7 @@ data class SpecialistDescriptor(
 /**
  * One decision emitted by the orchestrator.
  *
- * Several CALL_AGENT actions may share parallelGroup to let TaskDispatcher run them
+ * Several CALL_SPECIALIST actions may share parallelGroup to let TaskDispatcher run them
  * concurrently when safe.
  */
 data class OrchestratorAction(

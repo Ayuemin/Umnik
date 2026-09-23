@@ -18,12 +18,12 @@ object OrchestratorCodec {
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
             val rawType = obj.string("type").trim()
             if (rawType.isBlank()) return@mapNotNull null
+            val normalizedType = rawType.uppercase()
+                .replace('-', '_')
+                .replace(' ', '_')
+                .let { if (it == "CALL_AGENT") "CALL_SPECIALIST" else it }
             val type = runCatching {
-                OrchestratorActionType.valueOf(
-                    rawType.uppercase()
-                        .replace('-', '_')
-                        .replace(' ', '_')
-                )
+                OrchestratorActionType.valueOf(normalizedType)
             }.getOrElse { error("Неизвестное действие Оркестратора: " + rawType) }
             OrchestratorAction(
                 id = obj.string("id").ifBlank { UUID.randomUUID().toString() },
@@ -59,13 +59,13 @@ object OrchestratorCodec {
         val completes = decision.completed ||
             actions.any { it.type == OrchestratorActionType.COMPLETE_JOB }
         val executable = actions.any {
-            it.type == OrchestratorActionType.CALL_AGENT ||
+            it.type == OrchestratorActionType.CALL_SPECIALIST ||
                 it.type == OrchestratorActionType.REQUEST_REVISION
         }
 
         actions.forEach { action ->
             when (action.type) {
-                OrchestratorActionType.CALL_AGENT -> {
+                OrchestratorActionType.CALL_SPECIALIST -> {
                     if (action.specialistId.isNullOrBlank()) return "call_specialist_without_specialist_id"
                 }
                 OrchestratorActionType.REQUEST_REVISION -> {
