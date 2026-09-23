@@ -431,14 +431,6 @@ private fun AgentSettingsDialog(
                     maxLines = 4
                 )
             }
-            item {
-                Text(
-                    "Системная и Embeddings-модели для служебных задач агента используются из общих Настройки → Модели.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
             item { AgentSettingsSectionTitle("Работа модели") }
 
             item {
