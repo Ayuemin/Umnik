@@ -7,7 +7,6 @@ enum class KnowledgeOwnerKind {
 }
 
 data class KnowledgeBaseSettings(
-    val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
     val enabled: Boolean = true,
     val topK: Int = DEFAULT_TOP_K
 ) {
