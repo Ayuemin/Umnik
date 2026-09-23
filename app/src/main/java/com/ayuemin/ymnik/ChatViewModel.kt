@@ -835,23 +835,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun knowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings =
         knowledgeBase.settings(kind, ownerId)
 
-    fun isKnowledgeDocumentEnabled(documentId: String): Boolean =
-        knowledgeBase.isDocumentEnabled(documentId)
-
-    fun setKnowledgeDocumentEnabled(documentId: String, enabled: Boolean) {
-        if (_state.value.isLoading || _state.value.requestActive) return
-        if (knowledgeBase.setDocumentEnabled(documentId, enabled)) {
-            _state.update {
-                it.copy(
-                    status = if (enabled)
-                        "Источник снова участвует в поиске базы знаний"
-                    else
-                        "Источник исключён из поиска базы знаний"
-                )
-            }
-        }
-    }
-
     fun knowledgeFailure(kind: KnowledgeOwnerKind, ownerId: String): String? =
         knowledgeBase.failedTaskMessage(kind, ownerId)
 
