@@ -1041,7 +1041,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             if (agentId != null) {
                 add(KnowledgeOwnerKind.AGENT to agentId)
             } else {
-                project?.id?.let { add(KnowledgeOwnerKind.PROJECT to it) }
                 chat?.id?.let { add(KnowledgeOwnerKind.CHAT to it) }
             }
         }
