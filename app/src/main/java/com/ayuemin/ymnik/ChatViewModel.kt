@@ -4620,37 +4620,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
                             var knowledgeContext = ""
                             if (knowledgeAvailable && systemModelConfigured() && memoryCredentials != null) {
-                                val plan = runCatching {
-                                    systemTaskPlanner.planKnowledgeQuery(
-                                        apiKey = memoryCredentials.first,
-                                        baseUrl = memoryCredentials.second,
-                                        modelId = _state.value.systemModel,
-                                        currentQuery = clean,
-                                        history = before,
-                                        apiOverride = requestApi
-                                    )
-                                }.onFailure { error ->
-                                    DiagnosticLog.record(
-                                        context,
-                                        "KNOWLEDGE",
-                                        "system planner failed; fallback=local",
-                                        error
-                                    )
-                                }.getOrElse {
-                                    SystemKnowledgePlan(
-                                        baseOnly = KnowledgeIntent.mode(clean) == KnowledgeRequestMode.BASE_ONLY,
-                                        searchQuery = KnowledgeQueryBuilder.build(clean, before)
-                                    )
-                                }
+                                val plan = prepareSystemKnowledgePlan(
+                                    query = clean,
+                                    history = before,
+                                    apiKey = memoryCredentials.first,
+                                    baseUrl = memoryCredentials.second,
+                                    apiOverride = requestApi
+                                )
 
                                 answerKnowledgeBaseOnly = plan.baseOnly.takeIf { it }
-                                DiagnosticLog.record(
-                                    context,
-                                    "KNOWLEDGE",
-                                    "plan mode=${if (plan.baseOnly) "base_only" else "normal"}; " +
-                                        "queryRewritten=${plan.searchQuery != clean.take(12000)}; " +
-                                        "currentChars=${clean.length}; queryChars=${plan.searchQuery.length}"
-                                )
 
                                 knowledgeContext = if (requestAgent == null) {
                                     knowledgeSystemContext(
