@@ -4,7 +4,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -16,17 +15,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Search
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
-import com.ayuemin.ymnik.model.KnowledgeBaseSettings
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.UiState
 import java.util.Locale
@@ -72,6 +64,7 @@ fun KnowledgeBaseSection(
                 knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
                 documents.isEmpty() -> "Нет источников"
                 !enabled -> "${documents.size} источн. · автопоиск выключен"
+                !vm.systemModelConfigured() -> "${documents.size} источн. · нужна системная модель"
                 else -> "${documents.size} источн. · автопоиск включён"
             },
             expanded = expanded,
@@ -123,24 +116,14 @@ fun KnowledgeBaseSection(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text("Использовать базу знаний", Modifier.weight(1f))
-            Switch(checked = enabled, onCheckedChange = { enabled = it })
-        }
-
-        FilledTonalButton(
-            onClick = {
-                vm.saveKnowledgeSettings(
-                    kind,
-                    ownerId,
-                    KnowledgeBaseSettings(
-                        enabled = enabled,
-                        topK = KnowledgeBaseSettings.DEFAULT_TOP_K
-                    )
-                )
-            },
-            enabled = vm.globalEmbeddingModelId().isNotBlank() && !state.isLoading && !state.requestActive,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            Text("Сохранить настройки базы знаний")
+            Switch(
+                checked = enabled,
+                onCheckedChange = { checked ->
+                    enabled = checked
+                    vm.saveKnowledgeSettings(kind, ownerId, current.copy(enabled = checked))
+                },
+                enabled = !state.isLoading && !state.requestActive
+            )
         }
 
         if (documents.isEmpty()) {
