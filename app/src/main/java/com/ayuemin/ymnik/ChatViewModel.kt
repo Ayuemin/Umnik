@@ -1143,6 +1143,46 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return apiKey to effectiveTextBaseUrl(profile)
     }
 
+    private suspend fun prepareSystemKnowledgePlan(
+        query: String,
+        history: List<ChatMessage>,
+        apiKey: String,
+        baseUrl: String,
+        apiOverride: OpenRouterClient? = null
+    ): SystemKnowledgePlan {
+        require(systemModelConfigured()) { "Не выбрана системная модель" }
+        return runCatching {
+            systemTaskPlanner.planKnowledgeQuery(
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                modelId = _state.value.systemModel,
+                currentQuery = query,
+                history = history,
+                apiOverride = apiOverride
+            )
+        }.onFailure { error ->
+            DiagnosticLog.record(
+                context,
+                "KNOWLEDGE",
+                "system planner failed; fallback=local",
+                error
+            )
+        }.getOrElse {
+            SystemKnowledgePlan(
+                baseOnly = KnowledgeIntent.mode(query) == KnowledgeRequestMode.BASE_ONLY,
+                searchQuery = KnowledgeQueryBuilder.build(query, history)
+            )
+        }.also { plan ->
+            DiagnosticLog.record(
+                context,
+                "KNOWLEDGE",
+                "plan mode=${if (plan.baseOnly) "base_only" else "normal"}; " +
+                    "queryRewritten=${plan.searchQuery != query.take(12000)}; " +
+                    "currentChars=${query.length}; queryChars=${plan.searchQuery.length}"
+            )
+        }
+    }
+
     private suspend fun knowledgeSystemContext(
         project: Project?,
         chat: ChatSession?,
