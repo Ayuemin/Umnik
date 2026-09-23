@@ -24,6 +24,16 @@ class KnowledgeChunkerTest {
     }
 
     @Test
+    fun detectsLongBase64LikeChunk() {
+        val encoded = "R0lGODlhAQABAIA" + "A".repeat(700)
+        val wrapped = encoded.chunked(76).joinToString("\n")
+        assertTrue(KnowledgeChunker.isLikelyEncodedBlob(encoded))
+        assertTrue(KnowledgeChunker.isLikelyEncodedBlob(wrapped))
+        assertTrue(!KnowledgeChunker.isLikelyEncodedBlob("Обычный читаемый текст с нормальными пробелами и предложениями."))
+        assertTrue(!KnowledgeChunker.isLikelyEncodedBlob("Readable English prose with many ordinary words and spaces. ".repeat(30)))
+    }
+
+    @Test
     fun normalizesWhitespaceAndSkipsEmptySections() {
         val chunks = KnowledgeChunker.chunk(
             listOf(

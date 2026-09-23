@@ -1,4 +1,4 @@
-// Umnik v1.19.11-rc.12 — composer polish and guide refresh; release
+// Umnik v1.19.11-rc.13 — knowledge base FB2 and contextual retrieval
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 155
-        versionName = "1.19.11-rc.12"
+        versionCode = 156
+        versionName = "1.19.11-rc.13"
     }
 
     buildFeatures {

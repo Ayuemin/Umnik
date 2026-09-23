@@ -477,17 +477,20 @@ class KnowledgeBaseRepository(private val context: Context) {
                     ).first()
                 }
                 modelDocuments.forEach { document ->
-                    ownerHits += scoreDocument(document, queryVector)
+                    ownerHits += scoreDocument(document, queryVector, cleanQuery)
                 }
             }
-            result += ownerHits.sortedByDescending { it.score }.take(settings.topK)
+            result += selectDiverseHits(
+                ownerHits.sortedByDescending { it.score },
+                settings.topK
+            )
         }
         result.sortedByDescending { it.score }
             .distinctBy { "${it.documentId}:${it.text.hashCode()}" }
             .take(MAX_TOTAL_HITS)
     }
 
-    private fun scoreDocument(document: KnowledgeDocument, query: FloatArray): List<KnowledgeHit> {
+    private fun scoreDocument(document: KnowledgeDocument, query: FloatArray, rawQuery: String): List<KnowledgeHit> {
         if (query.size != document.vectorDimension) return emptyList()
         val dir = File(document.localPath).parentFile ?: return emptyList()
         val chunks = readChunks(File(dir, CHUNKS_FILE))
@@ -496,37 +499,75 @@ class KnowledgeBaseRepository(private val context: Context) {
 
         val queryNorm = sqrt(query.fold(0.0) { acc, value -> acc + value * value })
         if (queryNorm == 0.0) return emptyList()
-        return DataInputStream(FileInputStream(vectorsFile).buffered()).use { input ->
+        val semanticScores = DoubleArray(chunks.size)
+        DataInputStream(FileInputStream(vectorsFile).buffered()).use { input ->
             val magic = input.readInt()
             val version = input.readInt()
             val count = input.readInt()
             val dimension = input.readInt()
             if (magic != VECTOR_MAGIC || version != VECTOR_VERSION || dimension != query.size || count != chunks.size) {
-                return@use emptyList()
+                return emptyList()
             }
-            buildList {
-                repeat(count) { index ->
-                    var dot = 0.0
-                    var norm = 0.0
-                    repeat(dimension) { d ->
-                        val value = input.readFloat()
-                        dot += query[d] * value
-                        norm += value * value
-                    }
-                    val score = if (norm <= 0.0) 0.0 else dot / (queryNorm * sqrt(norm))
-                    val chunk = chunks[index]
-                    add(
-                        KnowledgeHit(
-                            documentId = document.id,
-                            documentName = document.name,
-                            text = chunk.text,
-                            page = chunk.page,
-                            score = score
-                        )
+            repeat(count) { index ->
+                var dot = 0.0
+                var norm = 0.0
+                repeat(dimension) { d ->
+                    val value = input.readFloat()
+                    dot += query[d] * value
+                    norm += value * value
+                }
+                semanticScores[index] = if (norm <= 0.0) 0.0 else dot / (queryNorm * sqrt(norm))
+            }
+        }
+
+        return KnowledgeHybridRanker.rank(rawQuery, chunks, semanticScores)
+            .mapNotNull { ranked ->
+                val chunk = chunks[ranked.index]
+                if (KnowledgeChunker.isLikelyEncodedBlob(chunk.text)) {
+                    null
+                } else {
+                    KnowledgeHit(
+                        documentId = document.id,
+                        documentName = document.name,
+                        text = chunk.text,
+                        page = chunk.page,
+                        score = ranked.score,
+                        ordinal = chunk.ordinal,
+                        semanticScore = ranked.semanticScore,
+                        lexicalScore = ranked.lexicalScore
                     )
                 }
             }
+    }
+
+    private fun selectDiverseHits(hits: List<KnowledgeHit>, limit: Int): List<KnowledgeHit> {
+        if (limit <= 0 || hits.isEmpty()) return emptyList()
+        val selected = mutableListOf<KnowledgeHit>()
+        val diverseTarget = minOf(limit, 3)
+
+        hits.forEach { hit ->
+            if (selected.size >= diverseTarget) return@forEach
+            val tooClose = selected.any { chosen ->
+                chosen.documentId == hit.documentId &&
+                    chosen.ordinal >= 0 &&
+                    hit.ordinal >= 0 &&
+                    kotlin.math.abs(chosen.ordinal - hit.ordinal) <= 1
+            }
+            if (!tooClose) selected += hit
         }
+
+        hits.forEach { hit ->
+            if (selected.size >= limit) return@forEach
+            if (selected.none { chosen ->
+                    chosen.documentId == hit.documentId &&
+                        chosen.ordinal == hit.ordinal &&
+                        chosen.text == hit.text
+                }
+            ) {
+                selected += hit
+            }
+        }
+        return selected
     }
 
     private fun documentFilesValid(document: KnowledgeDocument): Boolean {
