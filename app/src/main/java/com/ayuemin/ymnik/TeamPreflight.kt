@@ -33,7 +33,7 @@ internal data class TeamPreflightReport(
         get() = blockers.isEmpty()
 
     fun blockedMessage(): String = buildString {
-        appendLine("⛔ Команда пока не готов к запуску")
+        appendLine("⛔ Команда пока не готова к запуску")
         appendLine()
         blockers.forEach { issue ->
             appendLine("• " + issue.message)
@@ -57,7 +57,7 @@ internal data class TeamPreflightReport(
 }
 
 /**
- * Fast local validation before the first run of an specialist team (and again after its
+ * Fast local validation before the first run of a specialist team (and again after its
  * configuration changes). It intentionally does not call an LLM or the network.
  */
 internal object TeamPreflight {
@@ -110,7 +110,7 @@ internal object TeamPreflight {
                 blocking("$label: подключение «${profile.name}» отключено.")
             }
             if (profile.type != ProviderType.OPENROUTER) {
-                blocking("$label: текущее специалистное выполнение поддерживает только OpenRouter.")
+                blocking("$label: текущее выполнение команды поддерживает только OpenRouter.")
             }
             if (!hasApiKey(profile.id)) {
                 blocking(
@@ -121,14 +121,14 @@ internal object TeamPreflight {
         }
 
         if (orchestrator.teamId != team.id) {
-            blocking("Оркестратор не принадлежит текущему команде.")
+            blocking("Оркестратор не принадлежит текущей команде.")
         }
         validateModel(orchestrator)
 
         if (specialists.isEmpty()) {
             blocking(
                 "В команде нет ни одного специалиста.",
-                "Добавьте хотя бы одного специалиста-специалиста."
+                "Добавьте хотя бы одного специалиста."
             )
         }
 

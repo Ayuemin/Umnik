@@ -128,7 +128,7 @@ class OrchestratorCodecTest {
             """.trimIndent()
         )
 
-        assertEquals("call_specialist_without_agent_id", OrchestratorCodec.validationProblem(parsed))
+        assertEquals("call_specialist_without_specialist_id", OrchestratorCodec.validationProblem(parsed))
     }
 
     @Test
