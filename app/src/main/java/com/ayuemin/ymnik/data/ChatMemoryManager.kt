@@ -36,6 +36,8 @@ class ChatMemoryManager(
         query: String,
         apiKey: String?,
         baseUrl: String?,
+        embeddingModelId: String,
+        systemModelId: String,
         apiOverride: OpenRouterClient? = null
     ): PreparedContext {
         if (chat == null || query.isBlank()) return PreparedContext(fullHistory)
@@ -45,7 +47,12 @@ class ChatMemoryManager(
             return PreparedContext(fullHistory, description = "full")
         }
 
-        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
+        val settings = withKnownEmbeddingLimit(
+            repository.settingsForChat(chat.id).copy(
+                embeddingModelId = embeddingModelId.trim(),
+                summaryModelId = systemModelId.trim()
+            )
+        )
         val chunkPlan = ChatMemoryChunking.plan(settings)
         val completed = ConversationContext.completedTextTurns(fullHistory)
         val totalTokens = estimateHistoryTokens(completed)
@@ -151,10 +158,17 @@ class ChatMemoryManager(
         chat: ChatSession,
         apiKey: String,
         baseUrl: String,
+        embeddingModelId: String,
+        systemModelId: String,
         mode: ChatContextMode = repository.mode(chat.id)
     ) {
         repository.clearMemory(chat.id)
-        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
+        val settings = withKnownEmbeddingLimit(
+            repository.settingsForChat(chat.id).copy(
+                embeddingModelId = embeddingModelId.trim(),
+                summaryModelId = systemModelId.trim()
+            )
+        )
         val recent = evenRecentCount(
             if (mode == ChatContextMode.ECONOMY) settings.economyRecentMessages else settings.autoRecentMessages
         )
@@ -179,7 +193,6 @@ class ChatMemoryManager(
         if (
             snapshot != null && (
                 snapshot.embeddingModelId != settings.embeddingModelId ||
-                    snapshot.summaryModelId != settings.summaryModelId ||
                     snapshot.chunkTokens != settings.chunkTokens ||
                     snapshot.chunkOverlapTokens != settings.chunkOverlapTokens ||
                     snapshot.embeddingContextTokens != settings.embeddingContextTokens
@@ -240,6 +253,14 @@ class ChatMemoryManager(
             turn.size == 2 && turn.any { it.id !in checkpointedIds }
         }
         if (pendingTurns.isEmpty()) return
+        if (settings.summaryModelId.isBlank()) {
+            DiagnosticLog.record(
+                context,
+                "CHAT_MEMORY",
+                "checkpoint skipped chat=${chat.id.take(8)}; system model not configured; embeddings remain searchable"
+            )
+            return
+        }
 
         val pendingTokens = pendingTurns.sumOf { turn ->
             turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
