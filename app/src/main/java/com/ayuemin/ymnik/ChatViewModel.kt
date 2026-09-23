@@ -541,21 +541,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 )
             )
 
-            // Agent conversations never inherit the global chat memory/context settings.
-            // If no embedding model is configured yet, FULL mode keeps the full history
-            // without silently borrowing the ordinary-chat embedding model.
+            // Agent conversations keep their own memory contents and context mode,
+            // but helper models are global for all of Umnik.
             chatMemory.saveSettingsForChat(
                 chatId,
                 ChatMemoryGlobalSettings(
-                    embeddingModelId = profile.memoryEmbeddingModel?.modelId
-                        ?: ChatMemoryGlobalSettings.DEFAULT_EMBEDDING_MODEL,
-                    summaryModelId = profile.contextModel?.modelId
-                        ?: profile.primaryModel?.modelId
-                        ?: ChatMemoryGlobalSettings.DEFAULT_SUMMARY_MODEL,
-                    defaultContextMode = if (profile.memoryEmbeddingModel == null)
-                        ChatContextMode.FULL
-                    else
-                        ChatContextMode.AUTO
+                    embeddingModelId = _state.value.embeddingModel,
+                    summaryModelId = _state.value.systemModel,
+                    defaultContextMode = ChatContextMode.AUTO
                 )
             )
             chatMemory.saveMode(chatId, null)
@@ -813,7 +806,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             _state.value = _state.value.copy(isLoading = true, busyLabel = "Перестраиваю память чата…", status = null)
             try {
                 val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
-                chatMemoryManager.rebuild(chat, apiKey, baseUrl)
+                chatMemoryManager.rebuild(
+                    chat = chat,
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
+                    embeddingModelId = _state.value.embeddingModel,
+                    systemModelId = _state.value.systemModel
+                )
                 val stats = chatMemory.stats(chatId)
                 _state.value = _state.value.copy(
                     status = if (stats.chunks == 0)
@@ -2999,6 +2998,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     query = delegatedText,
                     apiKey = memoryCredentials?.first,
                     baseUrl = memoryCredentials?.second,
+                    embeddingModelId = _state.value.embeddingModel,
+                    systemModelId = _state.value.systemModel,
                     apiOverride = requestApi
                 )
                 requestApi.chat(
@@ -4645,7 +4646,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             query = clean,
                             apiKey = memoryCredentials?.first,
                             baseUrl = memoryCredentials?.second,
-                                apiOverride = requestApi
+                            embeddingModelId = _state.value.embeddingModel,
+                            systemModelId = _state.value.systemModel,
+                            apiOverride = requestApi
                             )
                             answerMemoryContextUsed = preparedContext.systemContext.isNotBlank()
                             requestApi.chat(
