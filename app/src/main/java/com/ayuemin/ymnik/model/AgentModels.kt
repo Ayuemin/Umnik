@@ -17,12 +17,6 @@ data class AgentModelRef(
     val modelId: String
 )
 
-/** Agent-owned knowledge-base state. Helper model selection is global for Umnik. */
-data class AgentKnowledgeBaseProfile(
-    val enabled: Boolean = true,
-    val indexGeneration: Long = 0L
-)
-
 data class AgentProfile(
     val id: String,
     val projectId: String,
@@ -36,9 +30,6 @@ data class AgentProfile(
 
     /** Additional chat models available for this agent's conversations. */
     val quickModels: List<AgentModelRef> = emptyList(),
-
-    /** Agent-owned knowledge base. System and embedding models are global. */
-    val knowledgeBase: AgentKnowledgeBaseProfile = AgentKnowledgeBaseProfile(),
 
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
