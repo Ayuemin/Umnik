@@ -112,14 +112,15 @@ private enum class SimpleModelKind {
     TOOLS
 }
 
-private enum class SimplePriceFilter {
+internal enum class SimplePriceFilter {
     ALL,
     FREE,
-    UP_TO_0_02,
-    UP_TO_0_05,
-    UP_TO_0_1,
-    UP_TO_1,
-    UP_TO_5,
+    FROM_0_TO_0_02,
+    FROM_0_02_TO_0_05,
+    FROM_0_05_TO_0_10,
+    FROM_0_10_TO_0_50,
+    FROM_0_50_TO_1,
+    FROM_1_TO_5,
     OVER_5
 }
 
@@ -386,35 +387,61 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
 
 private val modelSearchSeparators = Regex("""[^\p{L}\p{N}]+""")
 
-internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean {
-    val query = rawQuery.trim()
-    if (query.isBlank()) return true
+private fun normalizeModelSearch(value: String): String = modelSearchSeparators
+    .replace(value.lowercase(Locale.ROOT), " ")
+    .trim()
 
-    val fields = listOfNotNull(
-        model.id,
-        model.name,
-        model.description,
-        model.canonicalSlug,
-        model.huggingFaceId,
-        model.providerId
+internal fun modelSearchRank(model: ModelInfo, rawQuery: String): Int {
+    val query = normalizeModelSearch(rawQuery)
+    if (query.isBlank()) return 0
+    val tokens = query.split(' ').filter { it.isNotBlank() }
+    if (tokens.isEmpty()) return 0
+
+    fun fieldRank(values: List<String?>, exact: Int, starts: Int, contains: Int, tokensRank: Int): Int {
+        val normalized = values.mapNotNull { it?.takeIf(String::isNotBlank) }.map(::normalizeModelSearch)
+        if (normalized.any { it == query }) return exact
+        if (normalized.any { it.startsWith(query) }) return starts
+        if (normalized.any { query in it }) return contains
+        if (normalized.any { value -> tokens.all { token -> token in value } }) return tokensRank
+        return Int.MAX_VALUE
+    }
+
+    val primary = fieldRank(
+        listOf(model.name, model.id),
+        exact = 0,
+        starts = 1,
+        contains = 2,
+        tokensRank = 3
     )
-    if (fields.any { it.contains(query, ignoreCase = true) }) return true
+    if (primary != Int.MAX_VALUE) return primary
 
-    fun normalized(value: String): String = modelSearchSeparators
-        .replace(value.lowercase(Locale.ROOT), " ")
-        .trim()
+    val identity = fieldRank(
+        listOf(model.providerId, model.canonicalSlug, model.huggingFaceId),
+        exact = 1,
+        starts = 2,
+        contains = 3,
+        tokensRank = 4
+    )
+    if (identity != Int.MAX_VALUE) return identity
 
-    val tokens = normalized(query).split(' ').filter { it.isNotBlank() }
-    if (tokens.isEmpty()) return true
-    val haystack = normalized(fields.joinToString(" "))
-    return tokens.all { token -> token in haystack }
+    return fieldRank(
+        listOf(model.description),
+        exact = 4,
+        starts = 5,
+        contains = 6,
+        tokensRank = 7
+    )
 }
+
+internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean =
+    rawQuery.isBlank() || modelSearchRank(model, rawQuery) != Int.MAX_VALUE
 
 @Composable
 private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(SimpleModelKind.ALL) }
     var price by remember { mutableStateOf(SimplePriceFilter.ALL) }
+    var priceMenuOpen by remember { mutableStateOf(false) }
     var sortByCapabilities by remember { mutableStateOf(false) }
     var moreKindsOpen by remember { mutableStateOf(false) }
     var filtersExpanded by remember { mutableStateOf(true) }
@@ -462,20 +489,29 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
 
     val filtered = remember(state.catalog, query, kind, price, sortByCapabilities) {
         val needle = query.trim()
+        val comparator = when {
+            needle.isNotBlank() && sortByCapabilities ->
+                compareBy<ModelInfo> { modelSearchRank(it, needle) }
+                    .thenByDescending { ModelUniversality.score(it).total }
+                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                    .thenBy { it.id }
+            needle.isNotBlank() ->
+                compareBy<ModelInfo> { modelSearchRank(it, needle) }
+                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                    .thenBy { it.id }
+            sortByCapabilities ->
+                compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
+                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                    .thenBy { it.id }
+            else ->
+                compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
+                    .thenBy { it.id }
+        }
         state.catalog.asSequence()
             .filter { model -> modelMatchesSearch(model, needle) }
             .filter { model -> modelMatchesSimpleKind(model, kind) }
             .filter { model -> modelMatchesSimplePrice(model, kind, price) }
-            .sortedWith(
-                if (sortByCapabilities) {
-                    compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
-                        .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                        .thenBy { it.id }
-                } else {
-                    compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                        .thenBy { it.id }
-                }
-            )
+            .sortedWith(comparator)
             .take(700)
             .toList()
     }
@@ -551,16 +587,25 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             modifier = Modifier.padding(start = 14.dp, top = 4.dp),
             style = MaterialTheme.typography.labelMedium
         )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(SimplePriceFilter.entries) { item ->
-                FilterChip(
-                    selected = price == item,
-                    onClick = { price = item },
-                    label = { Text(simplePriceFilterLabel(item)) }
-                )
+        Box(Modifier.padding(horizontal = 12.dp)) {
+            FilterChip(
+                selected = price != SimplePriceFilter.ALL,
+                onClick = { priceMenuOpen = true },
+                label = { Text("Цена: ${simplePriceFilterLabel(price)}") }
+            )
+            DropdownMenu(
+                expanded = priceMenuOpen,
+                onDismissRequest = { priceMenuOpen = false }
+            ) {
+                SimplePriceFilter.entries.forEach { item ->
+                    DropdownMenuItem(
+                        text = { Text(simplePriceFilterLabel(item)) },
+                        onClick = {
+                            price = item
+                            priceMenuOpen = false
+                        }
+                    )
+                }
             }
         }
 
@@ -590,8 +635,11 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         Text(
             buildString {
                 append("Показано ${filtered.size} из ${state.catalog.size}")
-                if (!sortByCapabilities) append(" · по алфавиту")
-                else append(" · больше возможностей выше")
+                when {
+                    query.isNotBlank() -> append(" · точные совпадения выше")
+                    sortByCapabilities -> append(" · больше возможностей выше")
+                    else -> append(" · по алфавиту")
+                }
             },
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
             style = MaterialTheme.typography.bodySmall,
@@ -1125,12 +1173,13 @@ private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) 
 
 private fun simplePriceFilterLabel(value: SimplePriceFilter): String = when (value) {
     SimplePriceFilter.ALL -> "Все"
-    SimplePriceFilter.FREE -> "Бесплатно"
-    SimplePriceFilter.UP_TO_0_02 -> "до \$0,02"
-    SimplePriceFilter.UP_TO_0_05 -> "до \$0,05"
-    SimplePriceFilter.UP_TO_0_1 -> "до \$0,1"
-    SimplePriceFilter.UP_TO_1 -> "до \$1"
-    SimplePriceFilter.UP_TO_5 -> "до \$5"
+    SimplePriceFilter.FREE -> "Бесплатные"
+    SimplePriceFilter.FROM_0_TO_0_02 -> "\$0–0,02"
+    SimplePriceFilter.FROM_0_02_TO_0_05 -> "\$0,02–0,05"
+    SimplePriceFilter.FROM_0_05_TO_0_10 -> "\$0,05–0,10"
+    SimplePriceFilter.FROM_0_10_TO_0_50 -> "\$0,10–0,50"
+    SimplePriceFilter.FROM_0_50_TO_1 -> "\$0,50–1"
+    SimplePriceFilter.FROM_1_TO_5 -> "\$1–5"
     SimplePriceFilter.OVER_5 -> "более \$5"
 }
 
@@ -1149,7 +1198,7 @@ private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boo
     SimpleModelKind.TOOLS -> model.supportsTools
 }
 
-private fun modelMatchesSimplePrice(
+internal fun modelMatchesSimplePrice(
     model: ModelInfo,
     kind: SimpleModelKind,
     filter: SimplePriceFilter
@@ -1158,13 +1207,15 @@ private fun modelMatchesSimplePrice(
     if (filter == SimplePriceFilter.FREE) return isSimpleCatalogFree(model, kind)
 
     val value = simpleCatalogPrice(model, kind) ?: return false
+    if (value <= 0.0 || isSimpleCatalogFree(model, kind)) return false
     return when (filter) {
         SimplePriceFilter.ALL, SimplePriceFilter.FREE -> true
-        SimplePriceFilter.UP_TO_0_02 -> value <= 0.02
-        SimplePriceFilter.UP_TO_0_05 -> value <= 0.05
-        SimplePriceFilter.UP_TO_0_1 -> value <= 0.10
-        SimplePriceFilter.UP_TO_1 -> value <= 1.0
-        SimplePriceFilter.UP_TO_5 -> value <= 5.0
+        SimplePriceFilter.FROM_0_TO_0_02 -> value <= 0.02
+        SimplePriceFilter.FROM_0_02_TO_0_05 -> value > 0.02 && value <= 0.05
+        SimplePriceFilter.FROM_0_05_TO_0_10 -> value > 0.05 && value <= 0.10
+        SimplePriceFilter.FROM_0_10_TO_0_50 -> value > 0.10 && value <= 0.50
+        SimplePriceFilter.FROM_0_50_TO_1 -> value > 0.50 && value <= 1.0
+        SimplePriceFilter.FROM_1_TO_5 -> value > 1.0 && value <= 5.0
         SimplePriceFilter.OVER_5 -> value > 5.0
     }
 }
