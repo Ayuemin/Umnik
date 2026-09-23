@@ -15,6 +15,7 @@ import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
 import com.ayuemin.ymnik.data.KnowledgeBaseRepository
+import com.ayuemin.ymnik.data.KnowledgeQueryBuilder
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.ProjectAutomationRepository
@@ -1052,6 +1053,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 apiKey = apiKey,
                 baseUrl = baseUrl,
                 embeddings = embeddingApi
+            )
+            DiagnosticLog.record(
+                context,
+                "KNOWLEDGE",
+                "retrieved owners=${owners.size}; queryChars=${query.length.coerceAtMost(12000)}; hits=${hits.size}; scores=" +
+                    hits.take(5).joinToString(",") { hit -> ((hit.score * 1000.0).toInt() / 1000.0).toString() }
             )
             if (hits.isEmpty()) {
                 ""
@@ -4396,11 +4403,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val allAttachments = (pending + requestPersistentTextAttachments + projectFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         answerAttachmentCount = allAttachments.size
+                        val knowledgeQuery = KnowledgeQueryBuilder.build(clean, before)
+                        if (knowledgeQuery != clean.take(12000)) {
+                            DiagnosticLog.record(
+                                context,
+                                "KNOWLEDGE",
+                                "contextual follow-up query expanded; currentChars=${clean.length}; queryChars=${knowledgeQuery.length}"
+                            )
+                        }
                         val knowledgeContext = if (requestAgent == null) {
                             knowledgeSystemContext(
                                 currentProject,
                                 currentChat,
-                                clean,
+                                knowledgeQuery,
                                 onRetrieved = { count, sources ->
                                     answerKnowledgeHitCount = count
                                     answerKnowledgeSources = sources
@@ -4410,7 +4425,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             knowledgeSystemContext(
                                 project = null,
                                 chat = null,
-                                query = clean,
+                                query = knowledgeQuery,
                                 agentId = requestAgent.id,
                                 onRetrieved = { count, sources ->
                                     answerKnowledgeHitCount = count
