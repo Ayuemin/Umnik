@@ -3472,10 +3472,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             profiles = _state.value.connectionProfiles,
             disabledConnectionIds = _state.value.disabledConnectionIds,
             hasApiKey = { profileId -> secrets.getProfileApiKey(profileId).orEmpty().isNotBlank() },
+            systemModelId = _state.value.systemModel,
             filesForAgent = { agentId -> agentFiles.list(agentId) },
             skillIdsForAgent = { agentId -> agentSkills.list(agentId).map { it.id }.toSet() },
             knowledgeForAgent = { agentId ->
                 knowledgeBase.documents(KnowledgeOwnerKind.AGENT, agentId)
+            },
+            knowledgeEnabledForAgent = { agentId ->
+                knowledgeBase.settings(KnowledgeOwnerKind.AGENT, agentId).enabled
             },
             fileExists = { path -> path.isNotBlank() && File(path).isFile }
         )
