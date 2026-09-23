@@ -139,7 +139,7 @@ fun KnowledgeBaseSection(
                     )
                 )
             },
-            enabled = modelId.isNotBlank() && !state.isLoading && !state.requestActive,
+            enabled = vm.globalEmbeddingModelId().isNotBlank() && !state.isLoading && !state.requestActive,
             modifier = Modifier.fillMaxWidth()
         ) {
             Text("Сохранить настройки базы знаний")
