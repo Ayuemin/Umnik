@@ -68,31 +68,36 @@ internal class SystemTaskPlanner(
             modelInfo = ModelInfo(modelId)
         )
 
-        val raw = result.text.trim()
-            .removePrefix("```json")
-            .removePrefix("```")
-            .removeSuffix("```")
-            .trim()
-        val payload = JsonParser.parseString(raw)
-            .takeIf { it.isJsonObject }
-            ?.asJsonObject
-            ?: error("Системная модель вернула ответ не в формате JSON")
-        val mode = payload.get("mode")
-            ?.takeIf { it.isJsonPrimitive }
-            ?.asString
-            .orEmpty()
-            .trim()
-            .lowercase()
-        val query = payload.get("search_query")
-            ?.takeIf { it.isJsonPrimitive }
-            ?.asString
-            .orEmpty()
-            .trim()
-            .take(12000)
-        require(query.isNotBlank()) { "Системная модель не вернула поисковый запрос" }
-        return SystemKnowledgePlan(
-            baseOnly = mode == "base_only",
-            searchQuery = query
-        )
+        return parseSystemKnowledgePlan(result.text)
+    }
+}
+
+internal fun parseSystemKnowledgePlan(rawText: String): SystemKnowledgePlan {
+    val raw = rawText.trim()
+        .removePrefix("```json")
+        .removePrefix("```")
+        .removeSuffix("```")
+        .trim()
+    val payload = JsonParser.parseString(raw)
+        .takeIf { it.isJsonObject }
+        ?.asJsonObject
+        ?: error("Системная модель вернула ответ не в формате JSON")
+    val mode = payload.get("mode")
+        ?.takeIf { it.isJsonPrimitive }
+        ?.asString
+        .orEmpty()
+        .trim()
+        .lowercase()
+    val query = payload.get("search_query")
+        ?.takeIf { it.isJsonPrimitive }
+        ?.asString
+        .orEmpty()
+        .trim()
+        .take(12000)
+    require(query.isNotBlank()) { "Системная модель не вернула поисковый запрос" }
+    return SystemKnowledgePlan(
+        baseOnly = mode == "base_only",
+        searchQuery = query
+    )
     }
 }
