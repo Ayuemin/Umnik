@@ -49,12 +49,12 @@ internal object KnowledgeHybridRanker {
         semanticScore: Double,
         lexicalScore: Double
     ): Boolean {
-        // Calibrated conservatively for the current default OpenRouter embedding path.
-        // A strong semantic hit is enough by itself. Borderline semantic matches need
-        // lexical support, while very strong lexical evidence can rescue an exact term.
+        // A semantic match must carry some minimum meaning on its own. Strong semantic
+        // evidence is enough; borderline semantic matches also need lexical support.
+        // Pure lexical overlap is deliberately not sufficient because common book terms
+        // can otherwise pull unrelated fragments into the answer context.
         return semanticScore >= STRONG_SEMANTIC_SCORE ||
-            (semanticScore >= SUPPORTED_SEMANTIC_SCORE && lexicalScore >= SUPPORTING_LEXICAL_SCORE) ||
-            lexicalScore >= STRONG_LEXICAL_SCORE
+            (semanticScore >= SUPPORTED_SEMANTIC_SCORE && lexicalScore >= SUPPORTING_LEXICAL_SCORE)
     }
 
     private fun bm25Scores(query: String, chunks: List<KnowledgeChunk>): DoubleArray {
@@ -114,8 +114,7 @@ internal object KnowledgeHybridRanker {
     private const val RRF_K = 60.0
     private const val BM25_K1 = 1.2
     private const val BM25_B = 0.75
-    private const val STRONG_SEMANTIC_SCORE = 0.42
+    private const val STRONG_SEMANTIC_SCORE = 0.45
     private const val SUPPORTED_SEMANTIC_SCORE = 0.34
     private const val SUPPORTING_LEXICAL_SCORE = 2.0
-    private const val STRONG_LEXICAL_SCORE = 6.0
 }
