@@ -275,9 +275,6 @@ class KnowledgeBaseRepository(private val context: Context) {
             documents = next
             old
         }
-        if (replaced != null && replaced != document.id) {
-            replaceDocumentEnabledState(replaced, document.id)
-        }
         removeTask(task.id)
         if (oldDocument != null && oldDocument.id != document.id) {
             File(oldDocument.localPath).parentFile?.deleteRecursively()
@@ -312,17 +309,8 @@ class KnowledgeBaseRepository(private val context: Context) {
         prefs.edit().putString(settingsKey(kind, ownerId), gson.toJson(sanitizeSettings(value))).apply()
     }
 
-    fun isDocumentEnabled(documentId: String): Boolean =
-        documentId !in disabledDocumentIds()
-
-    fun setDocumentEnabled(documentId: String, enabled: Boolean): Boolean {
-        if (documents.none { it.id == documentId }) return false
-        updateDocumentEnabledState(documentId, enabled)
-        return true
-    }
-
     fun hasEnabledKnowledge(owners: List<Pair<KnowledgeOwnerKind, String>>): Boolean = owners.any { (kind, id) ->
-        settings(kind, id).enabled && documents(kind, id).any { isDocumentEnabled(it.id) }
+        settings(kind, id).enabled && documents(kind, id).isNotEmpty()
     }
 
     suspend fun index(
@@ -412,7 +400,6 @@ class KnowledgeBaseRepository(private val context: Context) {
         val previous = documents.firstOrNull { it.id == documentId } ?: error("Документ базы знаний не найден")
         val source = File(previous.localPath)
         require(source.isFile) { "Исходный файл «${previous.name}» не найден" }
-        val wasEnabled = isDocumentEnabled(previous.id)
         val replacement = index(
             kind = previous.ownerKind,
             ownerId = previous.ownerId,
@@ -430,7 +417,6 @@ class KnowledgeBaseRepository(private val context: Context) {
             onProgress = onProgress
         )
         deleteDocument(documentId)
-        setDocumentEnabled(replacement.id, wasEnabled)
         return replacement
     }
 
@@ -442,7 +428,6 @@ class KnowledgeBaseRepository(private val context: Context) {
             saveDocuments(next)
             documents = next
         }
-        removeDocumentEnabledStates(setOf(documentId))
         File(document.localPath).parentFile?.deleteRecursively()
         return true
     }
@@ -457,7 +442,6 @@ class KnowledgeBaseRepository(private val context: Context) {
                 saveDocuments(next)
                 documents = next
             }
-            removeDocumentEnabledStates(owned.map { it.id }.toSet())
             owned.forEach { File(it.localPath).parentFile?.deleteRecursively() }
         }
         prefs.edit().remove(settingsKey(kind, ownerId)).apply()
@@ -478,9 +462,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         owners.distinct().forEach { (kind, ownerId) ->
             val settings = settings(kind, ownerId)
             if (!settings.enabled) return@forEach
-            val ownerDocuments = documents(kind, ownerId)
-                .filter { isDocumentEnabled(it.id) }
-                .filter { documentFilesValid(it) }
+            val ownerDocuments = documents(kind, ownerId).filter { documentFilesValid(it) }
             if (ownerDocuments.isEmpty()) return@forEach
 
             val ownerHits = mutableListOf<KnowledgeHit>()
@@ -780,31 +762,6 @@ class KnowledgeBaseRepository(private val context: Context) {
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =
         "settings::${kind.name.lowercase()}::$ownerId"
 
-    private fun disabledDocumentIds(): Set<String> =
-        prefs.getStringSet(DISABLED_DOCUMENT_IDS_KEY, emptySet()).orEmpty().toSet()
-
-    private fun updateDocumentEnabledState(documentId: String, enabled: Boolean) {
-        val next = disabledDocumentIds().toMutableSet().apply {
-            if (enabled) remove(documentId) else add(documentId)
-        }
-        prefs.edit().putStringSet(DISABLED_DOCUMENT_IDS_KEY, next).apply()
-    }
-
-    private fun replaceDocumentEnabledState(oldDocumentId: String, newDocumentId: String) {
-        val next = disabledDocumentIds().toMutableSet()
-        val wasDisabled = next.remove(oldDocumentId)
-        if (wasDisabled) next.add(newDocumentId)
-        prefs.edit().putStringSet(DISABLED_DOCUMENT_IDS_KEY, next).apply()
-    }
-
-    private fun removeDocumentEnabledStates(documentIds: Set<String>) {
-        if (documentIds.isEmpty()) return
-        val next = disabledDocumentIds().toMutableSet()
-        if (next.removeAll(documentIds)) {
-            prefs.edit().putStringSet(DISABLED_DOCUMENT_IDS_KEY, next).apply()
-        }
-    }
-
     private fun documentDir(kind: KnowledgeOwnerKind, ownerId: String, documentId: String): File =
         if (kind == KnowledgeOwnerKind.AGENT) {
             File(context.filesDir, "agents/${safe(ownerId)}/knowledge/${safe(documentId)}")
@@ -823,7 +780,6 @@ class KnowledgeBaseRepository(private val context: Context) {
     companion object {
         private val TASK_LOCK = Any()
         private val DOCUMENT_LOCK = Any()
-        private const val DISABLED_DOCUMENT_IDS_KEY = "disabled_document_ids"
         private const val MAX_SOURCE_BYTES = 25L * 1024L * 1024L
         private const val MAX_CHUNKS_PER_DOCUMENT = 6000
         private const val EMBED_BATCH_SIZE = 24
