@@ -637,10 +637,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun systemModelConfigured(): Boolean = _state.value.systemModel.isNotBlank()
 
-    fun systemModelId(): String = _state.value.systemModel
-
-    fun globalEmbeddingModelId(): String = _state.value.embeddingModel
-
     fun setSystemModel(modelId: String) {
         if (_state.value.isLoading || _state.value.requestActive) return
         val clean = modelId.trim()
