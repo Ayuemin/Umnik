@@ -21,16 +21,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
@@ -143,7 +139,6 @@ private fun ContextModeChoice(
 
 @Composable
 fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
-    val context = LocalContext.current
     var expanded by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
@@ -165,14 +160,9 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     var minimumScore by remember(initial.minimumScore) { mutableStateOf(String.format(Locale.US, "%.2f", initial.minimumScore)) }
     var stateCardMaxChars by remember(initial.stateCardMaxChars) { mutableStateOf(initial.stateCardMaxChars.toString()) }
 
-    val catalog = remember(context, vm) { OpenRouterHubController(context, vm) }
-    val catalogState by catalog.state.collectAsState()
-    DisposableEffect(catalog) { onDispose { catalog.close() } }
-    LaunchedEffect(expanded) {
-        if (expanded && catalogState.catalog.isEmpty() && !catalogState.loading) catalog.refreshCatalog()
-    }
-    val selectedEmbeddingInfo = catalogState.catalog.firstOrNull { it.id == embeddingModel }
-    val detectedEmbeddingContext = selectedEmbeddingInfo?.contextLength
+    val detectedEmbeddingContext = state.modelCatalog
+        .firstOrNull { it.id == embeddingModel }
+        ?.contextLength
         ?: initial.embeddingContextTokens
     val requestedChunk = chunkTokens.toIntOrNull() ?: initial.chunkTokens
     val effectiveChunk = adaptiveChunkTarget(requestedChunk, detectedEmbeddingContext)
@@ -226,10 +216,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
             )
             if (advanced) {
                 when {
-                    catalogState.loading -> Text(
-                        "Обновляю сведения о выбранной модели…",
-                        style = MaterialTheme.typography.bodySmall
-                    )
                     detectedEmbeddingContext != null -> Text(
                         "Окно Embeddings-модели: $detectedEmbeddingContext токенов. Рабочий фрагмент: до $effectiveChunk токенов.",
                         style = MaterialTheme.typography.bodySmall,
@@ -266,8 +252,9 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
 
             FilledTonalButton(
                 onClick = {
-                    val catalogLimit = catalogState.catalog.firstOrNull { it.id == embeddingModel }?.contextLength
-                    val savedLimit = catalogLimit
+                    val savedLimit = state.modelCatalog
+                        .firstOrNull { it.id == embeddingModel }
+                        ?.contextLength
                         ?: initial.embeddingContextTokens
                     vm.saveChatMemorySettings(
                         ChatMemoryGlobalSettings(
