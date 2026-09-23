@@ -97,7 +97,7 @@ import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
-private enum class SimpleModelKind {
+internal enum class SimpleModelKind {
     ALL,
     TEXT,
     IMAGE,
