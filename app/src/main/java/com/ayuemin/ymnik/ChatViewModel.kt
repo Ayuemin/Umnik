@@ -626,6 +626,140 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun globalOpenRouterTools() = openRouterFeaturePrefs.tools()
 
+    fun systemModelConfigured(): Boolean = _state.value.systemModel.isNotBlank()
+
+    fun systemModelId(): String = _state.value.systemModel
+
+    fun globalEmbeddingModelId(): String = _state.value.embeddingModel
+
+    fun setSystemModel(modelId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val clean = modelId.trim()
+        if (clean.isBlank()) {
+            _state.value = _state.value.copy(status = "Системная модель обязательна для базы знаний и служебных текстовых задач")
+            return
+        }
+        prefs.edit().putString("system_model_id", clean).apply()
+        _state.value = _state.value.copy(
+            systemModel = clean,
+            status = "Системная модель сохранена"
+        )
+    }
+
+    fun setEmbeddingModel(modelId: String) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val clean = modelId.trim()
+        if (clean.isBlank()) {
+            _state.value = _state.value.copy(status = "Выберите Embeddings-модель")
+            return
+        }
+        if (clean == _state.value.embeddingModel) {
+            _state.value = _state.value.copy(status = "Embeddings-модель уже выбрана")
+            return
+        }
+        if (knowledgeBase.activeTaskLabels().isNotEmpty()) {
+            _state.value = _state.value.copy(
+                status = "Дождитесь завершения текущей индексации перед сменой Embeddings-модели"
+            )
+            return
+        }
+
+        prefs.edit().putString("embedding_model_id", clean).apply()
+        _state.value = _state.value.copy(
+            embeddingModel = clean,
+            status = "Embeddings-модель сохранена. Запускаю переиндексацию…"
+        )
+        viewModelScope.launch {
+            migrateGlobalEmbeddingModel(clean)
+        }
+    }
+
+    private suspend fun migrateGlobalEmbeddingModel(modelId: String) {
+        knowledgeBase.reloadFromDisk()
+        val documents = knowledgeBase.allDocuments()
+        var queued = 0
+        val errors = mutableListOf<String>()
+
+        if (documents.isNotEmpty()) {
+            runCatching {
+                val (profileId, baseUrl) = knowledgeOpenRouterTaskConfig()
+                documents.forEach { document ->
+                    runCatching {
+                        knowledgeBase.prepareReindexTask(
+                            documentId = document.id,
+                            embeddingModelId = modelId,
+                            connectionProfileId = profileId,
+                            baseUrl = baseUrl,
+                            allowQueuedForOwner = true
+                        )
+                    }.onSuccess { task ->
+                        KnowledgeIndexWorker.schedule(context, task)
+                        queued++
+                    }.onFailure { error ->
+                        errors += "${document.name}: ${error.message ?: "ошибка подготовки"}"
+                        DiagnosticLog.record(
+                            context,
+                            "KNOWLEDGE",
+                            "global embedding migration queue failed document=${document.id.take(8)}",
+                            error
+                        )
+                    }
+                }
+            }.onFailure { error ->
+                errors += error.message ?: "Не удалось запустить переиндексацию базы знаний"
+                DiagnosticLog.record(context, "KNOWLEDGE", "global embedding migration setup failed", error)
+            }
+        }
+
+        // Vector memory is incompatible across embedding models. Remove it first so
+        // no stale vector can be queried with the newly selected global model.
+        chatMemory.clearAllMemory()
+
+        val systemModel = _state.value.systemModel
+        if (systemModel.isNotBlank()) {
+            runCatching {
+                val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
+                _state.value.chats.forEach { chat ->
+                    if (chatMemory.mode(chat.id) != ChatContextMode.FULL) {
+                        runCatching {
+                            chatMemoryManager.rebuild(
+                                chat = chat,
+                                apiKey = apiKey,
+                                baseUrl = baseUrl,
+                                embeddingModelId = modelId,
+                                systemModelId = systemModel
+                            )
+                        }.onFailure { error ->
+                            DiagnosticLog.record(
+                                context,
+                                "CHAT_MEMORY",
+                                "global embedding rebuild failed chat=${chat.id.take(8)}",
+                                error
+                            )
+                        }
+                    }
+                }
+            }.onFailure { error ->
+                DiagnosticLog.record(context, "CHAT_MEMORY", "global embedding memory rebuild setup failed", error)
+            }
+        }
+
+        refreshKnowledgeState(
+            when {
+                errors.isNotEmpty() && queued > 0 ->
+                    "Новая Embeddings-модель сохранена. Переиндексация запущена для $queued документов; часть задач не удалось подготовить."
+                errors.isNotEmpty() ->
+                    "Новая Embeddings-модель сохранена, но переиндексацию не удалось запустить: ${errors.first()}"
+                queued > 0 ->
+                    "Новая Embeddings-модель сохранена. Автоматически переиндексируются $queued документов."
+                systemModel.isBlank() ->
+                    "Новая Embeddings-модель сохранена. Индексы памяти очищены; для их восстановления выберите системную модель."
+                else ->
+                    "Новая Embeddings-модель сохранена. Служебная память перестроена."
+            }
+        )
+    }
+
     fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
 
     fun saveChatMemorySettings(settings: ChatMemoryGlobalSettings) {
