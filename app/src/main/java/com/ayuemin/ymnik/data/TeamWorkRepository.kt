@@ -6,10 +6,10 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
 
-/** Durable local journal for orchestrated project jobs. */
-class AgentWorkRepository(context: Context) {
+/** Durable local journal for orchestrated team jobs. */
+class TeamWorkRepository(context: Context) {
     private val gson = Gson()
-    private val root = File(context.filesDir, "agent_workspaces").apply { mkdirs() }
+    private val root = LegacyDomainStorageMigration.migrateDirectory(context, "agent_workspaces", "team_workspaces")
     private val metadata = File(root, "workspaces.json")
     private val atomic = AtomicJsonFile(metadata)
     private val type = object : TypeToken<List<JobWorkspace>>() {}.type
@@ -20,16 +20,16 @@ class AgentWorkRepository(context: Context) {
     fun list(): List<JobWorkspace> = runCatching {
         atomic.read(::validJson)?.let { gson.fromJson<List<JobWorkspace>>(it, type) } ?: emptyList()
     }.onFailure {
-        loadError = "Журнал работы агентов повреждён и защищён от перезаписи."
+        loadError = "Журнал работы специалистов повреждён и защищён от перезаписи."
     }.getOrDefault(emptyList())
 
     fun get(id: String): JobWorkspace? = list().firstOrNull { it.id == id }
 
-    fun latestForProject(projectId: String): JobWorkspace? =
-        list().filter { it.projectId == projectId }.maxByOrNull { it.updatedAt }
+    fun latestForTeam(teamId: String): JobWorkspace? =
+        list().filter { it.teamId == teamId }.maxByOrNull { it.updatedAt }
 
     fun upsert(workspace: JobWorkspace): JobWorkspace {
-        check(loadError == null) { loadError ?: "Журнал работы агентов недоступен" }
+        check(loadError == null) { loadError ?: "Журнал работы специалистов недоступен" }
         val clean = workspace.copy(updatedAt = System.currentTimeMillis())
         val current = list()
         save(
@@ -42,9 +42,9 @@ class AgentWorkRepository(context: Context) {
         return clean
     }
 
-    fun deleteProject(projectId: String) {
-        check(loadError == null) { loadError ?: "Журнал работы агентов недоступен" }
-        save(list().filterNot { it.projectId == projectId })
+    fun deleteTeam(teamId: String) {
+        check(loadError == null) { loadError ?: "Журнал работы специалистов недоступен" }
+        save(list().filterNot { it.teamId == teamId })
     }
 
     private fun save(items: List<JobWorkspace>) {
