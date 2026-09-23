@@ -998,12 +998,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 saveAgent(
                     profile.copy(
                         knowledgeBase = profile.knowledgeBase.copy(
-                            enabled = globalSettings.enabled,
-                            embeddingModel = _state.value.embeddingModel
-                                .trim()
-                                .takeIf { it.isNotBlank() }
-                                ?.let { AgentModelRef("openrouter", it) },
-                            topK = globalSettings.topK
+                            enabled = globalSettings.enabled
                         )
                     )
                 )
