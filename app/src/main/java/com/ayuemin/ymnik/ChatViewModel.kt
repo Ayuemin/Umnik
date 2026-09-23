@@ -172,6 +172,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialImageProfile = initialProfiles.firstOrNull { it.id == initialImageProfileId }
         ?: defaultOpenRouterProfile()
     private val initialImageModel = loadImageModelForProfile(initialImageProfile.id)
+    private val initialEmbeddingModel = loadGlobalEmbeddingModel()
     private val initialImageAspectRatio = loadImageParameter("aspect_ratio", initialImageProfile.id, initialImageModel)
     private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
     private val initialRuntime = projectAutomation.profile(initialChat.id) ?: run {
@@ -209,10 +210,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             disabledConnectionIds = initialDisabledConnectionIds,
             textModel = loadTextModelForProfile(initialProfile),
             systemModel = prefs.getString("system_model_id", "").orEmpty().trim(),
-            embeddingModel = prefs.getString(
-                "embedding_model_id",
-                KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL
-            ).orEmpty().trim().ifBlank { KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL },
+            embeddingModel = initialEmbeddingModel,
             currentChatTextModel = initialRuntime.modelId,
             quickTextModels = loadAllQuickTextModels(initialProfiles, initialDisabledConnectionIds),
             imageConnectionProfileId = initialImageProfileId,
@@ -268,6 +266,26 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     )
     val state: StateFlow<UiState> = _state.asStateFlow()
+
+    private fun loadGlobalEmbeddingModel(): String {
+        prefs.getString("embedding_model_id", null)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?.let { return it }
+
+        val documentModels = knowledgeBase.allDocuments()
+            .map { it.embeddingModelId.trim() }
+            .filter { it.isNotBlank() }
+            .distinct()
+        val legacyMemoryModel = chatMemory.settings().embeddingModelId.trim()
+        val migrated = when {
+            documentModels.size == 1 -> documentModels.first()
+            legacyMemoryModel.isNotBlank() -> legacyMemoryModel
+            else -> KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL
+        }
+        prefs.edit().putString("embedding_model_id", migrated).apply()
+        return migrated
+    }
 
     fun activeRequestChatId(): String? = RequestExecutionManager.snapshots.value.firstOrNull()?.chatId
     fun activeRequestChatIds(): Set<String> = RequestExecutionManager.activeChatIds()
