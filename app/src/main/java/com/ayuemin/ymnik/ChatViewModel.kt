@@ -976,7 +976,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         knowledgeBase.documents(kind, ownerId)
 
     fun knowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings =
-        knowledgeBase.settings(kind, ownerId).copy(embeddingModelId = _state.value.embeddingModel)
+        knowledgeBase.settings(kind, ownerId)
 
     fun knowledgeFailure(kind: KnowledgeOwnerKind, ownerId: String): String? =
         knowledgeBase.failedTaskMessage(kind, ownerId)
@@ -991,7 +991,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun saveKnowledgeSettings(kind: KnowledgeOwnerKind, ownerId: String, settings: KnowledgeBaseSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
-        val globalSettings = settings.copy(embeddingModelId = _state.value.embeddingModel)
+        val globalSettings = settings
         knowledgeBase.saveSettings(kind, ownerId, globalSettings)
         if (kind == KnowledgeOwnerKind.AGENT) {
             agent(ownerId)?.let { profile ->
