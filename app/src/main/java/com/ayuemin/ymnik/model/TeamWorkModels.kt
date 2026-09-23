@@ -1,12 +1,14 @@
 package com.ayuemin.ymnik.model
 
+import com.google.gson.annotations.SerializedName
+
 /**
- * Runtime objects for the agent-first orchestrator architecture.
+ * Runtime objects for the specialist-first orchestrator architecture.
  *
- * These models define the current agent-office protocol so the
+ * These models define the current specialist-office protocol so the
  * new execution engine can evolve without inheriting stage-based behavior.
  */
-enum class AgentTaskStatus {
+enum class SpecialistTaskStatus {
     CREATED,
     QUEUED,
     RUNNING,
@@ -15,10 +17,11 @@ enum class AgentTaskStatus {
     CANCELLED
 }
 
-data class AgentTaskPackage(
+data class SpecialistTaskPackage(
     val id: String,
     val workspaceId: String,
-    val agentId: String,
+    @SerializedName(value = "specialistId", alternate = ["agentId"])
+    val specialistId: String,
     val objective: String,
     val assignmentInstruction: String = "",
     val constraints: List<String> = emptyList(),
@@ -29,11 +32,12 @@ data class AgentTaskPackage(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-data class AgentResult(
+data class SpecialistResult(
     val id: String,
     val workspaceId: String,
     val taskId: String,
-    val agentId: String,
+    @SerializedName(value = "specialistId", alternate = ["agentId"])
+    val specialistId: String,
     val outputText: String,
     val fileIds: List<String> = emptyList(),
     val summary: String = "",
@@ -42,11 +46,13 @@ data class AgentResult(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-data class AgentTransferLogEntry(
+data class SpecialistTransferLogEntry(
     val id: String,
     val workspaceId: String,
-    val fromAgentId: String?,
-    val toAgentId: String?,
+    @SerializedName(value = "fromSpecialistId", alternate = ["fromAgentId"])
+    val fromSpecialistId: String?,
+    @SerializedName(value = "toSpecialistId", alternate = ["toAgentId"])
+    val toSpecialistId: String?,
     val taskId: String? = null,
     val resultIds: List<String> = emptyList(),
     val fileIds: List<String> = emptyList(),
@@ -54,9 +60,9 @@ data class AgentTransferLogEntry(
     val createdAt: Long = System.currentTimeMillis()
 )
 
-data class AgentTaskState(
-    val packageData: AgentTaskPackage,
-    val status: AgentTaskStatus = AgentTaskStatus.CREATED,
+data class SpecialistTaskState(
+    val packageData: SpecialistTaskPackage,
+    val status: SpecialistTaskStatus = SpecialistTaskStatus.CREATED,
     val resultId: String? = null,
     val error: String? = null,
     val updatedAt: Long = System.currentTimeMillis()
@@ -64,13 +70,15 @@ data class AgentTaskState(
 
 data class JobWorkspace(
     val id: String,
-    val projectId: String,
-    val orchestratorAgentId: String,
+    @SerializedName(value = "teamId", alternate = ["projectId"])
+    val teamId: String,
+    @SerializedName(value = "orchestratorSpecialistId", alternate = ["orchestratorAgentId"])
+    val orchestratorSpecialistId: String,
     val userRequest: String,
     val plan: String = "",
-    val tasks: List<AgentTaskState> = emptyList(),
-    val results: List<AgentResult> = emptyList(),
-    val transfers: List<AgentTransferLogEntry> = emptyList(),
+    val tasks: List<SpecialistTaskState> = emptyList(),
+    val results: List<SpecialistResult> = emptyList(),
+    val transfers: List<SpecialistTransferLogEntry> = emptyList(),
     val finalResult: String? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()

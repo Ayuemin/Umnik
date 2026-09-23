@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.model
 
+import com.google.gson.annotations.SerializedName
+
 enum class KnowledgeOwnerKind {
     CHAT,
     PROJECT,

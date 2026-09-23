@@ -6,29 +6,29 @@ import com.google.gson.JsonParser
 import java.util.UUID
 
 /**
- * JSON codec for decisions emitted by the agent Orchestrator.
+ * JSON codec for decisions emitted by the specialist Orchestrator.
  *
  * Parsing extracts the first balanced JSON object, so a model can accidentally add
  * a short sentence around the object without breaking the whole office run.
  */
-object AgentOrchestratorCodec {
-    fun parse(raw: String): AgentOrchestratorDecision {
+object OrchestratorCodec {
+    fun parse(raw: String): OrchestratorDecision {
         val root = JsonParser.parseString(extractObject(raw)).asJsonObject
         val actions = root.array("actions").mapNotNull { element ->
             val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
             val rawType = obj.string("type").trim()
             if (rawType.isBlank()) return@mapNotNull null
             val type = runCatching {
-                AgentOrchestratorActionType.valueOf(
+                OrchestratorActionType.valueOf(
                     rawType.uppercase()
                         .replace('-', '_')
                         .replace(' ', '_')
                 )
             }.getOrElse { error("Неизвестное действие Оркестратора: " + rawType) }
-            AgentOrchestratorAction(
+            OrchestratorAction(
                 id = obj.string("id").ifBlank { UUID.randomUUID().toString() },
                 type = type,
-                agentId = obj.string("agentId").ifBlank { null },
+                specialistId = obj.string("specialistId").ifBlank { null },
                 taskId = obj.string("taskId").ifBlank { null },
                 objective = obj.string("objective"),
                 assignmentInstruction = obj.string("assignmentInstruction"),
@@ -39,7 +39,7 @@ object AgentOrchestratorCodec {
                 note = obj.string("note")
             )
         }
-        return AgentOrchestratorDecision(
+        return OrchestratorDecision(
             planSummary = root.string("planSummary"),
             userReply = root.string("userReply"),
             actions = actions,
@@ -53,36 +53,36 @@ object AgentOrchestratorCodec {
      * Returns a stable, content-free reason code when a parsed decision cannot make
      * safe progress. The caller may ask the model to regenerate the management plan.
      */
-    fun validationProblem(decision: AgentOrchestratorDecision): String? {
+    fun validationProblem(decision: OrchestratorDecision): String? {
         val actions = decision.actions
-        val asksUser = actions.any { it.type == AgentOrchestratorActionType.ASK_USER }
+        val asksUser = actions.any { it.type == OrchestratorActionType.ASK_USER }
         val completes = decision.completed ||
-            actions.any { it.type == AgentOrchestratorActionType.COMPLETE_JOB }
+            actions.any { it.type == OrchestratorActionType.COMPLETE_JOB }
         val executable = actions.any {
-            it.type == AgentOrchestratorActionType.CALL_AGENT ||
-                it.type == AgentOrchestratorActionType.REQUEST_REVISION
+            it.type == OrchestratorActionType.CALL_AGENT ||
+                it.type == OrchestratorActionType.REQUEST_REVISION
         }
 
         actions.forEach { action ->
             when (action.type) {
-                AgentOrchestratorActionType.CALL_AGENT -> {
-                    if (action.agentId.isNullOrBlank()) return "call_agent_without_agent_id"
+                OrchestratorActionType.CALL_AGENT -> {
+                    if (action.specialistId.isNullOrBlank()) return "call_specialist_without_specialist_id"
                 }
-                AgentOrchestratorActionType.REQUEST_REVISION -> {
-                    if (action.taskId.isNullOrBlank() && action.agentId.isNullOrBlank()) {
+                OrchestratorActionType.REQUEST_REVISION -> {
+                    if (action.taskId.isNullOrBlank() && action.specialistId.isNullOrBlank()) {
                         return "request_revision_without_target"
                     }
                 }
-                AgentOrchestratorActionType.CANCEL_TASK -> {
+                OrchestratorActionType.CANCEL_TASK -> {
                     if (action.taskId.isNullOrBlank()) return "cancel_task_without_task_id"
                 }
-                AgentOrchestratorActionType.ASK_USER -> {
+                OrchestratorActionType.ASK_USER -> {
                     if (decision.userReply.isBlank() && action.note.isBlank()) {
                         return "ask_user_without_message"
                     }
                 }
-                AgentOrchestratorActionType.COMPLETE_JOB -> Unit
-                AgentOrchestratorActionType.TRANSFER_WORK -> {
+                OrchestratorActionType.COMPLETE_JOB -> Unit
+                OrchestratorActionType.TRANSFER_WORK -> {
                     return "unsupported_transfer_work"
                 }
             }

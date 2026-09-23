@@ -1,6 +1,6 @@
 package com.ayuemin.ymnik.model
 
-data class ProjectChatRuntimeProfile(
+data class ChatRuntimeProfile(
     val modelId: String? = null,
     val webSearchEnabled: Boolean = false,
     val reasoningEnabled: Boolean = false,
