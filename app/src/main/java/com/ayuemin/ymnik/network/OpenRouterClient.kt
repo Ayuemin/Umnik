@@ -294,6 +294,71 @@ class OpenRouterClient(
         Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
     }
 
+    /**
+     * Minimal text-only call for Umnik's internal service tasks.
+     * Deliberately bypasses every user-facing tool/web feature so a System Model
+     * never requires provider tool-use support just to plan retrieval or summarize memory.
+     */
+    suspend fun internalText(
+        apiKey: String,
+        model: String,
+        prompt: String,
+        systemPrompt: String,
+        baseUrl: String = DEFAULT_BASE_URL,
+        modelInfo: ModelInfo? = null
+    ): Result = withContext(Dispatchers.IO) {
+        val messages = JsonArray().apply {
+            add(message("system", systemPrompt))
+            add(message("user", prompt))
+        }
+        DiagnosticLog.record(
+            context,
+            "CONTEXT",
+            "OpenRouter internal model=$model; stored=0; sent=0; window=${modelInfo?.contextLength ?: "provider"}; tools=0; web=off"
+        )
+        val payload = JsonObject().apply {
+            addProperty("model", model)
+            add("messages", messages)
+            add("metadata", JsonObject().apply {
+                addProperty("umnik_internal", "true")
+            })
+            if (modelInfo?.reasoningMandatory == true) {
+                add("reasoning", JsonObject().apply {
+                    if ("low" in modelInfo.reasoningEfforts) addProperty("effort", "low")
+                    addProperty("exclude", true)
+                })
+            } else if (
+                modelInfo?.supportsReasoning == true ||
+                modelInfo?.reasoningDefaultEnabled == true ||
+                model.startsWith("deepseek/deepseek-v4", ignoreCase = true) ||
+                model.startsWith("~deepseek/deepseek-v4", ignoreCase = true)
+            ) {
+                add("reasoning", JsonObject().apply {
+                    addProperty("effort", "none")
+                    addProperty("exclude", true)
+                })
+            }
+        }
+        val completion = requestCompletion(
+            apiKey = apiKey,
+            baseUrl = baseUrl,
+            payload = payload,
+            allowEmpty = false,
+            streamToUi = false
+        )
+        val content = extractText(completion.message.get("content"))
+        if (content.isBlank()) error("Системная модель не вернула текст")
+        Result(
+            text = content,
+            files = emptyList(),
+            modelId = completion.model.ifBlank { model },
+            providerName = completion.provider.takeIf { it.isNotBlank() },
+            costUsd = completion.costUsd,
+            inputTokens = completion.promptTokens,
+            outputTokens = completion.completionTokens
+        )
+    }
+
     suspend fun generateImage(
         apiKey: String,
         model: String,
