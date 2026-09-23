@@ -295,8 +295,6 @@ private fun AgentSettingsDialog(
     var quickModelsText by remember(agent.id) {
         mutableStateOf(agent.quickModels.joinToString("\n") { it.modelId })
     }
-    var contextModel by remember(agent.id) { mutableStateOf(agent.contextModel?.modelId.orEmpty()) }
-    var memoryEmbedding by remember(agent.id) { mutableStateOf(agent.memoryEmbeddingModel?.modelId.orEmpty()) }
     var reasoningEnabled by remember(agent.id) { mutableStateOf(agent.reasoningEnabled) }
     var reasoningEffort by remember(agent.id) { mutableStateOf(agent.reasoningEffort) }
     var webSearch by remember(agent.id) { mutableStateOf(agent.webSearchEnabled) }
@@ -346,8 +344,8 @@ private fun AgentSettingsDialog(
             .distinct()
             .map { AgentModelRef("openrouter", it) }
             .toList(),
-        contextModel = ref(contextModel),
-        memoryEmbeddingModel = ref(memoryEmbedding),
+        contextModel = null,
+        memoryEmbeddingModel = null,
         knowledgeBase = agent.knowledgeBase,
         reasoningEnabled = reasoningEnabled && !reasoningKnownUnsupported,
         reasoningEffort = reasoningEffort,
@@ -436,21 +434,10 @@ private fun AgentSettingsDialog(
                 )
             }
             item {
-                ModelField(
-                    label = "Модель контекста",
-                    info = "Необязательно. Используется для обработки и сжатия длинного контекста агента. Если оставить пустым, Umnik использует основную модель.",
-                    value = contextModel,
-                    onValueChange = { contextModel = it },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
-                )
-            }
-            item {
-                ModelField(
-                    label = "Модель поиска по памяти",
-                    info = "Необязательно. Embeddings-модель OpenRouter превращает память агента в смысловой индекс и помогает находить подходящие фрагменты прошлых разговоров. Если оставить пустым, Umnik работает с полным контекстом без такого отбора.",
-                    value = memoryEmbedding,
-                    onValueChange = { memoryEmbedding = it.trim() },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
+                Text(
+                    "Системная и Embeddings-модели для служебных задач агента используются из общих Настройки → Модели.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
