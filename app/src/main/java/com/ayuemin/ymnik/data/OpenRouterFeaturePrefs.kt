@@ -3,7 +3,6 @@ package com.ayuemin.ymnik.data
 import android.content.Context
 import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
@@ -25,9 +24,6 @@ class OpenRouterFeaturePrefs(context: Context) {
         )
     }
     fun saveTools(value: ServerToolSettings) { prefs.edit().putString("tools", gson.toJson(value)).apply() }
-
-    fun rag(): RagSettings = read("rag", RagSettings::class.java, RagSettings())
-    fun saveRag(value: RagSettings) { prefs.edit().putString("rag", gson.toJson(value.copy(topK = value.topK.coerceIn(1, 30)))).apply() }
 
     fun media(): OpenRouterMediaSettings = read("media", OpenRouterMediaSettings::class.java, OpenRouterMediaSettings())
     fun saveMedia(value: OpenRouterMediaSettings) { prefs.edit().putString("media", gson.toJson(value)).apply() }
