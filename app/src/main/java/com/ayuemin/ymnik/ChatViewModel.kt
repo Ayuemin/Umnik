@@ -2743,12 +2743,28 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             it.projectId == project.id && it.kind == AgentKind.SPECIALIST
         }
         val skillText = withContext(Dispatchers.IO) { agentSkills.promptFor(orchestrator.id, orchestrator.skillIds) }
-        val knowledgeContext = knowledgeSystemContext(
-            project = null,
-            chat = null,
-            query = workspace.userRequest,
-            agentId = orchestrator.id
-        )
+        val orchestratorKnowledgeOwners = listOf(KnowledgeOwnerKind.AGENT to orchestrator.id)
+        val knowledgeContext = if (
+            systemModelConfigured() &&
+            knowledgeBase.hasEnabledKnowledge(orchestratorKnowledgeOwners)
+        ) {
+            val (helperKey, helperBaseUrl) = knowledgeOpenRouterCredentials()
+            val plan = prepareSystemKnowledgePlan(
+                query = workspace.userRequest,
+                history = history,
+                apiKey = helperKey,
+                baseUrl = helperBaseUrl
+            )
+            knowledgeSystemContext(
+                project = null,
+                chat = null,
+                query = plan.searchQuery,
+                agentId = orchestrator.id,
+                baseOnly = plan.baseOnly
+            )
+        } else {
+            ""
+        }
         val system = buildSystemPrompt(
             skillText = skillText,
             project = null,
@@ -2991,13 +3007,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             val attachments = (ownAttachments + delegatedAttachments)
                 .filter { agentAttachmentAllowed(it, profile, modelInfo) }
                 .distinctBy { it.localPath ?: it.uri }
-            val knowledgeContext = knowledgeSystemContext(
-                project = null,
-                chat = null,
-                query = delegatedText,
-                agentId = worker.id
-            )
             val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
+            val workerKnowledgeOwners = listOf(KnowledgeOwnerKind.AGENT to worker.id)
+            val knowledgeContext = if (
+                systemModelConfigured() &&
+                knowledgeBase.hasEnabledKnowledge(workerKnowledgeOwners) &&
+                memoryCredentials != null
+            ) {
+                val plan = prepareSystemKnowledgePlan(
+                    query = delegatedText,
+                    history = before,
+                    apiKey = memoryCredentials.first,
+                    baseUrl = memoryCredentials.second
+                )
+                knowledgeSystemContext(
+                    project = null,
+                    chat = null,
+                    query = plan.searchQuery,
+                    agentId = worker.id,
+                    baseOnly = plan.baseOnly
+                )
+            } else {
+                ""
+            }
 
             network.updatePhase("Курьер → " + worker.name)
             val modelResult = network.call(
