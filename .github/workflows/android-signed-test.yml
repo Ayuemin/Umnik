@@ -1,0 +1,103 @@
+name: Signed Test APK
+
+on:
+  push:
+    branches:
+      - "work/quiet-knowledge-rag"
+
+permissions:
+  contents: read
+
+jobs:
+  signed-test:
+    if: contains(github.event.head_commit.message, '[signed-test]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout audited application code
+        uses: actions/checkout@v7
+        with:
+          ref: 97c568dfd6fb031bda842b70702de1fad6408fae
+          fetch-depth: 1
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: platform-tools
+
+      - name: Install Android 17 platform
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Restore permanent signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!value:-}" ]; then
+              echo "Missing GitHub Actions secret: $value"
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
+          keytool -list             -keystore "$RUNNER_TEMP/umnik-release.jks"             -storepass "$KEYSTORE_PASSWORD"             -alias "$KEY_ALIAS" >/dev/null
+
+      - name: Run lint and unit tests
+        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest --stacktrace
+
+      - name: Build signed release APK
+        env:
+          UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-release.jks
+          UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Verify signature and prepare artifact
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK"             | sed -n 's/^.*certificate SHA-256 digest: //p'             | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+          KEY_CERT=$(keytool -list -v             -keystore "$RUNNER_TEMP/umnik-release.jks"             -storepass "$KEYSTORE_PASSWORD"             -alias "$KEY_ALIAS"             | sed -n 's/^[[:space:]]*SHA256: //p'             | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          test -n "$APK_CERT"
+          test -n "$KEY_CERT"
+          test "$APK_CERT" = "$KEY_CERT"
+
+          mkdir -p dist
+          cp "$APK" dist/Umnik-team-specialist-migration-97c568d-signed-test.apk
+          (
+            cd dist
+            sha256sum Umnik-team-specialist-migration-97c568d-signed-test.apk > Umnik-team-specialist-migration-97c568d-signed-test.apk.sha256
+          )
+          printf '%s\n' "$APK_CERT" > dist/Umnik-signing-certificate-sha256.txt
+
+      - name: Upload signed test APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Umnik-team-specialist-migration-97c568d-signed-test
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
