@@ -2,6 +2,7 @@ package com.ayuemin.ymnik.ui
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -36,6 +37,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,12 +59,11 @@ fun KnowledgeBaseSection(
     val documents = vm.knowledgeDocuments(kind, ownerId)
     val knowledgeTask = vm.knowledgeTaskLabel(kind, ownerId)
     val knowledgeFailure = vm.knowledgeFailure(kind, ownerId)
-    val indexedEmbeddingModels = documents.map { it.embeddingModelId }.filter { it.isNotBlank() }.distinct()
+    val context = LocalContext.current
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
-    var modelId by remember(ownerId, current.embeddingModelId) { mutableStateOf(current.embeddingModelId) }
     val addDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) vm.addKnowledgeDocuments(kind, ownerId, uris, modelId)
+        if (uris.isNotEmpty()) vm.addKnowledgeDocuments(kind, ownerId, uris)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(9.dp)) {
@@ -77,7 +78,7 @@ fun KnowledgeBaseSection(
             expanded = expanded,
             onToggle = { expanded = !expanded },
             icon = Icons.Outlined.MenuBook,
-            info = "Книги и справочники индексируются один раз. При запросе Umnik автоматически находит подходящие фрагменты и добавляет только их в контекст модели. Полный документ заново не отправляется."
+            info = "База знаний использует общую Embeddings-модель из Настройки → Модели для смыслового поиска и общую системную модель, чтобы понимать естественные формулировки, продолжения вопросов и запросы «только по книге». Пока системная модель не выбрана, база знаний не запускается. Документы индексируются один раз и затем в ответ передаются только подходящие фрагменты."
         )
         if (!expanded) return@Column
 
@@ -126,41 +127,13 @@ fun KnowledgeBaseSection(
             Switch(checked = enabled, onCheckedChange = { enabled = it })
         }
 
-        UmnikModelIdField(
-            label = "Embedding-модель",
-            value = modelId,
-            onValueChange = { modelId = it.trim() },
-            onPick = {
-                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                    "models-settings",
-                    if (kind == KnowledgeOwnerKind.AGENT) "Настройки агента" else "Настройки чата"
-                )
-            },
-            info = "Это модель для новых и переиндексируемых источников. Каждый уже готовый источник сохраняет ту Embeddings-модель, которой был проиндексирован. Поэтому в одной базе технически могут одновременно работать несколько Embeddings-моделей: при каждом вопросе Umnik делает отдельный embedding запроса для каждой используемой модели. Для скорости и более однородной оценки релевантности лучше по возможности держать одну модель на базу и переиндексировать старые источники после смены."
-        )
-
-        if (indexedEmbeddingModels.size > 1) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "В готовых индексах используются ${indexedEmbeddingModels.size} Embeddings-модели",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.tertiary
-                )
-                UmnikInfoHint(
-                    title = "Несколько Embeddings-моделей",
-                    text = "Umnik умеет искать по таким источникам: запрос отдельно преобразуется каждой моделью, а результаты затем объединяются. Это добавляет сетевые запросы и может сделать оценки релевантности менее однородными. Если это не было задумано специально, переиндексируйте старые источники текущей моделью."
-                )
-            }
-        }
-
         FilledTonalButton(
             onClick = {
                 vm.saveKnowledgeSettings(
                     kind,
                     ownerId,
                     KnowledgeBaseSettings(
-                        embeddingModelId = modelId,
+                        embeddingModelId = vm.globalEmbeddingModelId(),
                         enabled = enabled,
                         topK = KnowledgeBaseSettings.DEFAULT_TOP_K
                     )
@@ -194,7 +167,7 @@ fun KnowledgeBaseSection(
                             )
                         }
                         IconButton(
-                            onClick = { vm.reindexKnowledgeDocument(document.id, modelId) },
+                            onClick = { vm.reindexKnowledgeDocument(document.id) },
                             enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
                         ) {
                             Icon(Icons.Outlined.Refresh, contentDescription = "Переиндексировать")
@@ -211,7 +184,17 @@ fun KnowledgeBaseSection(
         }
 
         FilledTonalButton(
-            onClick = { addDocuments.launch(arrayOf("*/*")) },
+            onClick = {
+                if (!vm.systemModelConfigured()) {
+                    Toast.makeText(
+                        context,
+                        "Сначала выберите системную модель: Настройки → Модели → Системная модель",
+                        Toast.LENGTH_LONG
+                    ).show()
+                } else {
+                    addDocuments.launch(arrayOf("*/*"))
+                }
+            },
             enabled = knowledgeTask == null && !state.isLoading && !state.requestActive,
             modifier = Modifier.fillMaxWidth()
         ) {
