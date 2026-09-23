@@ -5,7 +5,7 @@ import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterBackgroundWorker
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.data.BatchJobRepository
-import com.ayuemin.ymnik.data.ProjectAutomationRepository
+import com.ayuemin.ymnik.data.ChatRuntimeRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.model.BatchJob
 import com.ayuemin.ymnik.model.BatchJobItem
@@ -68,7 +68,7 @@ internal class OpenRouterRequestEnhancer(
         OpenRouterFeaturePayload.applyRouting(payload, routing)
 
         val activeChatId = effectiveChatId()
-        val serverTools = activeChatId?.let { ProjectAutomationRepository(context).profile(it)?.tools } ?: prefs.tools()
+        val serverTools = activeChatId?.let { ChatRuntimeRepository(context).profile(it)?.tools } ?: prefs.tools()
         if (serverTools.webSearch != WebSearchMode.OFF) payload.remove("plugins")
         val advancedTools = OpenRouterFeaturePayload.chatServerTools(serverTools)
         if (advancedTools.size() > 0) {

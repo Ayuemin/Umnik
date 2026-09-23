@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.model
 
+import com.google.gson.annotations.SerializedName
+
 enum class VideoJobStatus {
     PENDING,
     QUEUED,
@@ -32,7 +34,8 @@ data class VideoJob(
     val remoteId: String,
     val connectionProfileId: String,
     val chatId: String? = null,
-    val projectId: String? = null,
+    @SerializedName(value = "teamId", alternate = ["projectId"])
+    val teamId: String? = null,
     val modelId: String,
     val prompt: String,
     val status: VideoJobStatus = VideoJobStatus.PENDING,

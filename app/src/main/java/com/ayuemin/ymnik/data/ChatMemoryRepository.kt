@@ -52,7 +52,7 @@ class ChatMemoryRepository(private val context: Context) {
     }.getOrDefault("")
 
     /**
-     * Agent conversations may have a fully isolated memory/context profile.
+     * Specialist conversations may have a fully isolated memory/context profile.
      * Ordinary chats without an override continue to use the global chat defaults.
      */
     fun settingsForChat(chatId: String): ChatMemoryGlobalSettings = runCatching {
