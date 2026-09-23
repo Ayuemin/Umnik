@@ -1,0 +1,1 @@
+Stable 1.19.11 release. Enabled R8 shrinking and optimization. Improved knowledge-base indexing, FB2 cleanup, hybrid BM25 + embeddings retrieval and contextual follow-ups. Chat settings are now isolated per chat. Refined OpenRouter model selection, response details, diagnostics, background work and UI consistency.
