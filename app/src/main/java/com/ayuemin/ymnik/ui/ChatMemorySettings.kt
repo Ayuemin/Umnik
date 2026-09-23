@@ -158,8 +158,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
     var advanced by remember { mutableStateOf(false) }
     var confirmClear by remember { mutableStateOf(false) }
     val initial = vm.chatMemorySettings()
-    var embeddingModel by remember(initial.embeddingModelId) { mutableStateOf(initial.embeddingModelId) }
-    var summaryModel by remember(initial.summaryModelId) { mutableStateOf(initial.summaryModelId) }
+    val embeddingModel = state.embeddingModel
     var defaultMode by remember(initial.defaultContextMode) { mutableStateOf(initial.defaultContextMode) }
     var autoThreshold by remember(initial.autoThresholdTokens) { mutableStateOf(initial.autoThresholdTokens.toString()) }
     var economyThreshold by remember(initial.economyThresholdTokens) { mutableStateOf(initial.economyThresholdTokens.toString()) }
@@ -195,7 +194,7 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
             subtitle = "Гибридная память длинных чатов · ${formatMemoryBytes(vm.totalChatMemoryBytes())}",
             expanded = expanded,
             onToggle = { expanded = !expanded },
-            info = "Umnik не удаляет старую переписку. После заданного порога старые завершённые ходы индексируются один раз, а модели отправляются свежий хвост, компактный конспект и только релевантные старые фрагменты."
+            info = "Umnik не удаляет старую переписку. После заданного порога старые завершённые ходы индексируются общей Embeddings-моделью, а системная модель делает компактный конспект. Обе модели задаются один раз в Настройки → Модели."
         )
         if (!expanded) return@UmnikPanel
         Column(
@@ -230,32 +229,11 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 )
             }
 
-            UmnikModelIdField(
-                label = "Модель поиска по памяти",
-                value = embeddingModel,
-                onValueChange = { embeddingModel = it.trim() },
-                onPick = {
-                    com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                        "models-settings",
-                        "Память и контекст"
-                    )
-                },
-                info = "Это Embeddings-модель OpenRouter для смыслового поиска по старой переписке. Конкретную модель Umnik не выбирает за вас: откройте каталог, сравните цену и скопируйте подходящий ID."
+            Text(
+                "Служебные модели задаются один раз в Настройки → Модели: системная модель делает конспекты, а общая Embeddings-модель ищет по старой переписке.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            UmnikModelIdField(
-                label = "Модель конспекта",
-                value = summaryModel,
-                onValueChange = { summaryModel = it.trim() },
-                onPick = {
-                    com.ayuemin.ymnik.AsyncJobEvents.requestHub(
-                        "models-settings",
-                        "Память и контекст"
-                    )
-                },
-                info = "Обычная текстовая модель OpenRouter, которая сжимает длинную историю в компактный конспект. Найдите модель в общем каталоге и вставьте её ID."
-            )
-
-
 
             UmnikInlineExpander(
                 title = "Расширенные параметры памяти",
@@ -309,8 +287,8 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                         ?: initial.embeddingContextTokens.takeIf { initial.embeddingModelId == embeddingModel }
                     vm.saveChatMemorySettings(
                         ChatMemoryGlobalSettings(
-                            embeddingModelId = embeddingModel,
-                            summaryModelId = summaryModel,
+                            embeddingModelId = state.embeddingModel,
+                            summaryModelId = state.systemModel,
                             defaultContextMode = defaultMode,
                             autoThresholdTokens = autoThreshold.toIntOrNull() ?: initial.autoThresholdTokens,
                             economyThresholdTokens = economyThreshold.toIntOrNull() ?: initial.economyThresholdTokens,
