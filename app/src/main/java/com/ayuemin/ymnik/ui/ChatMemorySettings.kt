@@ -219,12 +219,6 @@ fun ChatMemoryGlobalSettingsSection(state: UiState, vm: ChatViewModel) {
                 )
             }
 
-            Text(
-                "Служебные модели задаются один раз в Настройки → Модели: системная модель делает конспекты, а общая Embeddings-модель ищет по старой переписке.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
             UmnikInlineExpander(
                 title = "Расширенные параметры памяти",
                 expanded = advanced,
