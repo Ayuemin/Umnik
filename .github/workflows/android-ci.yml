@@ -41,3 +41,40 @@ jobs:
 
       - name: Lint, tests, debug APK and unsigned release APK
         run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
+
+
+      - name: Restore signing key for work-branch test APK
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/work/')
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!value:-}" ]; then
+              echo "Missing GitHub Actions secret: $value"
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-test.jks"
+
+      - name: Build signed work-branch APK
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/work/')
+        env:
+          UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-test.jks
+          UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Upload signed work-branch APK
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/work/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: Umnik-knowledge-final-test
+          path: app/build/outputs/apk/release/app-release.apk
+          if-no-files-found: error
+          retention-days: 7
