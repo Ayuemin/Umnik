@@ -467,7 +467,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         embeddings = embeddings
     ).hits
 
-    suspend fun retrieveDetailed(
+    internal suspend fun retrieveDetailed(
         owners: List<Pair<KnowledgeOwnerKind, String>>,
         query: String,
         apiKey: String,
@@ -798,7 +798,7 @@ class KnowledgeBaseRepository(private val context: Context) {
 
     private fun sanitizeSettings(value: KnowledgeBaseSettings): KnowledgeBaseSettings = value.copy(
         embeddingModelId = value.embeddingModelId.trim().ifBlank { KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL },
-        topK = value.topK.coerceIn(1, 10)
+        topK = value.topK.coerceIn(2, 4)
     )
 
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =
