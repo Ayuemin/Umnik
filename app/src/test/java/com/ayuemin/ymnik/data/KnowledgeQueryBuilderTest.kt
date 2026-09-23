@@ -23,6 +23,20 @@ class KnowledgeQueryBuilderTest {
         assertTrue(query.contains("что ещё есть в учебнике об этом?"))
     }
 
+
+    @Test
+    fun expandsNaturalShortFollowUp() {
+        val history = listOf(
+            ChatMessage("u1", "user", "Почему человеку перестаёт нравиться работа?"),
+            ChatMessage("a1", "assistant", "Причин может быть несколько.")
+        )
+
+        val query = KnowledgeQueryBuilder.build("А если он просто устал?", history)
+
+        assertTrue(query.contains("Почему человеку перестаёт нравиться работа?"))
+        assertTrue(query.contains("А если он просто устал?"))
+    }
+
     @Test
     fun leavesIndependentQuestionUntouched() {
         val history = listOf(
