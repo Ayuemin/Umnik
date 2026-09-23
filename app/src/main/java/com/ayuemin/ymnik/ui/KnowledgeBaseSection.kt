@@ -55,6 +55,7 @@ fun KnowledgeBaseSection(
 ) {
     val current = vm.knowledgeSettings(kind, ownerId)
     val documents = vm.knowledgeDocuments(kind, ownerId)
+    val enabledDocumentCount = documents.count { vm.isKnowledgeDocumentEnabled(it.id) }
     val knowledgeTask = vm.knowledgeTaskLabel(kind, ownerId)
     val knowledgeFailure = vm.knowledgeFailure(kind, ownerId)
     val indexedEmbeddingModels = documents.map { it.embeddingModelId }.filter { it.isNotBlank() }.distinct()
@@ -73,6 +74,8 @@ fun KnowledgeBaseSection(
                 knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
                 documents.isEmpty() -> "Нет источников"
                 !enabled -> "${documents.size} источн. · автопоиск выключен"
+                enabledDocumentCount == 0 -> "${documents.size} источн. · все отключены"
+                enabledDocumentCount < documents.size -> "${documents.size} источн. · в поиске $enabledDocumentCount"
                 else -> "${documents.size} источн. · автопоиск включён"
             },
             expanded = expanded,
@@ -184,34 +187,62 @@ fun KnowledgeBaseSection(
             Text("Источников пока нет", color = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             documents.forEach { document ->
+                var documentEnabled by remember(document.id) {
+                    mutableStateOf(vm.isKnowledgeDocumentEnabled(document.id))
+                }
                 UmnikPanel {
-                    Row(
+                    Column(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Icon(Icons.Outlined.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(document.name, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.MenuBook, contentDescription = null, modifier = Modifier.size(20.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(document.name, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    "${document.chunkCount} фрагм. · ${knowledgeSize(document.size)} · ${document.embeddingModelId.substringAfterLast('/')}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                            IconButton(
+                                onClick = { vm.reindexKnowledgeDocument(document.id, modelId) },
+                                enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
+                            ) {
+                                Icon(Icons.Outlined.Refresh, contentDescription = "Переиндексировать")
+                            }
+                            IconButton(
+                                onClick = { vm.deleteKnowledgeDocument(document.id) },
+                                enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
+                            ) {
+                                Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить из базы знаний")
+                            }
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                "${document.chunkCount} фрагм. · ${knowledgeSize(document.size)} · ${document.embeddingModelId.substringAfterLast('/')}",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis
+                                "Использовать в поиске",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall
                             )
-                        }
-                        IconButton(
-                            onClick = { vm.reindexKnowledgeDocument(document.id, modelId) },
-                            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
-                        ) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "Переиндексировать")
-                        }
-                        IconButton(
-                            onClick = { vm.deleteKnowledgeDocument(document.id) },
-                            enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
-                        ) {
-                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить из базы знаний")
+                            UmnikInfoHint(
+                                title = "Источник в поиске",
+                                text = "Если выключить источник, Umnik перестанет брать из него фрагменты для ответов. Сам документ и готовый индекс останутся на месте, поэтому источник можно включить обратно без переиндексации."
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Switch(
+                                checked = documentEnabled,
+                                onCheckedChange = { value ->
+                                    documentEnabled = value
+                                    vm.setKnowledgeDocumentEnabled(document.id, value)
+                                },
+                                enabled = knowledgeTask == null && !state.isLoading && !state.requestActive
+                            )
                         }
                     }
                 }
