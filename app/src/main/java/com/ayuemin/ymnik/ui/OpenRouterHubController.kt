@@ -242,44 +242,6 @@ class OpenRouterHubController(
         }
     }
 
-    fun clearAssignedModel(category: ModelCategory) {
-        when (category) {
-            ModelCategory.TEXT -> {
-                val profile = openRouterProfile() ?: return
-                viewModel.selectDefaultTextModel(profile.id, "openrouter/auto")
-                mutableState.value = mutableState.value.copy(status = "Модель чата сброшена на OpenRouter Auto")
-            }
-            ModelCategory.IMAGE -> {
-                viewModel.clearImageModel()
-                mutableState.value = mutableState.value.copy(status = "Модель изображений снята")
-            }
-            ModelCategory.VIDEO -> {
-                val media = mutableState.value.media.copy(videoModel = "")
-                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель видео снята")
-            }
-            ModelCategory.SPEECH, ModelCategory.AUDIO -> {
-                val media = mutableState.value.media.copy(speechModel = "", voice = "", responseFormat = null)
-                featurePrefs.saveMedia(media)
-                mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания текста и документов снята")
-            }
-            ModelCategory.TRANSCRIPTION -> {
-                val media = mutableState.value.media.copy(transcriptionModel = "")
-                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель распознавания снята")
-            }
-            ModelCategory.EMBEDDINGS -> {
-                mutableState.value = mutableState.value.copy(
-                    status = "Embeddings-модель задаётся глобально в Настройки → Модели"
-                )
-            }
-            ModelCategory.RERANK -> {
-                mutableState.value = mutableState.value.copy(
-                    status = "Отдельная Rerank-модель сейчас не используется"
-                )
-            }
-        }
-    }
-
-
     fun assignReplySpeechModel(model: ModelInfo) {
         if (ModelCategory.SPEECH !in model.categories && ModelCategory.AUDIO !in model.categories) {
             mutableState.value = mutableState.value.copy(status = "Эта модель не поддерживает озвучивание")
