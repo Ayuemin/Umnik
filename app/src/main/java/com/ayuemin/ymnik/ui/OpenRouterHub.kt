@@ -180,7 +180,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
-            "tools", "rag" -> {
+            "tools" -> {
                 requestedPage = HubPage.TOOLS
                 requestedMediaSection = MediaSection.ALL
                 open = true
