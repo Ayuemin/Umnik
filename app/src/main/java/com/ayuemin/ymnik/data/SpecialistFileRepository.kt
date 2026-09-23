@@ -26,6 +26,7 @@ class SpecialistFileRepository(private val context: Context) {
         AtomicJsonFile(metadata(specialistId)).read(::validJson)
             ?.let { gson.fromJson<List<ChatFile>>(it, type) }
             .orEmpty()
+            .map(::migrateLegacyLocalPath)
     }.onSuccess { loadErrors.remove(specialistId) }
         .onFailure { loadErrors[specialistId] = "Данные файлов специалиста повреждены и защищены от перезаписи." }
         .getOrDefault(emptyList())
@@ -91,6 +92,13 @@ class SpecialistFileRepository(private val context: Context) {
         File(File(specialistsRoot, safeId(specialistId)), "files").apply { mkdirs() }
 
     private fun metadata(specialistId: String): File = File(root(specialistId), "files.json")
+
+    private fun migrateLegacyLocalPath(file: ChatFile): ChatFile {
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!file.localPath.startsWith(legacyPrefix)) return file
+        val relative = file.localPath.removePrefix(legacyPrefix)
+        return file.copy(localPath = File(specialistsRoot, relative).absolutePath)
+    }
 
     private fun validJson(raw: String): Boolean = runCatching {
         gson.fromJson<List<ChatFile>>(raw, type) != null

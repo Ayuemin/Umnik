@@ -4,8 +4,10 @@ import com.google.gson.annotations.SerializedName
 
 enum class KnowledgeOwnerKind {
     CHAT,
-    PROJECT,
-    AGENT
+    @SerializedName(value = "TEAM", alternate = ["PROJECT"])
+    TEAM,
+    @SerializedName(value = "SPECIALIST", alternate = ["AGENT"])
+    SPECIALIST
 }
 
 data class KnowledgeBaseSettings(

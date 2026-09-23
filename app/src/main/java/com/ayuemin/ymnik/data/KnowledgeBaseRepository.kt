@@ -310,12 +310,19 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     fun settings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings = runCatching {
-        prefs.getString(settingsKey(kind, ownerId), null)
-            ?.let { gson.fromJson(it, KnowledgeBaseSettings::class.java) }
+        val currentKey = settingsKey(kind, ownerId)
+        val raw = prefs.getString(currentKey, null) ?: legacySettingsKey(kind, ownerId)?.let { legacyKey ->
+            prefs.getString(legacyKey, null)?.also { legacyValue ->
+                prefs.edit().putString(currentKey, legacyValue).remove(legacyKey).apply()
+            }
+        }
+        raw?.let { gson.fromJson(it, KnowledgeBaseSettings::class.java) }
     }.getOrNull()?.let(::sanitizeSettings) ?: KnowledgeBaseSettings()
 
     fun saveSettings(kind: KnowledgeOwnerKind, ownerId: String, value: KnowledgeBaseSettings) {
-        prefs.edit().putString(settingsKey(kind, ownerId), gson.toJson(sanitizeSettings(value))).apply()
+        val editor = prefs.edit().putString(settingsKey(kind, ownerId), gson.toJson(sanitizeSettings(value)))
+        legacySettingsKey(kind, ownerId)?.let(editor::remove)
+        editor.apply()
     }
 
     fun hasEnabledKnowledge(owners: List<Pair<KnowledgeOwnerKind, String>>): Boolean = owners.any { (kind, id) ->
@@ -675,6 +682,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         taskManifest.read { raw -> runCatching { gson.fromJson<List<KnowledgeIndexTask>>(raw, tasksType) }.isSuccess }
             ?.let { gson.fromJson<List<KnowledgeIndexTask>>(it, tasksType) }
             .orEmpty()
+            .map(::migrateLegacyTaskPath)
     }.getOrDefault(emptyList()).also { indexTasks = it }
 
     private fun saveTasks(value: List<KnowledgeIndexTask>) {
@@ -806,6 +814,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         manifest.read { raw -> runCatching { gson.fromJson<List<KnowledgeDocument>>(raw, documentsType) }.isSuccess }
             ?.let { gson.fromJson<List<KnowledgeDocument>>(it, documentsType) }
             .orEmpty()
+            .map(::migrateLegacyDocumentPath)
     }.getOrDefault(emptyList())
 
     private fun saveDocuments(value: List<KnowledgeDocument>) {
@@ -821,9 +830,31 @@ class KnowledgeBaseRepository(private val context: Context) {
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =
         "settings::${kind.name.lowercase()}::$ownerId"
 
+    private fun legacySettingsKey(kind: KnowledgeOwnerKind, ownerId: String): String? = when (kind) {
+        KnowledgeOwnerKind.TEAM -> "settings::project::$ownerId"
+        KnowledgeOwnerKind.SPECIALIST -> "settings::agent::$ownerId"
+        else -> null
+    }
+
+    private fun migrateLegacyDocumentPath(document: KnowledgeDocument): KnowledgeDocument {
+        if (document.ownerKind != KnowledgeOwnerKind.SPECIALIST) return document
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!document.localPath.startsWith(legacyPrefix)) return document
+        val relative = document.localPath.removePrefix(legacyPrefix)
+        return document.copy(localPath = File(File(context.filesDir, "specialists"), relative).absolutePath)
+    }
+
+    private fun migrateLegacyTaskPath(task: KnowledgeIndexTask): KnowledgeIndexTask {
+        if (task.ownerKind != KnowledgeOwnerKind.SPECIALIST) return task
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!task.localPath.startsWith(legacyPrefix)) return task
+        val relative = task.localPath.removePrefix(legacyPrefix)
+        return task.copy(localPath = File(File(context.filesDir, "specialists"), relative).absolutePath)
+    }
+
     private fun documentDir(kind: KnowledgeOwnerKind, ownerId: String, documentId: String): File =
-        if (kind == KnowledgeOwnerKind.AGENT) {
-            File(context.filesDir, "agents/${safe(ownerId)}/knowledge/${safe(documentId)}")
+        if (kind == KnowledgeOwnerKind.SPECIALIST) {
+            File(context.filesDir, "specialists/${safe(ownerId)}/knowledge/${safe(documentId)}")
         } else {
             File(root, safe(documentId))
         }
