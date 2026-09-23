@@ -344,8 +344,6 @@ private fun AgentSettingsDialog(
             .distinct()
             .map { AgentModelRef("openrouter", it) }
             .toList(),
-        contextModel = null,
-        memoryEmbeddingModel = null,
         knowledgeBase = agent.knowledgeBase,
         reasoningEnabled = reasoningEnabled && !reasoningKnownUnsupported,
         reasoningEffort = reasoningEffort,
