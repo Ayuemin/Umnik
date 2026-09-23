@@ -62,9 +62,10 @@ fun KnowledgeBaseSection(
             title = title,
             subtitle = when {
                 knowledgeTask != null -> "Идёт индексация · можно продолжать работу"
+                !vm.systemModelConfigured() && documents.isEmpty() -> "Сначала выберите системную модель"
+                !vm.systemModelConfigured() -> "${documents.size} источн. · нужна системная модель"
                 documents.isEmpty() -> "Нет источников"
                 !enabled -> "${documents.size} источн. · автопоиск выключен"
-                !vm.systemModelConfigured() -> "${documents.size} источн. · нужна системная модель"
                 else -> "${documents.size} источн. · автопоиск включён"
             },
             expanded = expanded,
