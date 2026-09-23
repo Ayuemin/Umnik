@@ -1187,6 +1187,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         onSearchAttempted: () -> Unit = {},
         onRetrieved: (hitCount: Int, sources: List<String>) -> Unit = { _, _ -> }
     ): String {
+        if (!systemModelConfigured()) return ""
         if (query.isBlank()) return if (baseOnly) baseOnlyNoEvidenceContext() else ""
         val owners = buildList {
             if (agentId != null) {
