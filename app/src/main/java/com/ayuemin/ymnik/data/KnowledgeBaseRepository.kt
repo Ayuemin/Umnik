@@ -461,13 +461,15 @@ class KnowledgeBaseRepository(private val context: Context) {
         query: String,
         apiKey: String,
         baseUrl: String,
-        embeddings: OpenRouterEmbeddingClient
+        embeddings: OpenRouterEmbeddingClient,
+        embeddingModelId: String? = null
     ): List<KnowledgeHit> = retrieveDetailed(
         owners = owners,
         query = query,
         apiKey = apiKey,
         baseUrl = baseUrl,
-        embeddings = embeddings
+        embeddings = embeddings,
+        embeddingModelId = embeddingModelId
     ).hits
 
     internal suspend fun retrieveDetailed(
@@ -475,7 +477,8 @@ class KnowledgeBaseRepository(private val context: Context) {
         query: String,
         apiKey: String,
         baseUrl: String,
-        embeddings: OpenRouterEmbeddingClient
+        embeddings: OpenRouterEmbeddingClient,
+        embeddingModelId: String? = null
     ): KnowledgeRetrievalResult = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
         if (cleanQuery.isBlank()) {
@@ -490,7 +493,10 @@ class KnowledgeBaseRepository(private val context: Context) {
         owners.distinct().forEach { (kind, ownerId) ->
             val settings = settings(kind, ownerId)
             if (!settings.enabled) return@forEach
-            val ownerDocuments = documents(kind, ownerId).filter { documentFilesValid(it) }
+            val expectedModel = embeddingModelId?.trim().orEmpty()
+            val ownerDocuments = documents(kind, ownerId)
+                .filter { documentFilesValid(it) }
+                .filter { expectedModel.isBlank() || it.embeddingModelId == expectedModel }
             if (ownerDocuments.isEmpty()) return@forEach
 
             val ownerHits = mutableListOf<KnowledgeHit>()
