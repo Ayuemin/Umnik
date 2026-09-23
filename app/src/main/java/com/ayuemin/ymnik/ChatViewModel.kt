@@ -740,32 +740,33 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatMemory.clearAllMemory()
 
         val systemModel = _state.value.systemModel
-        if (systemModel.isNotBlank()) {
-            runCatching {
-                val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
-                _state.value.chats.forEach { chat ->
-                    if (chatMemory.mode(chat.id) != ChatContextMode.FULL) {
-                        runCatching {
-                            chatMemoryManager.rebuild(
-                                chat = chat,
-                                apiKey = apiKey,
-                                baseUrl = baseUrl,
-                                embeddingModelId = modelId,
-                                systemModelId = systemModel
-                            )
-                        }.onFailure { error ->
-                            DiagnosticLog.record(
-                                context,
-                                "CHAT_MEMORY",
-                                "global embedding rebuild failed chat=${chat.id.take(8)}",
-                                error
-                            )
-                        }
+        var memoryRebuildFailed = false
+        runCatching {
+            val (apiKey, baseUrl) = knowledgeOpenRouterCredentials()
+            _state.value.chats.forEach { chat ->
+                if (chatMemory.mode(chat.id) != ChatContextMode.FULL) {
+                    runCatching {
+                        chatMemoryManager.rebuild(
+                            chat = chat,
+                            apiKey = apiKey,
+                            baseUrl = baseUrl,
+                            embeddingModelId = modelId,
+                            systemModelId = systemModel
+                        )
+                    }.onFailure { error ->
+                        memoryRebuildFailed = true
+                        DiagnosticLog.record(
+                            context,
+                            "CHAT_MEMORY",
+                            "global embedding rebuild failed chat=${chat.id.take(8)}",
+                            error
+                        )
                     }
                 }
-            }.onFailure { error ->
-                DiagnosticLog.record(context, "CHAT_MEMORY", "global embedding memory rebuild setup failed", error)
             }
+        }.onFailure { error ->
+            memoryRebuildFailed = true
+            DiagnosticLog.record(context, "CHAT_MEMORY", "global embedding memory rebuild setup failed", error)
         }
 
         refreshKnowledgeState(
@@ -774,17 +775,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     "Новая Embeddings-модель сохранена. Переиндексация запущена для $queued документов; часть задач не удалось подготовить."
                 errors.isNotEmpty() ->
                     "Новая Embeddings-модель сохранена, но переиндексацию не удалось запустить: ${errors.first()}"
+                memoryRebuildFailed && queued > 0 ->
+                    "Новая Embeddings-модель сохранена. Документы переиндексируются; часть памяти чатов перестроится при дальнейшей работе."
                 queued > 0 ->
                     "Новая Embeddings-модель сохранена. Автоматически переиндексируются $queued документов."
+                memoryRebuildFailed ->
+                    "Новая Embeddings-модель сохранена. Память чатов перестроится при дальнейшей работе."
                 systemModel.isBlank() ->
-                    "Новая Embeddings-модель сохранена. Индексы памяти очищены; для их восстановления выберите системную модель."
+                    "Новая Embeddings-модель сохранена. Векторная память перестроена; конспекты появятся после выбора системной модели."
                 else ->
                     "Новая Embeddings-модель сохранена. Служебная память перестроена."
             }
         )
     }
 
-    fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
+    fun chatMemorySettings()    fun chatMemorySettings(): ChatMemoryGlobalSettings = chatMemory.settings()
 
     fun saveChatMemorySettings(settings: ChatMemoryGlobalSettings) {
         if (_state.value.isLoading || _state.value.requestActive) return
