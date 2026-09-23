@@ -3,7 +3,7 @@ package com.ayuemin.ymnik.data
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.network.OpenRouterClient
-import com.google.gson.Gson
+import com.google.gson.JsonParser
 
 internal data class SystemKnowledgePlan(
     val baseOnly: Boolean,
@@ -13,13 +13,6 @@ internal data class SystemKnowledgePlan(
 internal class SystemTaskPlanner(
     private val api: OpenRouterClient
 ) {
-    private data class PlanPayload(
-        val mode: String? = null,
-        val search_query: String? = null
-    )
-
-    private val gson = Gson()
-
     suspend fun planKnowledgeQuery(
         apiKey: String,
         baseUrl: String,
@@ -80,9 +73,22 @@ internal class SystemTaskPlanner(
             .removePrefix("```")
             .removeSuffix("```")
             .trim()
-        val payload = gson.fromJson(raw, PlanPayload::class.java)
-        val mode = payload.mode.orEmpty().trim().lowercase()
-        val query = payload.search_query.orEmpty().trim().take(12000)
+        val payload = JsonParser.parseString(raw)
+            .takeIf { it.isJsonObject }
+            ?.asJsonObject
+            ?: error("Системная модель вернула ответ не в формате JSON")
+        val mode = payload.get("mode")
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+            .orEmpty()
+            .trim()
+            .lowercase()
+        val query = payload.get("search_query")
+            ?.takeIf { it.isJsonPrimitive }
+            ?.asString
+            .orEmpty()
+            .trim()
+            .take(12000)
         require(query.isNotBlank()) { "Системная модель не вернула поисковый запрос" }
         return SystemKnowledgePlan(
             baseOnly = mode == "base_only",
