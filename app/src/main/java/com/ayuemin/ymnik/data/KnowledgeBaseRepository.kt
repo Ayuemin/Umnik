@@ -515,15 +515,17 @@ class KnowledgeBaseRepository(private val context: Context) {
                     }
                     val score = if (norm <= 0.0) 0.0 else dot / (queryNorm * sqrt(norm))
                     val chunk = chunks[index]
-                    add(
-                        KnowledgeHit(
-                            documentId = document.id,
-                            documentName = document.name,
-                            text = chunk.text,
-                            page = chunk.page,
-                            score = score
+                    if (!KnowledgeChunker.isLikelyEncodedBlob(chunk.text)) {
+                        add(
+                            KnowledgeHit(
+                                documentId = document.id,
+                                documentName = document.name,
+                                text = chunk.text,
+                                page = chunk.page,
+                                score = score
+                            )
                         )
-                    )
+                    }
                 }
             }
         }
