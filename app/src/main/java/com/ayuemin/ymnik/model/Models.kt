@@ -419,6 +419,8 @@ data class UiState(
     val activeConnectionProfileId: String = "openrouter",
     val disabledConnectionIds: Set<String> = emptySet(),
     val textModel: String = "openrouter/auto",
+    val systemModel: String = "",
+    val embeddingModel: String = KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL,
     val currentChatTextModel: String? = null,
     val quickTextModels: List<String> = emptyList(),
     val imageConnectionProfileId: String = "openrouter",
