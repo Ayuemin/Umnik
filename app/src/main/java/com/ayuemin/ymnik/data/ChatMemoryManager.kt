@@ -367,17 +367,11 @@ class ChatMemoryManager(
             appendLine("===== НОВЫЙ ФРАГМЕНТ =====")
             appendLine(sourceText)
         }
-        val result = (apiOverride ?: api).chat(
+        val result = (apiOverride ?: api).internalText(
             apiKey = apiKey,
             model = systemModelId,
-            history = emptyList(),
             prompt = prompt,
-            attachments = emptyList(),
             systemPrompt = "Ты служебный модуль памяти Umnik. Сохраняй только то, что подтверждено исходной перепиской. Не обращайся к пользователю и не добавляй советы.",
-            webSearchEnabled = false,
-            reasoningEnabled = false,
-            reasoningEffort = null,
-            toolsEnabled = false,
             baseUrl = baseUrl,
             modelInfo = ModelInfo(systemModelId)
         )
