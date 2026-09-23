@@ -138,13 +138,16 @@ class KnowledgeBaseRepository(private val context: Context) {
         documentId: String,
         embeddingModelId: String,
         connectionProfileId: String,
-        baseUrl: String
+        baseUrl: String,
+        allowQueuedForOwner: Boolean = false
     ): KnowledgeIndexTask = withContext(Dispatchers.IO) {
         val previous = (loadDocuments().firstOrNull { it.id == documentId }
             ?: documents.firstOrNull { it.id == documentId })
             ?: error("Документ базы знаний не найден")
-        require(activeIndexTask(previous.ownerKind, previous.ownerId) == null) {
-            "Для этой базы знаний уже выполняется индексация"
+        if (!allowQueuedForOwner) {
+            require(activeIndexTask(previous.ownerKind, previous.ownerId) == null) {
+                "Для этой базы знаний уже выполняется индексация"
+            }
         }
         val oldSource = File(previous.localPath)
         require(oldSource.isFile) { "Исходный файл «${previous.name}» не найден" }
