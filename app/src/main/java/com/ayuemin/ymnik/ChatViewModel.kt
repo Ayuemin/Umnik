@@ -15,9 +15,6 @@ import com.ayuemin.ymnik.data.ChatFileRepository
 import com.ayuemin.ymnik.data.ChatMemoryManager
 import com.ayuemin.ymnik.data.ChatMemoryRepository
 import com.ayuemin.ymnik.data.KnowledgeBaseRepository
-import com.ayuemin.ymnik.data.KnowledgeIntent
-import com.ayuemin.ymnik.data.KnowledgeRequestMode
-import com.ayuemin.ymnik.data.KnowledgeQueryBuilder
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.ProjectRepository
 import com.ayuemin.ymnik.data.ProjectAutomationRepository
@@ -1164,13 +1161,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             DiagnosticLog.record(
                 context,
                 "KNOWLEDGE",
-                "system planner failed; fallback=local",
+                "system planner failed; request aborted",
                 error
             )
-        }.getOrElse {
-            SystemKnowledgePlan(
-                baseOnly = KnowledgeIntent.mode(query) == KnowledgeRequestMode.BASE_ONLY,
-                searchQuery = KnowledgeQueryBuilder.build(query, history)
+        }.getOrElse { error ->
+            throw IllegalStateException(
+                "Системная модель не смогла подготовить запрос к базе знаний. Проверьте её выбор в Настройки → Модели.",
+                error
             )
         }.also { plan ->
             DiagnosticLog.record(
@@ -1213,7 +1210,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 query = query.take(12000),
                 apiKey = apiKey,
                 baseUrl = baseUrl,
-                embeddings = embeddingApi
+                embeddings = embeddingApi,
+                embeddingModelId = _state.value.embeddingModel
             )
             val hits = retrieval.hits
             DiagnosticLog.record(
