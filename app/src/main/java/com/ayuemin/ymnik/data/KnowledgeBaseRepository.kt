@@ -24,6 +24,12 @@ import java.io.RandomAccessFile
 import java.util.UUID
 import kotlin.math.sqrt
 
+internal data class KnowledgeRetrievalResult(
+    val hits: List<KnowledgeHit>,
+    val candidateCount: Int,
+    val thresholdDropped: Int
+)
+
 class KnowledgeBaseRepository(private val context: Context) {
     private val root = File(context.filesDir, "knowledge_base").apply { mkdirs() }
     private val manifest = AtomicJsonFile(File(root, "manifest.json"))
@@ -453,12 +459,31 @@ class KnowledgeBaseRepository(private val context: Context) {
         apiKey: String,
         baseUrl: String,
         embeddings: OpenRouterEmbeddingClient
-    ): List<KnowledgeHit> = withContext(Dispatchers.IO) {
+    ): List<KnowledgeHit> = retrieveDetailed(
+        owners = owners,
+        query = query,
+        apiKey = apiKey,
+        baseUrl = baseUrl,
+        embeddings = embeddings
+    ).hits
+
+    suspend fun retrieveDetailed(
+        owners: List<Pair<KnowledgeOwnerKind, String>>,
+        query: String,
+        apiKey: String,
+        baseUrl: String,
+        embeddings: OpenRouterEmbeddingClient
+    ): KnowledgeRetrievalResult = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
-        if (cleanQuery.isBlank()) return@withContext emptyList()
+        if (cleanQuery.isBlank()) {
+            return@withContext KnowledgeRetrievalResult(emptyList(), 0, 0)
+        }
 
         val queryVectors = mutableMapOf<String, FloatArray>()
         val result = mutableListOf<KnowledgeHit>()
+        var candidateCount = 0
+        var thresholdDropped = 0
+
         owners.distinct().forEach { (kind, ownerId) ->
             val settings = settings(kind, ownerId)
             if (!settings.enabled) return@forEach
@@ -480,14 +505,31 @@ class KnowledgeBaseRepository(private val context: Context) {
                     ownerHits += scoreDocument(document, queryVector, cleanQuery)
                 }
             }
+
+            candidateCount += ownerHits.size
+            val relevantHits = ownerHits.filter { hit ->
+                KnowledgeHybridRanker.passesRelevanceGate(
+                    semanticScore = hit.semanticScore ?: 0.0,
+                    lexicalScore = hit.lexicalScore ?: 0.0
+                )
+            }
+            thresholdDropped += ownerHits.size - relevantHits.size
+
             result += selectDiverseHits(
-                ownerHits.sortedByDescending { it.score },
+                relevantHits.sortedByDescending { it.score },
                 settings.topK
             )
         }
-        result.sortedByDescending { it.score }
+
+        val finalHits = result.sortedByDescending { it.score }
             .distinctBy { "${it.documentId}:${it.text.hashCode()}" }
             .take(MAX_TOTAL_HITS)
+
+        KnowledgeRetrievalResult(
+            hits = finalHits,
+            candidateCount = candidateCount,
+            thresholdDropped = thresholdDropped
+        )
     }
 
     private fun scoreDocument(document: KnowledgeDocument, query: FloatArray, rawQuery: String): List<KnowledgeHit> {
