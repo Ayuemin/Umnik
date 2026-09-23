@@ -43,16 +43,26 @@ internal object KnowledgeChunker {
     }
 
     internal fun isLikelyEncodedBlob(text: String): Boolean {
-        val token = text
+        val longestToken = text
             .split(Regex("\\s+"))
             .maxByOrNull { it.length }
             .orEmpty()
-        if (token.length < 256) return false
-        val encodedChars = token.count { ch ->
-            ch.isLetterOrDigit() || ch == '+' || ch == '/' || ch == '=' || ch == '_' || ch == '-'
+        if (longestToken.length >= 256) {
+            val encodedChars = longestToken.count(::isBase64LikeChar)
+            if (encodedChars.toDouble() / longestToken.length.toDouble() >= 0.97) return true
         }
-        return encodedChars.toDouble() / token.length.toDouble() >= 0.97
+
+        val compact = text.filterNot(Char::isWhitespace)
+        if (compact.length < 512) return false
+        val whitespaceRatio = text.count(Char::isWhitespace).toDouble() / text.length.coerceAtLeast(1)
+        if (whitespaceRatio > 0.08) return false
+        val encodedChars = compact.count(::isBase64LikeChar)
+        return encodedChars.toDouble() / compact.length.toDouble() >= 0.98
     }
+
+    private fun isBase64LikeChar(ch: Char): Boolean =
+        ch in 'A'..'Z' || ch in 'a'..'z' || ch in '0'..'9' ||
+            ch == '+' || ch == '/' || ch == '=' || ch == '_' || ch == '-'
 
     private fun normalize(text: String): String = text
         .replace('\u0000', ' ')
