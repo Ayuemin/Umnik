@@ -106,7 +106,6 @@ private enum class SimpleModelKind {
     SPEECH,
     TRANSCRIPTION,
     EMBEDDINGS,
-    RERANK,
     AUDIO_INPUT,
     MULTIMODAL,
     REASONING,
@@ -454,7 +453,6 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         listOf(
             SimpleModelKind.TRANSCRIPTION,
             SimpleModelKind.EMBEDDINGS,
-            SimpleModelKind.RERANK,
             SimpleModelKind.AUDIO_INPUT,
             SimpleModelKind.MULTIMODAL,
             SimpleModelKind.REASONING,
@@ -1119,7 +1117,6 @@ private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) 
     SimpleModelKind.SPEECH -> "Озвучка"
     SimpleModelKind.TRANSCRIPTION -> "Распознавание речи"
     SimpleModelKind.EMBEDDINGS -> "Поиск по документам"
-    SimpleModelKind.RERANK -> "Rerank"
     SimpleModelKind.AUDIO_INPUT -> "Аудио на вход"
     SimpleModelKind.MULTIMODAL -> "Мультимодальный чат"
     SimpleModelKind.REASONING -> "Reasoning"
@@ -1146,7 +1143,6 @@ private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boo
     SimpleModelKind.SPEECH -> ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories
     SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION in model.categories
     SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS in model.categories
-    SimpleModelKind.RERANK -> ModelCategory.RERANK in model.categories
     SimpleModelKind.AUDIO_INPUT -> model.accepts("audio")
     SimpleModelKind.MULTIMODAL -> model.isMultimodalChat
     SimpleModelKind.REASONING -> model.supportsReasoning
@@ -1202,7 +1198,6 @@ private fun simplePriceCategory(kind: SimpleModelKind, model: ModelInfo): ModelC
     SimpleModelKind.SPEECH -> ModelCategory.SPEECH
     SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION
     SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS
-    SimpleModelKind.RERANK -> ModelCategory.RERANK
     SimpleModelKind.ALL, SimpleModelKind.AUDIO_INPUT, SimpleModelKind.MULTIMODAL,
     SimpleModelKind.REASONING, SimpleModelKind.TOOLS -> when {
         model.outputModalities == setOf("image") -> ModelCategory.IMAGE
