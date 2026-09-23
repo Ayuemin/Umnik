@@ -19,7 +19,7 @@ internal object KnowledgeTextExtractor {
             lower.endsWith(".html") || lower.endsWith(".htm") || mime == "text/html" ->
                 listOf(KnowledgeSourceSection(htmlToText(file.readText(Charsets.UTF_8))))
             lower.endsWith(".fb2") || mime == "application/x-fictionbook+xml" ->
-                listOf(KnowledgeSourceSection(xmlToText(file.readText(Charsets.UTF_8))))
+                listOf(KnowledgeSourceSection(fb2ToText(file.readText(Charsets.UTF_8))))
             lower.endsWith(".xml") || mime.endsWith("xml") ->
                 listOf(KnowledgeSourceSection(xmlToText(file.readText(Charsets.UTF_8))))
             isPlainText(lower, mime) -> listOf(KnowledgeSourceSection(readPlainText(file)))
@@ -78,6 +78,19 @@ internal object KnowledgeTextExtractor {
         .toString()
         .replace('\u00A0', ' ')
         .trim()
+
+    internal fun sanitizeFb2Xml(value: String): String = value
+        .replace(Regex("""(?is)<binary\b[^>]*>.*?</binary>"""), " ")
+        .replace(Regex("""(?is)<stylesheet\b[^>]*>.*?</stylesheet>"""), " ")
+        .replace(Regex("""(?i)</(?:p|title|subtitle|section|epigraph|poem|stanza|v|text-author|body)>""")) { match ->
+            match.value + "\n"
+        }
+
+    private fun fb2ToText(value: String): String {
+        val text = xmlToText(sanitizeFb2Xml(value))
+        if (text.isBlank()) error("В FB2 не найден читаемый текст")
+        return text
+    }
 
     private fun xmlToText(value: String): String = Html.fromHtml(
         value.replace(Regex("<[^>]+>"), " "),
