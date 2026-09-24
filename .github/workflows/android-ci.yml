@@ -46,7 +46,7 @@ jobs:
         if: startsWith(github.ref, 'refs/heads/work/')
         uses: actions/upload-artifact@v4
         with:
-          name: Umnik-${{ github.ref_name }}-debug
+          name: Umnik-local-shell-mvp-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
