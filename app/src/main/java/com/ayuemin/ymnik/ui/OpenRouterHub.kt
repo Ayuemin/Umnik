@@ -318,6 +318,7 @@ private fun OpenRouterHubDialog(
                                     HubPage.ROUTING -> "Правила выбора провайдера"
                                     HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
                                     HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
+                                    HubPage.SHELL -> "Работа с файлами и выполнение кода"
                                     else -> null
                                 }
                                 if (subtitle != null) {
@@ -348,8 +349,8 @@ private fun OpenRouterHubDialog(
                                     }
                                 )
                                 HubPage.SHELL -> UmnikInfoHint(
-                                    title = "OpenRouter Shell",
-                                    text = "Shell выполняет задачи через OpenRouter. Добавленные файлы попадают во временную рабочую среду; результат и созданные файлы возвращаются в текущий чат."
+                                    title = "Что умеет Shell",
+                                    text = "Shell даёт модели рабочую среду для выполнения кода и обработки файлов. Например: очистить CSV, посчитать данные, преобразовать файл, запустить скрипт или создать новый документ. Добавьте файлы, опишите нужный результат и запустите задачу. Ответ и готовые файлы появятся в текущем чате. Внутри Shell вложения могут получить временные имена."
                                 )
                                 else -> Unit
                             }
@@ -391,7 +392,12 @@ private fun OpenRouterHubDialog(
                         HubPage.JOBS -> JobsPage(state, controller, openCatalog)
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
-                        HubPage.SHELL -> ShellPage(state, controller)
+                        HubPage.SHELL -> ShellPage(
+                            state = state,
+                            controller = controller,
+                            currentChatId = appState.currentChatId,
+                            onReturnToChat = onDismiss
+                        )
                     }
                 }
             }
@@ -2410,26 +2416,123 @@ private fun ReplySpeechPage(
 }
 
 @Composable
-private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
+private fun ShellPage(
+    state: OpenRouterHubState,
+    controller: OpenRouterHubController,
+    currentChatId: String,
+    onReturnToChat: () -> Unit
+) {
     var prompt by remember { mutableStateOf("") }
+    var showResultHere by remember(state.shellResult) { mutableStateOf(false) }
     val files = remember { mutableStateListOf<Uri>() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         files.clear(); files.addAll(uris.take(10))
     }
     val context = LocalContext.current
+    val belongsToCurrentChat = state.shellChatId == null || state.shellChatId == currentChatId
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         item {
-            OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(), label = { Text("Задача") }, minLines = 4, maxLines = 10)
-            FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}") }
-            Button(onClick = { controller.runShell(prompt, files.toList()); prompt = ""; files.clear() }, enabled = prompt.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Выполнить через Shell") }
+            OutlinedTextField(
+                prompt,
+                { prompt = it },
+                Modifier.fillMaxWidth(),
+                label = { Text("Задача") },
+                minLines = 4,
+                maxLines = 10
+            )
+            FilledTonalButton(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                enabled = !state.shellRunning && !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            ) {
+                Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}")
+            }
+            Button(
+                onClick = {
+                    controller.runShell(prompt, files.toList())
+                    prompt = ""
+                    files.clear()
+                },
+                enabled = prompt.isNotBlank() && !state.shellRunning && !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            ) { Text("Выполнить через Shell") }
+
+            if (state.shellRunning && belongsToCurrentChat) {
+                Text(
+                    "Можно вернуться в чат: задача продолжит выполняться, а результат появится там.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+                TextButton(
+                    onClick = onReturnToChat,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Вернуться в чат") }
+            }
         }
-        if (state.shellResult.isNotBlank()) {
+
+        if (state.shellResult.isNotBlank() && !state.shellRunning && belongsToCurrentChat) {
             item {
                 UmnikPanel {
                     Column(Modifier.padding(12.dp)) {
-                        Text(state.shellResult)
-                        TextButton(onClick = { copyToClipboard(context, state.shellResult) }) { Text("Копировать результат") }
+                        Text(
+                            if (state.shellFileCount > 0) {
+                                "Готово · создано файлов: ${state.shellFileCount}"
+                            } else {
+                                "Готово"
+                            },
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        FilledTonalButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) { Text("Открыть результат в чате") }
+                        TextButton(
+                            onClick = { showResultHere = !showResultHere },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (showResultHere) "Скрыть ответ здесь" else "Показать ответ здесь")
+                        }
+                        if (showResultHere) {
+                            Text(
+                                state.shellResult,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                            TextButton(
+                                onClick = { copyToClipboard(context, state.shellResult) }
+                            ) { Text("Копировать результат") }
+                        }
+                    }
+                }
+            }
+        }
+
+        state.shellError?.takeIf { it.isNotBlank() && belongsToCurrentChat }?.let { error ->
+            item {
+                UmnikPanel {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Shell не выполнил задачу", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            "Ошибка также добавлена в исходный чат.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        FilledTonalButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) { Text("Вернуться в чат") }
                     }
                 }
             }

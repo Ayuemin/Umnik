@@ -58,6 +58,10 @@ data class OpenRouterHubState(
     val status: String? = null,
     val transcription: String = "",
     val shellResult: String = "",
+    val shellRunning: Boolean = false,
+    val shellFileCount: Int = 0,
+    val shellError: String? = null,
+    val shellChatId: String? = null,
     val speechFile: GeneratedFile? = null
 )
 
@@ -602,28 +606,60 @@ class OpenRouterHubController(
         val prompt = promptRaw.trim()
         val profile = openRouterProfile()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
-        val currentModel = viewModel.state.value.currentChatTextModel ?: viewModel.state.value.textModel
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val currentModel = originState.currentChatTextModel ?: originState.textModel
         val model = currentModel.removeSuffix(":batch")
-        if (prompt.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите задачу для Shell"); return }
-        if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
+        if (prompt.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "Введите задачу для Shell")
+            return
+        }
+        if (profile == null || key.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
+            return
+        }
         scope.launch {
-            mutableState.value = mutableState.value.copy(loading = true, operation = "Shell выполняет задачу…", status = null)
+            mutableState.value = mutableState.value.copy(
+                loading = true,
+                operation = "Shell выполняет задачу…",
+                status = null,
+                shellResult = "",
+                shellRunning = true,
+                shellFileCount = 0,
+                shellError = null,
+                shellChatId = originChatId
+            )
             val uploadedIds = mutableListOf<String>()
             runCatching {
                 attachments.take(10).forEach { uri ->
                     val attachment = withContext(Dispatchers.IO) { uriBytes(uri) }
-                    val remote = filesClient.upload(key, attachment.name, attachment.mime, attachment.bytes, viewModel.connectionTextEndpoint(profile.id))
+                    val remote = filesClient.upload(
+                        key,
+                        attachment.name,
+                        attachment.mime,
+                        attachment.bytes,
+                        viewModel.connectionTextEndpoint(profile.id)
+                    )
                     uploadedIds += remote.id
                 }
-                val appState = viewModel.state.value
-                val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val team = chat?.teamId?.let { id -> appState.teams.firstOrNull { it.id == id } }
+                val chat = originState.chats.firstOrNull { it.id == originChatId }
+                val team = chat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
+                val shellSystemPrompt = buildString {
+                    append(buildSystemPrompt(chat, team))
+                    appendLine()
+                    appendLine("===== РЕЖИМ SHELL =====")
+                    appendLine("Прикреплённые к этому запросу файлы — пользовательские вложения из Umnik. В контейнере их имена могут измениться; не говори пользователю, что эти файлы тебе недоступны.")
+                    appendLine("Вспомогательные скрипты и промежуточные файлы создавай как временные и удаляй перед завершением.")
+                    appendLine("Возвращай пользователю только те итоговые файлы, которые он явно попросил получить. Не возвращай служебные скрипты, если пользователь отдельно их не просил.")
+                    appendLine("В финальном ответе описывай результат понятным языком и не акцентируй внутренние пути контейнера без необходимости.")
+                    appendLine("===== КОНЕЦ РЕЖИМА SHELL =====")
+                }
                 val result = responsesClient.respond(
                     apiKey = key,
                     model = model,
                     history = chat?.messages.orEmpty(),
                     prompt = prompt,
-                    systemPrompt = buildSystemPrompt(chat, team),
+                    systemPrompt = shellSystemPrompt,
                     tools = mutableState.value.tools.copy(shell = true),
                     routing = mutableState.value.routing,
                     shellFileIds = uploadedIds,
@@ -631,25 +667,81 @@ class OpenRouterHubController(
                 )
                 val generated = result.shellArtifacts.mapNotNull { artifact ->
                     runCatching {
-                        val bytes = filesClient.downloadContainerFile(key, artifact.containerId, artifact.fileId, viewModel.connectionTextEndpoint(profile.id))
-                        saveGeneratedBinary(artifact.name ?: "shell_${artifact.fileId}.bin", "application/octet-stream", bytes)
+                        val bytes = filesClient.downloadContainerFile(
+                            key,
+                            artifact.containerId,
+                            artifact.fileId,
+                            viewModel.connectionTextEndpoint(profile.id)
+                        )
+                        saveGeneratedBinary(
+                            artifact.name ?: "shell_${artifact.fileId}.bin",
+                            "application/octet-stream",
+                            bytes
+                        )
                     }.getOrNull()
                 }
                 result to generated
             }.onSuccess { (result, generated) ->
-                val chatId = viewModel.state.value.currentChatId
-                appendHubExchange(chatId, "[Shell]\n$prompt", result.text, generated)
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, shellResult = result.text, status = if (generated.isEmpty()) "Shell завершил работу" else "Shell завершил работу · файлов: ${generated.size}")
+                appendHubExchange(originChatId, "[Shell]\n$prompt", result.text, generated)
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    shellResult = result.text,
+                    shellRunning = false,
+                    shellFileCount = generated.size,
+                    shellError = null,
+                    shellChatId = originChatId,
+                    status = if (generated.isEmpty()) {
+                        "Shell завершил работу"
+                    } else {
+                        "Shell завершил работу · файлов: ${generated.size}"
+                    }
+                )
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Ошибка Shell")
+                val message = error.message ?: "Ошибка Shell"
+                appendHubExchange(
+                    originChatId,
+                    "[Shell]\n$prompt",
+                    "Shell не выполнил задачу: $message",
+                    emptyList()
+                )
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    shellRunning = false,
+                    shellFileCount = 0,
+                    shellError = message,
+                    shellChatId = originChatId,
+                    status = message
+                )
+                AsyncJobEvents.notifyChanged()
             }
-            uploadedIds.forEach { id -> scope.launch(Dispatchers.IO) { runCatching { filesClient.delete(key, id, viewModel.connectionTextEndpoint(profile.id)) } } }
+            uploadedIds.forEach { id ->
+                scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        filesClient.delete(
+                            key,
+                            id,
+                            viewModel.connectionTextEndpoint(profile.id)
+                        )
+                    }
+                }
+            }
         }
     }
 
     fun clearTransientResult() {
-        mutableState.value = mutableState.value.copy(transcription = "", shellResult = "", speechFile = null, status = null)
+        mutableState.value = mutableState.value.copy(
+            transcription = "",
+            shellResult = "",
+            shellRunning = false,
+            shellFileCount = 0,
+            shellError = null,
+            shellChatId = null,
+            speechFile = null,
+            status = null
+        )
     }
 
     private fun openRouterProfile(): ConnectionProfile? = viewModel.state.value.connectionProfiles.firstOrNull {
