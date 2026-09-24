@@ -325,6 +325,13 @@ private fun OpenRouterHubDialog(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+                            if (page == HubPage.MODELS) {
+                                UmnikInfoHint(
+                                    title = "О каталоге",
+                                    text = "Не нашли нужной информации? Посмотрите модель на сайте OpenRouter и вставьте её ID в Umnik вручную."
+                                )
+                                Spacer(Modifier.width(2.dp))
+                            }
                             if (!showBack) {
                                 IconButton(onClick = onDismiss) {
                                     Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
@@ -1706,14 +1713,14 @@ private fun ToolsPage(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Настройки новых чатов",
+                    "Поиск для новых чатов",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 UmnikInfoHint(
                     title = "Зачем это",
-                    text = "Здесь задаются значения по умолчанию для новых обычных чатов. Уже созданные чаты хранят свои настройки отдельно. Модель пользователь всегда выбирает сам."
+                    text = "Здесь задаются стартовые настройки поиска для новых обычных чатов. В уже созданном чате поиск включается и настраивается через «+»."
                 )
             }
         }
@@ -1729,10 +1736,10 @@ private fun ToolsPage(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Режим веб-поиска по умолчанию", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("Режим поиска по умолчанию", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 UmnikInfoHint(
                     title = "Поиск для новых чатов",
-                    text = "Сам поиск включается или выключается в конкретном чате. Здесь задаётся только режим, который получит новый чат."
+                    text = "Этот режим получит новый чат. После создания его можно изменить в самом чате через «+»."
                 )
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1747,7 +1754,7 @@ private fun ToolsPage(
         }
         item {
             UmnikInlineExpander(
-                title = "Дополнительные инструменты",
+                title = "Тонкая настройка поиска и инструменты",
                 expanded = advanced,
                 onToggle = { advanced = !advanced }
             )
@@ -1758,7 +1765,7 @@ private fun ToolsPage(
                     Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                     UmnikInfoHint(
                         title = "Сервис поиска",
-                        text = "Auto подходит большинству пользователей. Ручной выбор нужен только если вы понимаете, какой поисковый backend хотите использовать."
+                        text = "Общий движок веб-поиска для всех чатов, где поиск включён. Auto подходит большинству пользователей; ручной выбор нужен только для тонкой настройки."
                     )
                 }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
