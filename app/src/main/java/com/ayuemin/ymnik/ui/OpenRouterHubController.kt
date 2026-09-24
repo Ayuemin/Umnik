@@ -2,15 +2,19 @@ package com.ayuemin.ymnik.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.OpenRouterBackgroundWorker
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
+import com.ayuemin.ymnik.data.SystemTaskPlanner
+import com.ayuemin.ymnik.data.ShellWatchdogAction
 import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.BatchJob
@@ -24,7 +28,6 @@ import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.PendingAttachment
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ProviderType
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.model.VideoJob
@@ -32,26 +35,34 @@ import com.ayuemin.ymnik.network.OpenRouterAudioClient
 import com.ayuemin.ymnik.network.OpenRouterBatchBodyBuilder
 import com.ayuemin.ymnik.network.OpenRouterBatchClient
 import com.ayuemin.ymnik.network.OpenRouterCatalogClient
+import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterFilesClient
 import com.ayuemin.ymnik.network.OpenRouterResponsesClient
 import com.ayuemin.ymnik.network.OpenRouterVideoClient
+import com.ayuemin.ymnik.network.ShellAttachmentEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class OpenRouterHubState(
     val catalog: List<ModelInfo> = emptyList(),
     val routing: ProviderRoutingSettings = ProviderRoutingSettings(),
     val tools: ServerToolSettings = ServerToolSettings(),
-    val rag: RagSettings = RagSettings(),
     val media: OpenRouterMediaSettings = OpenRouterMediaSettings(),
     val batches: List<BatchJob> = emptyList(),
     val videos: List<VideoJob> = emptyList(),
@@ -60,13 +71,43 @@ data class OpenRouterHubState(
     val status: String? = null,
     val transcription: String = "",
     val shellResult: String = "",
+    val shellRunning: Boolean = false,
+    val shellFileCount: Int = 0,
+    val shellError: String? = null,
+    val shellChatId: String? = null,
     val speechFile: GeneratedFile? = null
 )
+
+private object ShellRuntime {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
+    private var cancelCurrent: (() -> Unit)? = null
+
+    fun installCancel(cancel: () -> Unit) {
+        cancelCurrent = cancel
+    }
+
+    fun cancel() {
+        cancelCurrent?.invoke()
+    }
+
+    fun clear() {
+        cancelCurrent = null
+    }
+}
 
 class OpenRouterHubController(
     private val context: Context,
     private val viewModel: ChatViewModel
 ) {
+    private companion object {
+        const val SHELL_WATCHDOG_SILENCE_MS = 180_000L
+        const val SHELL_WATCHDOG_RECHECK_MS = 180_000L
+        const val SHELL_WATCHDOG_POLL_MS = 15_000L
+        const val SHELL_WATCHDOG_SYSTEM_TIMEOUT_MS = 60_000L
+        const val SHELL_WATCHDOG_MAX_CHECKS = 2
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val secrets = SecretStore(context)
     private val featurePrefs = OpenRouterFeaturePrefs(context)
@@ -77,6 +118,8 @@ class OpenRouterHubController(
     private val videoClient = OpenRouterVideoClient(context)
     private val videoRepository = VideoJobRepository(context)
     private val audioClient = OpenRouterAudioClient(context)
+    private val systemClient = OpenRouterClient(context)
+    private val systemTaskPlanner = SystemTaskPlanner(systemClient)
     private val responsesClient = OpenRouterResponsesClient(context)
     private val filesClient = OpenRouterFilesClient(context)
     private val chats = ChatRepository(context)
@@ -86,7 +129,6 @@ class OpenRouterHubController(
         OpenRouterHubState(
             routing = featurePrefs.routing(),
             tools = featurePrefs.tools(),
-            rag = featurePrefs.rag(),
             media = featurePrefs.media(),
             batches = batchRepository.list(),
             videos = videoRepository.list()
@@ -148,12 +190,6 @@ class OpenRouterHubController(
         mutableState.value = mutableState.value.copy(tools = value, status = null)
     }
 
-    fun updateRag(value: RagSettings) {
-        val clean = value.copy(topK = value.topK.coerceIn(1, 30))
-        featurePrefs.saveRag(clean)
-        mutableState.value = mutableState.value.copy(rag = clean, status = "Настройки RAG сохранены")
-    }
-
     fun updateMedia(value: OpenRouterMediaSettings) {
         featurePrefs.saveMedia(value)
         mutableState.value = mutableState.value.copy(media = value, status = null)
@@ -183,6 +219,17 @@ class OpenRouterHubController(
         }
         val profile = openRouterProfile() ?: return
         viewModel.toggleQuickTextModelForConnection(profile.id, model.id)
+        mutableState.value = mutableState.value.copy(status = null)
+    }
+
+    fun useAsSystemModel(model: ModelInfo) {
+        if (ModelCategory.TEXT !in model.categories || model.isBatch) {
+            mutableState.value = mutableState.value.copy(
+                status = "Для системных задач нужна обычная текстовая модель"
+            )
+            return
+        }
+        viewModel.setSystemModel(model.id)
         mutableState.value = mutableState.value.copy(status = null)
     }
 
@@ -229,53 +276,16 @@ class OpenRouterHubController(
                 mutableState.value = mutableState.value.copy(media = media, status = null)
             }
             ModelCategory.EMBEDDINGS -> {
-                val rag = mutableState.value.rag.copy(embeddingModel = model.id)
-                featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = null)
+                viewModel.setEmbeddingModel(model.id)
+                mutableState.value = mutableState.value.copy(status = null)
             }
             ModelCategory.RERANK -> {
-                val rag = mutableState.value.rag.copy(rerankModel = model.id)
-                featurePrefs.saveRag(rag)
-                mutableState.value = mutableState.value.copy(rag = rag, status = null)
+                mutableState.value = mutableState.value.copy(
+                    status = "Отдельная Rerank-модель сейчас не используется"
+                )
             }
         }
     }
-
-    fun clearAssignedModel(category: ModelCategory) {
-        when (category) {
-            ModelCategory.TEXT -> {
-                val profile = openRouterProfile() ?: return
-                viewModel.selectDefaultTextModel(profile.id, "openrouter/auto")
-                mutableState.value = mutableState.value.copy(status = "Модель чата сброшена на OpenRouter Auto")
-            }
-            ModelCategory.IMAGE -> {
-                viewModel.clearImageModel()
-                mutableState.value = mutableState.value.copy(status = "Модель изображений снята")
-            }
-            ModelCategory.VIDEO -> {
-                val media = mutableState.value.media.copy(videoModel = "")
-                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель видео снята")
-            }
-            ModelCategory.SPEECH, ModelCategory.AUDIO -> {
-                val media = mutableState.value.media.copy(speechModel = "", voice = "", responseFormat = null)
-                featurePrefs.saveMedia(media)
-                mutableState.value = mutableState.value.copy(media = media, status = "Модель озвучивания текста и документов снята")
-            }
-            ModelCategory.TRANSCRIPTION -> {
-                val media = mutableState.value.media.copy(transcriptionModel = "")
-                featurePrefs.saveMedia(media); mutableState.value = mutableState.value.copy(media = media, status = "Модель распознавания снята")
-            }
-            ModelCategory.EMBEDDINGS -> {
-                val rag = mutableState.value.rag.copy(embeddingModel = "")
-                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Embedding-модель снята")
-            }
-            ModelCategory.RERANK -> {
-                val rag = mutableState.value.rag.copy(rerankModel = "")
-                featurePrefs.saveRag(rag); mutableState.value = mutableState.value.copy(rag = rag, status = "Rerank-модель снята")
-            }
-        }
-    }
-
 
     fun assignReplySpeechModel(model: ModelInfo) {
         if (ModelCategory.SPEECH !in model.categories && ModelCategory.AUDIO !in model.categories) {
@@ -300,6 +310,24 @@ class OpenRouterHubController(
             voice = if (changed) "" else current.voice,
             responseFormat = if (changed) null else current.responseFormat
         )
+        featurePrefs.saveMedia(media)
+        mutableState.value = mutableState.value.copy(media = media, status = null)
+    }
+
+    fun setBatchModelId(modelId: String) {
+        val media = mutableState.value.media.copy(batchModel = modelId.trim())
+        featurePrefs.saveMedia(media)
+        mutableState.value = mutableState.value.copy(media = media, status = null)
+    }
+
+    fun setVideoModelId(modelId: String) {
+        val media = mutableState.value.media.copy(videoModel = modelId.trim())
+        featurePrefs.saveMedia(media)
+        mutableState.value = mutableState.value.copy(media = media, status = null)
+    }
+
+    fun setTranscriptionModelId(modelId: String) {
+        val media = mutableState.value.media.copy(transcriptionModel = modelId.trim())
         featurePrefs.saveMedia(media)
         mutableState.value = mutableState.value.copy(media = media, status = null)
     }
@@ -374,18 +402,22 @@ class OpenRouterHubController(
             .filter(String::isNotBlank)
         if (prompts.isEmpty()) return
         val filesPerPrompt = prompts.indices.map { index -> taskFileUris.getOrNull(index).orEmpty().take(6) }
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val originChat = originState.chats.firstOrNull { it.id == originChatId }
+        val originTeam = originChat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
+        AsyncJobEvents.markHubToolRunning(originChatId, "batch", "Batch отправляется…")
 
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Отправляю Batch…", status = null)
             runCatching {
-                val appState = viewModel.state.value
-                val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
+                val chat = originChat
+                val team = originTeam
                 val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
                 // Batch API не принимает обычные file/image parts. Текстовые файлы
                 // конкретной задачи безопасно встраиваются только в её prompt.
                 val fileContexts = withContext(Dispatchers.IO) { filesPerPrompt.map(::batchTextContext) }
-                val system = buildSystemPrompt(chat, project)
+                val system = buildSystemPrompt(chat, team)
                 val requests = prompts.mapIndexed { index, prompt ->
                     val inlineFiles = fileContexts[index]
                     val promptWithFiles = if (inlineFiles.isBlank()) prompt else "$prompt\n\n===== ФАЙЛЫ ЭТОЙ ЗАДАЧИ =====\n$inlineFiles"
@@ -394,7 +426,10 @@ class OpenRouterHubController(
                         label = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Задание ${index + 1}",
                         body = batchBuilder.build(
                             model = model,
-                            history = chat?.messages.orEmpty(),
+                            history = chat?.messages.orEmpty().filterNot { message ->
+                        message.role == "assistant" &&
+                            message.text.trimStart().startsWith("Shell не выполнил задачу:")
+                    },
                             prompt = promptWithFiles,
                             attachments = emptyList(),
                             systemPrompt = system,
@@ -409,8 +444,8 @@ class OpenRouterHubController(
                     id = UUID.randomUUID().toString(),
                     remoteId = snapshot.remoteId,
                     connectionProfileId = profile.id,
-                    chatId = chat?.id,
-                    projectId = project?.id,
+                    chatId = originChatId,
+                    teamId = team?.id,
                     modelId = model,
                     baseModelId = model.removeSuffix(":batch"),
                     title = "Batch · ${requests.size} заданий",
@@ -419,7 +454,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 batchRepository.upsert(job)
-                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}${if (totalFiles > 0) " · файлов: $totalFiles" else ""}]\n$input")
+                appendHubUserMessage(originChatId, "[Batch: ${requests.size}${if (totalFiles > 0) " · файлов: $totalFiles" else ""}]\n$input")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -429,8 +464,10 @@ class OpenRouterHubController(
                     operation = null,
                     status = "Batch принят · ${job.remoteId}"
                 )
+                AsyncJobEvents.markHubToolFinished(originChatId, "batch")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(originChatId, "batch")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать Batch")
             }
         }
@@ -445,6 +482,10 @@ class OpenRouterHubController(
         if (prompt.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите описание видео"); return }
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (model.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите модель видео"); return }
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val originTeamId = originState.chats.firstOrNull { it.id == originChatId }?.teamId
+        AsyncJobEvents.markHubToolRunning(originChatId, "video", "Видео отправляется…")
 
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Отправляю генерацию видео…", status = null)
@@ -457,14 +498,12 @@ class OpenRouterHubController(
                     options = OpenRouterVideoClient.SubmitOptions(references = refs),
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
-                val chatId = viewModel.state.value.currentChatId
-                val projectId = viewModel.state.value.chats.firstOrNull { it.id == chatId }?.projectId
                 val job = VideoJob(
                     id = UUID.randomUUID().toString(),
                     remoteId = snapshot.id,
                     connectionProfileId = profile.id,
-                    chatId = chatId,
-                    projectId = projectId,
+                    chatId = originChatId,
+                    teamId = originTeamId,
                     modelId = model,
                     prompt = prompt,
                     status = snapshot.status,
@@ -475,7 +514,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 videoRepository.upsert(job)
-                appendHubUserMessage(chatId, "[Видео · ${model.substringAfterLast('/')} ]\n$prompt")
+                appendHubUserMessage(originChatId, "[Видео · ${model.substringAfterLast('/')} ]\n$prompt")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -485,8 +524,10 @@ class OpenRouterHubController(
                     operation = null,
                     status = "Видео принято · ${job.remoteId}"
                 )
+                AsyncJobEvents.markHubToolFinished(originChatId, "video")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(originChatId, "video")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось запустить видео")
             }
         }
@@ -500,6 +541,7 @@ class OpenRouterHubController(
         val chatId = viewModel.state.value.currentChatId
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (model.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите модель распознавания речи"); return }
+        AsyncJobEvents.markHubToolRunning(chatId, "transcription", "Распознаю аудио…")
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Распознаю аудио…", status = null)
             runCatching {
@@ -509,8 +551,10 @@ class OpenRouterHubController(
             }.onSuccess { result ->
                 appendHubExchange(chatId, "[Распознавание речи]", result.text, emptyList())
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, transcription = result.text, status = "Расшифровка готова и добавлена в чат")
+                AsyncJobEvents.markHubToolFinished(chatId, "transcription")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(chatId, "transcription")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось распознать аудио")
             }
         }
@@ -547,6 +591,7 @@ class OpenRouterHubController(
         if (text.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите текст для озвучивания"); return }
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (media.speechModel.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите speech-модель"); return }
+        AsyncJobEvents.markHubToolRunning(chatId, "speech", "Создаю аудио…")
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Создаю аудио…", status = null)
             runCatching {
@@ -562,8 +607,10 @@ class OpenRouterHubController(
             }.onSuccess { file ->
                 appendHubExchange(chatId, "[Озвучивание]\n$text", "Аудио готово: ${file.name}", listOf(file))
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Аудио создано и добавлено в чат")
+                AsyncJobEvents.markHubToolFinished(chatId, "speech")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(chatId, "speech")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать аудио")
             }
         }
@@ -614,59 +661,441 @@ class OpenRouterHubController(
         }
     }
 
+    fun cancelShell() {
+        ShellRuntime.cancel()
+    }
+
     fun runShell(promptRaw: String, attachments: List<Uri> = emptyList()) {
         DiagnosticLog.action(context, "shell_submit", "promptChars=${promptRaw.length}; attachments=${attachments.size}")
         val prompt = promptRaw.trim()
         val profile = openRouterProfile()
         val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
-        val currentModel = viewModel.state.value.currentChatTextModel ?: viewModel.state.value.textModel
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val currentModel = originState.currentChatTextModel ?: originState.textModel
         val model = currentModel.removeSuffix(":batch")
-        if (prompt.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите задачу для Shell"); return }
-        if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
-        scope.launch {
-            mutableState.value = mutableState.value.copy(loading = true, operation = "Shell выполняет задачу…", status = null)
-            val uploadedIds = mutableListOf<String>()
-            runCatching {
-                attachments.take(10).forEach { uri ->
-                    val attachment = withContext(Dispatchers.IO) { uriBytes(uri) }
-                    val remote = filesClient.upload(key, attachment.name, attachment.mime, attachment.bytes, viewModel.connectionTextEndpoint(profile.id))
-                    uploadedIds += remote.id
-                }
-                val appState = viewModel.state.value
-                val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val project = chat?.projectId?.let { id -> appState.projects.firstOrNull { it.id == id } }
-                val result = responsesClient.respond(
-                    apiKey = key,
-                    model = model,
-                    history = chat?.messages.orEmpty(),
-                    prompt = prompt,
-                    systemPrompt = buildSystemPrompt(chat, project),
-                    tools = mutableState.value.tools.copy(shell = true),
-                    routing = mutableState.value.routing,
-                    shellFileIds = uploadedIds,
-                    baseUrl = viewModel.connectionTextEndpoint(profile.id)
+        if (prompt.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "Введите задачу для Shell")
+            return
+        }
+        if (profile == null || key.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
+            return
+        }
+        if (AsyncJobEvents.shellActivity.value != null) {
+            mutableState.value = mutableState.value.copy(status = "Другая задача Shell уже выполняется")
+            return
+        }
+
+        val cancelRequested = AtomicBoolean(false)
+        ShellRuntime.scope.launch {
+            AsyncJobEvents.markShellRunning(originChatId, model, attachments.size)
+            ShellRuntime.installCancel {
+                cancelRequested.set(true)
+                responsesClient.cancelActive()
+                systemClient.cancelActiveRequest()
+            }
+            runCatching { RequestKeepAliveService.start(context) }
+            mutableState.value = mutableState.value.copy(
+                loading = true,
+                operation = "Shell выполняет задачу…",
+                status = null,
+                shellResult = "",
+                shellRunning = true,
+                shellFileCount = 0,
+                shellError = null,
+                shellChatId = originChatId
+            )
+
+            var lastKeepAliveRefreshAt = 0L
+            var lastKeepAliveLabel = ""
+            fun updateShellProgress(
+                label: String,
+                responseId: String? = null,
+                shellStepDelta: Int = 0,
+                remoteSignal: Boolean = false
+            ) {
+                AsyncJobEvents.updateShellProgress(
+                    chatId = originChatId,
+                    status = label,
+                    responseId = responseId,
+                    shellStepDelta = shellStepDelta,
+                    remoteSignal = remoteSignal
                 )
+                val now = System.currentTimeMillis()
+                val shouldRefreshKeepAlive =
+                    label != lastKeepAliveLabel ||
+                        shellStepDelta > 0 ||
+                        now - lastKeepAliveRefreshAt >= 30_000L
+                if (shouldRefreshKeepAlive) {
+                    lastKeepAliveLabel = label
+                    lastKeepAliveRefreshAt = now
+                    runCatching { RequestKeepAliveService.update(context) }
+                }
+            }
+
+            val uploadedIds = mutableListOf<String>()
+            val transportedAttachments = mutableListOf<ShellTransportedAttachment>()
+            runCatching {
+                attachments.take(10).forEachIndexed { index, uri ->
+                    updateShellProgress("Передаю файл ${index + 1} из ${attachments.take(10).size}")
+                    val attachment = withContext(Dispatchers.IO) { uriBytes(uri) }
+                    val uploaded = uploadShellAttachment(
+                        apiKey = key,
+                        attachment = attachment,
+                        index = index,
+                        baseUrl = viewModel.connectionTextEndpoint(profile.id)
+                    )
+                    uploadedIds += uploaded.remoteId
+                    transportedAttachments += uploaded
+                    if (cancelRequested.get()) error("Shell остановлен пользователем")
+                }
+                val chat = originState.chats.firstOrNull { it.id == originChatId }
+                val team = chat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
+                val shellSystemPrompt = buildString {
+                    append(buildSystemPrompt(chat, team))
+                    appendLine()
+                    appendLine("===== РЕЖИМ SHELL =====")
+                    appendLine("Пользователь явно запустил эту задачу через Shell. До финального ответа обязательно используй Shell хотя бы один раз. Если вложения уже прикреплены, сначала проверь их в рабочем окружении; не проси пользователя прислать их повторно.")
+                    appendLine("Прикреплённые к этому запросу файлы — пользовательские вложения из Umnik. В контейнере их имена могут получить служебный префикс OpenRouter; не говори пользователю, что эти файлы тебе недоступны.")
+                    val encodedFallbacks = transportedAttachments.filter { it.encodedFallback }
+                    if (encodedFallbacks.isNotEmpty()) {
+                        appendLine("Некоторые бинарные вложения OpenRouter Files не принял в исходном виде. Umnik передал их через транспортные текстовые файлы вида umnik_attachment_N.b64.txt.")
+                        appendLine("Перед основной задачей обязательно восстанови такие вложения. Формат транспорта: первая строка UMNIK_BASE64_ATTACHMENT_V1; original_name_base64 содержит имя исходного файла в Base64 UTF-8; mime_base64 — MIME; sha256 — контрольную сумму; полезные данные находятся между data_base64_begin и data_base64_end.")
+                        appendLine("Восстанови исходные байты Base64-декодированием в отдельную рабочую папку, проверь SHA-256 и дальше работай только с восстановленным файлом. Транспортный .b64.txt — служебная оболочка Umnik, не включай её в пользовательский результат.")
+                        encodedFallbacks.forEach { item ->
+                            appendLine("Транспорт: ${item.transportName} → исходный файл: ${item.originalName}")
+                        }
+                    }
+                    appendLine("Если среди вложений есть ZIP-архив, при необходимости работай с ним как с целой папкой, проектом или набором данных. Перед изменениями зафиксируй список путей внутри исходного архива, затем распакуй его в отдельную временную рабочую папку. Исходный архив не изменяй и не перезаписывай.")
+                    appendLine("Все файлы и папки, которые были в пользовательском архиве, по умолчанию считаются частью пользовательских данных. Не удаляй их только потому, что они не понадобились при анализе. Если для исправления действительно нужно удалить, переименовать или переместить исходный файл, делай это осознанно как часть задачи, а не как очистку временных данных.")
+                    appendLine("Если пользователь передал ZIP с папкой или проектом и просит проверить, исправить, поправить или доработать содержимое, по умолчанию верни новый ZIP со всем обновлённым деревом, даже если пользователь отдельно не написал «верни целиком». Исключение — если он явно попросил только отдельные файлы, патч или отчёт.")
+                    appendLine("Перед упаковкой сравни итоговое дерево с исходным списком путей: случайно пропавшие исходные файлы восстанови; намеренно удалённые или переименованные в рамках исправления не восстанавливай. В новый ZIP включи неизменённые исходные файлы, изменённые файлы и новые файлы, которые являются частью результата. Не включай только временные скрипты, кэши, промежуточные файлы и прочие артефакты, созданные исключительно для выполнения задачи.")
+                    appendLine("RAR/7z используй только если формат реально поддерживается доступными утилитами; не обещай поддержку, если распаковка не удалась.")
+                    appendLine("Вспомогательные скрипты и промежуточные файлы создавай как временные и удаляй перед завершением.")
+                    appendLine("Возвращай пользователю запрошенный итоговый результат. Служебные скрипты и временные файлы не возвращай, если пользователь отдельно их не просил.")
+                    appendLine("В финальном ответе описывай результат понятным языком и не акцентируй внутренние пути контейнера без необходимости.")
+                    appendLine("===== КОНЕЦ РЕЖИМА SHELL =====")
+                }
+                if (cancelRequested.get()) error("Shell остановлен пользователем")
+                updateShellProgress("Запускаю модель и Shell")
+                val shellHistory = chat?.messages.orEmpty().filterNot { message ->
+                    message.role == "assistant" &&
+                        message.text.trimStart().startsWith("Shell не выполнил задачу:")
+                }
+                val shellSessionId = "umnik-shell-${UUID.randomUUID()}"
+                var watchdogChecks = 0
+                var recoveryCount = 0
+
+                suspend fun runShellAttempt(
+                    attemptPrompt: String,
+                    includeFiles: Boolean
+                ): Pair<Result<OpenRouterResponsesClient.Result>, Boolean> = coroutineScope {
+                    val recoveryRequested = AtomicBoolean(false)
+                    var nextAssessmentAt = 0L
+                    var missingSystemModelWarned = false
+                    val responseDeferred = async {
+                        runCatching {
+                            responsesClient.respond(
+                                apiKey = key,
+                                model = model,
+                                history = shellHistory,
+                                prompt = attemptPrompt,
+                                systemPrompt = shellSystemPrompt,
+                                tools = mutableState.value.tools.copy(shell = true),
+                                routing = mutableState.value.routing,
+                                shellFileIds = if (includeFiles) uploadedIds else emptyList(),
+                                sessionId = shellSessionId,
+                                forceToolUse = true,
+                                onProgress = { progress ->
+                                    updateShellProgress(
+                                        label = progress.label,
+                                        responseId = progress.responseId,
+                                        shellStepDelta = progress.shellStepDelta,
+                                        remoteSignal = true
+                                    )
+                                },
+                                baseUrl = viewModel.connectionTextEndpoint(profile.id)
+                            )
+                        }
+                    }
+                    val watchdog = launch {
+                        while (
+                            isActive &&
+                            !responseDeferred.isCompleted &&
+                            !cancelRequested.get() &&
+                            watchdogChecks < SHELL_WATCHDOG_MAX_CHECKS
+                        ) {
+                            delay(SHELL_WATCHDOG_POLL_MS)
+                            if (responseDeferred.isCompleted || cancelRequested.get()) break
+                            val activity = AsyncJobEvents.shellActivity.value ?: break
+                            val lastRemote = activity.lastRemoteEventAt ?: continue
+                            val now = System.currentTimeMillis()
+                            if (now < nextAssessmentAt) continue
+                            val silenceMs = now - lastRemote
+                            if (silenceMs < SHELL_WATCHDOG_SILENCE_MS) continue
+
+                            val systemModel = viewModel.state.value.systemModel.trim()
+                            if (systemModel.isBlank()) {
+                                if (!missingSystemModelWarned) {
+                                    missingSystemModelWarned = true
+                                    DiagnosticLog.record(
+                                        context,
+                                        "SHELL_WATCHDOG",
+                                        "silenceSec=${silenceMs / 1000}; passive=true; reason=system-model-missing"
+                                    )
+                                    updateShellProgress(
+                                        "Shell давно не отвечает. Системная модель не выбрана — продолжаю ждать"
+                                    )
+                                }
+                                nextAssessmentAt = now + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            watchdogChecks += 1
+                            val checkNumber = watchdogChecks
+                            updateShellProgress("Shell давно не отвечает. Системная модель проверяет выполнение…")
+
+                            val decision = withTimeoutOrNull(SHELL_WATCHDOG_SYSTEM_TIMEOUT_MS) {
+                                runCatching {
+                                    systemTaskPlanner.assessShellSilence(
+                                        apiKey = key,
+                                        baseUrl = viewModel.connectionTextEndpoint(profile.id),
+                                        modelId = systemModel,
+                                        task = prompt,
+                                        executorModelId = model,
+                                        elapsedSeconds = (now - activity.startedAt).coerceAtLeast(0L) / 1000L,
+                                        silenceSeconds = silenceMs.coerceAtLeast(0L) / 1000L,
+                                        shellSteps = activity.shellSteps,
+                                        eventCount = activity.eventCount,
+                                        lastStatus = activity.status,
+                                        assessmentNumber = checkNumber
+                                    )
+                                }.onFailure { error ->
+                                    DiagnosticLog.record(
+                                        context,
+                                        "SHELL_WATCHDOG",
+                                        "check=$checkNumber; system assessment failed",
+                                        error
+                                    )
+                                }.getOrNull()
+                            }
+
+                            if (responseDeferred.isCompleted || cancelRequested.get()) break
+                            val latestRemote = AsyncJobEvents.shellActivity.value?.lastRemoteEventAt
+                            if (latestRemote != null && latestRemote > lastRemote) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "SHELL_WATCHDOG",
+                                    "check=$checkNumber; decision=ignored; reason=remote-resumed"
+                                )
+                                updateShellProgress("Shell снова отвечает. Продолжаю работу")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            if (decision == null) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "SHELL_WATCHDOG",
+                                    "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=wait; reason=system-timeout-or-error"
+                                )
+                                updateShellProgress("Системная проверка не завершилась. Shell продолжает работу")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            DiagnosticLog.record(
+                                context,
+                                "SHELL_WATCHDOG",
+                                "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=${decision.action.name.lowercase()}; reason=${decision.reason.take(180)}"
+                            )
+                            if (decision.action == ShellWatchdogAction.CHECK) {
+                                recoveryCount += 1
+                                updateShellProgress("Shell похоже завис. Возобновляю работу в том же окружении…")
+                                recoveryRequested.set(true)
+                                responsesClient.cancelActive()
+                                break
+                            } else {
+                                updateShellProgress("Долгий этап Shell. Продолжаю ждать")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                            }
+                        }
+
+                        if (
+                            !responseDeferred.isCompleted &&
+                            !cancelRequested.get() &&
+                            watchdogChecks >= SHELL_WATCHDOG_MAX_CHECKS &&
+                            !recoveryRequested.get()
+                        ) {
+                            updateShellProgress("Shell всё ещё выполняется. Автопроверки завершены — можно продолжить ждать или остановить.")
+                        }
+                    }
+
+                    val outcome = responseDeferred.await()
+                    if (!watchdog.isCompleted) systemClient.cancelActiveRequest()
+                    watchdog.cancelAndJoin()
+                    outcome to recoveryRequested.get()
+                }
+
+                suspend fun executeShellWithWatchdog(): OpenRouterResponsesClient.Result {
+                    var attemptPrompt = prompt
+                    var includeFiles = true
+                    while (true) {
+                        val (outcome, recoveryRequested) = runShellAttempt(attemptPrompt, includeFiles)
+                        if (outcome.isSuccess) return outcome.getOrThrow()
+
+                        val failure = outcome.exceptionOrNull() ?: error("Shell завершился без результата")
+                        if (cancelRequested.get()) throw failure
+                        if (!recoveryRequested) throw failure
+
+                        DiagnosticLog.record(
+                            context,
+                            "SHELL_WATCHDOG",
+                            "recovery=$recoveryCount; session=$shellSessionId; continue=same-container"
+                        )
+                        attemptPrompt = buildString {
+                            appendLine("Служебное продолжение той же Shell-задачи после автоматической проверки.")
+                            appendLine("Используй уже существующее состояние контейнера этой сессии.")
+                            appendLine("Сначала проверь текущие файлы и процессы. Убедись, что предыдущая команда не зависла и не ожидает интерактивного ввода.")
+                            appendLine("Сохрани уже полученные результаты и продолжи с текущего состояния. Не начинай задачу заново без необходимости.")
+                            appendLine("Если предыдущий способ выполнения завис, безопасно выбери другой способ.")
+                            appendLine()
+                            appendLine("Исходная задача пользователя:")
+                            append(prompt)
+                        }
+                        includeFiles = false
+                        updateShellProgress("Продолжаю задачу с текущего состояния")
+                    }
+                }
+
+                val result = executeShellWithWatchdog()
+                if (result.shellCalls <= 0) {
+                    error("Модель не использовала Shell, хотя задача была запущена через Shell. Попробуйте другую модель с поддержкой tools/tool_choice.")
+                }
+                if (result.shellArtifacts.isNotEmpty()) {
+                    updateShellProgress("Скачиваю созданные файлы")
+                } else {
+                    updateShellProgress("Получаю итоговый ответ")
+                }
                 val generated = result.shellArtifacts.mapNotNull { artifact ->
                     runCatching {
-                        val bytes = filesClient.downloadContainerFile(key, artifact.containerId, artifact.fileId, viewModel.connectionTextEndpoint(profile.id))
-                        saveGeneratedBinary(artifact.name ?: "shell_${artifact.fileId}.bin", "application/octet-stream", bytes)
+                        val bytes = filesClient.downloadContainerFile(
+                            key,
+                            artifact.containerId,
+                            artifact.fileId,
+                            viewModel.connectionTextEndpoint(profile.id)
+                        )
+                        saveGeneratedBinary(
+                            artifact.name ?: "shell_${artifact.fileId}.bin",
+                            "application/octet-stream",
+                            bytes
+                        )
                     }.getOrNull()
                 }
                 result to generated
             }.onSuccess { (result, generated) ->
-                val chatId = viewModel.state.value.currentChatId
-                appendHubExchange(chatId, "[Shell]\n$prompt", result.text, generated)
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, shellResult = result.text, status = if (generated.isEmpty()) "Shell завершил работу" else "Shell завершил работу · файлов: ${generated.size}")
+                appendHubExchange(originChatId, "[Shell]\n$prompt", result.text, generated)
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    shellResult = result.text,
+                    shellRunning = false,
+                    shellFileCount = generated.size,
+                    shellError = null,
+                    shellChatId = originChatId,
+                    status = if (generated.isEmpty()) {
+                        "Shell завершил работу"
+                    } else {
+                        "Shell завершил работу · файлов: ${generated.size}"
+                    }
+                )
+                AsyncJobEvents.markShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
-                mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Ошибка Shell")
+                val rawMessage = error.message ?: "Ошибка Shell"
+                val activityBeforeFailure = AsyncJobEvents.shellActivity.value
+                val modelNotStarted = activityBeforeFailure?.responseId == null &&
+                    (activityBeforeFailure?.eventCount ?: 0) == 0
+                val message = when {
+                    cancelRequested.get() -> "Shell остановлен пользователем"
+                    modelNotStarted && (
+                        rawMessage.contains("PROTOCOL_ERROR", ignoreCase = true) ||
+                            rawMessage.contains("stream was reset", ignoreCase = true)
+                    ) ->
+                        "Не удалось передать файл в OpenRouter: соединение оборвалось до запуска модели. Платный запрос Shell не был запущен."
+                    rawMessage.contains("Software caused connection abort", ignoreCase = true) ->
+                        "Соединение с OpenRouter оборвалось. Автоматический повтор не запущен, чтобы не списать деньги повторно."
+                    rawMessage.equals("timeout", ignoreCase = true) ||
+                        rawMessage.contains("InterruptedIOException: timeout", ignoreCase = true) -> {
+                        val steps = activityBeforeFailure?.shellSteps ?: 0
+                        val events = activityBeforeFailure?.eventCount ?: 0
+                        buildString {
+                            append("Соединение с OpenRouter прервалось по таймауту")
+                            if (steps > 0 || events > 0) {
+                                append(". До обрыва Shell успел выполнить")
+                                if (steps > 0) append(" этапов: $steps")
+                                if (steps > 0 && events > 0) append(",")
+                                if (events > 0) append(" событий: $events")
+                            }
+                            append(". Автоматический повтор не запущен, чтобы не списать деньги повторно.")
+                        }
+                    }
+                    else -> rawMessage
+                }
+                val activity = AsyncJobEvents.shellActivity.value
+                DiagnosticLog.record(
+                    context,
+                    "SHELL",
+                    "failed; response=${activity?.responseId ?: "none"}; events=${activity?.eventCount ?: 0}; shellSteps=${activity?.shellSteps ?: 0}",
+                    error
+                )
+                appendHubExchange(
+                    originChatId,
+                    "[Shell]\n$prompt",
+                    if (cancelRequested.get()) message else "Shell не выполнил задачу: $message",
+                    emptyList()
+                )
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    shellRunning = false,
+                    shellFileCount = 0,
+                    shellError = message,
+                    shellChatId = originChatId,
+                    status = message
+                )
+                AsyncJobEvents.markShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
+                AsyncJobEvents.notifyChanged()
             }
-            uploadedIds.forEach { id -> scope.launch(Dispatchers.IO) { runCatching { filesClient.delete(key, id, viewModel.connectionTextEndpoint(profile.id)) } } }
+            uploadedIds.forEach { id ->
+                ShellRuntime.scope.launch(Dispatchers.IO) {
+                    runCatching {
+                        filesClient.delete(
+                            key,
+                            id,
+                            viewModel.connectionTextEndpoint(profile.id)
+                        )
+                    }
+                }
+            }
+            ShellRuntime.clear()
         }
     }
 
     fun clearTransientResult() {
-        mutableState.value = mutableState.value.copy(transcription = "", shellResult = "", speechFile = null, status = null)
+        mutableState.value = mutableState.value.copy(
+            transcription = "",
+            shellResult = "",
+            shellRunning = false,
+            shellFileCount = 0,
+            shellError = null,
+            shellChatId = null,
+            speechFile = null,
+            status = null
+        )
     }
 
     private fun openRouterProfile(): ConnectionProfile? = viewModel.state.value.connectionProfiles.firstOrNull {
@@ -675,14 +1104,14 @@ class OpenRouterHubController(
 
     private fun buildSystemPrompt(
         chat: com.ayuemin.ymnik.model.ChatSession?,
-        project: com.ayuemin.ymnik.model.Project?
+        team: com.ayuemin.ymnik.model.Team?
     ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         val appState = viewModel.state.value
         val profile = appState.userProfile
         val useProfile = !profile.isEmpty() &&
             appState.userProfileScope == UserProfileScope.CHATS &&
-            project == null
+            team == null
         if (useProfile) {
             appendLine("\n===== КРАТКО О ПОЛЬЗОВАТЕЛЕ =====")
             if (profile.name.isNotBlank()) appendLine("Имя: ${profile.name}")
@@ -690,13 +1119,13 @@ class OpenRouterHubController(
             if (profile.age.isNotBlank()) appendLine("Возраст: ${profile.age}")
             if (profile.occupation.isNotBlank()) appendLine("Род занятий: ${profile.occupation}")
             if (profile.note.isNotBlank()) appendLine("Предпочтение в общении: ${profile.note}")
-            appendLine("Используй эти сведения только когда они полезны. Явный запрос и инструкции проекта важнее профиля.")
+            appendLine("Используй эти сведения только когда они полезны. Явный запрос и инструкции команды важнее профиля.")
             appendLine("===== КОНЕЦ ПРОФИЛЯ =====")
         }
-        if (project != null) {
-            appendLine("\n===== ПРОЕКТ: ${project.name} =====")
-            appendLine("Проект — только кабинет; рабочие настройки принадлежат агентам.")
-            appendLine("===== КОНЕЦ ПРОЕКТА =====")
+        if (team != null) {
+            appendLine("\n===== КОМАНДА: ${team.name} =====")
+            appendLine("Команда — только кабинет; рабочие настройки принадлежат специалистам.")
+            appendLine("===== КОНЕЦ КОМАНДЫ =====")
         }
         if (chat != null && (!chat.assignedRole.isNullOrBlank() || !chat.masterPrompt.isNullOrBlank())) {
             appendLine("\n===== НАСТРОЙКИ ЭТОГО ДИАЛОГА =====")
@@ -790,10 +1219,91 @@ class OpenRouterHubController(
 
     private data class UriData(val name: String, val mime: String, val bytes: ByteArray)
 
+    private data class ShellTransportedAttachment(
+        val remoteId: String,
+        val originalName: String,
+        val transportName: String,
+        val encodedFallback: Boolean
+    )
+
+    private suspend fun uploadShellAttachment(
+        apiKey: String,
+        attachment: UriData,
+        index: Int,
+        baseUrl: String
+    ): ShellTransportedAttachment {
+        val direct = runCatching {
+            filesClient.upload(
+                apiKey,
+                attachment.name,
+                attachment.mime,
+                attachment.bytes,
+                baseUrl
+            )
+        }
+        direct.getOrNull()?.let { remote ->
+            DiagnosticLog.record(
+                context,
+                "SHELL_FILE",
+                "upload=direct; ext=${attachment.name.substringAfterLast('.', "")}; mime=${attachment.mime}; bytes=${attachment.bytes.size}"
+            )
+            return ShellTransportedAttachment(
+                remoteId = remote.id,
+                originalName = attachment.name,
+                transportName = remote.name ?: attachment.name,
+                encodedFallback = false
+            )
+        }
+
+        val directError = direct.exceptionOrNull() ?: error("Не удалось загрузить ${attachment.name}")
+        if (!isUnsupportedShellFileType(directError)) throw directError
+
+        val encoded = ShellAttachmentEnvelope.encode(
+            originalName = attachment.name,
+            mimeType = attachment.mime,
+            bytes = attachment.bytes,
+            index = index
+        )
+        DiagnosticLog.record(
+            context,
+            "SHELL_FILE",
+            "upload=base64-fallback; ext=${attachment.name.substringAfterLast('.', "")}; mime=${attachment.mime}; bytes=${attachment.bytes.size}; transport=${encoded.transportName}"
+        )
+        val remote = filesClient.upload(
+            apiKey,
+            encoded.transportName,
+            "text/plain",
+            encoded.bytes,
+            baseUrl
+        )
+        return ShellTransportedAttachment(
+            remoteId = remote.id,
+            originalName = attachment.name,
+            transportName = encoded.transportName,
+            encodedFallback = true
+        )
+    }
+
+    private fun isUnsupportedShellFileType(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("File type is not allowed", ignoreCase = true)
+    }
+
     private fun uriBytes(uri: Uri): UriData {
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Не удалось прочитать $name")
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri) ?: "application/octet-stream"
+        val displayName = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+            }
+        }.getOrNull()
+        val name = displayName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "file"
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Не удалось прочитать $name")
         return UriData(name, mime, bytes)
     }
 

@@ -53,6 +53,10 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                 return@forEach
             }
             if (batches.list().none { it.id == stored.id }) return@forEach
+            if (!stored.status.terminal && System.currentTimeMillis() - stored.createdAt < 15_000L) {
+                retry = true
+                return@forEach
+            }
             val key = secrets.getProfileApiKey(stored.connectionProfileId)
             if (key.isNullOrBlank()) { retry = true; return@forEach }
             runCatching {
@@ -89,10 +93,13 @@ class OpenRouterBackgroundWorker(context: Context, params: WorkerParameters) : C
                         )
                     }
                     markDelivered("batches", current.remoteId)
-                    DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch delivered; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; items=${current.items.size}")
-                } else retry = true
-                batches.upsert(current)
-                if (current.status.terminal) AsyncJobEvents.notifyChanged()
+                    batches.remove(current.id)
+                    DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch delivered and local tracking cleared; status=${current.status}; chat=${current.chatId?.take(8) ?: "none"}; items=${current.items.size}")
+                } else {
+                    retry = true
+                    batches.upsert(current)
+                }
+                AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 retry = true
                 DiagnosticLog.record(applicationContext, "BACKGROUND", "Batch worker failure", error)

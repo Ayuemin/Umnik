@@ -1,0 +1,196 @@
+name: Public Pre-release
+
+on:
+  push:
+    branches:
+      - "work/quiet-knowledge-rag"
+
+permissions:
+  contents: write
+
+jobs:
+  prerelease:
+    if: contains(github.event.head_commit.message, '[public-prerelease]')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout selected test commit
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+
+      - name: Validate pre-release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' app/build.gradle.kts | head -n 1)
+          VERSION_CODE=$(sed -n 's/.*versionCode = \([0-9][0-9]*\).*/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$VERSION"
+          test -n "$VERSION_CODE"
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-[A-Za-z0-9._-]+$ ]]; then
+            echo "Public test release must use a pre-release versionName, got: $VERSION"
+            exit 1
+          fi
+
+          TAG="v$VERSION"
+          if [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Refusing stable tag from public pre-release workflow: $TAG"
+            exit 1
+          fi
+
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "VERSION_CODE=$VERSION_CODE" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          cmdline-tools-version: 15859902
+          packages: platform-tools
+
+      - name: Install Android 17 platform
+        run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Restore permanent signing key
+        shell: bash
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          for value in KEYSTORE_BASE64 KEYSTORE_PASSWORD KEY_ALIAS KEY_PASSWORD; do
+            if [ -z "${!value:-}" ]; then
+              echo "Missing GitHub Actions secret: $value"
+              exit 1
+            fi
+          done
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/umnik-release.jks"
+          keytool -list \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" >/dev/null
+
+      - name: Run lint and unit tests
+        run: ./gradlew --no-daemon :app:lintDebug :app:testDebugUnitTest --stacktrace
+
+      - name: Build signed pre-release APK
+        env:
+          UMNIK_KEYSTORE_PATH: ${{ runner.temp }}/umnik-release.jks
+          UMNIK_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          UMNIK_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          UMNIK_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew --no-daemon :app:assembleRelease --stacktrace
+
+      - name: Verify signature and prepare assets
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/release/app-release.apk"
+          APKSIGNER="$ANDROID_HOME/build-tools/37.0.0/apksigner"
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+
+          APK_CERT=$("$APKSIGNER" verify --print-certs "$APK" \
+            | sed -n 's/^.*certificate SHA-256 digest: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          KEY_CERT=$(keytool -list -v \
+            -keystore "$RUNNER_TEMP/umnik-release.jks" \
+            -storepass "$KEYSTORE_PASSWORD" \
+            -alias "$KEY_ALIAS" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' \
+            | head -n1 | tr 'A-F' 'a-f' | tr -d ':')
+
+          test -n "$APK_CERT"
+          test -n "$KEY_CERT"
+          test "$APK_CERT" = "$KEY_CERT"
+
+          mkdir -p dist
+          cp "$APK" "dist/Umnik-v${VERSION}.apk"
+          (
+            cd dist
+            sha256sum "Umnik-v${VERSION}.apk" > "Umnik-v${VERSION}.apk.sha256"
+          )
+          printf '%s\n' "$APK_CERT" > dist/Umnik-signing-certificate-sha256.txt
+
+          awk -v ver="v${VERSION}" '
+            $0 ~ "^## " ver "( |$)" { found=1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > dist/changelog-section.md
+
+          {
+            echo "## Umnik v${VERSION} — публичная тестовая версия"
+            echo
+            echo "> Это Pre-release для добровольного раннего тестирования. Он не является стабильным релизом F-Droid."
+            echo
+            if [ -s dist/changelog-section.md ]; then
+              cat dist/changelog-section.md
+            else
+              echo "Список изменений для этой тестовой версии см. в CHANGELOG.md."
+            fi
+            echo
+            echo "### Установка"
+            echo
+            echo "Скачайте **Umnik-v${VERSION}.apk** из Assets."
+            echo
+            echo "Контрольная сумма SHA-256 приложена отдельным файлом."
+            echo "APK подписан постоянным ключом проекта."
+          } > dist/release-notes.md
+
+      - name: Create tag and publish GitHub Pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --tags --force
+
+          if git rev-parse "$RELEASE_TAG^{commit}" >/dev/null 2>&1; then
+            TAG_COMMIT=$(git rev-parse "$RELEASE_TAG^{commit}")
+            HEAD_COMMIT=$(git rev-parse HEAD)
+            if [ "$TAG_COMMIT" != "$HEAD_COMMIT" ]; then
+              echo "Existing tag $RELEASE_TAG points to another commit."
+              exit 1
+            fi
+          else
+            git tag "$RELEASE_TAG" "$GITHUB_SHA"
+            git push origin "$RELEASE_TAG"
+          fi
+
+          ASSETS=(
+            "dist/Umnik-v${VERSION}.apk"
+            "dist/Umnik-v${VERSION}.apk.sha256"
+            "dist/Umnik-signing-certificate-sha256.txt"
+          )
+
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release upload "$RELEASE_TAG" "${ASSETS[@]}" --clobber
+            gh release edit "$RELEASE_TAG" \
+              --title "Umnik v${VERSION} (Pre-release)" \
+              --notes-file dist/release-notes.md \
+              --prerelease
+          else
+            gh release create "$RELEASE_TAG" \
+              "${ASSETS[@]}" \
+              --verify-tag \
+              --title "Umnik v${VERSION} (Pre-release)" \
+              --notes-file dist/release-notes.md \
+              --prerelease
+          fi

@@ -5,9 +5,9 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class AgentOrchestratorCodecTest {
+class OrchestratorCodecTest {
     @Test
-    fun parsesCallAgentDecisionWrappedInExtraText() {
+    fun parsesCallSpecialistDecisionWrappedInExtraText() {
         val raw = """
             Решение:
             {
@@ -18,8 +18,8 @@ class AgentOrchestratorCodecTest {
               "actions": [
                 {
                   "id": "a1",
-                  "type": "call_agent",
-                  "agentId": "agent-1",
+                  "type": "call_specialist",
+                  "specialistId": "specialist-1",
                   "taskId": null,
                   "objective": "Разобрать материал",
                   "assignmentInstruction": "Не писать статью",
@@ -34,13 +34,13 @@ class AgentOrchestratorCodecTest {
             конец
         """.trimIndent()
 
-        val parsed = AgentOrchestratorCodec.parse(raw)
+        val parsed = OrchestratorCodec.parse(raw)
 
         assertFalse(parsed.completed)
         assertEquals("Сначала аналитик", parsed.planSummary)
         assertEquals(1, parsed.actions.size)
-        assertEquals(AgentOrchestratorActionType.CALL_AGENT, parsed.actions.first().type)
-        assertEquals("agent-1", parsed.actions.first().agentId)
+        assertEquals(OrchestratorActionType.CALL_SPECIALIST, parsed.actions.first().type)
+        assertEquals("specialist-1", parsed.actions.first().specialistId)
         assertEquals(listOf("USER"), parsed.actions.first().inputFileIds)
     }
 
@@ -52,13 +52,13 @@ class AgentOrchestratorCodecTest {
               "userReply": "",
               "completed": false,
               "actions": [
-                {"id":"a","type":"CALL_AGENT","agentId":"agent-a","parallelGroup":"research"},
-                {"id":"b","type":"CALL_AGENT","agentId":"agent-b","parallelGroup":"research"}
+                {"id":"a","type":"CALL_SPECIALIST","specialistId":"specialist-a","parallelGroup":"research"},
+                {"id":"b","type":"CALL_SPECIALIST","specialistId":"specialist-b","parallelGroup":"research"}
               ]
             }
         """.trimIndent()
 
-        val parsed = AgentOrchestratorCodec.parse(raw)
+        val parsed = OrchestratorCodec.parse(raw)
 
         assertEquals(2, parsed.actions.size)
         assertEquals("research", parsed.actions[0].parallelGroup)
@@ -79,15 +79,15 @@ class AgentOrchestratorCodecTest {
             }
         """.trimIndent()
 
-        val parsed = AgentOrchestratorCodec.parse(raw)
+        val parsed = OrchestratorCodec.parse(raw)
 
         assertTrue(parsed.completed)
         assertEquals("Готовый результат", parsed.finalResult)
-        assertEquals(AgentOrchestratorActionType.COMPLETE_JOB, parsed.actions.first().type)
+        assertEquals(OrchestratorActionType.COMPLETE_JOB, parsed.actions.first().type)
     }
     @Test
     fun rejectsEmptyActionDecisionThatIsNotComplete() {
-        val parsed = AgentOrchestratorCodec.parse(
+        val parsed = OrchestratorCodec.parse(
             """
             {
               "planSummary": "Нужно продолжить",
@@ -99,41 +99,41 @@ class AgentOrchestratorCodecTest {
             """.trimIndent()
         )
 
-        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(parsed))
+        assertEquals("no_next_action", OrchestratorCodec.validationProblem(parsed))
     }
 
     @Test
     fun rejectsMissingOrWrongActionsShapeAsNoNextAction() {
-        val missing = AgentOrchestratorCodec.parse(
+        val missing = OrchestratorCodec.parse(
             """{"planSummary":"x","completed":false}"""
         )
-        val wrongType = AgentOrchestratorCodec.parse(
-            """{"planSummary":"x","completed":false,"actions":"CALL_AGENT"}"""
+        val wrongType = OrchestratorCodec.parse(
+            """{"planSummary":"x","completed":false,"actions":"CALL_SPECIALIST"}"""
         )
 
-        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(missing))
-        assertEquals("no_next_action", AgentOrchestratorCodec.validationProblem(wrongType))
+        assertEquals("no_next_action", OrchestratorCodec.validationProblem(missing))
+        assertEquals("no_next_action", OrchestratorCodec.validationProblem(wrongType))
     }
 
     @Test
-    fun rejectsCallAgentWithoutAgentId() {
-        val parsed = AgentOrchestratorCodec.parse(
+    fun rejectsCallSpecialistWithoutSpecialistId() {
+        val parsed = OrchestratorCodec.parse(
             """
             {
               "completed": false,
               "actions": [
-                {"id":"a","type":"CALL_AGENT","objective":"Проверить"}
+                {"id":"a","type":"CALL_SPECIALIST","objective":"Проверить"}
               ]
             }
             """.trimIndent()
         )
 
-        assertEquals("call_agent_without_agent_id", AgentOrchestratorCodec.validationProblem(parsed))
+        assertEquals("call_specialist_without_specialist_id", OrchestratorCodec.validationProblem(parsed))
     }
 
     @Test
     fun rejectsCompletionWithoutFinalText() {
-        val parsed = AgentOrchestratorCodec.parse(
+        val parsed = OrchestratorCodec.parse(
             """
             {
               "completed": true,
@@ -144,12 +144,12 @@ class AgentOrchestratorCodecTest {
             """.trimIndent()
         )
 
-        assertEquals("completion_without_result", AgentOrchestratorCodec.validationProblem(parsed))
+        assertEquals("completion_without_result", OrchestratorCodec.validationProblem(parsed))
     }
 
     @Test
     fun acceptsAskUserWithMessage() {
-        val parsed = AgentOrchestratorCodec.parse(
+        val parsed = OrchestratorCodec.parse(
             """
             {
               "completed": false,
@@ -159,24 +159,33 @@ class AgentOrchestratorCodecTest {
             """.trimIndent()
         )
 
-        assertEquals(null, AgentOrchestratorCodec.validationProblem(parsed))
+        assertEquals(null, OrchestratorCodec.validationProblem(parsed))
     }
 
     @Test
     fun acceptsParallelCallGroupAsExecutableDecision() {
-        val parsed = AgentOrchestratorCodec.parse(
+        val parsed = OrchestratorCodec.parse(
             """
             {
               "completed": false,
               "actions": [
-                {"id":"a","type":"CALL_AGENT","agentId":"agent-a","parallelGroup":"pair"},
-                {"id":"b","type":"CALL_AGENT","agentId":"agent-b","parallelGroup":"pair"}
+                {"id":"a","type":"CALL_SPECIALIST","specialistId":"specialist-a","parallelGroup":"pair"},
+                {"id":"b","type":"CALL_SPECIALIST","specialistId":"specialist-b","parallelGroup":"pair"}
               ]
             }
             """.trimIndent()
         )
 
-        assertEquals(null, AgentOrchestratorCodec.validationProblem(parsed))
+        assertEquals(null, OrchestratorCodec.validationProblem(parsed))
     }
 
+    @Test
+    fun acceptsLegacyCallAgentAndAgentId() {
+        val parsed = OrchestratorCodec.parse(
+            """{"completed":false,"actions":[{"id":"legacy","type":"CALL_AGENT","agentId":"legacy-agent","objective":"Проверить"}]}"""
+        )
+
+        assertEquals(OrchestratorActionType.CALL_SPECIALIST, parsed.actions.single().type)
+        assertEquals("legacy-agent", parsed.actions.single().specialistId)
+    }
 }

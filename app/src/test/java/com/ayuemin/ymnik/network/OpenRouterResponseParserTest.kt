@@ -50,6 +50,7 @@ class OpenRouterResponseParserTest {
         assertEquals(7, parsed.completionTokens)
         assertEquals(19, parsed.totalTokens)
         assertEquals(0.00123, parsed.costUsd!!, 0.0000001)
+        assertEquals("0.00123", parsed.costUsdExact)
     }
     @Test
     fun imageOnlyChatCompletionIsAccepted() {

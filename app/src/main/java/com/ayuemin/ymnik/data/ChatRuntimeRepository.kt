@@ -1,14 +1,14 @@
 package com.ayuemin.ymnik.data
 
 import android.content.Context
-import com.ayuemin.ymnik.model.ProjectChatRuntimeProfile
+import com.ayuemin.ymnik.model.ChatRuntimeProfile
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.normalized
 import com.google.gson.Gson
 
-/** Per-conversation runtime settings for project/agent chats. */
-class ProjectAutomationRepository(context: Context) {
-    private val prefs = context.getSharedPreferences("project_automation", Context.MODE_PRIVATE)
+/** Per-conversation runtime settings for team/specialist chats. */
+class ChatRuntimeRepository(context: Context) {
+    private val prefs = LegacyDomainStorageMigration.migratePreferences(context, "project_automation", "chat_runtime")
     private val gson = Gson()
 
     init {
@@ -24,16 +24,16 @@ class ProjectAutomationRepository(context: Context) {
 
     private fun profileKey(chatId: String) = "profile::$chatId"
 
-    fun profile(chatId: String): ProjectChatRuntimeProfile? = runCatching {
+    fun profile(chatId: String): ChatRuntimeProfile? = runCatching {
         prefs.getString(profileKey(chatId), null)?.let {
-            gson.fromJson(it, ProjectChatRuntimeProfile::class.java)
+            gson.fromJson(it, ChatRuntimeProfile::class.java)
         }?.let { profile ->
             val tools = runCatching { profile.tools }.getOrNull()?.normalized() ?: ServerToolSettings()
             profile.copy(tools = tools)
         }
     }.getOrNull()
 
-    fun saveProfile(chatId: String, value: ProjectChatRuntimeProfile) {
+    fun saveProfile(chatId: String, value: ChatRuntimeProfile) {
         prefs.edit().putString(profileKey(chatId), gson.toJson(value)).apply()
     }
 

@@ -1,18 +1,29 @@
 package com.ayuemin.ymnik.model
 
+import com.google.gson.annotations.SerializedName
+
 enum class KnowledgeOwnerKind {
     CHAT,
-    PROJECT,
-    AGENT
+    @SerializedName(value = "TEAM", alternate = ["PROJECT"])
+    TEAM,
+    @SerializedName(value = "SPECIALIST", alternate = ["AGENT"])
+    SPECIALIST
 }
 
 data class KnowledgeBaseSettings(
-    val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
     val enabled: Boolean = true,
-    val topK: Int = 5
+    val topK: Int = DEFAULT_TOP_K,
+    val modelInstruction: String = "",
+    val modelSearchLimit: Int? = null
 ) {
+    val effectiveModelSearchLimit: Int
+        get() = (modelSearchLimit ?: DEFAULT_MODEL_SEARCH_LIMIT).coerceIn(0, MAX_MODEL_SEARCH_LIMIT)
+
     companion object {
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
+        const val DEFAULT_TOP_K = 4
+        const val DEFAULT_MODEL_SEARCH_LIMIT = 4
+        const val MAX_MODEL_SEARCH_LIMIT = 10
     }
 }
 

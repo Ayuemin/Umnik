@@ -48,11 +48,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.ChatViewModel
-import com.ayuemin.ymnik.model.AgentKind
-import com.ayuemin.ymnik.model.AgentModelRef
-import com.ayuemin.ymnik.model.AgentProfile
+import com.ayuemin.ymnik.model.SpecialistKind
+import com.ayuemin.ymnik.model.SpecialistModelRef
+import com.ayuemin.ymnik.model.SpecialistProfile
 import com.ayuemin.ymnik.model.ModelCategory
-import com.ayuemin.ymnik.model.Project
+import com.ayuemin.ymnik.model.Team
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.WebSearchPreset
@@ -60,26 +60,26 @@ import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchEngine
 
 /**
- * First visible slice of the agent-first project architecture.
+ * First visible slice of the specialist-first team architecture.
  *
- * The project is only a room. All working configuration lives on AgentProfile.
+ * The team is only a room. All working configuration lives on SpecialistProfile.
  */
 @Composable
-fun AgentProjectDetailDialog(
-    project: Project,
+fun TeamDetailDialog(
+    team: Team,
     state: UiState,
     vm: ChatViewModel,
     onDismiss: () -> Unit,
     onConversationOpened: (String) -> Unit
 ) {
-    var editingAgentId by remember(project.id) { mutableStateOf<String?>(null) }
-    var projectSettingsOpen by remember(project.id) { mutableStateOf(false) }
+    var editingSpecialistId by remember(team.id) { mutableStateOf<String?>(null) }
+    var teamSettingsOpen by remember(team.id) { mutableStateOf(false) }
 
-    val agents = state.agents.filter { it.projectId == project.id }
-    val orchestrator = agents.firstOrNull { it.kind == AgentKind.ORCHESTRATOR }
-    val specialists = agents.filter { it.kind == AgentKind.SPECIALIST }.sortedBy { it.name.lowercase() }
+    val teamMembers = state.specialists.filter { it.teamId == team.id }
+    val orchestrator = teamMembers.firstOrNull { it.kind == SpecialistKind.ORCHESTRATOR }
+    val specialists = teamMembers.filter { it.kind == SpecialistKind.SPECIALIST }.sortedBy { it.name.lowercase() }
 
-    FullScreenPanel(title = project.name, onBack = onDismiss) {
+    FullScreenPanel(title = team.name, onBack = onDismiss) {
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -93,19 +93,19 @@ fun AgentProjectDetailDialog(
                 ) {
                     FilledTonalButton(
                         onClick = {
-                            editingAgentId = vm.createAgent(project.id)
+                            editingSpecialistId = vm.createSpecialist(team.id)
                         },
                         modifier = Modifier.weight(1f),
                         shape = UmnikFieldShape
                     ) {
                         Icon(Icons.Outlined.Add, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Новый агент")
+                        Text("Новый специалист")
                     }
                     UmnikCircleAction(
                         icon = Icons.Outlined.Settings,
-                        contentDescription = "Настройки проекта",
-                        onClick = { projectSettingsOpen = true }
+                        contentDescription = "Настройки команды",
+                        onClick = { teamSettingsOpen = true }
                     )
                 }
             }
@@ -125,11 +125,11 @@ fun AgentProjectDetailDialog(
                         color = MaterialTheme.colorScheme.error
                     )
                 } else {
-                    AgentCard(
-                        agent = orchestrator,
-                        onSettings = { editingAgentId = orchestrator.id },
+                    SpecialistCard(
+                        specialist = orchestrator,
+                        onSettings = { editingSpecialistId = orchestrator.id },
                         onOpenChat = {
-                            vm.openAgentChat(orchestrator.id)?.let(onConversationOpened)
+                            vm.openSpecialistChat(orchestrator.id)?.let(onConversationOpened)
                         }
                     )
                 }
@@ -141,7 +141,7 @@ fun AgentProjectDetailDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        "Агенты",
+                        "Специалисты",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         modifier = Modifier.weight(1f)
@@ -157,17 +157,17 @@ fun AgentProjectDetailDialog(
             if (specialists.isEmpty()) {
                 item {
                     Text(
-                        "В кабинете пока никого нет. Создайте первого агента и настройте его роль, модель и рабочую среду.",
+                        "В кабинете пока никого нет. Создайте первого специалиста и настройте его роль, модель и рабочую среду.",
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
-                items(specialists, key = { it.id }) { agent ->
-                    AgentCard(
-                        agent = agent,
-                        onSettings = { editingAgentId = agent.id },
+                items(specialists, key = { it.id }) { specialist ->
+                    SpecialistCard(
+                        specialist = specialist,
+                        onSettings = { editingSpecialistId = specialist.id },
                         onOpenChat = {
-                            vm.openAgentChat(agent.id)?.let(onConversationOpened)
+                            vm.openSpecialistChat(specialist.id)?.let(onConversationOpened)
                         }
                     )
                 }
@@ -176,7 +176,7 @@ fun AgentProjectDetailDialog(
             item {
                 Spacer(Modifier.height(8.dp))
                 Text(
-                    "Агенты изолированы: настройки обычных чатов, чужие навыки, память и база знаний сюда не наследуются.",
+                    "Специалисты изолированы: настройки обычных чатов, чужие навыки, память и база знаний сюда не наследуются.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -184,29 +184,29 @@ fun AgentProjectDetailDialog(
         }
     }
 
-    editingAgentId?.let { id ->
-        state.agents.firstOrNull { it.id == id }?.let { agent ->
-            AgentSettingsDialog(
-                agent = agent,
+    editingSpecialistId?.let { id ->
+        state.specialists.firstOrNull { it.id == id }?.let { specialist ->
+            SpecialistSettingsDialog(
+                specialist = specialist,
                 state = state,
                 vm = vm,
-                onDismiss = { editingAgentId = null },
+                onDismiss = { editingSpecialistId = null },
                 onOpenChat = {
-                    vm.saveAgent(it)
-                    vm.openAgentChat(it.id)?.let(onConversationOpened)
-                    editingAgentId = null
+                    vm.saveSpecialist(it)
+                    vm.openSpecialistChat(it.id)?.let(onConversationOpened)
+                    editingSpecialistId = null
                 }
             )
         }
     }
 
-    if (projectSettingsOpen) {
-        SimpleProjectSettingsDialog(
-            project = project,
+    if (teamSettingsOpen) {
+        SimpleTeamSettingsDialog(
+            team = team,
             vm = vm,
-            onDismiss = { projectSettingsOpen = false },
+            onDismiss = { teamSettingsOpen = false },
             onDeleted = {
-                projectSettingsOpen = false
+                teamSettingsOpen = false
                 onDismiss()
             }
         )
@@ -214,31 +214,31 @@ fun AgentProjectDetailDialog(
 }
 
 @Composable
-private fun AgentCard(
-    agent: AgentProfile,
+private fun SpecialistCard(
+    specialist: SpecialistProfile,
     onSettings: () -> Unit,
     onOpenChat: () -> Unit
 ) {
-    val primaryModelId = agent.primaryModel?.modelId
+    val primaryModelId = specialist.primaryModel?.modelId
     val primaryModelLabel = primaryModelId
         ?.substringAfter('/')
         ?.ifBlank { primaryModelId }
         ?: "Основная модель не выбрана"
 
-    UmnikPanel(selected = agent.kind == AgentKind.ORCHESTRATOR) {
+    UmnikPanel(selected = specialist.kind == SpecialistKind.ORCHESTRATOR) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text(
-                        agent.name,
+                        specialist.name,
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     val roleLine = when {
-                        agent.role.isNotBlank() -> agent.role
-                        agent.kind == AgentKind.ORCHESTRATOR -> "Руководитель проекта"
+                        specialist.role.isNotBlank() -> specialist.role
+                        specialist.kind == SpecialistKind.ORCHESTRATOR -> "Руководитель команды"
                         else -> "Роль не задана"
                     }
                     Text(
@@ -251,7 +251,7 @@ private fun AgentCard(
                 }
                 UmnikCircleAction(
                     icon = Icons.Outlined.Edit,
-                    contentDescription = "Настройки агента",
+                    contentDescription = "Настройки специалиста",
                     onClick = onSettings
                 )
             }
@@ -260,7 +260,7 @@ private fun AgentCard(
             Text(
                 primaryModelLabel,
                 style = MaterialTheme.typography.labelMedium,
-                color = if (agent.primaryModel == null)
+                color = if (specialist.primaryModel == null)
                     MaterialTheme.colorScheme.error
                 else
                     MaterialTheme.colorScheme.onSurfaceVariant
@@ -274,67 +274,65 @@ private fun AgentCard(
             ) {
                 Icon(Icons.Outlined.ChatBubbleOutline, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text(if (agent.kind == AgentKind.ORCHESTRATOR) "Открыть Оркестратора" else "Перейти в чат")
+                Text(if (specialist.kind == SpecialistKind.ORCHESTRATOR) "Открыть Оркестратора" else "Перейти в чат")
             }
         }
     }
 }
 
 @Composable
-private fun AgentSettingsDialog(
-    agent: AgentProfile,
+private fun SpecialistSettingsDialog(
+    specialist: SpecialistProfile,
     state: UiState,
     vm: ChatViewModel,
     onDismiss: () -> Unit,
-    onOpenChat: (AgentProfile) -> Unit
+    onOpenChat: (SpecialistProfile) -> Unit
 ) {
-    var name by remember(agent.id) { mutableStateOf(agent.name) }
-    var role by remember(agent.id) { mutableStateOf(agent.role) }
-    var instruction by remember(agent.id) { mutableStateOf(agent.instruction) }
-    var primaryModel by remember(agent.id) { mutableStateOf(agent.primaryModel?.modelId.orEmpty()) }
-    var quickModelsText by remember(agent.id) {
-        mutableStateOf(agent.quickModels.joinToString("\n") { it.modelId })
+    var name by remember(specialist.id) { mutableStateOf(specialist.name) }
+    var role by remember(specialist.id) { mutableStateOf(specialist.role) }
+    var instruction by remember(specialist.id) { mutableStateOf(specialist.instruction) }
+    var primaryModel by remember(specialist.id) { mutableStateOf(specialist.primaryModel?.modelId.orEmpty()) }
+    var quickModelsText by remember(specialist.id) {
+        mutableStateOf(specialist.quickModels.joinToString("\n") { it.modelId })
     }
-    var contextModel by remember(agent.id) { mutableStateOf(agent.contextModel?.modelId.orEmpty()) }
-    var memoryEmbedding by remember(agent.id) { mutableStateOf(agent.memoryEmbeddingModel?.modelId.orEmpty()) }
-    var reasoningEnabled by remember(agent.id) { mutableStateOf(agent.reasoningEnabled) }
-    var reasoningEffort by remember(agent.id) { mutableStateOf(agent.reasoningEffort) }
-    var webSearch by remember(agent.id) { mutableStateOf(agent.webSearchEnabled) }
-    var webSearchPreset by remember(agent.id) { mutableStateOf(agent.tools.webSearchPreset) }
-    var webSearchEngine by remember(agent.id) { mutableStateOf(agent.tools.webSearchEngine) }
-    var deleteConfirm by remember(agent.id) { mutableStateOf(false) }
-    var skillEditorOpen by remember(agent.id) { mutableStateOf(false) }
-    var skillName by remember(agent.id) { mutableStateOf("") }
-    var skillBody by remember(agent.id) { mutableStateOf("") }
-    val ownedSkills = vm.agentSkills(agent.id)
-    val ownedFiles = vm.agentFiles(agent.id)
-    val agentFilesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) vm.addAgentFiles(agent.id, uris)
+    var reasoningEnabled by remember(specialist.id) { mutableStateOf(specialist.reasoningEnabled) }
+    var reasoningEffort by remember(specialist.id) { mutableStateOf(specialist.reasoningEffort) }
+    var webSearch by remember(specialist.id) { mutableStateOf(specialist.webSearchEnabled) }
+    var webSearchPreset by remember(specialist.id) { mutableStateOf(specialist.tools.webSearchPreset) }
+    var webSearchEngine by remember(specialist.id) { mutableStateOf(specialist.tools.webSearchEngine) }
+    var deleteConfirm by remember(specialist.id) { mutableStateOf(false) }
+    var skillEditorOpen by remember(specialist.id) { mutableStateOf(false) }
+    var skillName by remember(specialist.id) { mutableStateOf("") }
+    var skillBody by remember(specialist.id) { mutableStateOf("") }
+    val ownedSkills = vm.specialistSkills(specialist.id)
+    val ownedFiles = vm.specialistFiles(specialist.id)
+    val specialistFilesPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) vm.addSpecialistFiles(specialist.id, uris)
     }
     val skillFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        uri?.let { vm.importAgentSkillFile(agent.id, it) }
+        uri?.let { vm.importSpecialistSkillFile(specialist.id, it) }
     }
     val skillFolderPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { uri ->
-        uri?.let { vm.importAgentSkillTree(agent.id, it) }
+        uri?.let { vm.importSpecialistSkillTree(specialist.id, it) }
     }
 
-    LaunchedEffect(agent.id) {
+    LaunchedEffect(specialist.id) {
         if (state.modelCatalogConnectionId != "openrouter") {
             vm.loadConnectionModels("openrouter")
         }
     }
 
-    fun ref(modelId: String): AgentModelRef? =
-        modelId.trim().takeIf { it.isNotBlank() }?.let { AgentModelRef("openrouter", it) }
+    fun ref(modelId: String): SpecialistModelRef? =
+        modelId.trim().takeIf { it.isNotBlank() }?.let { SpecialistModelRef("openrouter", it) }
 
     val selectedPrimaryInfo = state.modelCatalog.firstOrNull { it.id == primaryModel }
         ?: state.availableTextModels.firstOrNull { it.id == primaryModel }
     val supportedReasoningEfforts = selectedPrimaryInfo?.reasoningEfforts.orEmpty()
     val reasoningKnownUnsupported = selectedPrimaryInfo != null && !selectedPrimaryInfo.supportsReasoning
 
-    fun buildProfile(): AgentProfile = agent.copy(
+    fun buildProfile(): SpecialistProfile = specialist.copy(
         name = name.trim().ifBlank {
-            if (agent.kind == AgentKind.ORCHESTRATOR) "Оркестратор" else "Агент"
+            if (specialist.kind == SpecialistKind.ORCHESTRATOR) "Оркестратор" else "Специалист"
         },
         role = role.trim(),
         instruction = instruction.trim(),
@@ -344,15 +342,12 @@ private fun AgentSettingsDialog(
             .map(String::trim)
             .filter(String::isNotBlank)
             .distinct()
-            .map { AgentModelRef("openrouter", it) }
+            .map { SpecialistModelRef("openrouter", it) }
             .toList(),
-        contextModel = ref(contextModel),
-        memoryEmbeddingModel = ref(memoryEmbedding),
-        knowledgeBase = agent.knowledgeBase,
         reasoningEnabled = reasoningEnabled && !reasoningKnownUnsupported,
         reasoningEffort = reasoningEffort,
         webSearchEnabled = webSearch,
-        tools = agent.tools.copy(
+        tools = specialist.tools.copy(
             webSearch = if (webSearch) WebSearchMode.AUTO else WebSearchMode.OFF,
             webSearchPreset = webSearchPreset,
             webSearchEngine = webSearchEngine
@@ -360,7 +355,7 @@ private fun AgentSettingsDialog(
     )
 
     FullScreenPanel(
-        title = if (agent.kind == AgentKind.ORCHESTRATOR) "Оркестратор" else "Настройки агента",
+        title = if (specialist.kind == SpecialistKind.ORCHESTRATOR) "Оркестратор" else "Настройки специалиста",
         onBack = onDismiss
     ) {
         LazyColumn(
@@ -382,14 +377,14 @@ private fun AgentSettingsDialog(
                     value = role,
                     onValueChange = { role = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Назначение агента") },
+                    label = { Text("Назначение специалиста") },
                     trailingIcon = {
                         UmnikInfoHint(
-                            title = "Назначение агента",
-                            text = if (agent.kind == AgentKind.ORCHESTRATOR) {
-                                "Коротко опишите, чем управляет Оркестратор и какие решения он должен принимать в проекте."
+                            title = "Назначение специалиста",
+                            text = if (specialist.kind == SpecialistKind.ORCHESTRATOR) {
+                                "Коротко опишите, чем управляет Оркестратор и какие решения он должен принимать в команде."
                             } else {
-                                "Коротко опишите специализацию агента и какие задачи ему можно поручать. Это описание видит Оркестратор."
+                                "Коротко опишите специализацию специалиста и какие задачи ему можно поручать. Это описание видит Оркестратор."
                             }
                         )
                     },
@@ -401,26 +396,26 @@ private fun AgentSettingsDialog(
                     value = instruction,
                     onValueChange = { instruction = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Инструкция агенту") },
+                    label = { Text("Инструкция специалисту") },
                     trailingIcon = {
                         UmnikInfoHint(
-                            title = "Инструкция агенту",
-                            text = "Подробные правила работы этого агента: стиль ответа, порядок действий, ограничения, формат результата и другие постоянные требования."
+                            title = "Инструкция специалисту",
+                            text = "Подробные правила работы этого специалиста: стиль ответа, порядок действий, ограничения, формат результата и другие постоянные требования."
                         )
                     },
                     minLines = 5
                 )
             }
 
-            item { AgentSettingsSectionTitle("Модели") }
+            item { SpecialistSettingsSectionTitle("Модели") }
 
             item {
                 ModelField(
                     label = "Основная модель",
-                    info = "Обязательная модель, которая отвечает в чате агента и выполняет его основные задачи.",
+                    info = "Обязательная модель, которая отвечает в чате специалиста и выполняет его основные задачи.",
                     value = primaryModel,
                     onValueChange = { primaryModel = it },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки специалиста") }
                 )
             }
             item {
@@ -428,33 +423,14 @@ private fun AgentSettingsDialog(
                     label = "Дополнительные модели чатов",
                     value = quickModelsText,
                     onValueChange = { quickModelsText = it },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") },
-                    info = "Необязательно. Дополнительные модели для переключения прямо в чате этого агента. Указываются по одной модели OpenRouter в строке.",
+                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки специалиста") },
+                    info = "Необязательно. Дополнительные модели для переключения прямо в чате этого специалиста. Указываются по одной модели OpenRouter в строке.",
                     singleLine = false,
                     minLines = 2,
                     maxLines = 4
                 )
             }
-            item {
-                ModelField(
-                    label = "Модель контекста",
-                    info = "Необязательно. Используется для обработки и сжатия длинного контекста агента. Если оставить пустым, Umnik использует основную модель.",
-                    value = contextModel,
-                    onValueChange = { contextModel = it },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
-                )
-            }
-            item {
-                ModelField(
-                    label = "Модель поиска по памяти",
-                    info = "Необязательно. Embeddings-модель OpenRouter превращает память агента в смысловой индекс и помогает находить подходящие фрагменты прошлых разговоров. Если оставить пустым, Umnik работает с полным контекстом без такого отбора.",
-                    value = memoryEmbedding,
-                    onValueChange = { memoryEmbedding = it.trim() },
-                    onPick = { com.ayuemin.ymnik.AsyncJobEvents.requestHub("models-settings", "Настройки агента") }
-                )
-            }
-
-            item { AgentSettingsSectionTitle("Работа модели") }
+            item { SpecialistSettingsSectionTitle("Работа модели") }
 
             item {
                 ToggleSettingRow(
@@ -544,7 +520,7 @@ private fun AgentSettingsDialog(
                 }
             }
 
-            item { AgentSettingsSectionTitle("Навыки") }
+            item { SpecialistSettingsSectionTitle("Навыки") }
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -579,13 +555,13 @@ private fun AgentSettingsDialog(
             if (ownedSkills.isEmpty()) {
                 item {
                     Text(
-                        "Навыков у этого агента пока нет.",
+                        "Навыков у этого специалиста пока нет.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
-                items(ownedSkills, key = { "agent-skill-${it.id}" }) { skill ->
+                items(ownedSkills, key = { "specialist-skill-${it.id}" }) { skill ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -599,12 +575,12 @@ private fun AgentSettingsDialog(
                             )
                         }
                         Switch(
-                            checked = skill.id in agent.skillIds,
+                            checked = skill.id in specialist.skillIds,
                             onCheckedChange = { enabled ->
-                                vm.setAgentSkillEnabled(agent.id, skill.id, enabled)
+                                vm.setSpecialistSkillEnabled(specialist.id, skill.id, enabled)
                             }
                         )
-                        IconButton(onClick = { vm.deleteAgentSkill(agent.id, skill.id) }) {
+                        IconButton(onClick = { vm.deleteSpecialistSkill(specialist.id, skill.id) }) {
                             Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить навык")
                         }
                     }
@@ -612,10 +588,10 @@ private fun AgentSettingsDialog(
                 }
             }
 
-            item { AgentSettingsSectionTitle("Файлы агента") }
+            item { SpecialistSettingsSectionTitle("Файлы специалиста") }
             item {
                 FilledTonalButton(
-                    onClick = { agentFilesPicker.launch(arrayOf("*/*")) },
+                    onClick = { specialistFilesPicker.launch(arrayOf("*/*")) },
                     enabled = !state.isLoading && !state.requestActive,
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -627,13 +603,13 @@ private fun AgentSettingsDialog(
             if (ownedFiles.isEmpty()) {
                 item {
                     Text(
-                        "Постоянных файлов у агента пока нет.",
+                        "Постоянных файлов у специалиста пока нет.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else {
-                items(ownedFiles, key = { "agent-file-${it.id}" }) { file ->
+                items(ownedFiles, key = { "specialist-file-${it.id}" }) { file ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically
@@ -651,32 +627,32 @@ private fun AgentSettingsDialog(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        IconButton(onClick = { vm.deleteAgentFile(agent.id, file.id) }) {
-                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл агента")
+                        IconButton(onClick = { vm.deleteSpecialistFile(specialist.id, file.id) }) {
+                            Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить файл специалиста")
                         }
                     }
                     HorizontalDivider()
                 }
             }
 
-            item { AgentSettingsSectionTitle("База знаний") }
+            item { SpecialistSettingsSectionTitle("База знаний") }
             item {
                 KnowledgeBaseSection(
-                    kind = com.ayuemin.ymnik.model.KnowledgeOwnerKind.AGENT,
-                    ownerId = agent.id,
+                    kind = com.ayuemin.ymnik.model.KnowledgeOwnerKind.SPECIALIST,
+                    ownerId = specialist.id,
                     state = state,
                     vm = vm,
-                    title = "База знаний агента"
+                    title = "База знаний специалиста"
                 )
             }
 
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    AgentSettingsSectionTitle("Локальная среда")
+                    SpecialistSettingsSectionTitle("Локальная среда")
                     Spacer(Modifier.weight(1f))
                     UmnikInfoHint(
-                        title = "Локальная среда агента",
-                        text = "Навыки, файлы, база знаний, память и разговоры хранятся в локальной папке этого агента и не наследуются другими агентами."
+                        title = "Локальная среда специалиста",
+                        text = "Навыки, файлы, база знаний, память и разговоры хранятся в локальной папке этого специалиста и не наследуются другими специалистами."
                     )
                 }
             }
@@ -685,7 +661,7 @@ private fun AgentSettingsDialog(
                 Button(
                     onClick = {
                         val saved = buildProfile()
-                        vm.saveAgent(saved)
+                        vm.saveSpecialist(saved)
                         onOpenChat(saved)
                     },
                     modifier = Modifier.fillMaxWidth(),
@@ -697,14 +673,14 @@ private fun AgentSettingsDialog(
 
             item {
                 OutlinedButton(
-                    onClick = { vm.saveAgent(buildProfile()) },
+                    onClick = { vm.saveSpecialist(buildProfile()) },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text("Сохранить")
                 }
             }
 
-            if (agent.kind == AgentKind.SPECIALIST) {
+            if (specialist.kind == SpecialistKind.SPECIALIST) {
                 item {
                     OutlinedButton(
                         onClick = { deleteConfirm = true },
@@ -712,7 +688,7 @@ private fun AgentSettingsDialog(
                     ) {
                         Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
-                        Text("Удалить агента")
+                        Text("Удалить специалиста")
                     }
                 }
             }
@@ -744,7 +720,7 @@ private fun AgentSettingsDialog(
             confirmButton = {
                 TextButton(
                     onClick = {
-                        if (vm.createAgentSkill(agent.id, skillName, skillBody) != null) {
+                        if (vm.createSpecialistSkill(specialist.id, skillName, skillBody) != null) {
                             skillEditorOpen = false
                         }
                     },
@@ -760,11 +736,11 @@ private fun AgentSettingsDialog(
     if (deleteConfirm) {
         AlertDialog(
             onDismissRequest = { deleteConfirm = false },
-            title = { Text("Удалить агента?") },
+            title = { Text("Удалить специалиста?") },
             text = { Text("Будут удалены его разговоры и локальное рабочее хранилище.") },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.deleteAgent(agent.id)
+                    vm.deleteSpecialist(specialist.id)
                     deleteConfirm = false
                     onDismiss()
                 }) { Text("Удалить") }
@@ -841,7 +817,7 @@ private fun ToggleSettingRow(
 }
 
 @Composable
-private fun AgentSettingsSectionTitle(text: String) {
+private fun SpecialistSettingsSectionTitle(text: String) {
     Text(
         text,
         modifier = Modifier.padding(top = 8.dp, bottom = 2.dp),
@@ -852,7 +828,7 @@ private fun AgentSettingsSectionTitle(text: String) {
 }
 
 @Composable
-fun SimpleProjectCreateDialog(
+fun SimpleTeamCreateDialog(
     onDismiss: () -> Unit,
     onCreate: (name: String, favorite: Boolean) -> Unit
 ) {
@@ -861,7 +837,7 @@ fun SimpleProjectCreateDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Новый проект") },
+        title = { Text("Новый команда") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(
@@ -873,12 +849,12 @@ fun SimpleProjectCreateDialog(
                 )
                 ToggleSettingRow(
                     title = "Закрепить",
-                    subtitle = "Показывать проект выше остальных",
+                    subtitle = "Показывать команда выше остальных",
                     checked = favorite,
                     onCheckedChange = { favorite = it }
                 )
                 Text(
-                    "Инструкции, навыки и знания настраиваются у каждого агента отдельно.",
+                    "Инструкции, навыки и знания настраиваются у каждого специалиста отдельно.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -895,17 +871,17 @@ fun SimpleProjectCreateDialog(
 }
 
 @Composable
-private fun SimpleProjectSettingsDialog(
-    project: Project,
+private fun SimpleTeamSettingsDialog(
+    team: Team,
     vm: ChatViewModel,
     onDismiss: () -> Unit,
     onDeleted: () -> Unit
 ) {
-    var name by remember(project.id) { mutableStateOf(project.name) }
-    var favorite by remember(project.id) { mutableStateOf(project.isFavorite) }
-    var deleteConfirm by remember(project.id) { mutableStateOf(false) }
+    var name by remember(team.id) { mutableStateOf(team.name) }
+    var favorite by remember(team.id) { mutableStateOf(team.isFavorite) }
+    var deleteConfirm by remember(team.id) { mutableStateOf(false) }
 
-    FullScreenPanel(title = "Настройки проекта", onBack = onDismiss) {
+    FullScreenPanel(title = "Настройки команды", onBack = onDismiss) {
         LazyColumn(
             modifier = Modifier.weight(1f).fillMaxWidth(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
@@ -927,12 +903,12 @@ private fun SimpleProjectSettingsDialog(
                         )
                         ToggleSettingRow(
                             title = "Закрепить",
-                            subtitle = "Показывать проект выше остальных",
+                            subtitle = "Показывать команда выше остальных",
                             checked = favorite,
                             onCheckedChange = { favorite = it }
                         )
                         Text(
-                            "У проекта нет общей инструкции, навыков или базы знаний. Это кабинет для Оркестратора и агентов.",
+                            "У команды нет общей инструкции, навыков или базы знаний. Это кабинет для Оркестратора и специалистов.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -942,7 +918,7 @@ private fun SimpleProjectSettingsDialog(
             item {
                 Button(
                     onClick = {
-                        vm.updateProject(project.id, name, favorite)
+                        vm.updateTeam(team.id, name, favorite)
                         onDismiss()
                     },
                     enabled = name.isNotBlank(),
@@ -959,7 +935,7 @@ private fun SimpleProjectSettingsDialog(
                 ) {
                     Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
                     Spacer(Modifier.width(6.dp))
-                    Text("Удалить проект")
+                    Text("Удалить команда")
                 }
             }
         }
@@ -968,11 +944,11 @@ private fun SimpleProjectSettingsDialog(
     if (deleteConfirm) {
         AlertDialog(
             onDismissRequest = { deleteConfirm = false },
-            title = { Text("Удалить проект?") },
-            text = { Text("Будут удалены Оркестратор, все агенты и их локальные рабочие хранилища.") },
+            title = { Text("Удалить команда?") },
+            text = { Text("Будут удалены Оркестратор, все специалисты и их локальные рабочие хранилища.") },
             confirmButton = {
                 TextButton(onClick = {
-                    vm.deleteProject(project.id)
+                    vm.deleteTeam(team.id)
                     deleteConfirm = false
                     onDeleted()
                 }) { Text("Удалить") }

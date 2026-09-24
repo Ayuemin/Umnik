@@ -16,6 +16,10 @@ internal class RequestNetworkSession(
 ) {
     private val app = context.applicationContext
     private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
+    private val costLedger = RequestCostLedger()
+    private val embeddingClient = com.ayuemin.ymnik.network.OpenRouterEmbeddingClient(app) { exact ->
+        costLedger.record(RequestCostKind.EMBEDDINGS, exact)
+    }
 
     private fun openRouter(
         chatId: String? = null,
@@ -29,7 +33,8 @@ internal class RequestNetworkSession(
             requestProfileId = profileId,
             recoveryEnabled = recoverable,
             streamCallback = { text -> updatePartial(text) },
-            phaseCallback = { label -> updatePhase(label) }
+            phaseCallback = { label -> updatePhase(label) },
+            costSink = costLedger::record
         )
             .also { clients += it }
 
@@ -41,6 +46,10 @@ internal class RequestNetworkSession(
     ): T = RequestConcurrencyLimiter.withPermit(app) {
         block(openRouter(chatId, profileId, recoverable))
     }
+
+    fun embeddings(): com.ayuemin.ymnik.network.OpenRouterEmbeddingClient = embeddingClient
+
+    fun costSnapshot(): com.ayuemin.ymnik.model.RequestCostBreakdown? = costLedger.snapshot()
 
     fun reserveChat(chatId: String): Boolean = RequestExecutionManager.reserveChat(requestId, chatId)
 

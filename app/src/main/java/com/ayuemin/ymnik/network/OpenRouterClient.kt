@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
+import com.ayuemin.ymnik.RequestCostKind
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -46,7 +47,8 @@ class OpenRouterClient(
     private val requestProfileId: String? = null,
     private val recoveryEnabled: Boolean = false,
     private val streamCallback: (String) -> Unit = {},
-    private val phaseCallback: (String) -> Unit = {}
+    private val phaseCallback: (String) -> Unit = {},
+    private val costSink: ((RequestCostKind, String?) -> Unit)? = null
 ) {
     private val gson = Gson()
     private val featurePrefs by lazy { OpenRouterFeaturePrefs(context.applicationContext) }
@@ -172,7 +174,9 @@ class OpenRouterClient(
         modelInfo: ModelInfo? = null,
         streamToUi: Boolean = false,
         webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
-        requestImageOutput: Boolean = false
+        requestImageOutput: Boolean = false,
+        knowledgeSearch: (suspend (String) -> String)? = null,
+        knowledgeSearchLimit: Int = 4
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -187,9 +191,12 @@ class OpenRouterClient(
         DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: "provider"}; output=provider; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
+        val knowledgeBudget = KnowledgeToolBudget(knowledgeSearchLimit)
+        val effectiveKnowledgeSearchLimit = knowledgeBudget.limit
+        val maxToolLoops = maxOf(5, effectiveKnowledgeSearchLimit + 3)
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
-        while (loops++ < 5) {
+        while (loops++ < maxToolLoops) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
@@ -205,6 +212,9 @@ class OpenRouterClient(
                 })
                 val mergedTools = JsonArray()
                 if (toolsEnabled) tools().forEach(mergedTools::add)
+                if (knowledgeSearch != null && effectiveKnowledgeSearchLimit > 0) {
+                    mergedTools.add(knowledgeSearchTool())
+                }
                 if (webSearchEnabled) {
                     if (modelInfo?.supportsTools == false) {
                         error("Выбранная модель не поддерживает современный веб-поиск OpenRouter")
@@ -241,6 +251,7 @@ class OpenRouterClient(
             val completion = requestCompletion(
                 apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
             )
+            costSink?.invoke(RequestCostKind.PRIMARY, completion.costUsdExact)
             val responseMessage = completion.message
             created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
@@ -262,14 +273,14 @@ class OpenRouterClient(
 
             phaseCallback("Выполняю инструменты…")
             messages.add(responseMessage.deepCopy())
-            toolCalls.forEach { callElement ->
+            for (callElement in toolCalls) {
                 val call = callElement.asJsonObject
                 val callId = call.get("id")?.asString ?: UUID.randomUUID().toString()
                 val function = call.getAsJsonObject("function")
                 val name = function?.get("name")?.asString.orEmpty()
                 val argsRaw = function?.get("arguments")?.asString ?: "{}"
-                val resultText = if (name == "create_file") {
-                    runCatching {
+                val resultText = when (name) {
+                    "create_file" -> runCatching {
                         val args = gson.fromJson(argsRaw, JsonObject::class.java)
                         val file = createGeneratedTextFile(
                             args.get("filename")?.asString ?: "result.txt",
@@ -281,8 +292,32 @@ class OpenRouterClient(
                     }.getOrElse {
                         gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка создания файла")))
                     }
-                } else {
-                    gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
+                    "knowledge_search" -> {
+                        val callback = knowledgeSearch
+                        if (callback == null) {
+                            gson.toJson(mapOf("ok" to false, "error" to "База знаний недоступна в этом запросе"))
+                        } else {
+                            runCatching {
+                                val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                                val query = args.get("query")?.asString.orEmpty()
+                                val beforeCalls = knowledgeBudget.usedCalls
+                                val result = knowledgeBudget.execute(query) { cleanQuery ->
+                                    callback(cleanQuery)
+                                }
+                                if (knowledgeBudget.usedCalls > beforeCalls) {
+                                    DiagnosticLog.record(
+                                        context,
+                                        "KNOWLEDGE_TOOL",
+                                        "autonomous call=${knowledgeBudget.usedCalls}/$effectiveKnowledgeSearchLimit"
+                                    )
+                                }
+                                gson.toJson(mapOf("ok" to true, "result" to result))
+                            }.getOrElse {
+                                gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка поиска по базе знаний")))
+                            }
+                        }
+                    }
+                    else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
                 messages.add(JsonObject().apply {
                     addProperty("role", "tool")
@@ -292,6 +327,72 @@ class OpenRouterClient(
             }
         }
         Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
+    }
+
+    /**
+     * Minimal text-only call for Umnik's internal service tasks.
+     * Deliberately bypasses every user-facing tool/web feature so a System Model
+     * never requires provider tool-use support just to plan retrieval or summarize memory.
+     */
+    suspend fun internalText(
+        apiKey: String,
+        model: String,
+        prompt: String,
+        systemPrompt: String,
+        baseUrl: String = DEFAULT_BASE_URL,
+        modelInfo: ModelInfo? = null
+    ): Result = withContext(Dispatchers.IO) {
+        val messages = JsonArray().apply {
+            add(message("system", systemPrompt))
+            add(message("user", prompt))
+        }
+        DiagnosticLog.record(
+            context,
+            "CONTEXT",
+            "OpenRouter internal model=$model; stored=0; sent=0; window=${modelInfo?.contextLength ?: "provider"}; tools=0; web=off"
+        )
+        val payload = JsonObject().apply {
+            addProperty("model", model)
+            add("messages", messages)
+            add("metadata", JsonObject().apply {
+                addProperty("umnik_internal", "true")
+            })
+            if (modelInfo?.reasoningMandatory == true) {
+                add("reasoning", JsonObject().apply {
+                    if ("low" in modelInfo.reasoningEfforts) addProperty("effort", "low")
+                    addProperty("exclude", true)
+                })
+            } else if (
+                modelInfo?.supportsReasoning == true ||
+                modelInfo?.reasoningDefaultEnabled == true ||
+                model.startsWith("deepseek/deepseek-v4", ignoreCase = true) ||
+                model.startsWith("~deepseek/deepseek-v4", ignoreCase = true)
+            ) {
+                add("reasoning", JsonObject().apply {
+                    addProperty("effort", "none")
+                    addProperty("exclude", true)
+                })
+            }
+        }
+        val completion = requestCompletion(
+            apiKey = apiKey,
+            baseUrl = baseUrl,
+            payload = payload,
+            allowEmpty = false,
+            streamToUi = false
+        )
+        costSink?.invoke(RequestCostKind.SYSTEM, completion.costUsdExact)
+        val content = extractText(completion.message.get("content"))
+        if (content.isBlank()) error("Системная модель не вернула текст")
+        Result(
+            text = content,
+            files = emptyList(),
+            modelId = completion.model.ifBlank { model },
+            providerName = completion.provider.takeIf { it.isNotBlank() },
+            costUsd = completion.costUsd,
+            inputTokens = completion.promptTokens,
+            outputTokens = completion.completionTokens
+        )
     }
 
     suspend fun generateImage(
@@ -350,7 +451,27 @@ class OpenRouterClient(
                     saveGeneratedImage(encoded, mime, index)
                 }
                 if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
-                Result("Изображение создано.", files)
+                val usage = root.getAsJsonObject("usage")
+                val costExact = runCatching {
+                    (usage?.get("cost")?.takeUnless { it.isJsonNull }
+                        ?: root.get("cost")?.takeUnless { it.isJsonNull })
+                        ?.takeIf { it.isJsonPrimitive }
+                        ?.asString
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                }.getOrNull()
+                val costUsd = costExact?.toDoubleOrNull()
+                costSink?.invoke(RequestCostKind.PRIMARY, costExact)
+                val promptTokens = usage?.get("prompt_tokens")?.takeUnless { it.isJsonNull }?.asInt
+                val completionTokens = usage?.get("completion_tokens")?.takeUnless { it.isJsonNull }?.asInt
+                Result(
+                    text = "Изображение создано.",
+                    files = files,
+                    modelId = model,
+                    costUsd = costUsd,
+                    inputTokens = promptTokens,
+                    outputTokens = completionTokens
+                )
             }
         } finally {
             clearActiveCall()
@@ -374,6 +495,7 @@ class OpenRouterClient(
             ?.any { it.isJsonPrimitive && it.asString.equals("image", ignoreCase = true) } == true
         val requestPayload = payload.deepCopy().apply {
             addProperty("stream", !requestsImageOutput)
+            add("usage", JsonObject().apply { addProperty("include", true) })
             if (!requestsImageOutput) {
                 add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
             }
@@ -728,7 +850,7 @@ class OpenRouterClient(
                 addProperty("name", "create_file")
                 addProperty(
                     "description",
-                    "Создать текстовый файл на устройстве пользователя. Вызывай ТОЛЬКО если пользователь в текущем запросе прямо просит файл/скачивание либо системная, проектная или подключённая инструкция прямо требует вернуть результат файлом. Никогда не создавай файл автоматически только из-за длины ответа."
+                    "Создать текстовый файл на устройстве пользователя. Вызывай ТОЛЬКО если пользователь в текущем запросе прямо просит файл/скачивание либо системная, командная или подключённая инструкция прямо требует вернуть результат файлом. Никогда не создавай файл автоматически только из-за длины ответа."
                 )
                 add("parameters", JsonObject().apply {
                     addProperty("type", "object")
@@ -742,6 +864,27 @@ class OpenRouterClient(
                     })
                     add("required", JsonArray().apply { add("filename"); add("content") })
                 })
+            })
+        })
+    }
+
+    private fun knowledgeSearchTool() = JsonObject().apply {
+        addProperty("type", "function")
+        add("function", JsonObject().apply {
+            addProperty("name", "knowledge_search")
+            addProperty(
+                "description",
+                "Искать в подключённой пользовательской базе знаний текущего чата или специалиста. Используй по необходимости, когда для текущей задачи полезны дополнительные факты, правила, требования, процедуры, примеры или другие сведения из базы. Не вызывай без необходимости и не повторяй одинаковый поиск."
+            )
+            add("parameters", JsonObject().apply {
+                addProperty("type", "object")
+                add("properties", JsonObject().apply {
+                    add("query", JsonObject().apply {
+                        addProperty("type", "string")
+                        addProperty("description", "Краткий смысловой поисковый запрос к базе знаний")
+                    })
+                })
+                add("required", JsonArray().apply { add("query") })
             })
         })
     }

@@ -18,4 +18,22 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent { UmnikV16Root(viewModel) }
     }
+
+    override fun onStart() {
+        super.onStart()
+        DiagnosticLog.record(
+            applicationContext,
+            "LIFECYCLE",
+            "MainActivity onStart; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
+    }
+
+    override fun onStop() {
+        DiagnosticLog.record(
+            applicationContext,
+            "LIFECYCLE",
+            "MainActivity onStop; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
+        super.onStop()
+    }
 }

@@ -1,14 +1,14 @@
 package com.ayuemin.ymnik.model
 
 /**
- * Agent-first orchestration protocol.
+ * Specialist-first orchestration protocol.
  *
- * This protocol intentionally does not expose commands that mutate another agent's
+ * This protocol intentionally does not expose commands that mutate another specialist's
  * permanent personality/settings. The orchestrator manages work; it does not rewrite
  * employees.
  */
-enum class AgentOrchestratorActionType {
-    CALL_AGENT,
+enum class OrchestratorActionType {
+    CALL_SPECIALIST,
     REQUEST_REVISION,
     TRANSFER_WORK,
     CANCEL_TASK,
@@ -20,10 +20,10 @@ enum class AgentOrchestratorActionType {
  * Public card visible to the orchestrator.
  *
  * No API secrets or private storage contents belong here. Capability summary is a
- * user-facing description of what this agent is for.
+ * user-facing description of what this specialist is for.
  */
-data class AgentPublicDescriptor(
-    val agentId: String,
+data class SpecialistDescriptor(
+    val specialistId: String,
     val name: String,
     val role: String,
     val capabilitySummary: String = ""
@@ -32,13 +32,13 @@ data class AgentPublicDescriptor(
 /**
  * One decision emitted by the orchestrator.
  *
- * Several CALL_AGENT actions may share parallelGroup to let TaskDispatcher run them
+ * Several CALL_SPECIALIST actions may share parallelGroup to let TaskDispatcher run them
  * concurrently when safe.
  */
-data class AgentOrchestratorAction(
+data class OrchestratorAction(
     val id: String,
-    val type: AgentOrchestratorActionType,
-    val agentId: String? = null,
+    val type: OrchestratorActionType,
+    val specialistId: String? = null,
     val taskId: String? = null,
     val objective: String = "",
     val assignmentInstruction: String = "",
@@ -49,10 +49,10 @@ data class AgentOrchestratorAction(
     val note: String = ""
 )
 
-data class AgentOrchestratorDecision(
+data class OrchestratorDecision(
     val planSummary: String = "",
     val userReply: String = "",
-    val actions: List<AgentOrchestratorAction> = emptyList(),
+    val actions: List<OrchestratorAction> = emptyList(),
     val completed: Boolean = false,
     val finalResult: String? = null
 )

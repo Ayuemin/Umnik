@@ -9,33 +9,34 @@ import java.io.File
 import java.util.UUID
 
 /**
- * Persistent files owned by exactly one agent.
+ * Persistent files owned by exactly one specialist.
  *
  * Physical layout:
- * filesDir/agents/<agentId>/files/
+ * filesDir/specialists/<specialistId>/files/
  *   files.json
  *   <uuid>_<name>
  */
-class AgentFileRepository(private val context: Context) {
+class SpecialistFileRepository(private val context: Context) {
     private val gson = Gson()
-    private val agentsRoot = File(context.filesDir, "agents").apply { mkdirs() }
+    private val specialistsRoot = LegacyDomainStorageMigration.migrateDirectory(context, "agents", "specialists")
     private val type = object : TypeToken<List<ChatFile>>() {}.type
     private val loadErrors = mutableMapOf<String, String>()
 
-    fun list(agentId: String): List<ChatFile> = runCatching {
-        AtomicJsonFile(metadata(agentId)).read(::validJson)
+    fun list(specialistId: String): List<ChatFile> = runCatching {
+        AtomicJsonFile(metadata(specialistId)).read(::validJson)
             ?.let { gson.fromJson<List<ChatFile>>(it, type) }
             .orEmpty()
-    }.onSuccess { loadErrors.remove(agentId) }
-        .onFailure { loadErrors[agentId] = "Данные файлов агента повреждены и защищены от перезаписи." }
+            .map(::migrateLegacyLocalPath)
+    }.onSuccess { loadErrors.remove(specialistId) }
+        .onFailure { loadErrors[specialistId] = "Данные файлов специалиста повреждены и защищены от перезаписи." }
         .getOrDefault(emptyList())
 
-    fun importFile(agentId: String, attachment: PendingAttachment): ChatFile {
-        require(agentId.isNotBlank()) { "agentId обязателен" }
+    fun importFile(specialistId: String, attachment: PendingAttachment): ChatFile {
+        require(specialistId.isNotBlank()) { "specialistId обязателен" }
         require(attachment.size <= MAX_BYTES || attachment.size <= 0L) {
-            "Файл агента должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+            "Файл специалиста должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
         }
-        val dir = root(agentId).apply { mkdirs() }
+        val dir = root(specialistId).apply { mkdirs() }
         val name = safeName(attachment.name).ifBlank { "file" }
         val target = File(dir, "${UUID.randomUUID()}_$name")
 
@@ -52,7 +53,7 @@ class AgentFileRepository(private val context: Context) {
         }
         require(target.length() <= MAX_BYTES) {
             target.delete()
-            "Файл агента должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+            "Файл специалиста должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
         }
 
         val file = ChatFile(
@@ -63,7 +64,7 @@ class AgentFileRepository(private val context: Context) {
             size = target.length()
         )
         return try {
-            save(agentId, list(agentId) + file)
+            save(specialistId, list(specialistId) + file)
             file
         } catch (error: Throwable) {
             target.delete()
@@ -71,26 +72,33 @@ class AgentFileRepository(private val context: Context) {
         }
     }
 
-    fun delete(agentId: String, fileId: String): Boolean {
-        val files = list(agentId)
+    fun delete(specialistId: String, fileId: String): Boolean {
+        val files = list(specialistId)
         val target = files.firstOrNull { it.id == fileId } ?: return false
         val physical = File(target.localPath)
-        if (isInside(physical, root(agentId))) physical.delete()
-        save(agentId, files.filterNot { it.id == fileId })
+        if (isInside(physical, root(specialistId))) physical.delete()
+        save(specialistId, files.filterNot { it.id == fileId })
         return true
     }
 
-    private fun save(agentId: String, files: List<ChatFile>) {
-        check(loadErrors[agentId] == null) { loadErrors[agentId] ?: "Хранилище файлов агента недоступно" }
-        val meta = metadata(agentId)
+    private fun save(specialistId: String, files: List<ChatFile>) {
+        check(loadErrors[specialistId] == null) { loadErrors[specialistId] ?: "Хранилище файлов специалиста недоступно" }
+        val meta = metadata(specialistId)
         meta.parentFile?.mkdirs()
         AtomicJsonFile(meta).write(gson.toJson(files), ::validJson)
     }
 
-    private fun root(agentId: String): File =
-        File(File(agentsRoot, safeId(agentId)), "files").apply { mkdirs() }
+    private fun root(specialistId: String): File =
+        File(File(specialistsRoot, safeId(specialistId)), "files").apply { mkdirs() }
 
-    private fun metadata(agentId: String): File = File(root(agentId), "files.json")
+    private fun metadata(specialistId: String): File = File(root(specialistId), "files.json")
+
+    private fun migrateLegacyLocalPath(file: ChatFile): ChatFile {
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!file.localPath.startsWith(legacyPrefix)) return file
+        val relative = file.localPath.removePrefix(legacyPrefix)
+        return file.copy(localPath = File(specialistsRoot, relative).absolutePath)
+    }
 
     private fun validJson(raw: String): Boolean = runCatching {
         gson.fromJson<List<ChatFile>>(raw, type) != null

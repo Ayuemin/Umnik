@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.model
 
+import com.google.gson.annotations.SerializedName
+
 enum class ChatMode {
     TEXT,
     IMAGE
@@ -90,7 +92,8 @@ data class BatchJob(
     val remoteId: String,
     val connectionProfileId: String,
     val chatId: String? = null,
-    val projectId: String? = null,
+    @SerializedName(value = "teamId", alternate = ["projectId"])
+    val teamId: String? = null,
     val userMessageId: String? = null,
     val modelId: String,
     val baseModelId: String,
@@ -322,12 +325,24 @@ data class GeneratedFile(
     val size: Long
 )
 
-data class Project(
+data class Team(
     val id: String,
     val name: String,
     val isFavorite: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis()
+)
+
+data class RequestCostBreakdown(
+    val primaryUsd: String? = null,
+    val systemUsd: String? = null,
+    val embeddingsUsd: String? = null,
+    val serviceUsd: String? = null,
+    val knownTotalUsd: String? = null,
+    val primaryCalls: Int = 0,
+    val systemCalls: Int = 0,
+    val embeddingCalls: Int = 0,
+    val incomplete: Boolean = false
 )
 
 data class ChatMessage(
@@ -348,22 +363,27 @@ data class ChatMessage(
     val responseDurationMs: Long? = null,
     val knowledgeHitCount: Int? = null,
     val knowledgeSources: List<String>? = null,
+    val knowledgeSearchAttempted: Boolean? = null,
+    val knowledgeBaseOnly: Boolean? = null,
     val webSearchEnabled: Boolean? = null,
     val reasoningEnabled: Boolean? = null,
     val reasoningEffort: String? = null,
     val memoryContextUsed: Boolean? = null,
     val activeSkillCount: Int? = null,
-    val projectContextUsed: Boolean? = null,
+    @SerializedName(value = "teamContextUsed", alternate = ["projectContextUsed"])
+    val teamContextUsed: Boolean? = null,
     val attachmentCount: Int? = null,
     val connectionName: String? = null,
-    val requestId: String? = null
+    val requestId: String? = null,
+    val costBreakdown: RequestCostBreakdown? = null
 )
 
 data class ChatSession(
     val id: String,
     val title: String,
     val messages: List<ChatMessage> = emptyList(),
-    val projectId: String? = null,
+    @SerializedName(value = "teamId", alternate = ["projectId"])
+    val teamId: String? = null,
     val mode: ChatMode? = null,
     val connectionProfileId: String? = null,
     val textModelOverride: String? = null,
@@ -393,19 +413,20 @@ data class StorageStats(
     val generatedBytes: Long = 0L,
     val exportBytes: Long = 0L,
     val skillBytes: Long = 0L,
-    val projectBytes: Long = 0L,
+    @SerializedName(value = "teamBytes", alternate = ["projectBytes"])
+    val teamBytes: Long = 0L,
     val chatBytes: Long = 0L,
     val soundBytes: Long = 0L
 ) {
     val totalBytes: Long
-        get() = generatedBytes + exportBytes + skillBytes + projectBytes + chatBytes + soundBytes
+        get() = generatedBytes + exportBytes + skillBytes + teamBytes + chatBytes + soundBytes
 }
 
 data class UiState(
     val messages: List<ChatMessage> = emptyList(),
-    val agents: List<AgentProfile> = emptyList(),
+    val specialists: List<SpecialistProfile> = emptyList(),
     val chats: List<ChatSession> = emptyList(),
-    val projects: List<Project> = emptyList(),
+    val teams: List<Team> = emptyList(),
     val currentChatId: String = "",
     val pendingAttachments: List<PendingAttachment> = emptyList(),
     val skills: List<Skill> = emptyList(),
@@ -417,6 +438,8 @@ data class UiState(
     val activeConnectionProfileId: String = "openrouter",
     val disabledConnectionIds: Set<String> = emptySet(),
     val textModel: String = "openrouter/auto",
+    val systemModel: String = "",
+    val embeddingModel: String = KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL,
     val currentChatTextModel: String? = null,
     val quickTextModels: List<String> = emptyList(),
     val imageConnectionProfileId: String = "openrouter",

@@ -4,9 +4,16 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -36,10 +43,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilterChip
@@ -75,6 +84,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.model.BatchJobStatus
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
@@ -83,7 +93,6 @@ import com.ayuemin.ymnik.model.ModelUniversality
 import com.ayuemin.ymnik.model.ModelVariant
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.VideoJobStatus
@@ -98,7 +107,7 @@ import java.util.Locale
 
 private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
-private enum class SimpleModelKind {
+internal enum class SimpleModelKind {
     ALL,
     TEXT,
     IMAGE,
@@ -107,22 +116,17 @@ private enum class SimpleModelKind {
     SPEECH,
     TRANSCRIPTION,
     EMBEDDINGS,
-    RERANK,
     AUDIO_INPUT,
     MULTIMODAL,
     REASONING,
     TOOLS
 }
 
-private enum class SimplePriceFilter {
-    ALL,
-    FREE,
-    UP_TO_0_02,
-    UP_TO_0_05,
-    UP_TO_0_1,
-    UP_TO_1,
-    UP_TO_5,
-    OVER_5
+internal enum class CatalogSort {
+    ALPHABETICAL,
+    CHEAPEST,
+    EXPENSIVE,
+    CAPABILITIES
 }
 
 @Composable
@@ -181,7 +185,7 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
-            "tools", "rag" -> {
+            "tools" -> {
                 requestedPage = HubPage.TOOLS
                 requestedMediaSection = MediaSection.ALL
                 open = true
@@ -314,17 +318,49 @@ private fun OpenRouterHubDialog(
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
-                                    when (page) {
-                                        HubPage.MODELS -> "Поиск, фильтры, цены и назначение моделей"
-                                        HubPage.ROUTING -> "Правила выбора провайдера"
-                                        HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
-                                        HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
-                                        else -> "Результат возвращается в текущий чат"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                val subtitle = when (page) {
+                                    HubPage.MODELS -> "Поиск, фильтры, цены и назначение моделей"
+                                    HubPage.ROUTING -> "Правила выбора провайдера"
+                                    HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
+                                    HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
+                                    HubPage.SHELL -> "Работа с файлами, ZIP-архивами и кодом"
+                                    else -> null
+                                }
+                                if (subtitle != null) {
+                                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                            when (page) {
+                                HubPage.MODELS -> UmnikInfoHint(
+                                    title = "О каталоге",
+                                    text = "Не нашли нужной информации? Посмотрите модель на сайте OpenRouter и вставьте её ID в Umnik вручную."
                                 )
+                                HubPage.JOBS -> UmnikInfoHint(
+                                    title = "Пакетные задачи",
+                                    text = "Добавьте несколько независимых заданий, при необходимости прикрепите файлы к каждому и запустите пакет. Batch удобен, когда задания не зависят друг от друга; результаты вернутся в исходный чат."
+                                )
+                                HubPage.MEDIA -> UmnikInfoHint(
+                                    title = when (initialMediaSection) {
+                                        MediaSection.VIDEO -> "Создание видео"
+                                        MediaSection.TRANSCRIPTION -> "Распознавание речи"
+                                        MediaSection.SPEECH -> "Озвучивание текста и документов"
+                                        MediaSection.ALL -> "Медиа"
+                                    },
+                                    text = when (initialMediaSection) {
+                                        MediaSection.VIDEO -> "Опишите видео, при необходимости добавьте референсы и нажмите «Создать». Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате."
+                                        MediaSection.TRANSCRIPTION -> "Выберите аудиофайл. После распознавания текст появится здесь и будет добавлен в текущий чат."
+                                        MediaSection.SPEECH -> "Введите текст или загрузите текстовый файл и нажмите «Создать аудио». Модель, голос и формат доступны в сворачиваемом блоке ниже."
+                                        MediaSection.ALL -> "Здесь собраны видео, распознавание речи и озвучивание. Технические настройки моделей находятся во вторичном уровне."
+                                    }
+                                )
+                                HubPage.SHELL -> UmnikInfoHint(
+                                    title = "Что умеет Shell",
+                                    text = "Shell даёт модели рабочую среду для выполнения кода и обработки файлов. Целую папку или проект удобно передать ZIP-архивом: Shell может распаковать его, сохранить структуру папок, проверить содержимое, исправить нужные файлы и вернуть новый ZIP со всем обновлённым проектом. Неизменённые файлы при этом тоже должны остаться на месте. Например, можно упаковать Android-проект в ZIP, попросить найти и исправить проблемы и получить обратно готовую папку проекта в новом архиве. Для архивов рекомендуем ZIP. RAR и 7z зависят от доступных утилит окружения и не считаются гарантированными. Добавьте файл или архив, простыми словами опишите, что нужно сделать, и запустите задачу. Ответ и готовые файлы появятся в текущем чате."
+                                )
+                                else -> Unit
+                            }
+                            if (page == HubPage.MODELS || page == HubPage.JOBS || page == HubPage.MEDIA || page == HubPage.SHELL) {
+                                Spacer(Modifier.width(2.dp))
                             }
                             if (!showBack) {
                                 IconButton(onClick = onDismiss) {
@@ -354,14 +390,85 @@ private fun OpenRouterHubDialog(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    val chatReturnPage = page == HubPage.JOBS ||
+                        page == HubPage.MEDIA ||
+                        page == HubPage.REPLY_SPEECH ||
+                        page == HubPage.SHELL
+                    if (chatReturnPage && !returnLabel.isNullOrBlank()) {
+                        Surface(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.ArrowBack, contentDescription = null)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    returnLabel,
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
+                    val activeBatch = if (page == HubPage.JOBS) {
+                        state.batches.filterNot { it.status.terminal }.maxByOrNull { it.updatedAt }
+                    } else {
+                        null
+                    }
+                    if (activeBatch != null) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        if (activeBatch.completedItems > 0) {
+                                            "${batchLabel(activeBatch.status)} · ${activeBatch.completedItems}/${activeBatch.totalItems}"
+                                        } else {
+                                            "${batchLabel(activeBatch.status)} · ${activeBatch.totalItems} заданий"
+                                        },
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        "Результат появится в исходном чате",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
                         HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
-                        HubPage.JOBS -> JobsPage(state, controller, openCatalog)
+                        HubPage.JOBS -> JobsPage(
+                            state = state,
+                            controller = controller,
+                            onOpenCatalog = openCatalog
+                        )
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
-                        HubPage.SHELL -> ShellPage(state, controller)
+                        HubPage.SHELL -> ShellPage(
+                            state = state,
+                            controller = controller,
+                            currentChatId = appState.currentChatId,
+                            onReturnToChat = onDismiss
+                        )
                     }
                 }
             }
@@ -388,36 +495,61 @@ private fun HubPageChip(label: String, value: HubPage, selected: HubPage, onPage
 
 private val modelSearchSeparators = Regex("""[^\p{L}\p{N}]+""")
 
-internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean {
-    val query = rawQuery.trim()
-    if (query.isBlank()) return true
+private fun normalizeModelSearch(value: String): String = modelSearchSeparators
+    .replace(value.lowercase(Locale.ROOT), " ")
+    .trim()
 
-    val fields = listOfNotNull(
-        model.id,
-        model.name,
-        model.description,
-        model.canonicalSlug,
-        model.huggingFaceId,
-        model.providerId
+internal fun modelSearchRank(model: ModelInfo, rawQuery: String): Int {
+    val query = normalizeModelSearch(rawQuery)
+    if (query.isBlank()) return 0
+    val tokens = query.split(' ').filter { it.isNotBlank() }
+    if (tokens.isEmpty()) return 0
+
+    fun fieldRank(values: List<String?>, exact: Int, starts: Int, contains: Int, tokensRank: Int): Int {
+        val normalized = values.mapNotNull { it?.takeIf(String::isNotBlank) }.map(::normalizeModelSearch)
+        if (normalized.any { it == query }) return exact
+        if (normalized.any { it.startsWith(query) }) return starts
+        if (normalized.any { query in it }) return contains
+        if (normalized.any { value -> tokens.all { token -> token in value } }) return tokensRank
+        return Int.MAX_VALUE
+    }
+
+    val primary = fieldRank(
+        listOf(model.name, model.id),
+        exact = 0,
+        starts = 1,
+        contains = 2,
+        tokensRank = 3
     )
-    if (fields.any { it.contains(query, ignoreCase = true) }) return true
+    if (primary != Int.MAX_VALUE) return primary
 
-    fun normalized(value: String): String = modelSearchSeparators
-        .replace(value.lowercase(Locale.ROOT), " ")
-        .trim()
+    val identity = fieldRank(
+        listOf(model.providerId, model.canonicalSlug, model.huggingFaceId),
+        exact = 1,
+        starts = 2,
+        contains = 3,
+        tokensRank = 4
+    )
+    if (identity != Int.MAX_VALUE) return identity
 
-    val tokens = normalized(query).split(' ').filter { it.isNotBlank() }
-    if (tokens.isEmpty()) return true
-    val haystack = normalized(fields.joinToString(" "))
-    return tokens.all { token -> token in haystack }
+    return fieldRank(
+        listOf(model.description),
+        exact = 4,
+        starts = 5,
+        contains = 6,
+        tokensRank = 7
+    )
 }
+
+internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean =
+    rawQuery.isBlank() || modelSearchRank(model, rawQuery) != Int.MAX_VALUE
 
 @Composable
 private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(SimpleModelKind.ALL) }
-    var price by remember { mutableStateOf(SimplePriceFilter.ALL) }
-    var sortByCapabilities by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(CatalogSort.ALPHABETICAL) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
     var moreKindsOpen by remember { mutableStateOf(false) }
     var filtersExpanded by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
@@ -435,7 +567,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         }
     }
 
-    LaunchedEffect(query, kind, price, sortByCapabilities) {
+    LaunchedEffect(query, kind, sort) {
         if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
             listState.scrollToItem(0)
         }
@@ -455,7 +587,6 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         listOf(
             SimpleModelKind.TRANSCRIPTION,
             SimpleModelKind.EMBEDDINGS,
-            SimpleModelKind.RERANK,
             SimpleModelKind.AUDIO_INPUT,
             SimpleModelKind.MULTIMODAL,
             SimpleModelKind.REASONING,
@@ -463,22 +594,39 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         )
     }
 
-    val filtered = remember(state.catalog, query, kind, price, sortByCapabilities) {
+    val effectiveSort = if (!catalogPriceSortSupported(kind) && sort in setOf(CatalogSort.CHEAPEST, CatalogSort.EXPENSIVE)) {
+        CatalogSort.ALPHABETICAL
+    } else {
+        sort
+    }
+
+    val filtered = remember(state.catalog, query, kind, effectiveSort) {
         val needle = query.trim()
+        val nameComparator = compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
+            .thenBy { it.id }
+        val sortComparator = when (effectiveSort) {
+            CatalogSort.ALPHABETICAL -> nameComparator
+            CatalogSort.CAPABILITIES ->
+                compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
+                    .then(nameComparator)
+            CatalogSort.CHEAPEST ->
+                compareBy<ModelInfo> { modelCatalogComparablePrice(it, kind) == null }
+                    .thenBy { modelCatalogComparablePrice(it, kind) ?: Double.MAX_VALUE }
+                    .then(nameComparator)
+            CatalogSort.EXPENSIVE ->
+                compareBy<ModelInfo> { modelCatalogComparablePrice(it, kind) == null }
+                    .thenByDescending { modelCatalogComparablePrice(it, kind) ?: Double.NEGATIVE_INFINITY }
+                    .then(nameComparator)
+        }
+        val comparator = if (needle.isBlank()) {
+            sortComparator
+        } else {
+            compareBy<ModelInfo> { modelSearchRank(it, needle) }.then(sortComparator)
+        }
         state.catalog.asSequence()
             .filter { model -> modelMatchesSearch(model, needle) }
             .filter { model -> modelMatchesSimpleKind(model, kind) }
-            .filter { model -> modelMatchesSimplePrice(model, kind, price) }
-            .sortedWith(
-                if (sortByCapabilities) {
-                    compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
-                        .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                        .thenBy { it.id }
-                } else {
-                    compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                        .thenBy { it.id }
-                }
-            )
+            .sortedWith(comparator)
             .take(700)
             .toList()
     }
@@ -506,101 +654,143 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
-            if (!filtersExpanded) {
+            AnimatedVisibility(
+                visible = !filtersExpanded,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
                 FilledTonalButton(onClick = { filtersExpanded = true }) {
                     Text("Фильтры")
                 }
             }
         }
 
-        if (filtersExpanded) {
-        Text(
-            "Тип",
-            modifier = Modifier.padding(start = 14.dp, top = 1.dp),
-            style = MaterialTheme.typography.labelMedium
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        AnimatedVisibility(
+            visible = filtersExpanded,
+            enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
         ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(mainKinds) { item ->
+            Column {
+                Text(
+                    "Тип",
+                    modifier = Modifier.padding(start = 14.dp, top = 1.dp),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    LazyRow(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(mainKinds) { item ->
+                            FilterChip(
+                                selected = kind == item,
+                                onClick = { kind = item },
+                                label = { Text(simpleModelKindLabel(item)) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
                     FilterChip(
-                        selected = kind == item,
-                        onClick = { kind = item },
-                        label = { Text(simpleModelKindLabel(item)) }
+                        selected = kind in extraKinds,
+                        onClick = { moreKindsOpen = true },
+                        label = {
+                            Text(
+                                if (kind in extraKinds) simpleModelKindLabel(kind) else "Больше",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     )
                 }
-            }
-            Spacer(Modifier.width(6.dp))
-            FilterChip(
-                selected = kind in extraKinds,
-                onClick = { moreKindsOpen = true },
-                label = {
-                    Text(
-                        if (kind in extraKinds) simpleModelKindLabel(kind) else "Больше",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            )
-        }
 
-        Text(
-            "Стоимость",
-            modifier = Modifier.padding(start = 14.dp, top = 4.dp),
-            style = MaterialTheme.typography.labelMedium
-        )
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            items(SimplePriceFilter.entries) { item ->
-                FilterChip(
-                    selected = price == item,
-                    onClick = { price = item },
-                    label = { Text(simplePriceFilterLabel(item)) }
+                Text(
+                    "Сортировка",
+                    modifier = Modifier.padding(start = 14.dp, top = 4.dp),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box {
+                        FilterChip(
+                            selected = sort != CatalogSort.ALPHABETICAL,
+                            onClick = { sortMenuOpen = true },
+                            label = { Text("Сортировка: ${catalogSortLabel(sort)}") }
+                        )
+                        DropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false }
+                        ) {
+                            CatalogSort.entries.forEach { item ->
+                                val priceSort = item == CatalogSort.CHEAPEST || item == CatalogSort.EXPENSIVE
+                                DropdownMenuItem(
+                                    text = { Text(catalogSortLabel(item)) },
+                                    enabled = !priceSort || catalogPriceSortSupported(kind),
+                                    onClick = {
+                                        sort = item
+                                        sortMenuOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (kind != SimpleModelKind.ALL || sort != CatalogSort.ALPHABETICAL) {
+                        TextButton(
+                            onClick = {
+                                kind = SimpleModelKind.ALL
+                                sort = CatalogSort.ALPHABETICAL
+                            }
+                        ) {
+                            Text("Сбросить")
+                        }
+                    }
+                }
+                when (kind) {
+                    SimpleModelKind.ALL -> Text(
+                        "Для сортировки по цене сначала выберите тип модели.",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    SimpleModelKind.SPEECH -> Text(
+                        "У моделей озвучивания разные единицы тарификации, поэтому ценовая сортировка отключена.",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> Unit
+                }
+
+                Text(
+                    buildString {
+                        append("Показано ${filtered.size} из ${state.catalog.size}")
+                        if (query.isNotBlank()) append(" · точные совпадения выше")
+                        append(" · ")
+                        append(
+                            when (effectiveSort) {
+                                CatalogSort.ALPHABETICAL -> "по алфавиту"
+                                CatalogSort.CHEAPEST -> "сначала бесплатные и дешёвые"
+                                CatalogSort.EXPENSIVE -> "сначала дорогие"
+                                CatalogSort.CAPABILITIES -> "больше возможностей выше"
+                            }
+                        )
+                    },
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.CenterVertically
+        AnimatedVisibility(
+            visible = !filtersExpanded,
+            enter = fadeIn(),
+            exit = fadeOut()
         ) {
-            FilterChip(
-                selected = sortByCapabilities,
-                onClick = { sortByCapabilities = !sortByCapabilities },
-                label = { Text(if (sortByCapabilities) "Возможности ↓" else "По возможностям") }
-            )
-            Spacer(Modifier.weight(1f))
-            if (kind != SimpleModelKind.ALL || price != SimplePriceFilter.ALL || sortByCapabilities) {
-                TextButton(
-                    onClick = {
-                        kind = SimpleModelKind.ALL
-                        price = SimplePriceFilter.ALL
-                        sortByCapabilities = false
-                    }
-                ) {
-                    Text("Сбросить")
-                }
-            }
-        }
-
-        Text(
-            buildString {
-                append("Показано ${filtered.size} из ${state.catalog.size}")
-                if (!sortByCapabilities) append(" · по алфавиту")
-                else append(" · больше возможностей выше")
-            },
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        } else {
             Text(
                 "Показано ${filtered.size} из ${state.catalog.size} · фильтры свёрнуты",
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
@@ -628,7 +818,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                 }
             }
             items(filtered, key = { it.id }) { model ->
-                ModelCatalogCard(model, controller, appState, state)
+                ModelCatalogCard(model, controller, appState, state, kind)
             }
         }
     }
@@ -670,7 +860,13 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
 }
 
 @Composable
-private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
+private fun ModelCatalogCard(
+    model: ModelInfo,
+    controller: OpenRouterHubController,
+    appState: UiState,
+    hubState: OpenRouterHubState,
+    selectedKind: SimpleModelKind
+) {
     val context = LocalContext.current
     val universality = remember(model) { ModelUniversality.score(model) }
     var menuOpen by remember(model.id) { mutableStateOf(false) }
@@ -722,6 +918,10 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                                 onClick = { menuOpen = false; controller.useAsTextModel(model) }
                             )
                             DropdownMenuItem(
+                                text = { Text("Использовать как системную модель") },
+                                onClick = { menuOpen = false; controller.useAsSystemModel(model) }
+                            )
+                            DropdownMenuItem(
                                 text = {
                                     Text(
                                         if (appState.quickTextModels.any { it.substringAfter('\u001F') == model.id })
@@ -737,6 +937,15 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                             DropdownMenuItem(
                                 text = { Text("Использовать для пакетных задач") },
                                 onClick = { menuOpen = false; controller.assignModel(model, ModelCategory.TEXT) }
+                            )
+                        }
+                        if (ModelCategory.EMBEDDINGS in model.categories) {
+                            DropdownMenuItem(
+                                text = { Text("Использовать как Embeddings-модель") },
+                                onClick = {
+                                    menuOpen = false
+                                    controller.assignModel(model, ModelCategory.EMBEDDINGS)
+                                }
                             )
                         }
                         if (ModelCategory.IMAGE in model.categories) {
@@ -822,7 +1031,7 @@ private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubControll
                 )
             }
 
-            catalogPriceText(model)?.let { priceText ->
+            catalogPriceText(model, selectedKind)?.let { priceText ->
                 Text(priceText, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
@@ -988,8 +1197,16 @@ private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
                                 model.pricingUsd.toSortedMap().forEach { (key, value) ->
                                     ModelDetailLine(pricingFieldLabel(key), formatRawPricing(key, value))
                                 }
+                                if (ModelCategory.IMAGE in model.categories) {
+                                    model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }?.let { estimate ->
+                                        ModelDetailLine(
+                                            "Генерация изображения 1K, ориентир",
+                                            formatCatalogPrice(estimate)
+                                        )
+                                    }
+                                }
                                 model.pricingSkusUsd.toSortedMap().forEach { (key, value) ->
-                                    ModelDetailLine(key, formatCatalogPrice(value))
+                                    ModelDetailLine(pricingFieldLabel(key), formatSpecializedPricing(key, value))
                                 }
                             }
                         }
@@ -1107,109 +1324,220 @@ private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) 
     SimpleModelKind.SPEECH -> "Озвучка"
     SimpleModelKind.TRANSCRIPTION -> "Распознавание речи"
     SimpleModelKind.EMBEDDINGS -> "Поиск по документам"
-    SimpleModelKind.RERANK -> "Rerank"
     SimpleModelKind.AUDIO_INPUT -> "Аудио на вход"
     SimpleModelKind.MULTIMODAL -> "Мультимодальный чат"
     SimpleModelKind.REASONING -> "Reasoning"
     SimpleModelKind.TOOLS -> "Tools"
 }
 
-private fun simplePriceFilterLabel(value: SimplePriceFilter): String = when (value) {
-    SimplePriceFilter.ALL -> "Все"
-    SimplePriceFilter.FREE -> "Бесплатно"
-    SimplePriceFilter.UP_TO_0_02 -> "до \$0,02"
-    SimplePriceFilter.UP_TO_0_05 -> "до \$0,05"
-    SimplePriceFilter.UP_TO_0_1 -> "до \$0,1"
-    SimplePriceFilter.UP_TO_1 -> "до \$1"
-    SimplePriceFilter.UP_TO_5 -> "до \$5"
-    SimplePriceFilter.OVER_5 -> "более \$5"
+private fun catalogSortLabel(value: CatalogSort): String = when (value) {
+    CatalogSort.ALPHABETICAL -> "По алфавиту"
+    CatalogSort.CHEAPEST -> "Сначала дешёвые"
+    CatalogSort.EXPENSIVE -> "Сначала дорогие"
+    CatalogSort.CAPABILITIES -> "По возможностям"
 }
 
-private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
+private fun catalogPriceSortSupported(kind: SimpleModelKind): Boolean =
+    kind != SimpleModelKind.ALL && kind != SimpleModelKind.SPEECH
+
+internal fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
     SimpleModelKind.ALL -> true
-    SimpleModelKind.TEXT -> ModelCategory.TEXT in model.categories && !model.isBatch
-    SimpleModelKind.IMAGE -> ModelCategory.IMAGE in model.categories
-    SimpleModelKind.VIDEO -> ModelCategory.VIDEO in model.categories
+    SimpleModelKind.TEXT ->
+        model.outputs("text") &&
+            !model.isBatch &&
+            !model.outputs("image") &&
+            !model.outputs("video") &&
+            !model.outputs("speech") &&
+            !model.outputs("transcription") &&
+            !model.outputs("audio")
+    SimpleModelKind.IMAGE -> model.outputs("image")
+    SimpleModelKind.VIDEO -> model.outputs("video")
     SimpleModelKind.BATCH -> model.isBatch
-    SimpleModelKind.SPEECH -> ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories
-    SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION in model.categories
-    SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS in model.categories
-    SimpleModelKind.RERANK -> ModelCategory.RERANK in model.categories
+    SimpleModelKind.SPEECH -> model.outputs("speech")
+    SimpleModelKind.TRANSCRIPTION -> model.outputs("transcription")
+    SimpleModelKind.EMBEDDINGS -> model.outputs("embeddings") || model.outputs("embedding")
     SimpleModelKind.AUDIO_INPUT -> model.accepts("audio")
     SimpleModelKind.MULTIMODAL -> model.isMultimodalChat
     SimpleModelKind.REASONING -> model.supportsReasoning
     SimpleModelKind.TOOLS -> model.supportsTools
 }
 
-private fun modelMatchesSimplePrice(
-    model: ModelInfo,
-    kind: SimpleModelKind,
-    filter: SimplePriceFilter
-): Boolean {
-    if (filter == SimplePriceFilter.ALL) return true
-    if (filter == SimplePriceFilter.FREE) return isSimpleCatalogFree(model, kind)
+internal fun modelCatalogComparablePrice(model: ModelInfo, kind: SimpleModelKind): Double? =
+    catalogPriceQuote(model, kind).sortValue
 
-    val value = simpleCatalogPrice(model, kind) ?: return false
-    return when (filter) {
-        SimplePriceFilter.ALL, SimplePriceFilter.FREE -> true
-        SimplePriceFilter.UP_TO_0_02 -> value <= 0.02
-        SimplePriceFilter.UP_TO_0_05 -> value <= 0.05
-        SimplePriceFilter.UP_TO_0_1 -> value <= 0.10
-        SimplePriceFilter.UP_TO_1 -> value <= 1.0
-        SimplePriceFilter.UP_TO_5 -> value <= 5.0
-        SimplePriceFilter.OVER_5 -> value > 5.0
+private data class CatalogPriceQuote(
+    val sortValue: Double?,
+    val text: String?
+)
+
+private fun catalogPriceQuote(model: ModelInfo, requestedKind: SimpleModelKind): CatalogPriceQuote {
+    val kind = if (requestedKind == SimpleModelKind.ALL) primaryPriceKind(model) else requestedKind
+    if (ModelVariant.FREE in model.variants) {
+        return CatalogPriceQuote(0.0, "Цена: бесплатно (:free)")
+    }
+
+    return when (kind) {
+        SimpleModelKind.TEXT,
+        SimpleModelKind.BATCH,
+        SimpleModelKind.EMBEDDINGS,
+        SimpleModelKind.MULTIMODAL,
+        SimpleModelKind.REASONING,
+        SimpleModelKind.TOOLS,
+        SimpleModelKind.AUDIO_INPUT -> tokenPriceQuote(model)
+
+        SimpleModelKind.IMAGE -> imagePriceQuote(model)
+        SimpleModelKind.VIDEO -> videoPriceQuote(model)
+        SimpleModelKind.SPEECH -> speechPriceQuote(model)
+        SimpleModelKind.TRANSCRIPTION -> transcriptionPriceQuote(model)
+        SimpleModelKind.ALL -> CatalogPriceQuote(null, null)
     }
 }
 
-private fun isSimpleCatalogFree(model: ModelInfo, kind: SimpleModelKind): Boolean {
-    if (ModelVariant.FREE in model.variants) return true
-    val category = simplePriceCategory(kind, model)
-    if (category == ModelCategory.TEXT || category == ModelCategory.IMAGE) {
-        return model.isFreeFor(category)
-    }
-    val prices = simpleRawUnitPrices(model)
-    return prices.isNotEmpty() && prices.all { it <= 0.0 }
+private fun primaryPriceKind(model: ModelInfo): SimpleModelKind = when {
+    model.outputs("video") -> SimpleModelKind.VIDEO
+    model.outputs("image") -> SimpleModelKind.IMAGE
+    model.outputs("speech") -> SimpleModelKind.SPEECH
+    model.outputs("transcription") -> SimpleModelKind.TRANSCRIPTION
+    model.outputs("embeddings") || model.outputs("embedding") -> SimpleModelKind.EMBEDDINGS
+    else -> SimpleModelKind.TEXT
 }
 
-private fun simpleCatalogPrice(model: ModelInfo, kind: SimpleModelKind): Double? {
-    return when (simplePriceCategory(kind, model)) {
-        ModelCategory.TEXT -> model.maxTextPriceUsdPerMillion
-        ModelCategory.IMAGE -> model.estimatedImageOutputUsd1K ?: model.imagePriceUsd
-        ModelCategory.EMBEDDINGS, ModelCategory.RERANK -> model.maxTextPriceUsdPerMillion
-        else -> simpleRawUnitPrices(model).filter { it > 0.0 }.minOrNull()
-            ?: simpleRawUnitPrices(model).firstOrNull()
-            ?: model.maxTextPriceUsdPerMillion
-            ?: model.estimatedImageOutputUsd1K
+private fun tokenPriceQuote(model: ModelInfo): CatalogPriceQuote {
+    val input = model.promptPriceUsdPerMillion
+    val output = model.completionPriceUsdPerMillion
+    val known = listOfNotNull(input, output)
+    if (known.isEmpty()) return CatalogPriceQuote(null, null)
+    val sortValue = known.average()
+    val text = if (known.all { it <= 0.0 }) {
+        "Цена: бесплатно"
+    } else {
+        "Текст / 1M: вход ${formatCatalogPrice(input)} · выход ${formatCatalogPrice(output)}"
+    }
+    return CatalogPriceQuote(sortValue, text)
+}
+
+private fun imagePriceQuote(model: ModelInfo): CatalogPriceQuote {
+    // OpenRouter's generic `pricing.image` is the INPUT-image charge for models
+    // that accept references. It is not the generation price. For output pricing
+    // the general catalog exposes image_output/image_token; 4096 image tokens is
+    // the 1K baseline used by OpenRouter's image catalog.
+    val estimated1K = model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }
+    if (estimated1K != null) {
+        return CatalogPriceQuote(
+            estimated1K,
+            "Изображение: от ${formatCatalogPrice(estimated1K)} / изображение · 1K"
+        )
+    }
+
+    val endpointOutput = model.pricingSkusUsd
+        .filter { (key, value) ->
+            value > 0.0 && key.lowercase().let { k ->
+                k.contains("output_image") || k.contains("per-image") || k.contains("megapixel")
+            }
+        }
+        .values
+        .minOrNull()
+    if (endpointOutput != null) {
+        return CatalogPriceQuote(
+            endpointOutput,
+            "Изображение: от ${formatCatalogPrice(endpointOutput)}"
+        )
+    }
+
+    return CatalogPriceQuote(null, "Изображение: цена генерации не указана")
+}
+
+private fun videoPriceQuote(model: ModelInfo): CatalogPriceQuote {
+    val rates = videoPerSecondPrices(model)
+    val positive = rates.filter { it > 0.0 }
+    if (positive.isNotEmpty()) {
+        val value = positive.minOrNull()!!
+        return CatalogPriceQuote(value, "Видео: от ${formatCatalogPrice(value)} / сек")
+    }
+    return if (rates.isNotEmpty() && rates.all { it <= 0.0 }) {
+        CatalogPriceQuote(0.0, "Видео: бесплатно")
+    } else {
+        CatalogPriceQuote(null, "Видео: цена не указана")
     }
 }
 
-private fun simplePriceCategory(kind: SimpleModelKind, model: ModelInfo): ModelCategory? = when (kind) {
-    SimpleModelKind.TEXT, SimpleModelKind.BATCH -> ModelCategory.TEXT
-    SimpleModelKind.IMAGE -> ModelCategory.IMAGE
-    SimpleModelKind.VIDEO -> ModelCategory.VIDEO
-    SimpleModelKind.SPEECH -> ModelCategory.SPEECH
-    SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION
-    SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS
-    SimpleModelKind.RERANK -> ModelCategory.RERANK
-    SimpleModelKind.ALL, SimpleModelKind.AUDIO_INPUT, SimpleModelKind.MULTIMODAL,
-    SimpleModelKind.REASONING, SimpleModelKind.TOOLS -> when {
-        model.outputModalities == setOf("image") -> ModelCategory.IMAGE
-        ModelCategory.TEXT in model.categories -> ModelCategory.TEXT
-        ModelCategory.VIDEO in model.categories -> ModelCategory.VIDEO
-        ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories -> ModelCategory.SPEECH
-        ModelCategory.TRANSCRIPTION in model.categories -> ModelCategory.TRANSCRIPTION
-        ModelCategory.EMBEDDINGS in model.categories -> ModelCategory.EMBEDDINGS
-        ModelCategory.RERANK in model.categories -> ModelCategory.RERANK
-        else -> null
-    }
-}
-
-private fun simpleRawUnitPrices(model: ModelInfo): List<Double> {
-    val tokenKeys = setOf("prompt", "completion", "internal_reasoning", "image_token", "image_output")
-    return model.pricingUsd
-        .filterKeys { it.lowercase() !in tokenKeys }
+private fun videoPerSecondPrices(model: ModelInfo): List<Double> =
+    (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, _) -> isVideoSecondPriceKey(key) }
         .values
         .toList()
+
+private fun isVideoSecondPriceKey(key: String): Boolean {
+    val k = key.lowercase()
+    return k.contains("duration_seconds") ||
+        k.contains("per-video-second") ||
+        (k.contains("video") && k.contains("second"))
+}
+
+private fun speechPriceQuote(model: ModelInfo): CatalogPriceQuote {
+    val specialized = (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, _) ->
+            val k = key.lowercase()
+            k.contains("character") || k.contains("byte")
+        }
+    val specializedPositive = specialized.filterValues { it > 0.0 }
+    if (specializedPositive.isNotEmpty()) {
+        val entry = specializedPositive.minBy { it.value }
+        val perMillion = entry.value * 1_000_000.0
+        return CatalogPriceQuote(
+            perMillion,
+            "Озвучка: ${formatSpecializedPricing(entry.key, entry.value)}"
+        )
+    }
+
+    val input = model.promptPriceUsdPerMillion
+    val output = model.completionPriceUsdPerMillion
+    val known = listOfNotNull(input, output)
+    if (known.isEmpty()) return CatalogPriceQuote(null, "Озвучка: цена не указана")
+    if (known.all { it <= 0.0 }) return CatalogPriceQuote(0.0, "Озвучка: бесплатно")
+
+    val sortValue = known.average()
+    val text = when {
+        output != null && output > 0.0 ->
+            "Озвучка / 1M: текст-токены ${formatCatalogPrice(input)} · аудио-токены ${formatCatalogPrice(output)}"
+        input != null && input > 0.0 && model.providerId == "fish-audio" ->
+            "Озвучка: ${formatCatalogPrice(input)} / 1M UTF-8 байт"
+        input != null && input > 0.0 ->
+            "Озвучка: ${formatCatalogPrice(input)} / 1M символов"
+        else -> "Озвучка: цена не указана"
+    }
+    return CatalogPriceQuote(sortValue, text)
+}
+
+private fun transcriptionPriceQuote(model: ModelInfo): CatalogPriceQuote {
+    val explicitPerSecond = (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, value) ->
+            value >= 0.0 && key.lowercase().let { k ->
+                k.contains("per-second") || k.contains("per_second") || k.contains("second")
+            }
+        }
+        .values
+        .minOrNull()
+    val explicitPerMinute = (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, value) ->
+            value >= 0.0 && key.lowercase().contains("minute")
+        }
+        .values
+        .minOrNull()
+
+    val perSecond = when {
+        explicitPerSecond != null -> explicitPerSecond
+        explicitPerMinute != null -> explicitPerMinute / 60.0
+        else -> model.pricingUsd["prompt"]
+    }
+
+    if (perSecond == null) return CatalogPriceQuote(null, "Распознавание: цена не указана")
+    if (perSecond <= 0.0) return CatalogPriceQuote(0.0, "Распознавание: бесплатно")
+
+    return CatalogPriceQuote(
+        perSecond,
+        "Распознавание: ${formatCatalogPrice(perSecond)} / сек"
+    )
 }
 
 
@@ -1255,43 +1583,56 @@ private fun capabilityFieldLabel(value: String): String = when (value) {
     else -> value
 }
 
-private fun pricingFieldLabel(value: String): String = when (value) {
-    "prompt" -> "Входные токены"
-    "completion" -> "Выходные токены"
-    "request" -> "Запрос"
-    "image" -> "Изображение"
-    "image_token" -> "Image token"
-    "image_output" -> "Image output"
-    "web_search" -> "Веб-поиск"
-    "internal_reasoning" -> "Reasoning tokens"
-    "audio" -> "Аудио"
-    else -> value
+private fun pricingFieldLabel(value: String): String {
+    val key = value.lowercase()
+    return when {
+        key == "prompt" -> "Входные токены"
+        key == "completion" -> "Выходные токены"
+        key == "request" -> "Запрос"
+        key == "image" -> "Входное изображение"
+        key == "image_token" -> "Image token"
+        key == "image_output" -> "Выходной image token"
+        key == "web_search" -> "Веб-поиск"
+        key == "internal_reasoning" -> "Reasoning tokens"
+        key == "audio" -> "Аудио"
+        key.startsWith("duration_seconds_") -> "Видео ${key.removePrefix("duration_seconds_")}"
+        key == "duration_seconds" -> "Видео"
+        key.contains("character") -> "Символы"
+        key.contains("byte") -> "UTF-8 байты"
+        key.contains("megapixel") -> "Мегапиксели"
+        else -> value
+    }
 }
 
-private fun formatRawPricing(key: String, value: Double): String = when (key) {
+private fun formatRawPricing(key: String, value: Double): String = when (key.lowercase()) {
     "prompt", "completion" -> "${formatCatalogPrice(value * 1_000_000.0)} / 1M токенов"
-    else -> formatCatalogPrice(value)
+    else -> formatSpecializedPricing(key, value)
 }
 
-private fun catalogPriceText(model: ModelInfo): String? {
-    if (ModelVariant.FREE in model.variants) return "Цена: бесплатно (:free)"
-
-    val parts = mutableListOf<String>()
-    if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
-        parts += "Текст / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}"
+private fun formatSpecializedPricing(key: String, value: Double): String {
+    val normalized = key.lowercase()
+    return when {
+        normalized.startsWith("duration_seconds") || normalized.contains("per-video-second") || normalized.endsWith("_second") || normalized.endsWith("_seconds") ->
+            "${formatCatalogPrice(value)} / сек"
+        normalized.contains("minute") ->
+            "${formatCatalogPrice(value)} / мин"
+        normalized.contains("character") ->
+            "${formatCatalogPrice(value * 1_000_000.0)} / 1M символов"
+        normalized.contains("byte") ->
+            "${formatCatalogPrice(value * 1_000_000.0)} / 1M байт"
+        normalized.contains("megapixel") ->
+            "${formatCatalogPrice(value)} / МП"
+        normalized == "image" || normalized.endsWith("_image") ->
+            "${formatCatalogPrice(value)} / изображение"
+        normalized == "request" || normalized.endsWith("_request") ->
+            "${formatCatalogPrice(value)} / запрос"
+        else -> formatCatalogPrice(value)
     }
-    if (ModelCategory.IMAGE in model.categories) {
-        model.estimatedImageOutputUsd1K?.let { estimate ->
-            if (estimate > 0.0) {
-                parts += "изображение ≈ ${formatCatalogPrice(estimate)} за 1K"
-            }
-        }
-    }
-    if (parts.isEmpty() && ModelCategory.IMAGE in model.categories) {
-        parts += "изображение: цена зависит от image-тарифа OpenRouter"
-    }
-    return parts.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
 }
+
+private fun catalogPriceText(model: ModelInfo, kind: SimpleModelKind): String? =
+    catalogPriceQuote(model, kind).text
+
 
 private fun formatCatalogPrice(value: Double?): String = when {
     value == null -> "—"
@@ -1473,14 +1814,14 @@ private fun ToolsPage(
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "Настройки новых чатов",
+                    "Поиск для новых чатов",
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 UmnikInfoHint(
                     title = "Зачем это",
-                    text = "Здесь задаются значения по умолчанию для новых обычных чатов. Уже созданные чаты хранят свои настройки отдельно. Модель пользователь всегда выбирает сам."
+                    text = "Здесь задаются стартовые настройки поиска для новых обычных чатов. В уже созданном чате поиск включается и настраивается через «+»."
                 )
             }
         }
@@ -1496,10 +1837,10 @@ private fun ToolsPage(
         }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("Режим веб-поиска по умолчанию", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
+                Text("Режим поиска по умолчанию", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                 UmnikInfoHint(
                     title = "Поиск для новых чатов",
-                    text = "Сам поиск включается или выключается в конкретном чате. Здесь задаётся только режим, который получит новый чат."
+                    text = "Этот режим получит новый чат. После создания его можно изменить в самом чате через «+»."
                 )
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1514,7 +1855,7 @@ private fun ToolsPage(
         }
         item {
             UmnikInlineExpander(
-                title = "Дополнительные инструменты",
+                title = "Тонкая настройка поиска и инструменты",
                 expanded = advanced,
                 onToggle = { advanced = !advanced }
             )
@@ -1525,7 +1866,7 @@ private fun ToolsPage(
                     Text("Сервис интернет-поиска", modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
                     UmnikInfoHint(
                         title = "Сервис поиска",
-                        text = "Auto подходит большинству пользователей. Ручной выбор нужен только если вы понимаете, какой поисковый backend хотите использовать."
+                        text = "Общий движок веб-поиска для всех чатов, где поиск включён. Auto подходит большинству пользователей; ручной выбор нужен только для тонкой настройки."
                     )
                 }
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -1591,7 +1932,6 @@ private fun JobsPage(
     val tasks = remember { mutableStateListOf(BatchDraftTask()) }
     var bulkInput by remember { mutableStateOf("") }
     var fileTargetIndex by remember { mutableStateOf<Int?>(null) }
-    var clearHistoryConfirm by remember { mutableStateOf(false) }
     val taskFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val index = fileTargetIndex
         if (index != null && index in tasks.indices) {
@@ -1603,24 +1943,7 @@ private fun JobsPage(
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Text("Пакет из нескольких независимых заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Batch удобен, когда задания не зависят друг от друга. Результаты вернутся в тот чат, из которого вы запустили пакет.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            CategoryModelPicker(
-                title = "Модель для пакетных задач",
-                current = state.media.batchModel,
-                models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
-                onOpenCatalog = onOpenCatalog
-            )
-        }
-
-        item {
-            Text("Задания", fontWeight = FontWeight.Bold)
-            Text("Каждое поле — отдельный запрос. Файлы можно добавить отдельно к нужной задаче.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Новый пакет", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
 
         item {
@@ -1665,8 +1988,10 @@ private fun JobsPage(
         }
 
         item {
-            Text("Быстро добавить списком", fontWeight = FontWeight.SemiBold)
-            Text("Если у вас уже есть список коротких задач, вставьте по одной задаче на строку.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingTitleWithInfo(
+                title = "Быстро добавить списком",
+                info = "Если у вас уже есть список коротких задач, вставьте по одной задаче на строку."
+            )
             OutlinedTextField(
                 value = bulkInput,
                 onValueChange = { bulkInput = it },
@@ -1703,45 +2028,13 @@ private fun JobsPage(
         }
 
         item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("История Batch", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                TextButton(
-                    onClick = { clearHistoryConfirm = true },
-                    enabled = state.batches.any { it.status.terminal }
-                ) { Text("Очистить") }
-                TextButton(onClick = controller::refreshJobs) {
-                    Icon(Icons.Outlined.Refresh, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Обновить")
-                }
-            }
+            CategoryModelPicker(
+                title = "Модель Batch",
+                current = state.media.batchModel,
+                onOpenCatalog = onOpenCatalog,
+                onApply = controller::setBatchModelId
+            )
         }
-        if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(state.batches, key = { it.id }) { job ->
-            UmnikPanel {
-                Column(Modifier.padding(12.dp)) {
-                    Text(job.title, fontWeight = FontWeight.SemiBold)
-                    Text("${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}", style = MaterialTheme.typography.bodySmall)
-                    Text(job.modelId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    job.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                }
-            }
-        }
-    }
-
-    if (clearHistoryConfirm) {
-        AlertDialog(
-            onDismissRequest = { clearHistoryConfirm = false },
-            title = { Text("Очистить историю Batch?") },
-            text = { Text("Готовые, ошибочные и отменённые записи будут удалены. Активные задания останутся и продолжат выполняться.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearHistoryConfirm = false
-                    controller.clearFinishedBatchHistory()
-                }) { Text("Очистить") }
-            },
-            dismissButton = { TextButton(onClick = { clearHistoryConfirm = false }) { Text("Отмена") } }
-        )
     }
 }
 
@@ -1758,6 +2051,8 @@ private fun MediaPage(
     var speechModelId by remember(state.media.speechModel) { mutableStateOf(state.media.speechModel) }
     var voice by remember(state.media.speechModel, state.media.voice) { mutableStateOf(state.media.voice) }
     var speechResponseFormat by remember(state.media.speechModel, state.media.responseFormat) { mutableStateOf(state.media.responseFormat.orEmpty()) }
+    var videoSettingsExpanded by remember { mutableStateOf(false) }
+    var transcriptionSettingsExpanded by remember { mutableStateOf(false) }
     var speechSettingsExpanded by remember { mutableStateOf(false) }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         videoRefs.clear(); videoRefs.addAll(uris.take(4))
@@ -1771,20 +2066,37 @@ private fun MediaPage(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (section == MediaSection.ALL || section == MediaSection.VIDEO) {
             item {
-                Text("Генерация видео", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                CategoryModelPicker(
-                    title = "Модель видео",
-                    current = state.media.videoModel,
-                    models = state.catalog.filter { ModelCategory.VIDEO in it.categories },
-                    onOpenCatalog = onOpenCatalog
-                )
-                OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Создание видео",
+                        info = "Опишите видео, при необходимости добавьте референсы и нажмите «Создать». Готовый файл появится в исходном чате."
+                    )
+                }
+                OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth(), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: ${videoRefs.size}") }
+                    FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: " + videoRefs.size) }
                     Button(onClick = { controller.submitVideo(videoPrompt, videoRefs.toList()); videoPrompt = ""; videoRefs.clear() }, enabled = state.media.videoModel.isNotBlank() && videoPrompt.isNotBlank() && !state.loading, modifier = Modifier.weight(1f)) { Text("Создать") }
                 }
-                Text("Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            item {
+                UmnikInlineExpander(
+                    title = "Модель и параметры",
+                    subtitle = state.media.videoModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    expanded = videoSettingsExpanded,
+                    onToggle = { videoSettingsExpanded = !videoSettingsExpanded }
+                )
+            }
+            if (videoSettingsExpanded) {
+                item {
+                    CategoryModelPicker(
+                        title = "ID модели видео",
+                        current = state.media.videoModel,
+                        onOpenCatalog = onOpenCatalog,
+                        onApply = controller::setVideoModelId
+                    )
+                }
+            }
+
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -1829,14 +2141,17 @@ private fun MediaPage(
 
         if (section == MediaSection.ALL || section == MediaSection.TRANSCRIPTION) {
             item {
-                Text("Распознавание речи", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                CategoryModelPicker(
-                    title = "Модель распознавания",
-                    current = state.media.transcriptionModel,
-                    models = state.catalog.filter { ModelCategory.TRANSCRIPTION in it.categories },
-                    onOpenCatalog = onOpenCatalog
-                )
-                FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Распознавание речи",
+                        info = "Выберите аудиофайл. Расшифровка появится здесь и будет добавлена в текущий чат."
+                    )
+                }
+                FilledTonalButton(
+                    onClick = { sttPicker.launch(arrayOf("audio/*")) },
+                    enabled = state.media.transcriptionModel.isNotBlank() && !state.loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Выбрать аудиофайл") }
                 if (state.transcription.isNotBlank()) {
                     UmnikPanel(modifier = Modifier.padding(top = 8.dp)) {
                         Column(Modifier.padding(12.dp)) {
@@ -1845,19 +2160,37 @@ private fun MediaPage(
                         }
                     }
                 }
-                Text("Расшифровка также добавляется в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            item {
+                UmnikInlineExpander(
+                    title = "Модель и параметры",
+                    subtitle = state.media.transcriptionModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    expanded = transcriptionSettingsExpanded,
+                    onToggle = { transcriptionSettingsExpanded = !transcriptionSettingsExpanded }
+                )
+            }
+            if (transcriptionSettingsExpanded) {
+                item {
+                    CategoryModelPicker(
+                        title = "ID модели распознавания",
+                        current = state.media.transcriptionModel,
+                        onOpenCatalog = onOpenCatalog,
+                        onApply = controller::setTranscriptionModelId
+                    )
+                }
+            }
+
             if (section == MediaSection.ALL) item { HorizontalDivider() }
         }
 
         if (section == MediaSection.ALL || section == MediaSection.SPEECH) {
             item {
-                Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "Введите текст или загрузите текстовый файл.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Озвучивание текста и документов",
+                        info = "Введите текст или загрузите текстовый файл и нажмите «Создать аудио»."
+                    )
+                }
                 OutlinedTextField(
                     speechText,
                     { speechText = it },
@@ -1903,7 +2236,7 @@ private fun MediaPage(
             }
             item {
                 UmnikInlineExpander(
-                    title = "Настройки модели и голоса",
+                    title = "Модель, голос и параметры",
                     subtitle = state.media.speechModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
                     expanded = speechSettingsExpanded,
                     onToggle = { speechSettingsExpanded = !speechSettingsExpanded }
@@ -2105,28 +2438,176 @@ private fun ReplySpeechPage(
 }
 
 @Composable
-private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubController) {
+private fun ShellPage(
+    state: OpenRouterHubState,
+    controller: OpenRouterHubController,
+    currentChatId: String,
+    onReturnToChat: () -> Unit
+) {
     var prompt by remember { mutableStateOf("") }
+    var showResultHere by remember(state.shellResult) { mutableStateOf(false) }
     val files = remember { mutableStateListOf<Uri>() }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         files.clear(); files.addAll(uris.take(10))
     }
     val context = LocalContext.current
+    val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val activeShell = shellActivity?.takeIf { it.chatId == currentChatId }
+    val belongsToCurrentChat = state.shellChatId == null || state.shellChatId == currentChatId
 
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
         item {
-            Text("OpenRouter Shell", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Shell использует Responses API. Загруженные файлы передаются во временный контейнер; созданные контейнером файлы Umnik скачивает в своё хранилище. Результат и созданные файлы добавляются в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Задача") }, minLines = 4, maxLines = 10)
-            FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}") }
-            Button(onClick = { controller.runShell(prompt, files.toList()); prompt = ""; files.clear() }, enabled = prompt.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Выполнить через Shell") }
+            OutlinedTextField(
+                prompt,
+                { prompt = it },
+                Modifier.fillMaxWidth(),
+                label = { Text("Задача") },
+                minLines = 4,
+                maxLines = 10
+            )
+            FilledTonalButton(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                enabled = !state.shellRunning && !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            ) {
+                Text(if (files.isEmpty()) "Добавить файлы" else "Выбрано файлов: ${files.size}")
+            }
+            if (files.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    files.toList().forEach { uri ->
+                        val info = remember(uri) { shellAttachmentInfo(context, uri) }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        info.name,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    info.sizeBytes?.let { size ->
+                                        Text(
+                                            shellFileSizeLabel(size),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { files.remove(uri) },
+                                    enabled = !state.shellRunning && !state.loading
+                                ) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Button(
+                onClick = {
+                    controller.runShell(prompt, files.toList())
+                },
+                enabled = prompt.isNotBlank() && activeShell == null && !state.shellRunning && !state.loading,
+                modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+            ) { Text("Выполнить через Shell") }
+
+            if (activeShell != null) {
+                Text(
+                    "Можно вернуться в чат: задача продолжит выполняться, а результат появится там.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 6.dp)
+                )
+            }
         }
-        if (state.shellResult.isNotBlank()) {
+
+        activeShell?.let { activity ->
+            item {
+                ShellProgressPanel(
+                    activity = activity,
+                    onStop = controller::cancelShell
+                )
+            }
+        }
+
+        if (state.shellResult.isNotBlank() && activeShell == null && !state.shellRunning && belongsToCurrentChat) {
             item {
                 UmnikPanel {
                     Column(Modifier.padding(12.dp)) {
-                        Text(state.shellResult)
-                        TextButton(onClick = { copyToClipboard(context, state.shellResult) }) { Text("Копировать результат") }
+                        Text(
+                            if (state.shellFileCount > 0) {
+                                "Готово · создано файлов: ${state.shellFileCount}"
+                            } else {
+                                "Готово"
+                            },
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        FilledTonalButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) { Text("Открыть результат в чате") }
+                        TextButton(
+                            onClick = { showResultHere = !showResultHere },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (showResultHere) "Скрыть ответ здесь" else "Показать ответ здесь")
+                        }
+                        if (showResultHere) {
+                            Text(
+                                state.shellResult,
+                                modifier = Modifier.padding(top = 4.dp)
+                            )
+                            TextButton(
+                                onClick = { copyToClipboard(context, state.shellResult) }
+                            ) { Text("Копировать результат") }
+                        }
+                    }
+                }
+            }
+        }
+
+        state.shellError?.takeIf { it.isNotBlank() && belongsToCurrentChat }?.let { error ->
+            item {
+                UmnikPanel {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Shell не выполнил задачу", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            error,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        Text(
+                            "Ошибка также добавлена в исходный чат.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        FilledTonalButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                        ) { Text("Вернуться в чат") }
                     }
                 }
             }
@@ -2135,19 +2616,113 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
 }
 
 @Composable
+private fun ShellProgressPanel(
+    activity: ShellActivity,
+    onStop: () -> Unit
+) {
+    var now by remember(activity.startedAt) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(activity.startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val elapsed = shellDurationLabel(now - activity.startedAt)
+    val lastSignal = activity.lastRemoteEventAt?.let { shellAgoLabel(now - it) }
+
+    UmnikPanel {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Shell работает · $elapsed", fontWeight = FontWeight.SemiBold)
+            Text(
+                activity.status,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (activity.modelId.isNotBlank()) {
+                Text(
+                    "Модель: ${activity.modelId.substringAfterLast('/')}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.attachmentCount > 0) {
+                Text(
+                    "Вложений: ${activity.attachmentCount}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.shellSteps > 0) {
+                Text(
+                    "Этапов Shell: ${activity.shellSteps}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.eventCount > 0) {
+                Text(
+                    buildString {
+                        append("Событий OpenRouter: ${activity.eventCount}")
+                        if (lastSignal != null) append(" · последний сигнал $lastSignal назад")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    "Жду первый сигнал от OpenRouter",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "Автоматический повтор после обрыва не запускается, чтобы не было повторного списания.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(
+                onClick = onStop,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Остановить Shell")
+            }
+        }
+    }
+}
+
+private fun shellDurationLabel(durationMs: Long): String {
+    val totalSeconds = (durationMs.coerceAtLeast(0L) / 1_000L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return if (minutes > 0L) "${minutes} мин ${seconds} с" else "${seconds} с"
+}
+
+private fun shellAgoLabel(durationMs: Long): String {
+    val seconds = (durationMs.coerceAtLeast(0L) / 1_000L)
+    return when {
+        seconds < 5L -> "только что"
+        seconds < 60L -> "${seconds} с"
+        else -> "${seconds / 60L} мин"
+    }
+}
+
+@Composable
 private fun CategoryModelPicker(
     title: String,
     current: String,
-    models: List<ModelInfo>,
-    onOpenCatalog: () -> Unit
+    onOpenCatalog: () -> Unit,
+    onApply: (String) -> Unit
 ) {
-    UmnikModelPickerCard(
-        title = title,
-        current = current,
+    var modelId by remember(current) { mutableStateOf(current) }
+    UmnikModelIdField(
+        label = title,
+        value = modelId,
+        onValueChange = { modelId = it },
         onPick = onOpenCatalog,
-        enabled = models.isNotEmpty(),
-        emptyLabel = if (models.isEmpty()) "Нет подходящих моделей" else "Не выбрана",
-        actionLabel = "Выбрать"
+        onApply = { onApply(modelId) },
+        info = "Можно вставить ID модели OpenRouter вручную или открыть каталог значком поиска."
     )
 }
 
@@ -2267,4 +2842,37 @@ private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Umnik", text))
     Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+}
+
+
+private data class ShellAttachmentInfo(val name: String, val sizeBytes: Long?)
+
+private fun shellAttachmentInfo(context: Context, uri: Uri): ShellAttachmentInfo {
+    val resolver = context.contentResolver
+    var name: String? = null
+    var size: Long? = null
+    runCatching {
+        resolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) name = cursor.getString(nameIndex)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+            }
+        }
+    }
+    val fallbackName = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "Файл"
+    return ShellAttachmentInfo(name?.takeIf { it.isNotBlank() } ?: fallbackName, size)
+}
+
+private fun shellFileSizeLabel(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes Б"
+    bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f КБ", bytes / 1024.0)
+    else -> String.format(Locale.US, "%.1f МБ", bytes / (1024.0 * 1024.0))
 }
