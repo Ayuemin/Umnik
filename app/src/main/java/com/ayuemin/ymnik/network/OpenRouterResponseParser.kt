@@ -17,7 +17,7 @@ internal object OpenRouterResponseParser {
         val totalTokens: Int?,
         val reasoningTokens: Int?,
         val costUsd: Double?,
-        val costUsdExact: String?
+        val costUsdExact: String? = null
     )
 
     fun parse(body: String, allowEmpty: Boolean = false): Completion {

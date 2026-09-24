@@ -3,7 +3,7 @@ package com.ayuemin.ymnik
 import com.ayuemin.ymnik.model.RequestCostBreakdown
 import java.math.BigDecimal
 
-internal enum class RequestCostKind {
+enum class RequestCostKind {
     PRIMARY,
     SYSTEM,
     EMBEDDINGS
