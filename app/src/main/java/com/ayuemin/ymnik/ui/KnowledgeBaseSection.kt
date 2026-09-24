@@ -55,6 +55,9 @@ fun KnowledgeBaseSection(
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
     var modelInstruction by remember(ownerId, current.modelInstruction) { mutableStateOf(current.modelInstruction) }
+    var modelSearchLimit by remember(ownerId, current.effectiveModelSearchLimit) {
+        mutableStateOf(current.effectiveModelSearchLimit)
+    }
     val addDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.addKnowledgeDocuments(kind, ownerId, uris)
     }
@@ -126,7 +129,7 @@ fun KnowledgeBaseSection(
                     vm.saveKnowledgeSettings(
                         kind,
                         ownerId,
-                        current.copy(enabled = checked, modelInstruction = modelInstruction)
+                        current.copy(enabled = checked)
                     )
                 },
                 enabled = !state.isLoading && !state.requestActive
@@ -135,7 +138,7 @@ fun KnowledgeBaseSection(
 
         SettingTitleWithInfo(
             title = "Самостоятельный поиск модели",
-            info = "Это дополнительная возможность, а не отдельный тип базы. Вы по-прежнему можете напрямую спрашивать модель о содержимом базы. Совместимая модель также может сама искать в ней сведения во время любой задачи. Поле ниже только уточняет, когда и как ей делать такой самостоятельный поиск; оставьте пустым, если хотите автоматическое решение модели."
+            info = "Это дополнительная возможность, а не отдельный тип базы. Вы по-прежнему можете напрямую спрашивать модель о содержимом базы. Совместимая модель также может сама искать в ней сведения во время любой задачи. Инструкция ниже уточняет, когда и как ей делать самостоятельный поиск. Лимит задаёт только максимум таких дополнительных обращений за один ответ."
         )
         OutlinedTextField(
             value = modelInstruction,
@@ -146,19 +149,60 @@ fun KnowledgeBaseSection(
             minLines = 2,
             maxLines = 5
         )
+        SettingTitleWithInfo(
+            title = "Лимит самостоятельных поисков",
+            info = "От 0 до 10 за один ответ. Это максимум, а не обязательное количество: модель может обратиться к базе меньше раз или не обращаться совсем. 0 отключает только самостоятельные обращения модели. Обычные вопросы пользователя по базе и тихий RAG продолжают работать."
+        )
+        UmnikPanel {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = { modelSearchLimit = (modelSearchLimit - 1).coerceAtLeast(0) },
+                    enabled = modelSearchLimit > 0 && !state.isLoading && !state.requestActive
+                ) {
+                    Text("−", style = MaterialTheme.typography.headlineSmall)
+                }
+                Column(Modifier.weight(1f), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        modelSearchLimit.toString(),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        if (modelSearchLimit == 0) "Самостоятельный поиск выключен" else "максимум за один ответ",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                IconButton(
+                    onClick = { modelSearchLimit = (modelSearchLimit + 1).coerceAtMost(10) },
+                    enabled = modelSearchLimit < 10 && !state.isLoading && !state.requestActive
+                ) {
+                    Icon(Icons.Outlined.Add, contentDescription = "Увеличить лимит")
+                }
+            }
+        }
         FilledTonalButton(
             onClick = {
                 vm.saveKnowledgeSettings(
                     kind,
                     ownerId,
-                    current.copy(enabled = enabled, modelInstruction = modelInstruction)
+                    current.copy(
+                        enabled = enabled,
+                        modelInstruction = modelInstruction,
+                        modelSearchLimit = modelSearchLimit
+                    )
                 )
             },
-            enabled = modelInstruction.trim() != current.modelInstruction.trim() &&
-                !state.isLoading && !state.requestActive,
+            enabled = (
+                modelInstruction.trim() != current.modelInstruction.trim() ||
+                    modelSearchLimit != current.effectiveModelSearchLimit
+                ) && !state.isLoading && !state.requestActive,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Text("Сохранить инструкцию")
+            Text("Сохранить настройки поиска")
         }
 
         if (documents.isEmpty()) {

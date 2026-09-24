@@ -173,7 +173,8 @@ class OpenRouterClient(
         streamToUi: Boolean = false,
         webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
         requestImageOutput: Boolean = false,
-        knowledgeSearch: (suspend (String) -> String)? = null
+        knowledgeSearch: (suspend (String) -> String)? = null,
+        knowledgeSearchLimit: Int = 4
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -190,9 +191,11 @@ class OpenRouterClient(
         val created = mutableListOf<GeneratedFile>()
         val knowledgeCache = mutableMapOf<String, String>()
         var knowledgeCalls = 0
+        val effectiveKnowledgeSearchLimit = knowledgeSearchLimit.coerceIn(0, 10)
+        val maxToolLoops = maxOf(5, effectiveKnowledgeSearchLimit + 3)
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
-        while (loops++ < 5) {
+        while (loops++ < maxToolLoops) {
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
@@ -208,7 +211,9 @@ class OpenRouterClient(
                 })
                 val mergedTools = JsonArray()
                 if (toolsEnabled) tools().forEach(mergedTools::add)
-                if (knowledgeSearch != null) mergedTools.add(knowledgeSearchTool())
+                if (knowledgeSearch != null && effectiveKnowledgeSearchLimit > 0) {
+                    mergedTools.add(knowledgeSearchTool())
+                }
                 if (webSearchEnabled) {
                     if (modelInfo?.supportsTools == false) {
                         error("Выбранная модель не поддерживает современный веб-поиск OpenRouter")
@@ -296,8 +301,15 @@ class OpenRouterClient(
                                 require(query.isNotBlank()) { "Пустой поисковый запрос" }
                                 val cacheKey = query.lowercase(Locale.ROOT)
                                 val result = knowledgeCache[cacheKey] ?: run {
-                                    require(knowledgeCalls < 4) { "Достигнут лимит самостоятельных обращений к базе знаний" }
+                                    require(knowledgeCalls < effectiveKnowledgeSearchLimit) {
+                                        "Достигнут лимит самостоятельных обращений к базе знаний: $effectiveKnowledgeSearchLimit"
+                                    }
                                     knowledgeCalls += 1
+                                    DiagnosticLog.record(
+                                        context,
+                                        "KNOWLEDGE_TOOL",
+                                        "autonomous call=$knowledgeCalls/$effectiveKnowledgeSearchLimit"
+                                    )
                                     callback(query).also { knowledgeCache[cacheKey] = it }
                                 }
                                 gson.toJson(mapOf("ok" to true, "result" to result))
