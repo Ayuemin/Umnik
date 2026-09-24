@@ -305,6 +305,7 @@ private fun ChatScreen(
     var actionsOpen by remember { mutableStateOf(false) }
     var reasoningModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var webSearchModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
@@ -1178,36 +1179,68 @@ onBranch = if (message.role == "assistant") {
     if (webSearchModeOpen) {
         AlertDialog(
             onDismissRequest = { webSearchModeOpen = false },
-            title = { Text("Режим поиска") },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Режим поиска", modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            webSearchModeOpen = false
+                            webSearchModeInfoOpen = true
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Info, contentDescription = "О режимах поиска")
+                    }
+                }
+            },
+            text = {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(WebSearchPreset.entries) { preset ->
+                        FilterChip(
+                            selected = state.webSearchPreset == preset,
+                            onClick = {
+                                vm.setWebSearchPreset(preset)
+                                webSearchModeOpen = false
+                            },
+                            label = { Text(webSearchPresetUiLabel(preset)) }
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { webSearchModeOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+    if (webSearchModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { webSearchModeInfoOpen = false },
+            title = { Text("О поиске") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Эти настройки относятся только к текущему чату.")
                     WebSearchPreset.entries.forEach { preset ->
-                        Column {
-                            FilterChip(
-                                selected = state.webSearchPreset == preset,
-                                onClick = {
-                                    vm.setWebSearchPreset(preset)
-                                    webSearchModeOpen = false
-                                },
-                                label = { Text(webSearchPresetUiLabel(preset)) }
-                            )
-                            Text(
-                                webSearchPresetDescription(preset),
-                                modifier = Modifier.padding(start = 6.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
+                        Text(
+                            "• ${webSearchPresetUiLabel(preset)} — ${webSearchPresetDescription(preset)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                     Text(
-                        "Сервис поиска и другие технические параметры настраиваются в общих настройках OpenRouter.",
+                        "Движок поиска и другие технические параметры находятся в «Каталог и модели OpenRouter → Инструменты». Там же задаются настройки поиска по умолчанию для новых чатов.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             },
             confirmButton = {
-                TextButton(onClick = { webSearchModeOpen = false }) { Text("Закрыть") }
+                TextButton(onClick = { webSearchModeInfoOpen = false }) { Text("Закрыть") }
             }
         )
     }
