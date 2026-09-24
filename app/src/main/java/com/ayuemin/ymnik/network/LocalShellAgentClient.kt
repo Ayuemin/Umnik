@@ -264,7 +264,7 @@ class LocalShellAgentClient(private val context: Context) {
 
     companion object {
         private const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-        private const val MAX_TURNS = 8
-        private const val MAX_TOOL_CALLS = 16
+        private const val MAX_TURNS = 24
+        private const val MAX_TOOL_CALLS = 48
     }
 }
