@@ -619,6 +619,7 @@ class OpenRouterHubController(
             return
         }
         scope.launch {
+            AsyncJobEvents.markShellRunning(originChatId)
             mutableState.value = mutableState.value.copy(
                 loading = true,
                 operation = "Shell выполняет задачу…",
@@ -697,6 +698,7 @@ class OpenRouterHubController(
                         "Shell завершил работу · файлов: ${generated.size}"
                     }
                 )
+                AsyncJobEvents.markShellFinished(originChatId)
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 val message = error.message ?: "Ошибка Shell"
@@ -715,6 +717,7 @@ class OpenRouterHubController(
                     shellChatId = originChatId,
                     status = message
                 )
+                AsyncJobEvents.markShellFinished(originChatId)
                 AsyncJobEvents.notifyChanged()
             }
             uploadedIds.forEach { id ->

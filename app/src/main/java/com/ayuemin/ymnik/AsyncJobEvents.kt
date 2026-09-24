@@ -4,6 +4,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
 internal data class OpenRouterSpeechRequest(val chatId: String, val text: String)
+internal data class ShellActivity(val chatId: String, val startedAt: Long = System.currentTimeMillis())
 
 internal object AsyncJobEvents {
     private val mutableSequence = MutableStateFlow(0L)
@@ -16,6 +17,9 @@ internal object AsyncJobEvents {
 
     private val mutableSpeechRequest = MutableStateFlow<OpenRouterSpeechRequest?>(null)
     val speechRequest: StateFlow<OpenRouterSpeechRequest?> = mutableSpeechRequest
+
+    private val mutableShellActivity = MutableStateFlow<ShellActivity?>(null)
+    val shellActivity: StateFlow<ShellActivity?> = mutableShellActivity
 
     fun notifyChanged() {
         mutableSequence.value = mutableSequence.value + 1L
@@ -38,5 +42,16 @@ internal object AsyncJobEvents {
 
     fun consumeSpeechRequest() {
         mutableSpeechRequest.value = null
+    }
+
+    fun markShellRunning(chatId: String) {
+        if (chatId.isBlank()) return
+        mutableShellActivity.value = ShellActivity(chatId)
+    }
+
+    fun markShellFinished(chatId: String) {
+        if (mutableShellActivity.value?.chatId == chatId) {
+            mutableShellActivity.value = null
+        }
     }
 }

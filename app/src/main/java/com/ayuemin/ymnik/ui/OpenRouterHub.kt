@@ -389,7 +389,12 @@ private fun OpenRouterHubDialog(
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
                         HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
-                        HubPage.JOBS -> JobsPage(state, controller, openCatalog)
+                        HubPage.JOBS -> JobsPage(
+                            state = state,
+                            controller = controller,
+                            onOpenCatalog = openCatalog,
+                            onReturnToChat = onDismiss
+                        )
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
                         HubPage.SHELL -> ShellPage(
@@ -1856,7 +1861,8 @@ private data class BatchDraftTask(
 private fun JobsPage(
     state: OpenRouterHubState,
     controller: OpenRouterHubController,
-    onOpenCatalog: () -> Unit
+    onOpenCatalog: () -> Unit,
+    onReturnToChat: () -> Unit
 ) {
     val tasks = remember { mutableStateListOf(BatchDraftTask()) }
     var bulkInput by remember { mutableStateOf("") }
@@ -1871,8 +1877,43 @@ private fun JobsPage(
         fileTargetIndex = null
     }
     val readyCount = tasks.count { it.text.isNotBlank() }
+    val activeBatches = state.batches.filterNot { it.status.terminal }
+    val finishedBatches = state.batches.filter { it.status.terminal }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (activeBatches.isNotEmpty()) {
+            item {
+                Text("Сейчас выполняется", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            }
+            items(activeBatches, key = { "active-${it.id}" }) { job ->
+                UmnikPanel {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(job.title, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            "${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Можно вернуться в чат. Результат появится там после завершения.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp)
+                        )
+                        TextButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                        ) { Text("Вернуться в чат") }
+                    }
+                }
+            }
+            item { HorizontalDivider() }
+        }
+
+        item {
+            Text("Новый пакет", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        }
+
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tasks.forEachIndexed { index, task ->
@@ -1987,8 +2028,10 @@ private fun JobsPage(
                 }
             }
         }
-        if (state.batches.isEmpty()) item { Text("Пока нет Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        items(state.batches, key = { it.id }) { job ->
+        if (finishedBatches.isEmpty()) {
+            item { Text("Пока нет завершённых Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        items(finishedBatches, key = { it.id }) { job ->
             UmnikPanel {
                 Column(Modifier.padding(12.dp)) {
                     Text(job.title, fontWeight = FontWeight.SemiBold)

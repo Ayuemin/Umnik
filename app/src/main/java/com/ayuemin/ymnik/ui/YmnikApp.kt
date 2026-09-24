@@ -164,11 +164,13 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
+import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
@@ -384,6 +386,15 @@ private fun ChatScreen(
         teamsOpen = true
     }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
+    val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
+    val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
+    val activeBatchForChat = remember(state.currentChatId, asyncJobSequence) {
+        batchRepository.list()
+            .filter { it.chatId == state.currentChatId && !it.status.terminal }
+            .maxByOrNull { it.updatedAt }
+    }
+    val shellActiveHere = shellActivity?.chatId == state.currentChatId
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
     val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
     val nonRequestBusy = state.isLoading && !state.requestActive
@@ -792,6 +803,22 @@ onBranch = if (message.role == "assistant") {
                             recordingStartedAt = 0L
                             recordingSeconds = 0
                         }
+                    )
+                }
+
+                if (shellActiveHere) {
+                    BackgroundOperationBanner(
+                        title = "Shell выполняет задачу",
+                        subtitle = "Можно продолжать чат · нажмите, чтобы открыть Shell",
+                        onClick = { AsyncJobEvents.requestHub("shell", "Вернуться в чат") }
+                    )
+                }
+
+                activeBatchForChat?.let { batch ->
+                    BackgroundOperationBanner(
+                        title = "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.completedItems}/${batch.totalItems}",
+                        subtitle = "Можно продолжать чат · результат появится здесь",
+                        onClick = { AsyncJobEvents.requestHub("batch", "Вернуться в чат") }
                     )
                 }
 
@@ -1317,6 +1344,59 @@ onBranch = if (message.role == "assistant") {
     }
 }
 
+
+@Composable
+private fun BackgroundOperationBanner(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                Icons.Outlined.KeyboardArrowRight,
+                contentDescription = "Открыть",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+private fun batchStatusUiLabel(status: com.ayuemin.ymnik.model.BatchJobStatus): String = when (status) {
+    com.ayuemin.ymnik.model.BatchJobStatus.VALIDATING -> "проверка"
+    com.ayuemin.ymnik.model.BatchJobStatus.QUEUED -> "в очереди"
+    com.ayuemin.ymnik.model.BatchJobStatus.IN_PROGRESS -> "выполняется"
+    com.ayuemin.ymnik.model.BatchJobStatus.FINALIZING -> "завершается"
+    else -> "выполняется"
+}
 
 @Composable
 private fun ComposerToggleTile(
