@@ -313,23 +313,47 @@ private fun OpenRouterHubDialog(
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Text(
-                                    when (page) {
-                                        HubPage.MODELS -> "Поиск, фильтры, цены и назначение моделей"
-                                        HubPage.ROUTING -> "Правила выбора провайдера"
-                                        HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
-                                        HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
-                                        else -> "Результат возвращается в текущий чат"
-                                    },
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                val subtitle = when (page) {
+                                    HubPage.MODELS -> "Поиск, фильтры, цены и назначение моделей"
+                                    HubPage.ROUTING -> "Правила выбора провайдера"
+                                    HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
+                                    HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
+                                    else -> null
+                                }
+                                if (subtitle != null) {
+                                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                             }
-                            if (page == HubPage.MODELS) {
-                                UmnikInfoHint(
+                            when (page) {
+                                HubPage.MODELS -> UmnikInfoHint(
                                     title = "О каталоге",
                                     text = "Не нашли нужной информации? Посмотрите модель на сайте OpenRouter и вставьте её ID в Umnik вручную."
                                 )
+                                HubPage.JOBS -> UmnikInfoHint(
+                                    title = "Пакетные задачи",
+                                    text = "Добавьте несколько независимых заданий, при необходимости прикрепите файлы к каждому и запустите пакет. Batch удобен, когда задания не зависят друг от друга; результаты вернутся в исходный чат."
+                                )
+                                HubPage.MEDIA -> UmnikInfoHint(
+                                    title = when (initialMediaSection) {
+                                        MediaSection.VIDEO -> "Создание видео"
+                                        MediaSection.TRANSCRIPTION -> "Распознавание речи"
+                                        MediaSection.SPEECH -> "Озвучивание текста и документов"
+                                        MediaSection.ALL -> "Медиа"
+                                    },
+                                    text = when (initialMediaSection) {
+                                        MediaSection.VIDEO -> "Опишите видео, при необходимости добавьте референсы и нажмите «Создать». Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате."
+                                        MediaSection.TRANSCRIPTION -> "Выберите аудиофайл. После распознавания текст появится здесь и будет добавлен в текущий чат."
+                                        MediaSection.SPEECH -> "Введите текст или загрузите текстовый файл и нажмите «Создать аудио». Модель, голос и формат доступны в сворачиваемом блоке ниже."
+                                        MediaSection.ALL -> "Здесь собраны видео, распознавание речи и озвучивание. Технические настройки моделей находятся во вторичном уровне."
+                                    }
+                                )
+                                HubPage.SHELL -> UmnikInfoHint(
+                                    title = "OpenRouter Shell",
+                                    text = "Shell выполняет задачи через OpenRouter. Добавленные файлы попадают во временную рабочую среду; результат и созданные файлы возвращаются в текущий чат."
+                                )
+                                else -> Unit
+                            }
+                            if (page == HubPage.MODELS || page == HubPage.JOBS || page == HubPage.MEDIA || page == HubPage.SHELL) {
                                 Spacer(Modifier.width(2.dp))
                             }
                             if (!showBack) {
@@ -1832,6 +1856,7 @@ private fun JobsPage(
     var bulkInput by remember { mutableStateOf("") }
     var fileTargetIndex by remember { mutableStateOf<Int?>(null) }
     var clearHistoryConfirm by remember { mutableStateOf(false) }
+    var modelSettingsExpanded by remember { mutableStateOf(false) }
     val taskFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val index = fileTargetIndex
         if (index != null && index in tasks.indices) {
@@ -1842,27 +1867,6 @@ private fun JobsPage(
     val readyCount = tasks.count { it.text.isNotBlank() }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        item {
-            Text("Пакет из нескольких независимых заданий", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text(
-                "Batch удобен, когда задания не зависят друг от друга. Результаты вернутся в тот чат, из которого вы запустили пакет.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(8.dp))
-            CategoryModelPicker(
-                title = "ID модели для пакетных задач",
-                current = state.media.batchModel,
-                onOpenCatalog = onOpenCatalog,
-                onApply = controller::setBatchModelId
-            )
-        }
-
-        item {
-            Text("Задания", fontWeight = FontWeight.Bold)
-            Text("Каждое поле — отдельный запрос. Файлы можно добавить отдельно к нужной задаче.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-
         item {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 tasks.forEachIndexed { index, task ->
@@ -1905,8 +1909,10 @@ private fun JobsPage(
         }
 
         item {
-            Text("Быстро добавить списком", fontWeight = FontWeight.SemiBold)
-            Text("Если у вас уже есть список коротких задач, вставьте по одной задаче на строку.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingTitleWithInfo(
+                title = "Быстро добавить списком",
+                info = "Если у вас уже есть список коротких задач, вставьте по одной задаче на строку."
+            )
             OutlinedTextField(
                 value = bulkInput,
                 onValueChange = { bulkInput = it },
@@ -1940,6 +1946,25 @@ private fun JobsPage(
                 enabled = state.media.batchModel.endsWith(":batch", true) && readyCount > 0 && !state.loading,
                 modifier = Modifier.fillMaxWidth()
             ) { Text("Запустить пакет · $readyCount") }
+        }
+
+        item {
+            UmnikInlineExpander(
+                title = "Модель и параметры",
+                subtitle = state.media.batchModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                expanded = modelSettingsExpanded,
+                onToggle = { modelSettingsExpanded = !modelSettingsExpanded }
+            )
+        }
+        if (modelSettingsExpanded) {
+            item {
+                CategoryModelPicker(
+                    title = "ID модели для пакетных задач",
+                    current = state.media.batchModel,
+                    onOpenCatalog = onOpenCatalog,
+                    onApply = controller::setBatchModelId
+                )
+            }
         }
 
         item {
@@ -1998,6 +2023,8 @@ private fun MediaPage(
     var speechModelId by remember(state.media.speechModel) { mutableStateOf(state.media.speechModel) }
     var voice by remember(state.media.speechModel, state.media.voice) { mutableStateOf(state.media.voice) }
     var speechResponseFormat by remember(state.media.speechModel, state.media.responseFormat) { mutableStateOf(state.media.responseFormat.orEmpty()) }
+    var videoSettingsExpanded by remember { mutableStateOf(false) }
+    var transcriptionSettingsExpanded by remember { mutableStateOf(false) }
     var speechSettingsExpanded by remember { mutableStateOf(false) }
     val videoPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         videoRefs.clear(); videoRefs.addAll(uris.take(4))
@@ -2011,20 +2038,37 @@ private fun MediaPage(
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         if (section == MediaSection.ALL || section == MediaSection.VIDEO) {
             item {
-                Text("Генерация видео", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                CategoryModelPicker(
-                    title = "ID модели видео",
-                    current = state.media.videoModel,
-                    onOpenCatalog = onOpenCatalog,
-                    onApply = controller::setVideoModelId
-                )
-                OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Создание видео",
+                        info = "Опишите видео, при необходимости добавьте референсы и нажмите «Создать». Готовый файл появится в исходном чате."
+                    )
+                }
+                OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth(), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                    FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: ${videoRefs.size}") }
+                    FilledTonalButton(onClick = { videoPicker.launch(arrayOf("image/*", "video/*", "audio/*")) }, modifier = Modifier.weight(1f)) { Text(if (videoRefs.isEmpty()) "Референсы" else "Референсы: " + videoRefs.size) }
                     Button(onClick = { controller.submitVideo(videoPrompt, videoRefs.toList()); videoPrompt = ""; videoRefs.clear() }, enabled = state.media.videoModel.isNotBlank() && videoPrompt.isNotBlank() && !state.loading, modifier = Modifier.weight(1f)) { Text("Создать") }
                 }
-                Text("Видео продолжит создаваться в фоне, а готовый файл появится в исходном чате.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            item {
+                UmnikInlineExpander(
+                    title = "Модель и параметры",
+                    subtitle = state.media.videoModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    expanded = videoSettingsExpanded,
+                    onToggle = { videoSettingsExpanded = !videoSettingsExpanded }
+                )
+            }
+            if (videoSettingsExpanded) {
+                item {
+                    CategoryModelPicker(
+                        title = "ID модели видео",
+                        current = state.media.videoModel,
+                        onOpenCatalog = onOpenCatalog,
+                        onApply = controller::setVideoModelId
+                    )
+                }
+            }
+
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
@@ -2069,14 +2113,17 @@ private fun MediaPage(
 
         if (section == MediaSection.ALL || section == MediaSection.TRANSCRIPTION) {
             item {
-                Text("Распознавание речи", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                CategoryModelPicker(
-                    title = "ID модели распознавания",
-                    current = state.media.transcriptionModel,
-                    onOpenCatalog = onOpenCatalog,
-                    onApply = controller::setTranscriptionModelId
-                )
-                FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Распознавание речи",
+                        info = "Выберите аудиофайл. Расшифровка появится здесь и будет добавлена в текущий чат."
+                    )
+                }
+                FilledTonalButton(
+                    onClick = { sttPicker.launch(arrayOf("audio/*")) },
+                    enabled = state.media.transcriptionModel.isNotBlank() && !state.loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Выбрать аудиофайл") }
                 if (state.transcription.isNotBlank()) {
                     UmnikPanel(modifier = Modifier.padding(top = 8.dp)) {
                         Column(Modifier.padding(12.dp)) {
@@ -2085,19 +2132,37 @@ private fun MediaPage(
                         }
                     }
                 }
-                Text("Расшифровка также добавляется в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             }
+            item {
+                UmnikInlineExpander(
+                    title = "Модель и параметры",
+                    subtitle = state.media.transcriptionModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
+                    expanded = transcriptionSettingsExpanded,
+                    onToggle = { transcriptionSettingsExpanded = !transcriptionSettingsExpanded }
+                )
+            }
+            if (transcriptionSettingsExpanded) {
+                item {
+                    CategoryModelPicker(
+                        title = "ID модели распознавания",
+                        current = state.media.transcriptionModel,
+                        onOpenCatalog = onOpenCatalog,
+                        onApply = controller::setTranscriptionModelId
+                    )
+                }
+            }
+
             if (section == MediaSection.ALL) item { HorizontalDivider() }
         }
 
         if (section == MediaSection.ALL || section == MediaSection.SPEECH) {
             item {
-                Text("Нейросетевая озвучка", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text(
-                    "Введите текст или загрузите текстовый файл.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                if (section == MediaSection.ALL) {
+                    SettingTitleWithInfo(
+                        title = "Озвучивание текста и документов",
+                        info = "Введите текст или загрузите текстовый файл и нажмите «Создать аудио»."
+                    )
+                }
                 OutlinedTextField(
                     speechText,
                     { speechText = it },
@@ -2143,7 +2208,7 @@ private fun MediaPage(
             }
             item {
                 UmnikInlineExpander(
-                    title = "Настройки модели и голоса",
+                    title = "Модель, голос и параметры",
                     subtitle = state.media.speechModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
                     expanded = speechSettingsExpanded,
                     onToggle = { speechSettingsExpanded = !speechSettingsExpanded }
@@ -2355,9 +2420,7 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
-            Text("OpenRouter Shell", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("Shell использует Responses API. Загруженные файлы передаются во временный контейнер; созданные контейнером файлы Umnik скачивает в своё хранилище. Результат и созданные файлы добавляются в текущий чат.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth().padding(top = 8.dp), label = { Text("Задача") }, minLines = 4, maxLines = 10)
+            OutlinedTextField(prompt, { prompt = it }, Modifier.fillMaxWidth(), label = { Text("Задача") }, minLines = 4, maxLines = 10)
             FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}") }
             Button(onClick = { controller.runShell(prompt, files.toList()); prompt = ""; files.clear() }, enabled = prompt.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text("Выполнить через Shell") }
         }

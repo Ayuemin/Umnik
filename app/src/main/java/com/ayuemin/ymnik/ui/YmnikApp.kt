@@ -304,6 +304,7 @@ private fun ChatScreen(
     var specialistChatReturnTeamId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var reasoningModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var reasoningModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
@@ -346,6 +347,9 @@ private fun ChatScreen(
         !activeTextModel.endsWith(":batch", ignoreCase = true) && textModelInfo?.accepts("image") == true
     }
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true
+    val reasoningLevelSelectable = reasoningAvailable &&
+        textModelInfo?.supportsReasoningEffort == true &&
+        textModelInfo.reasoningEfforts.isNotEmpty()
     val webSearchAvailable = !imagePromptMode && openRouterProfile && textModelInfo?.supportsTools == true
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
@@ -1040,7 +1044,9 @@ onBranch = if (message.role == "assistant") {
                     ) {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
-                            label = reasoningEffortCompactLabel(state.reasoningEffort),
+                            level = if (reasoningLevelSelectable) reasoningEffortIndicatorLevel(state.reasoningEffort) else 0,
+                            levelCount = 3,
+                            levelDescription = if (state.reasoningEnabled) "Размышление: " + reasoningEffortUiLabel(state.reasoningEffort) else "Размышление выключено",
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
@@ -1049,7 +1055,9 @@ onBranch = if (message.role == "assistant") {
                         )
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
-                            label = webSearchPresetCompactLabel(state.webSearchPreset),
+                            level = webSearchPresetIndicatorLevel(state.webSearchPreset),
+                            levelCount = 4,
+                            levelDescription = if (state.webSearchEnabled) "Поиск: " + webSearchPresetUiLabel(state.webSearchPreset) else "Поиск выключен",
                             checked = state.webSearchEnabled,
                             enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
@@ -1137,25 +1145,44 @@ onBranch = if (message.role == "assistant") {
     }
 
     if (reasoningModeOpen) {
-        val controllableEfforts = if (textModelInfo?.supportsReasoningEffort == true) {
+        val supportedEfforts = if (textModelInfo?.supportsReasoningEffort == true) {
             ReasoningEffort.entries.filter { effort ->
                 textModelInfo.reasoningEfforts.isNotEmpty() && effort.apiValue in textModelInfo.reasoningEfforts
             }
         } else {
             emptyList()
         }
+        val controllableEfforts = if (supportedEfforts.size <= 3) {
+            supportedEfforts
+        } else {
+            listOfNotNull(
+                supportedEfforts.firstOrNull { it == ReasoningEffort.LOW } ?: supportedEfforts.firstOrNull(),
+                supportedEfforts.firstOrNull { it == ReasoningEffort.HIGH } ?: supportedEfforts.getOrNull(supportedEfforts.lastIndex / 2),
+                supportedEfforts.firstOrNull { it == ReasoningEffort.MAX } ?: supportedEfforts.lastOrNull()
+            ).distinct()
+        }
         AlertDialog(
             onDismissRequest = { reasoningModeOpen = false },
-            title = { Text("Уровень размышления") },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Уровень размышления", modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            reasoningModeOpen = false
+                            reasoningModeInfoOpen = true
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Info, contentDescription = "Об уровне размышления")
+                    }
+                }
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(
-                        activeTextModel.substringAfter('/').ifBlank { activeTextModel },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                     if (controllableEfforts.isEmpty()) {
-                        Text("Модель поддерживает размышление, но доступный уровень выбирает сама.")
+                        Text("Модель умеет размышлять, но не даёт выбирать уровень.")
                     } else {
                         controllableEfforts.forEach { effort ->
                             FilterChip(
@@ -1172,6 +1199,24 @@ onBranch = if (message.role == "assistant") {
             },
             confirmButton = {
                 TextButton(onClick = { reasoningModeOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+    if (reasoningModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { reasoningModeInfoOpen = false },
+            title = { Text("О размышлении") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Уровень размышления относится только к текущему чату.")
+                    Text("Доступные уровни зависят от выбранной модели.")
+                    Text("Более высокий уровень может работать дольше и стоить дороже.")
+                    Text("Если модель не позволяет выбирать уровень, Umnik не показывает выбор, которого у неё нет.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { reasoningModeInfoOpen = false }) { Text("Понятно") }
             }
         )
     }
@@ -1276,8 +1321,9 @@ onBranch = if (message.role == "assistant") {
 @Composable
 private fun ComposerToggleTile(
     icon: ImageVector,
-    label: String,
-    subtitle: String? = null,
+    level: Int,
+    levelCount: Int,
+    levelDescription: String,
     checked: Boolean,
     enabled: Boolean,
     modifier: Modifier = Modifier,
@@ -1307,30 +1353,32 @@ private fun ComposerToggleTile(
             ) {
                 Icon(
                     icon,
-                    contentDescription = null,
+                    contentDescription = levelDescription,
                     modifier = Modifier.size(20.dp),
                     tint = if (enabled) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                 )
-                Spacer(Modifier.width(7.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (!subtitle.isNullOrBlank()) {
-                        Text(
-                            subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                Spacer(Modifier.width(8.dp))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    repeat(levelCount.coerceAtLeast(1)) { index ->
+                        val active = enabled && checked && index < level
+                        Surface(
+                            modifier = Modifier.weight(1f).height(6.dp),
+                            shape = RoundedCornerShape(999.dp),
+                            color = if (active) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.16f else 0.08f)
+                            }
+                        ) {}
                     }
                 }
             }
+            Spacer(Modifier.width(8.dp))
             Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
         }
     }
@@ -1345,20 +1393,17 @@ private fun reasoningEffortUiLabel(effort: ReasoningEffort): String = when (effo
     ReasoningEffort.MAX -> "Максимальный"
 }
 
-private fun reasoningEffortCompactLabel(effort: ReasoningEffort): String = when (effort) {
-    ReasoningEffort.MINIMAL -> "Минимум"
-    ReasoningEffort.LOW -> "Низкий"
-    ReasoningEffort.MEDIUM -> "Средний"
-    ReasoningEffort.HIGH -> "Высокий"
-    ReasoningEffort.XHIGH -> "Очень высокий"
-    ReasoningEffort.MAX -> "Максимум"
+private fun reasoningEffortIndicatorLevel(effort: ReasoningEffort): Int = when (effort) {
+    ReasoningEffort.MINIMAL, ReasoningEffort.LOW -> 1
+    ReasoningEffort.MEDIUM, ReasoningEffort.HIGH -> 2
+    ReasoningEffort.XHIGH, ReasoningEffort.MAX -> 3
 }
 
-private fun webSearchPresetCompactLabel(preset: WebSearchPreset): String = when (preset) {
-    WebSearchPreset.ON_DEMAND -> "Необходимый"
-    WebSearchPreset.FAST -> "Быстрый"
-    WebSearchPreset.NORMAL -> "Обычный"
-    WebSearchPreset.DEEP -> "Глубокий"
+private fun webSearchPresetIndicatorLevel(preset: WebSearchPreset): Int = when (preset) {
+    WebSearchPreset.ON_DEMAND -> 1
+    WebSearchPreset.FAST -> 2
+    WebSearchPreset.NORMAL -> 3
+    WebSearchPreset.DEEP -> 4
 }
 
 private fun webSearchPresetUiLabel(preset: WebSearchPreset): String = when (preset) {
