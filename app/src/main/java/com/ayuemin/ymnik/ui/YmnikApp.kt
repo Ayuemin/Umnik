@@ -1125,6 +1125,23 @@ onBranch = if (message.role == "assistant") {
                 }
 
                 if (currentSpecialistId == null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        CompactComposerTool(
+                            Icons.Outlined.Storage,
+                            "Локальный Shell",
+                            !state.isLoading,
+                            Modifier.weight(1f)
+                        ) {
+                            actionsOpen = false
+                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
+                        }
+                    }
+                }
+
+                if (currentSpecialistId == null) {
                     ComposerSectionHeader(
                         icon = Icons.Outlined.Storage,
                         label = "Инструменты OpenRouter",
