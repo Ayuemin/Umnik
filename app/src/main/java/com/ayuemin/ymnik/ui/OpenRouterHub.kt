@@ -587,39 +587,45 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             modifier = Modifier.padding(start = 14.dp, top = 4.dp),
             style = MaterialTheme.typography.labelMedium
         )
-        Box(Modifier.padding(horizontal = 12.dp)) {
-            FilterChip(
-                selected = price != SimplePriceFilter.ALL,
-                onClick = { priceMenuOpen = true },
-                label = { Text("Цена: ${simplePriceFilterLabel(price)}") }
-            )
-            DropdownMenu(
-                expanded = priceMenuOpen,
-                onDismissRequest = { priceMenuOpen = false }
-            ) {
-                SimplePriceFilter.entries.forEach { item ->
-                    DropdownMenuItem(
-                        text = { Text(simplePriceFilterLabel(item)) },
-                        onClick = {
-                            price = item
-                            priceMenuOpen = false
-                        }
-                    )
-                }
-            }
-        }
-
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            Box {
+                FilterChip(
+                    selected = price != SimplePriceFilter.ALL,
+                    onClick = { priceMenuOpen = true },
+                    label = { Text("Цена: ${simplePriceFilterLabel(price)}") }
+                )
+                DropdownMenu(
+                    expanded = priceMenuOpen,
+                    onDismissRequest = { priceMenuOpen = false }
+                ) {
+                    SimplePriceFilter.entries.forEach { item ->
+                        DropdownMenuItem(
+                            text = { Text(simplePriceFilterLabel(item)) },
+                            onClick = {
+                                price = item
+                                priceMenuOpen = false
+                            }
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f))
             FilterChip(
                 selected = sortByCapabilities,
                 onClick = { sortByCapabilities = !sortByCapabilities },
                 label = { Text(if (sortByCapabilities) "Возможности ↓" else "По возможностям") }
             )
-            Spacer(Modifier.weight(1f))
-            if (kind != SimpleModelKind.ALL || price != SimplePriceFilter.ALL || sortByCapabilities) {
+        }
+
+        if (kind != SimpleModelKind.ALL || price != SimplePriceFilter.ALL || sortByCapabilities) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(Modifier.weight(1f))
                 TextButton(
                     onClick = {
                         kind = SimpleModelKind.ALL
@@ -1669,10 +1675,10 @@ private fun JobsPage(
             )
             Spacer(Modifier.height(8.dp))
             CategoryModelPicker(
-                title = "Модель для пакетных задач",
+                title = "ID модели для пакетных задач",
                 current = state.media.batchModel,
-                models = state.catalog.filter { it.isBatch && ModelCategory.TEXT in it.categories },
-                onOpenCatalog = onOpenCatalog
+                onOpenCatalog = onOpenCatalog,
+                onApply = controller::setBatchModelId
             )
         }
 
@@ -1831,10 +1837,10 @@ private fun MediaPage(
             item {
                 Text("Генерация видео", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 CategoryModelPicker(
-                    title = "Модель видео",
+                    title = "ID модели видео",
                     current = state.media.videoModel,
-                    models = state.catalog.filter { ModelCategory.VIDEO in it.categories },
-                    onOpenCatalog = onOpenCatalog
+                    onOpenCatalog = onOpenCatalog,
+                    onApply = controller::setVideoModelId
                 )
                 OutlinedTextField(videoPrompt, { videoPrompt = it }, Modifier.fillMaxWidth().padding(top = 6.dp), label = { Text("Описание видео") }, minLines = 3, maxLines = 7)
                 Row(Modifier.fillMaxWidth().padding(top = 6.dp), horizontalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -1889,10 +1895,10 @@ private fun MediaPage(
             item {
                 Text("Распознавание речи", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 CategoryModelPicker(
-                    title = "Модель распознавания",
+                    title = "ID модели распознавания",
                     current = state.media.transcriptionModel,
-                    models = state.catalog.filter { ModelCategory.TRANSCRIPTION in it.categories },
-                    onOpenCatalog = onOpenCatalog
+                    onOpenCatalog = onOpenCatalog,
+                    onApply = controller::setTranscriptionModelId
                 )
                 FilledTonalButton(onClick = { sttPicker.launch(arrayOf("audio/*")) }, enabled = state.media.transcriptionModel.isNotBlank() && !state.loading, modifier = Modifier.fillMaxWidth().padding(top = 8.dp)) { Text("Выбрать аудиофайл") }
                 if (state.transcription.isNotBlank()) {
@@ -2196,16 +2202,17 @@ private fun ShellPage(state: OpenRouterHubState, controller: OpenRouterHubContro
 private fun CategoryModelPicker(
     title: String,
     current: String,
-    models: List<ModelInfo>,
-    onOpenCatalog: () -> Unit
+    onOpenCatalog: () -> Unit,
+    onApply: (String) -> Unit
 ) {
-    UmnikModelPickerCard(
-        title = title,
-        current = current,
+    var modelId by remember(current) { mutableStateOf(current) }
+    UmnikModelIdField(
+        label = title,
+        value = modelId,
+        onValueChange = { modelId = it },
         onPick = onOpenCatalog,
-        enabled = models.isNotEmpty(),
-        emptyLabel = if (models.isEmpty()) "Нет подходящих моделей" else "Не выбрана",
-        actionLabel = "Выбрать"
+        onApply = { onApply(modelId) },
+        info = "Можно вставить ID модели OpenRouter вручную или открыть каталог значком поиска."
     )
 }
 
