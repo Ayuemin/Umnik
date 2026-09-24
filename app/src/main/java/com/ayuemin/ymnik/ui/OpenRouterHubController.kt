@@ -13,6 +13,8 @@ import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.data.SecretStore
 import com.ayuemin.ymnik.data.SkillRepository
+import com.ayuemin.ymnik.data.SystemTaskPlanner
+import com.ayuemin.ymnik.data.ShellWatchdogAction
 import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.BatchJob
@@ -33,6 +35,7 @@ import com.ayuemin.ymnik.network.OpenRouterAudioClient
 import com.ayuemin.ymnik.network.OpenRouterBatchBodyBuilder
 import com.ayuemin.ymnik.network.OpenRouterBatchClient
 import com.ayuemin.ymnik.network.OpenRouterCatalogClient
+import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterFilesClient
 import com.ayuemin.ymnik.network.OpenRouterResponsesClient
 import com.ayuemin.ymnik.network.OpenRouterVideoClient
@@ -40,12 +43,18 @@ import com.ayuemin.ymnik.network.ShellAttachmentEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -92,6 +101,13 @@ class OpenRouterHubController(
     private val context: Context,
     private val viewModel: ChatViewModel
 ) {
+    private companion object {
+        const val SHELL_WATCHDOG_SILENCE_MS = 180_000L
+        const val SHELL_WATCHDOG_RECHECK_MS = 180_000L
+        const val SHELL_WATCHDOG_POLL_MS = 15_000L
+        const val SHELL_WATCHDOG_SYSTEM_TIMEOUT_MS = 60_000L
+        const val SHELL_WATCHDOG_MAX_CHECKS = 2
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val secrets = SecretStore(context)
     private val featurePrefs = OpenRouterFeaturePrefs(context)
@@ -102,6 +118,8 @@ class OpenRouterHubController(
     private val videoClient = OpenRouterVideoClient(context)
     private val videoRepository = VideoJobRepository(context)
     private val audioClient = OpenRouterAudioClient(context)
+    private val systemClient = OpenRouterClient(context)
+    private val systemTaskPlanner = SystemTaskPlanner(systemClient)
     private val responsesClient = OpenRouterResponsesClient(context)
     private val filesClient = OpenRouterFilesClient(context)
     private val chats = ChatRepository(context)
@@ -675,6 +693,7 @@ class OpenRouterHubController(
             ShellRuntime.installCancel {
                 cancelRequested.set(true)
                 responsesClient.cancelActive()
+                systemClient.cancelActiveRequest()
             }
             runCatching { RequestKeepAliveService.start(context) }
             mutableState.value = mutableState.value.copy(
@@ -764,26 +783,187 @@ class OpenRouterHubController(
                     message.role == "assistant" &&
                         message.text.trimStart().startsWith("Shell не выполнил задачу:")
                 }
-                val result = responsesClient.respond(
-                    apiKey = key,
-                    model = model,
-                    history = shellHistory,
-                    prompt = prompt,
-                    systemPrompt = shellSystemPrompt,
-                    tools = mutableState.value.tools.copy(shell = true),
-                    routing = mutableState.value.routing,
-                    shellFileIds = uploadedIds,
-                    forceToolUse = true,
-                    onProgress = { progress ->
-                        updateShellProgress(
-                            label = progress.label,
-                            responseId = progress.responseId,
-                            shellStepDelta = progress.shellStepDelta,
-                            remoteSignal = true
+                val shellSessionId = "umnik-shell-${UUID.randomUUID()}"
+                var watchdogChecks = 0
+                var recoveryCount = 0
+
+                suspend fun runShellAttempt(
+                    attemptPrompt: String,
+                    includeFiles: Boolean
+                ): Pair<Result<OpenRouterResponsesClient.Result>, Boolean> = coroutineScope {
+                    val recoveryRequested = AtomicBoolean(false)
+                    var nextAssessmentAt = 0L
+                    val responseDeferred = async {
+                        runCatching {
+                            responsesClient.respond(
+                                apiKey = key,
+                                model = model,
+                                history = shellHistory,
+                                prompt = attemptPrompt,
+                                systemPrompt = shellSystemPrompt,
+                                tools = mutableState.value.tools.copy(shell = true),
+                                routing = mutableState.value.routing,
+                                shellFileIds = if (includeFiles) uploadedIds else emptyList(),
+                                sessionId = shellSessionId,
+                                forceToolUse = true,
+                                onProgress = { progress ->
+                                    updateShellProgress(
+                                        label = progress.label,
+                                        responseId = progress.responseId,
+                                        shellStepDelta = progress.shellStepDelta,
+                                        remoteSignal = true
+                                    )
+                                },
+                                baseUrl = viewModel.connectionTextEndpoint(profile.id)
+                            )
+                        }
+                    }
+                    val watchdog = launch {
+                        while (
+                            isActive &&
+                            !responseDeferred.isCompleted &&
+                            !cancelRequested.get() &&
+                            watchdogChecks < SHELL_WATCHDOG_MAX_CHECKS
+                        ) {
+                            delay(SHELL_WATCHDOG_POLL_MS)
+                            if (responseDeferred.isCompleted || cancelRequested.get()) break
+                            val activity = AsyncJobEvents.shellActivity.value ?: break
+                            val lastRemote = activity.lastRemoteEventAt ?: continue
+                            val now = System.currentTimeMillis()
+                            if (now < nextAssessmentAt) continue
+                            val silenceMs = now - lastRemote
+                            if (silenceMs < SHELL_WATCHDOG_SILENCE_MS) continue
+
+                            watchdogChecks += 1
+                            val checkNumber = watchdogChecks
+                            updateShellProgress("Shell давно не отвечает. Системная модель проверяет выполнение…")
+
+                            val systemModel = viewModel.state.value.systemModel.trim()
+                            if (systemModel.isBlank()) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "SHELL_WATCHDOG",
+                                    "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=wait; reason=system-model-missing"
+                                )
+                                updateShellProgress("Shell давно не отвечает. Системная модель не настроена — продолжаю ждать")
+                                nextAssessmentAt = now + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            val decision = withTimeoutOrNull(SHELL_WATCHDOG_SYSTEM_TIMEOUT_MS) {
+                                runCatching {
+                                    systemTaskPlanner.assessShellSilence(
+                                        apiKey = key,
+                                        baseUrl = viewModel.connectionTextEndpoint(profile.id),
+                                        modelId = systemModel,
+                                        task = prompt,
+                                        executorModelId = model,
+                                        elapsedSeconds = (now - activity.startedAt).coerceAtLeast(0L) / 1000L,
+                                        silenceSeconds = silenceMs.coerceAtLeast(0L) / 1000L,
+                                        shellSteps = activity.shellSteps,
+                                        eventCount = activity.eventCount,
+                                        lastStatus = activity.status,
+                                        assessmentNumber = checkNumber
+                                    )
+                                }.onFailure { error ->
+                                    DiagnosticLog.record(
+                                        context,
+                                        "SHELL_WATCHDOG",
+                                        "check=$checkNumber; system assessment failed",
+                                        error
+                                    )
+                                }.getOrNull()
+                            }
+
+                            if (responseDeferred.isCompleted || cancelRequested.get()) break
+                            val latestRemote = AsyncJobEvents.shellActivity.value?.lastRemoteEventAt
+                            if (latestRemote != null && latestRemote > lastRemote) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "SHELL_WATCHDOG",
+                                    "check=$checkNumber; decision=ignored; reason=remote-resumed"
+                                )
+                                updateShellProgress("Shell снова отвечает. Продолжаю работу")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            if (decision == null) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "SHELL_WATCHDOG",
+                                    "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=wait; reason=system-timeout-or-error"
+                                )
+                                updateShellProgress("Системная проверка не завершилась. Shell продолжает работу")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                                continue
+                            }
+
+                            DiagnosticLog.record(
+                                context,
+                                "SHELL_WATCHDOG",
+                                "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=${decision.action.name.lowercase()}; reason=${decision.reason.take(180)}"
+                            )
+                            if (decision.action == ShellWatchdogAction.CHECK) {
+                                recoveryCount += 1
+                                updateShellProgress("Shell похоже завис. Возобновляю работу в том же окружении…")
+                                recoveryRequested.set(true)
+                                responsesClient.cancelActive()
+                                break
+                            } else {
+                                updateShellProgress("Долгий этап Shell. Продолжаю ждать")
+                                nextAssessmentAt = System.currentTimeMillis() + SHELL_WATCHDOG_RECHECK_MS
+                            }
+                        }
+
+                        if (
+                            !responseDeferred.isCompleted &&
+                            !cancelRequested.get() &&
+                            watchdogChecks >= SHELL_WATCHDOG_MAX_CHECKS &&
+                            !recoveryRequested.get()
+                        ) {
+                            updateShellProgress("Shell всё ещё выполняется. Автопроверки завершены — можно продолжить ждать или остановить.")
+                        }
+                    }
+
+                    val outcome = responseDeferred.await()
+                    if (!watchdog.isCompleted) systemClient.cancelActiveRequest()
+                    watchdog.cancelAndJoin()
+                    outcome to recoveryRequested.get()
+                }
+
+                suspend fun executeShellWithWatchdog(): OpenRouterResponsesClient.Result {
+                    var attemptPrompt = prompt
+                    var includeFiles = true
+                    while (true) {
+                        val (outcome, recoveryRequested) = runShellAttempt(attemptPrompt, includeFiles)
+                        if (outcome.isSuccess) return outcome.getOrThrow()
+
+                        val failure = outcome.exceptionOrNull() ?: error("Shell завершился без результата")
+                        if (cancelRequested.get()) throw failure
+                        if (!recoveryRequested) throw failure
+
+                        DiagnosticLog.record(
+                            context,
+                            "SHELL_WATCHDOG",
+                            "recovery=$recoveryCount; session=$shellSessionId; continue=same-container"
                         )
-                    },
-                    baseUrl = viewModel.connectionTextEndpoint(profile.id)
-                )
+                        attemptPrompt = buildString {
+                            appendLine("Служебное продолжение той же Shell-задачи после автоматической проверки.")
+                            appendLine("Используй уже существующее состояние контейнера этой сессии.")
+                            appendLine("Сначала проверь текущие файлы и процессы. Убедись, что предыдущая команда не зависла и не ожидает интерактивного ввода.")
+                            appendLine("Сохрани уже полученные результаты и продолжи с текущего состояния. Не начинай задачу заново без необходимости.")
+                            appendLine("Если предыдущий способ выполнения завис, безопасно выбери другой способ.")
+                            appendLine()
+                            appendLine("Исходная задача пользователя:")
+                            append(prompt)
+                        }
+                        includeFiles = false
+                        updateShellProgress("Продолжаю задачу с текущего состояния")
+                    }
+                }
+
+                val result = executeShellWithWatchdog()
                 if (result.shellCalls <= 0) {
                     error("Модель не использовала Shell, хотя задача была запущена через Shell. Попробуйте другую модель с поддержкой tools/tool_choice.")
                 }

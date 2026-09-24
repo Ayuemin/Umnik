@@ -30,6 +30,30 @@ class SystemTaskPlannerTest {
         assertEquals("что в книге говорится о страхе перемен", plan.searchQuery)
     }
 
+    @Test
+    fun parsesShellWatchdogWaitDecision() {
+        val decision = parseShellWatchdogDecision(
+            """{"action":"wait","reason":"Команда может законно выполняться дольше"}"""
+        )
+
+        assertEquals(ShellWatchdogAction.WAIT, decision.action)
+        assertEquals("Команда может законно выполняться дольше", decision.reason)
+    }
+
+    @Test
+    fun parsesShellWatchdogCheckDecisionFromFence() {
+        val decision = parseShellWatchdogDecision(
+            """
+            ```json
+            {"action":"check","reason":"Тот же Shell-этап молчит слишком долго"}
+            ```
+            """.trimIndent()
+        )
+
+        assertEquals(ShellWatchdogAction.CHECK, decision.action)
+        assertEquals("Тот же Shell-этап молчит слишком долго", decision.reason)
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun rejectsBlankSearchQuery() {
         parseSystemKnowledgePlan("""{"mode":"normal","search_query":""}""")
