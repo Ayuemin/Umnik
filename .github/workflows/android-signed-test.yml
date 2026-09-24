@@ -14,10 +14,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout audited application code
+      - name: Checkout test application code
         uses: actions/checkout@v7
         with:
-          ref: 97c568dfd6fb031bda842b70702de1fad6408fae
+          ref: ${{ github.sha }}
           fetch-depth: 1
 
       - name: Set up JDK 17
@@ -87,17 +87,17 @@ jobs:
           test "$APK_CERT" = "$KEY_CERT"
 
           mkdir -p dist
-          cp "$APK" dist/Umnik-team-specialist-migration-97c568d-signed-test.apk
+          cp "$APK" dist/Umnik-ui-fixes-signed-test.apk
           (
             cd dist
-            sha256sum Umnik-team-specialist-migration-97c568d-signed-test.apk > Umnik-team-specialist-migration-97c568d-signed-test.apk.sha256
+            sha256sum Umnik-ui-fixes-signed-test.apk > Umnik-ui-fixes-signed-test.apk.sha256
           )
           printf '%s\n' "$APK_CERT" > dist/Umnik-signing-certificate-sha256.txt
 
       - name: Upload signed test APK
         uses: actions/upload-artifact@v4
         with:
-          name: Umnik-team-specialist-migration-97c568d-signed-test
+          name: Umnik-ui-fixes-signed-test
           path: dist/*
           if-no-files-found: error
           retention-days: 14
