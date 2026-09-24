@@ -96,6 +96,22 @@ class OpenRouterResponsesCodecTest {
     }
 
     @Test
+    fun countsShellCallsWithoutCountingOutputs() {
+        val root = JsonParser.parseString(
+            """
+            {
+              "output": [
+                {"type":"shell_call","id":"call_1"},
+                {"type":"shell_call_output","id":"out_1","call_id":"call_1"},
+                {"type":"message","id":"msg_1"}
+              ]
+            }
+            """.trimIndent()
+        )
+        assertEquals(1, OpenRouterResponsesCodec.countShellCalls(root))
+    }
+
+    @Test
     fun findsContainerFilesInsideNestedShellResults() {
         val root = JsonParser.parseString(
             """

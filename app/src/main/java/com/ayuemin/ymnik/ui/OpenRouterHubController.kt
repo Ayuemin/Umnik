@@ -726,6 +726,7 @@ class OpenRouterHubController(
                     append(buildSystemPrompt(chat, team))
                     appendLine()
                     appendLine("===== РЕЖИМ SHELL =====")
+                    appendLine("Пользователь явно запустил эту задачу через Shell. До финального ответа обязательно используй Shell хотя бы один раз. Если вложения уже прикреплены, сначала проверь их в рабочем окружении; не проси пользователя прислать их повторно.")
                     appendLine("Прикреплённые к этому запросу файлы — пользовательские вложения из Umnik. В контейнере их имена могут получить служебный префикс OpenRouter; не говори пользователю, что эти файлы тебе недоступны.")
                     val encodedFallbacks = transportedAttachments.filter { it.encodedFallback }
                     if (encodedFallbacks.isNotEmpty()) {
@@ -761,6 +762,7 @@ class OpenRouterHubController(
                     tools = mutableState.value.tools.copy(shell = true),
                     routing = mutableState.value.routing,
                     shellFileIds = uploadedIds,
+                    forceToolUse = true,
                     onProgress = { progress ->
                         updateShellProgress(
                             label = progress.label,
@@ -771,6 +773,9 @@ class OpenRouterHubController(
                     },
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
+                if (result.shellCalls <= 0) {
+                    error("Модель не использовала Shell, хотя задача была запущена через Shell. Попробуйте другую модель с поддержкой tools/tool_choice.")
+                }
                 if (result.shellArtifacts.isNotEmpty()) {
                     updateShellProgress("Скачиваю созданные файлы")
                 } else {

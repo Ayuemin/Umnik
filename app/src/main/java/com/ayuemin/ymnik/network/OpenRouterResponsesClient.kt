@@ -46,7 +46,8 @@ class OpenRouterResponsesClient(private val context: Context) {
         val costUsd: Double? = null,
         val inputTokens: Int? = null,
         val outputTokens: Int? = null,
-        val shellArtifacts: List<ShellArtifact> = emptyList()
+        val shellArtifacts: List<ShellArtifact> = emptyList(),
+        val shellCalls: Int = 0
     )
 
     data class Progress(
@@ -70,6 +71,7 @@ class OpenRouterResponsesClient(private val context: Context) {
         routing: ProviderRoutingSettings = ProviderRoutingSettings(),
         shellFileIds: List<String> = emptyList(),
         sessionId: String? = null,
+        forceToolUse: Boolean = false,
         onProgress: (Progress) -> Unit = {},
         baseUrl: String = DEFAULT_BASE_URL
     ): Result = withContext(Dispatchers.IO) {
@@ -82,6 +84,7 @@ class OpenRouterResponsesClient(private val context: Context) {
             })
             addProperty("store", false)
             if (tools.shell) addProperty("stream", true)
+            if (forceToolUse && tools.shell) addProperty("tool_choice", "required")
             sessionId?.takeIf { it.isNotBlank() }?.let { addProperty("session_id", it.take(256)) }
         }
         OpenRouterFeaturePayload.applyRouting(payload, routing)
@@ -109,6 +112,7 @@ class OpenRouterResponsesClient(private val context: Context) {
                     error(apiError(response.code, body))
                 }
                 val contentType = response.header("Content-Type").orEmpty()
+                var observedShellCalls = 0
                 val root = if (contentType.contains("text/event-stream", ignoreCase = true)) {
                     val source = response.body?.source() ?: error("OpenRouter вернул пустой поток Responses")
                     OpenRouterResponsesCodec.readCompletedResponseStream(source, gson) { event ->
@@ -121,20 +125,26 @@ class OpenRouterResponsesClient(private val context: Context) {
                                 "event=$type${itemType?.let { "; item=$it" }.orEmpty()}"
                             )
                         }
-                        OpenRouterResponsesCodec.shellProgress(event)?.let(onProgress)
+                        OpenRouterResponsesCodec.shellProgress(event)?.let { progress ->
+                            observedShellCalls += progress.shellStepDelta
+                            onProgress(progress)
+                        }
                     }
                 } else {
                     val body = response.body?.string().orEmpty()
                     gson.fromJson(body, JsonObject::class.java)
                 }
-                resultFromRoot(root)
+                resultFromRoot(
+                    root = root,
+                    observedShellCalls = maxOf(observedShellCalls, OpenRouterResponsesCodec.countShellCalls(root))
+                )
             }
         } finally {
             if (activeCall === call) activeCall = null
         }
     }
 
-    private fun resultFromRoot(root: JsonObject): Result {
+    private fun resultFromRoot(root: JsonObject, observedShellCalls: Int = 0): Result {
         val status = root.string("status")
         if (status == "failed" || status == "cancelled" || status == "canceled") {
             val detail = OpenRouterResponsesCodec.responseFailure(root)
@@ -150,7 +160,7 @@ class OpenRouterResponsesClient(private val context: Context) {
         DiagnosticLog.record(
             context,
             "RESPONSES",
-            "id=${root.string("id")}; status=${status ?: "unknown"}; model=${root.string("model")}; shellFiles=${artifacts.size}; input=${usage?.int("input_tokens")}; output=${usage?.int("output_tokens")}"
+            "id=${root.string("id")}; status=${status ?: "unknown"}; model=${root.string("model")}; shellCalls=$observedShellCalls; shellFiles=${artifacts.size}; input=${usage?.int("input_tokens")}; output=${usage?.int("output_tokens")}"
         )
         return Result(
             id = root.string("id"),
@@ -159,7 +169,8 @@ class OpenRouterResponsesClient(private val context: Context) {
             costUsd = usage?.double("cost"),
             inputTokens = usage?.int("input_tokens") ?: usage?.int("prompt_tokens"),
             outputTokens = usage?.int("output_tokens") ?: usage?.int("completion_tokens"),
-            shellArtifacts = artifacts
+            shellArtifacts = artifacts,
+            shellCalls = observedShellCalls
         )
     }
 
@@ -348,6 +359,27 @@ internal object OpenRouterResponsesCodec {
             }
         }
         return parts.joinToString("\n").trim()
+    }
+
+    fun countShellCalls(root: JsonElement): Int {
+        val ids = linkedSetOf<String>()
+        fun visit(element: JsonElement?) {
+            if (element == null || element.isJsonNull) return
+            when {
+                element.isJsonArray -> element.asJsonArray.forEach(::visit)
+                element.isJsonObject -> {
+                    val obj = element.asJsonObject
+                    val type = primitiveString(obj, "type").orEmpty()
+                    if (type.contains("shell", ignoreCase = true) && !type.contains("output", ignoreCase = true)) {
+                        val id = primitiveString(obj, "id") ?: primitiveString(obj, "call_id")
+                        if (!id.isNullOrBlank()) ids += id
+                    }
+                    obj.entrySet().forEach { (_, child) -> visit(child) }
+                }
+            }
+        }
+        visit(root)
+        return ids.size
     }
 
     fun collectShellArtifacts(root: JsonElement): List<OpenRouterResponsesClient.ShellArtifact> {
