@@ -12,7 +12,8 @@ enum class KnowledgeOwnerKind {
 
 data class KnowledgeBaseSettings(
     val enabled: Boolean = true,
-    val topK: Int = DEFAULT_TOP_K
+    val topK: Int = DEFAULT_TOP_K,
+    val modelInstruction: String = ""
 ) {
     companion object {
         const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"

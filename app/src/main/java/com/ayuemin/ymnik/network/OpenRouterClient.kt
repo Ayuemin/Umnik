@@ -172,7 +172,8 @@ class OpenRouterClient(
         modelInfo: ModelInfo? = null,
         streamToUi: Boolean = false,
         webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
-        requestImageOutput: Boolean = false
+        requestImageOutput: Boolean = false,
+        knowledgeSearch: (suspend (String) -> String)? = null
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -187,6 +188,8 @@ class OpenRouterClient(
         DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: "provider"}; output=provider; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
+        val knowledgeCache = mutableMapOf<String, String>()
+        var knowledgeCalls = 0
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
         while (loops++ < 5) {
@@ -205,6 +208,7 @@ class OpenRouterClient(
                 })
                 val mergedTools = JsonArray()
                 if (toolsEnabled) tools().forEach(mergedTools::add)
+                if (knowledgeSearch != null) mergedTools.add(knowledgeSearchTool())
                 if (webSearchEnabled) {
                     if (modelInfo?.supportsTools == false) {
                         error("Выбранная модель не поддерживает современный веб-поиск OpenRouter")
@@ -262,14 +266,14 @@ class OpenRouterClient(
 
             phaseCallback("Выполняю инструменты…")
             messages.add(responseMessage.deepCopy())
-            toolCalls.forEach { callElement ->
+            for (callElement in toolCalls) {
                 val call = callElement.asJsonObject
                 val callId = call.get("id")?.asString ?: UUID.randomUUID().toString()
                 val function = call.getAsJsonObject("function")
                 val name = function?.get("name")?.asString.orEmpty()
                 val argsRaw = function?.get("arguments")?.asString ?: "{}"
-                val resultText = if (name == "create_file") {
-                    runCatching {
+                val resultText = when (name) {
+                    "create_file" -> runCatching {
                         val args = gson.fromJson(argsRaw, JsonObject::class.java)
                         val file = createGeneratedTextFile(
                             args.get("filename")?.asString ?: "result.txt",
@@ -281,8 +285,28 @@ class OpenRouterClient(
                     }.getOrElse {
                         gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка создания файла")))
                     }
-                } else {
-                    gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
+                    "knowledge_search" -> {
+                        val callback = knowledgeSearch
+                        if (callback == null) {
+                            gson.toJson(mapOf("ok" to false, "error" to "База знаний недоступна в этом запросе"))
+                        } else {
+                            runCatching {
+                                val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                                val query = args.get("query")?.asString.orEmpty().trim().take(12000)
+                                require(query.isNotBlank()) { "Пустой поисковый запрос" }
+                                val cacheKey = query.lowercase(Locale.ROOT)
+                                val result = knowledgeCache[cacheKey] ?: run {
+                                    require(knowledgeCalls < 4) { "Достигнут лимит самостоятельных обращений к базе знаний" }
+                                    knowledgeCalls += 1
+                                    callback(query).also { knowledgeCache[cacheKey] = it }
+                                }
+                                gson.toJson(mapOf("ok" to true, "result" to result))
+                            }.getOrElse {
+                                gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка поиска по базе знаний")))
+                            }
+                        }
+                    }
+                    else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
                 messages.add(JsonObject().apply {
                     addProperty("role", "tool")
@@ -818,6 +842,27 @@ class OpenRouterClient(
                     })
                     add("required", JsonArray().apply { add("filename"); add("content") })
                 })
+            })
+        })
+    }
+
+    private fun knowledgeSearchTool() = JsonObject().apply {
+        addProperty("type", "function")
+        add("function", JsonObject().apply {
+            addProperty("name", "knowledge_search")
+            addProperty(
+                "description",
+                "Искать в подключённой пользовательской базе знаний текущего чата или специалиста. Используй по необходимости, когда для текущей задачи полезны дополнительные факты, правила, требования, процедуры, примеры или другие сведения из базы. Не вызывай без необходимости и не повторяй одинаковый поиск."
+            )
+            add("parameters", JsonObject().apply {
+                addProperty("type", "object")
+                add("properties", JsonObject().apply {
+                    add("query", JsonObject().apply {
+                        addProperty("type", "string")
+                        addProperty("description", "Краткий смысловой поисковый запрос к базе знаний")
+                    })
+                })
+                add("required", JsonArray().apply { add("query") })
             })
         })
     }

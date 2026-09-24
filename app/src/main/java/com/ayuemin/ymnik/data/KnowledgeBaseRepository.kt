@@ -825,7 +825,8 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     private fun sanitizeSettings(value: KnowledgeBaseSettings): KnowledgeBaseSettings = value.copy(
-        topK = value.topK.coerceIn(2, 4)
+        topK = value.topK.coerceIn(2, 4),
+        modelInstruction = value.modelInstruction.orEmpty().trim().take(4000)
     )
 
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =

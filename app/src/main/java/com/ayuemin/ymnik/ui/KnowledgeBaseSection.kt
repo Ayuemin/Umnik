@@ -20,6 +20,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -53,6 +54,7 @@ fun KnowledgeBaseSection(
     val context = LocalContext.current
     var expanded by remember(ownerId) { mutableStateOf(false) }
     var enabled by remember(ownerId, current.enabled) { mutableStateOf(current.enabled) }
+    var modelInstruction by remember(ownerId, current.modelInstruction) { mutableStateOf(current.modelInstruction) }
     val addDocuments = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) vm.addKnowledgeDocuments(kind, ownerId, uris)
     }
@@ -65,13 +67,13 @@ fun KnowledgeBaseSection(
                 !vm.systemModelConfigured() && documents.isEmpty() -> "Сначала выберите системную модель"
                 !vm.systemModelConfigured() -> "${documents.size} источн. · нужна системная модель"
                 documents.isEmpty() -> "Нет источников"
-                !enabled -> "${documents.size} источн. · автопоиск выключен"
-                else -> "${documents.size} источн. · автопоиск включён"
+                !enabled -> "${documents.size} источн. · база выключена"
+                else -> "${documents.size} источн. · база включена"
             },
             expanded = expanded,
             onToggle = { expanded = !expanded },
             icon = Icons.Outlined.MenuBook,
-            info = "База знаний использует общую Embeddings-модель из Настройки → Модели для смыслового поиска и общую системную модель, чтобы понимать естественные формулировки, продолжения вопросов и запросы «только по книге». Пока системная модель не выбрана, база знаний не запускается. Документы индексируются один раз и затем в ответ передаются только подходящие фрагменты."
+            info = "База знаний работает в двух режимах одновременно: вы можете прямо задавать модели вопросы по её документам, а совместимая модель может сама обращаться к базе во время выполнения любой задачи, когда ей нужны дополнительные сведения. Для смыслового поиска используется общая Embeddings-модель, а системная модель помогает понимать естественные формулировки, продолжения и запросы «только по книге». Документы индексируются один раз, в модель передаются только подходящие фрагменты."
         )
         if (!expanded) return@Column
 
@@ -121,10 +123,42 @@ fun KnowledgeBaseSection(
                 checked = enabled,
                 onCheckedChange = { checked ->
                     enabled = checked
-                    vm.saveKnowledgeSettings(kind, ownerId, current.copy(enabled = checked))
+                    vm.saveKnowledgeSettings(
+                        kind,
+                        ownerId,
+                        current.copy(enabled = checked, modelInstruction = modelInstruction)
+                    )
                 },
                 enabled = !state.isLoading && !state.requestActive
             )
+        }
+
+        SettingTitleWithInfo(
+            title = "Самостоятельный поиск модели",
+            info = "Это дополнительная возможность, а не отдельный тип базы. Вы по-прежнему можете напрямую спрашивать модель о содержимом базы. Совместимая модель также может сама искать в ней сведения во время любой задачи. Поле ниже только уточняет, когда и как ей делать такой самостоятельный поиск; оставьте пустым, если хотите автоматическое решение модели."
+        )
+        OutlinedTextField(
+            value = modelInstruction,
+            onValueChange = { modelInstruction = it.take(4000) },
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Инструкция для работы с базой · необязательно") },
+            placeholder = { Text("Например: перед важными выводами проверяй требования и факты в базе") },
+            minLines = 2,
+            maxLines = 5
+        )
+        FilledTonalButton(
+            onClick = {
+                vm.saveKnowledgeSettings(
+                    kind,
+                    ownerId,
+                    current.copy(enabled = enabled, modelInstruction = modelInstruction)
+                )
+            },
+            enabled = modelInstruction.trim() != current.modelInstruction.trim() &&
+                !state.isLoading && !state.requestActive,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("Сохранить инструкцию")
         }
 
         if (documents.isEmpty()) {
