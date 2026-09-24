@@ -813,8 +813,16 @@ class OpenRouterHubController(
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 val rawMessage = error.message ?: "Ошибка Shell"
+                val activityBeforeFailure = AsyncJobEvents.shellActivity.value
+                val modelNotStarted = activityBeforeFailure?.responseId == null &&
+                    (activityBeforeFailure?.eventCount ?: 0) == 0
                 val message = when {
                     cancelRequested.get() -> "Shell остановлен пользователем"
+                    modelNotStarted && (
+                        rawMessage.contains("PROTOCOL_ERROR", ignoreCase = true) ||
+                            rawMessage.contains("stream was reset", ignoreCase = true)
+                    ) ->
+                        "Не удалось передать файл в OpenRouter: соединение оборвалось до запуска модели. Платный запрос Shell не был запущен."
                     rawMessage.contains("Software caused connection abort", ignoreCase = true) ->
                         "Соединение с OpenRouter оборвалось. Автоматический повтор не запущен, чтобы не списать деньги повторно."
                     else -> rawMessage
