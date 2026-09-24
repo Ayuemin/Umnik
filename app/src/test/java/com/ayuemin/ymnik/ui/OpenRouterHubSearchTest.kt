@@ -105,15 +105,19 @@ class OpenRouterHubSearchTest {
     }
 
     @Test
-    fun imagePositiveGenerationPriceBeatsZeroPlaceholder() {
+    fun imageGenerationIgnoresInputImageCharge() {
         val image = ModelInfo(
-            id = "vendor/image",
+            id = "qwen/qwen-image-3-pro",
             outputModalities = setOf("image"),
-            imagePriceUsd = 0.0,
-            imageOutputPriceUsd = 0.00001
+            imagePriceUsd = 0.003,
+            imageOutputPriceUsd = 0.00000958083832335329
         )
 
-        assertEquals(0.04096, modelCatalogComparablePrice(image, SimpleModelKind.IMAGE)!!, 0.0000001)
+        assertEquals(
+            0.03924311377245507,
+            modelCatalogComparablePrice(image, SimpleModelKind.IMAGE)!!,
+            0.0000001
+        )
     }
 
     @Test
