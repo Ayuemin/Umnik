@@ -387,6 +387,32 @@ private fun OpenRouterHubDialog(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    val chatReturnPage = page == HubPage.JOBS ||
+                        page == HubPage.MEDIA ||
+                        page == HubPage.REPLY_SPEECH ||
+                        page == HubPage.SHELL
+                    if (chatReturnPage && !returnLabel.isNullOrBlank()) {
+                        Surface(
+                            onClick = onDismiss,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.ArrowBack, contentDescription = null)
+                                Spacer(Modifier.width(10.dp))
+                                Text(
+                                    returnLabel,
+                                    modifier = Modifier.weight(1f),
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    }
                     val activeBatch = if (page == HubPage.JOBS) {
                         state.batches.filterNot { it.status.terminal }.maxByOrNull { it.updatedAt }
                     } else {
@@ -420,7 +446,6 @@ private fun OpenRouterHubDialog(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                TextButton(onClick = onDismiss) { Text("В чат") }
                             }
                         }
                     }
@@ -2463,10 +2488,6 @@ private fun ShellPage(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 6.dp)
                 )
-                TextButton(
-                    onClick = onReturnToChat,
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Вернуться в чат") }
             }
         }
 

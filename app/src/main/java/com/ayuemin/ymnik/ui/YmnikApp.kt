@@ -1113,15 +1113,15 @@ onBranch = if (message.role == "assistant") {
                         ) {
                             CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video", "Вернуться в чат")
                             }
                         }
                         Row(
@@ -1130,11 +1130,11 @@ onBranch = if (message.role == "assistant") {
                         ) {
                             CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell", "Вернуться в чат")
                             }
                             Spacer(Modifier.weight(1f))
                         }
