@@ -17,6 +17,7 @@ import com.ayuemin.ymnik.data.SystemTaskPlanner
 import com.ayuemin.ymnik.data.ShellWatchdogAction
 import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.local.LocalShellEngine
 import com.ayuemin.ymnik.model.BatchJob
 import com.ayuemin.ymnik.model.BatchJobItem
 import com.ayuemin.ymnik.model.ChatMessage
@@ -36,6 +37,7 @@ import com.ayuemin.ymnik.network.OpenRouterBatchBodyBuilder
 import com.ayuemin.ymnik.network.OpenRouterBatchClient
 import com.ayuemin.ymnik.network.OpenRouterCatalogClient
 import com.ayuemin.ymnik.network.OpenRouterClient
+import com.ayuemin.ymnik.network.LocalShellAgentClient
 import com.ayuemin.ymnik.network.OpenRouterFilesClient
 import com.ayuemin.ymnik.network.OpenRouterResponsesClient
 import com.ayuemin.ymnik.network.OpenRouterVideoClient
@@ -75,10 +77,39 @@ data class OpenRouterHubState(
     val shellFileCount: Int = 0,
     val shellError: String? = null,
     val shellChatId: String? = null,
+    val localShellResult: String = "",
+    val localShellRunning: Boolean = false,
+    val localShellFileCount: Int = 0,
+    val localShellError: String? = null,
+    val localShellChatId: String? = null,
+    val localShellStatus: String? = null,
+    val localShellTurns: Int = 0,
+    val localShellToolCalls: Int = 0,
+    val localShellModel: String? = null,
+    val localShellCostUsd: Double? = null,
     val speechFile: GeneratedFile? = null
 )
 
 private object ShellRuntime {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
+    private var cancelCurrent: (() -> Unit)? = null
+
+    fun installCancel(cancel: () -> Unit) {
+        cancelCurrent = cancel
+    }
+
+    fun cancel() {
+        cancelCurrent?.invoke()
+    }
+
+    fun clear() {
+        cancelCurrent = null
+    }
+}
+
+private object LocalShellRuntime {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Volatile
@@ -121,6 +152,7 @@ class OpenRouterHubController(
     private val systemClient = OpenRouterClient(context)
     private val systemTaskPlanner = SystemTaskPlanner(systemClient)
     private val responsesClient = OpenRouterResponsesClient(context)
+    private val localShellClient = LocalShellAgentClient(context)
     private val filesClient = OpenRouterFilesClient(context)
     private val chats = ChatRepository(context)
     private val skills = SkillRepository(context)
@@ -663,6 +695,169 @@ class OpenRouterHubController(
 
     fun cancelShell() {
         ShellRuntime.cancel()
+    }
+
+    fun cancelLocalShell() {
+        LocalShellRuntime.cancel()
+    }
+
+    fun runLocalShell(
+        promptRaw: String,
+        attachments: List<Uri> = emptyList(),
+        networkEnabled: Boolean = true
+    ) {
+        DiagnosticLog.action(
+            context,
+            "local_shell_submit",
+            "promptChars=" + promptRaw.length + "; attachments=" + attachments.size + "; network=" + networkEnabled
+        )
+        val prompt = promptRaw.trim()
+        val profile = openRouterProfile()
+        val key = profile?.let { secrets.getProfileApiKey(it.id) }.orEmpty()
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val currentModel = originState.currentChatTextModel ?: originState.textModel
+        val model = currentModel.removeSuffix(":batch")
+
+        if (prompt.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "Введите задачу для локального Shell")
+            return
+        }
+        if (profile == null || key.isBlank()) {
+            mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
+            return
+        }
+        if (mutableState.value.localShellRunning) {
+            mutableState.value = mutableState.value.copy(status = "Локальный Shell уже выполняет задачу")
+            return
+        }
+        val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
+        if (modelInfo?.supportsTools == false) {
+            mutableState.value = mutableState.value.copy(
+                status = "Выбранная модель не поддерживает вызовы инструментов. Выберите модель с tools."
+            )
+            return
+        }
+
+        val cancelRequested = AtomicBoolean(false)
+        LocalShellRuntime.scope.launch {
+            LocalShellRuntime.installCancel {
+                cancelRequested.set(true)
+                localShellClient.cancelActive()
+            }
+            val startedAt = System.currentTimeMillis()
+            mutableState.value = mutableState.value.copy(
+                loading = true,
+                operation = "Локальный Shell выполняет задачу…",
+                status = null,
+                localShellResult = "",
+                localShellRunning = true,
+                localShellFileCount = 0,
+                localShellError = null,
+                localShellChatId = originChatId,
+                localShellStatus = "Готовлю локальную рабочую область",
+                localShellTurns = 0,
+                localShellToolCalls = 0,
+                localShellModel = model,
+                localShellCostUsd = null
+            )
+
+            runCatching {
+                val engine = LocalShellEngine(
+                    context = context,
+                    networkEnabled = networkEnabled
+                )
+                val imported = withContext(Dispatchers.IO) { engine.prepare(attachments) }
+                if (cancelRequested.get()) error("Локальный Shell остановлен пользователем")
+
+                val systemPrompt = buildString {
+                    appendLine("Ты выполняешь задачу пользователя через Локальный Shell Umnik.")
+                    appendLine("Инструменты работают на Android-устройстве пользователя в отдельной рабочей папке задачи.")
+                    appendLine("Исходные вложения уже находятся в папке input. Не проси загрузить их повторно.")
+                    appendLine("Начни с local_list. Для ZIP/TAR сначала распакуй архив через local_archive в отдельную рабочую папку.")
+                    appendLine("Для поиска по проекту предпочитай local_search/local_read, для малых правок local_replace.")
+                    appendLine("Python используй для тестов и обработки данных, когда это действительно полезно.")
+                    appendLine("Сеть доступна только через local_fetch и public_clone в local_git. Не пытайся загружать локальные файлы в сеть.")
+                    appendLine("Не повторяй одинаковые действия без причины. У тебя максимум 8 модельных шагов и 16 вызовов локальных инструментов.")
+                    appendLine("Сохраняй все исходные файлы проекта, если задача явно не требует удалить или переименовать их.")
+                    appendLine("Если пользователь передал проект/ZIP и просит исправить или доработать его, перед финальным ответом обязательно вызови local_export и верни полный итоговый ZIP.")
+                    appendLine("В финальном ответе кратко перечисли сделанное и результаты проверок.")
+                    appendLine()
+                    appendLine("Вложения в локальной рабочей области:")
+                    append(engine.importedSummary())
+                }
+
+                mutableState.value = mutableState.value.copy(localShellStatus = "Запускаю модель")
+                val result = localShellClient.run(
+                    apiKey = key,
+                    model = model,
+                    prompt = prompt,
+                    systemPrompt = systemPrompt,
+                    engine = engine,
+                    routing = mutableState.value.routing,
+                    reasoningEnabled = false,
+                    onProgress = { progress ->
+                        mutableState.value = mutableState.value.copy(
+                            localShellStatus = progress.label,
+                            localShellTurns = progress.turn,
+                            localShellToolCalls = progress.toolCalls
+                        )
+                    },
+                    baseUrl = viewModel.connectionTextEndpoint(profile.id)
+                )
+                if (cancelRequested.get()) error("Локальный Shell остановлен пользователем")
+                Triple(result, engine.exportedFiles(), imported.size)
+            }.onSuccess { (result, generated, importedCount) ->
+                appendHubExchange(originChatId, "[Локальный Shell]\n" + prompt, result.text, generated)
+                val elapsedMs = System.currentTimeMillis() - startedAt
+                DiagnosticLog.record(
+                    context,
+                    "LOCAL_SHELL",
+                    "completed; elapsedMs=" + elapsedMs +
+                        "; turns=" + result.turns +
+                        "; toolCalls=" + result.toolCalls +
+                        "; inputFiles=" + importedCount +
+                        "; outputFiles=" + generated.size +
+                        "; model=" + (result.model ?: model)
+                )
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    localShellResult = result.text,
+                    localShellRunning = false,
+                    localShellFileCount = generated.size,
+                    localShellError = null,
+                    localShellChatId = originChatId,
+                    localShellStatus = "Готово",
+                    localShellTurns = result.turns,
+                    localShellToolCalls = result.toolCalls,
+                    localShellModel = result.model ?: model,
+                    localShellCostUsd = result.costUsd,
+                    status = if (generated.isEmpty()) {
+                        "Локальный Shell завершил работу"
+                    } else {
+                        "Локальный Shell завершил работу · файлов: " + generated.size
+                    }
+                )
+                AsyncJobEvents.notifyChanged()
+            }.onFailure { error ->
+                val message = if (cancelRequested.get()) {
+                    "Локальный Shell остановлен пользователем"
+                } else {
+                    error.message ?: "Ошибка локального Shell"
+                }
+                DiagnosticLog.record(context, "LOCAL_SHELL", "failed; " + message, error)
+                mutableState.value = mutableState.value.copy(
+                    loading = false,
+                    operation = null,
+                    localShellRunning = false,
+                    localShellError = message,
+                    localShellStatus = if (cancelRequested.get()) "Остановлено" else "Ошибка",
+                    status = message
+                )
+            }
+            LocalShellRuntime.clear()
+        }
     }
 
     fun runShell(promptRaw: String, attachments: List<Uri> = emptyList()) {
