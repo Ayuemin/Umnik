@@ -45,7 +45,7 @@ class OpenRouterHubSearchTest {
     }
 
     @Test
-    fun paidPriceBandsDoNotIncludeFreeModelsOrOverlap() {
+    fun comparablePriceKeepsFreeAndPaidTextModelsOrdered() {
         val free = ModelInfo(
             id = "vendor/free",
             promptPriceUsdPerMillion = 0.0,
@@ -62,11 +62,25 @@ class OpenRouterHubSearchTest {
             completionPriceUsdPerMillion = 0.05
         )
 
-        assertTrue(modelMatchesSimplePrice(free, SimpleModelKind.TEXT, SimplePriceFilter.FREE))
-        assertFalse(modelMatchesSimplePrice(free, SimpleModelKind.TEXT, SimplePriceFilter.FROM_0_TO_0_02))
-        assertTrue(modelMatchesSimplePrice(cheap, SimpleModelKind.TEXT, SimplePriceFilter.FROM_0_TO_0_02))
-        assertFalse(modelMatchesSimplePrice(cheap, SimpleModelKind.TEXT, SimplePriceFilter.FROM_0_02_TO_0_05))
-        assertTrue(modelMatchesSimplePrice(mid, SimpleModelKind.TEXT, SimplePriceFilter.FROM_0_02_TO_0_05))
+        assertEquals(0.0, modelCatalogComparablePrice(free, SimpleModelKind.TEXT)!!, 0.0)
+        assertEquals(0.02, modelCatalogComparablePrice(cheap, SimpleModelKind.TEXT)!!, 0.0)
+        assertEquals(0.05, modelCatalogComparablePrice(mid, SimpleModelKind.TEXT)!!, 0.0)
+    }
+
+    @Test
+    fun videoPriceUsesSpecializedOpenRouterTariffInsteadOfZeroTextTokens() {
+        val video = ModelInfo(
+            id = "vendor/video",
+            promptPriceUsdPerMillion = 0.0,
+            completionPriceUsdPerMillion = 0.0,
+            outputModalities = setOf("video", "text"),
+            pricingSkusUsd = mapOf(
+                "duration_seconds_720p" to 0.10,
+                "duration_seconds_1080p" to 0.17
+            )
+        )
+
+        assertEquals(0.10, modelCatalogComparablePrice(video, SimpleModelKind.VIDEO)!!, 0.0)
     }
 
 }
