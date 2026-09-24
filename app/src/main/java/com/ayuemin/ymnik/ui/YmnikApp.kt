@@ -168,6 +168,7 @@ import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
+import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
@@ -816,10 +817,9 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                if (shellActiveHere) {
-                    BackgroundOperationBanner(
-                        title = "Shell выполняет задачу",
-                        subtitle = "Чат доступен · можно отправлять обычные сообщения",
+                shellActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
+                    ShellBackgroundOperationBanner(
+                        activity = activity,
                         onClick = { AsyncJobEvents.requestHub("shell", "Вернуться в чат") }
                     )
                 }
@@ -1374,6 +1374,43 @@ onBranch = if (message.role == "assistant") {
     }
 }
 
+
+@Composable
+private fun ShellBackgroundOperationBanner(
+    activity: ShellActivity,
+    onClick: () -> Unit
+) {
+    var now by remember(activity.startedAt) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(activity.startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val elapsedSeconds = ((now - activity.startedAt).coerceAtLeast(0L) / 1_000L)
+    val elapsed = if (elapsedSeconds >= 60L) {
+        (elapsedSeconds / 60L).toString() + ":" + (elapsedSeconds % 60L).toString().padStart(2, '0')
+    } else {
+        elapsedSeconds.toString() + " с"
+    }
+    val signal = activity.lastRemoteEventAt?.let { eventAt ->
+        val ago = ((now - eventAt).coerceAtLeast(0L) / 1_000L)
+        when {
+            ago < 5L -> "сигнал только что"
+            ago < 60L -> "сигнал " + ago + " с назад"
+            else -> "сигнал " + (ago / 60L) + " мин назад"
+        }
+    }
+
+    BackgroundOperationBanner(
+        title = "Shell · " + elapsed,
+        subtitle = buildString {
+            append(activity.status)
+            if (signal != null) append(" · ").append(signal)
+        },
+        onClick = onClick
+    )
+}
 
 @Composable
 private fun BackgroundOperationBanner(

@@ -84,6 +84,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.model.BatchJobStatus
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.ModelInfo
@@ -2450,6 +2451,8 @@ private fun ShellPage(
         files.clear(); files.addAll(uris.take(10))
     }
     val context = LocalContext.current
+    val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val activeShell = shellActivity?.takeIf { it.chatId == currentChatId }
     val belongsToCurrentChat = state.shellChatId == null || state.shellChatId == currentChatId
 
     LazyColumn(
@@ -2525,11 +2528,11 @@ private fun ShellPage(
                 onClick = {
                     controller.runShell(prompt, files.toList())
                 },
-                enabled = prompt.isNotBlank() && !state.shellRunning && !state.loading,
+                enabled = prompt.isNotBlank() && activeShell == null && !state.shellRunning && !state.loading,
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
             ) { Text("Выполнить через Shell") }
 
-            if (state.shellRunning && belongsToCurrentChat) {
+            if (activeShell != null) {
                 Text(
                     "Можно вернуться в чат: задача продолжит выполняться, а результат появится там.",
                     style = MaterialTheme.typography.bodySmall,
@@ -2539,7 +2542,16 @@ private fun ShellPage(
             }
         }
 
-        if (state.shellResult.isNotBlank() && !state.shellRunning && belongsToCurrentChat) {
+        activeShell?.let { activity ->
+            item {
+                ShellProgressPanel(
+                    activity = activity,
+                    onStop = controller::cancelShell
+                )
+            }
+        }
+
+        if (state.shellResult.isNotBlank() && activeShell == null && !state.shellRunning && belongsToCurrentChat) {
             item {
                 UmnikPanel {
                     Column(Modifier.padding(12.dp)) {
@@ -2600,6 +2612,99 @@ private fun ShellPage(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ShellProgressPanel(
+    activity: ShellActivity,
+    onStop: () -> Unit
+) {
+    var now by remember(activity.startedAt) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(activity.startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val elapsed = shellDurationLabel(now - activity.startedAt)
+    val lastSignal = activity.lastRemoteEventAt?.let { shellAgoLabel(now - it) }
+
+    UmnikPanel {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            Text("Shell работает · $elapsed", fontWeight = FontWeight.SemiBold)
+            Text(
+                activity.status,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            if (activity.modelId.isNotBlank()) {
+                Text(
+                    "Модель: ${activity.modelId.substringAfterLast('/')}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.attachmentCount > 0) {
+                Text(
+                    "Вложений: ${activity.attachmentCount}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.shellSteps > 0) {
+                Text(
+                    "Этапов Shell: ${activity.shellSteps}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (activity.eventCount > 0) {
+                Text(
+                    buildString {
+                        append("Событий OpenRouter: ${activity.eventCount}")
+                        if (lastSignal != null) append(" · последний сигнал $lastSignal назад")
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Text(
+                    "Жду первый сигнал от OpenRouter",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Text(
+                "Автоматический повтор после обрыва не запускается, чтобы не было повторного списания.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            TextButton(
+                onClick = onStop,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Остановить Shell")
+            }
+        }
+    }
+}
+
+private fun shellDurationLabel(durationMs: Long): String {
+    val totalSeconds = (durationMs.coerceAtLeast(0L) / 1_000L)
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return if (minutes > 0L) "${minutes} мин ${seconds} с" else "${seconds} с"
+}
+
+private fun shellAgoLabel(durationMs: Long): String {
+    val seconds = (durationMs.coerceAtLeast(0L) / 1_000L)
+    return when {
+        seconds < 5L -> "только что"
+        seconds < 60L -> "${seconds} с"
+        else -> "${seconds / 60L} мин"
     }
 }
 

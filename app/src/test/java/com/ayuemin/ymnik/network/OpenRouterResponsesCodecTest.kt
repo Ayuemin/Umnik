@@ -72,6 +72,30 @@ class OpenRouterResponsesCodecTest {
     }
 
     @Test
+    fun mapsShellStreamEventsToUserProgress() {
+        val created = JsonParser.parseString(
+            """{"type":"response.created","response":{"id":"resp_live","status":"in_progress"}}"""
+        ).asJsonObject
+        val shellAdded = JsonParser.parseString(
+            """{"type":"response.output_item.added","item":{"type":"shell_call","id":"call_1"}}"""
+        ).asJsonObject
+        val textDelta = JsonParser.parseString(
+            """{"type":"response.output_text.delta","delta":"готово"}"""
+        ).asJsonObject
+
+        val first = OpenRouterResponsesCodec.shellProgress(created)!!
+        assertEquals("OpenRouter принял задачу", first.label)
+        assertEquals("resp_live", first.responseId)
+
+        val shell = OpenRouterResponsesCodec.shellProgress(shellAdded)!!
+        assertEquals("Shell начал новый этап", shell.label)
+        assertEquals(1, shell.shellStepDelta)
+
+        val text = OpenRouterResponsesCodec.shellProgress(textDelta)!!
+        assertEquals("Модель формирует итоговый ответ", text.label)
+    }
+
+    @Test
     fun findsContainerFilesInsideNestedShellResults() {
         val root = JsonParser.parseString(
             """

@@ -7,6 +7,7 @@ import android.util.Base64
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
 import com.ayuemin.ymnik.OpenRouterBackgroundWorker
+import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.ChatRepository
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
@@ -47,6 +48,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class OpenRouterHubState(
     val catalog: List<ModelInfo> = emptyList(),
@@ -66,6 +68,25 @@ data class OpenRouterHubState(
     val shellChatId: String? = null,
     val speechFile: GeneratedFile? = null
 )
+
+private object ShellRuntime {
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    @Volatile
+    private var cancelCurrent: (() -> Unit)? = null
+
+    fun installCancel(cancel: () -> Unit) {
+        cancelCurrent = cancel
+    }
+
+    fun cancel() {
+        cancelCurrent?.invoke()
+    }
+
+    fun clear() {
+        cancelCurrent = null
+    }
+}
 
 class OpenRouterHubController(
     private val context: Context,
@@ -622,6 +643,10 @@ class OpenRouterHubController(
         }
     }
 
+    fun cancelShell() {
+        ShellRuntime.cancel()
+    }
+
     fun runShell(promptRaw: String, attachments: List<Uri> = emptyList()) {
         DiagnosticLog.action(context, "shell_submit", "promptChars=${promptRaw.length}; attachments=${attachments.size}")
         val prompt = promptRaw.trim()
@@ -639,8 +664,19 @@ class OpenRouterHubController(
             mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
             return
         }
-        scope.launch {
-            AsyncJobEvents.markShellRunning(originChatId)
+        if (AsyncJobEvents.shellActivity.value != null) {
+            mutableState.value = mutableState.value.copy(status = "Другая задача Shell уже выполняется")
+            return
+        }
+
+        val cancelRequested = AtomicBoolean(false)
+        ShellRuntime.scope.launch {
+            AsyncJobEvents.markShellRunning(originChatId, model, attachments.size)
+            ShellRuntime.installCancel {
+                cancelRequested.set(true)
+                responsesClient.cancelActive()
+            }
+            runCatching { RequestKeepAliveService.start(context) }
             mutableState.value = mutableState.value.copy(
                 loading = true,
                 operation = "Shell выполняет задачу…",
@@ -651,10 +687,28 @@ class OpenRouterHubController(
                 shellError = null,
                 shellChatId = originChatId
             )
+
+            fun updateShellProgress(
+                label: String,
+                responseId: String? = null,
+                shellStepDelta: Int = 0,
+                remoteSignal: Boolean = false
+            ) {
+                AsyncJobEvents.updateShellProgress(
+                    chatId = originChatId,
+                    status = label,
+                    responseId = responseId,
+                    shellStepDelta = shellStepDelta,
+                    remoteSignal = remoteSignal
+                )
+                runCatching { RequestKeepAliveService.update(context) }
+            }
+
             val uploadedIds = mutableListOf<String>()
             val transportedAttachments = mutableListOf<ShellTransportedAttachment>()
             runCatching {
                 attachments.take(10).forEachIndexed { index, uri ->
+                    updateShellProgress("Передаю файл ${index + 1} из ${attachments.take(10).size}")
                     val attachment = withContext(Dispatchers.IO) { uriBytes(uri) }
                     val uploaded = uploadShellAttachment(
                         apiKey = key,
@@ -664,6 +718,7 @@ class OpenRouterHubController(
                     )
                     uploadedIds += uploaded.remoteId
                     transportedAttachments += uploaded
+                    if (cancelRequested.get()) error("Shell остановлен пользователем")
                 }
                 val chat = originState.chats.firstOrNull { it.id == originChatId }
                 val team = chat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
@@ -691,17 +746,36 @@ class OpenRouterHubController(
                     appendLine("В финальном ответе описывай результат понятным языком и не акцентируй внутренние пути контейнера без необходимости.")
                     appendLine("===== КОНЕЦ РЕЖИМА SHELL =====")
                 }
+                if (cancelRequested.get()) error("Shell остановлен пользователем")
+                updateShellProgress("Запускаю модель и Shell")
+                val shellHistory = chat?.messages.orEmpty().filterNot { message ->
+                    message.role == "assistant" &&
+                        message.text.trimStart().startsWith("Shell не выполнил задачу:")
+                }
                 val result = responsesClient.respond(
                     apiKey = key,
                     model = model,
-                    history = chat?.messages.orEmpty(),
+                    history = shellHistory,
                     prompt = prompt,
                     systemPrompt = shellSystemPrompt,
                     tools = mutableState.value.tools.copy(shell = true),
                     routing = mutableState.value.routing,
                     shellFileIds = uploadedIds,
+                    onProgress = { progress ->
+                        updateShellProgress(
+                            label = progress.label,
+                            responseId = progress.responseId,
+                            shellStepDelta = progress.shellStepDelta,
+                            remoteSignal = true
+                        )
+                    },
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
+                if (result.shellArtifacts.isNotEmpty()) {
+                    updateShellProgress("Скачиваю созданные файлы")
+                } else {
+                    updateShellProgress("Получаю итоговый ответ")
+                }
                 val generated = result.shellArtifacts.mapNotNull { artifact ->
                     runCatching {
                         val bytes = filesClient.downloadContainerFile(
@@ -735,13 +809,27 @@ class OpenRouterHubController(
                     }
                 )
                 AsyncJobEvents.markShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
-                val message = error.message ?: "Ошибка Shell"
+                val rawMessage = error.message ?: "Ошибка Shell"
+                val message = when {
+                    cancelRequested.get() -> "Shell остановлен пользователем"
+                    rawMessage.contains("Software caused connection abort", ignoreCase = true) ->
+                        "Соединение с OpenRouter оборвалось. Автоматический повтор не запущен, чтобы не списать деньги повторно."
+                    else -> rawMessage
+                }
+                val activity = AsyncJobEvents.shellActivity.value
+                DiagnosticLog.record(
+                    context,
+                    "SHELL",
+                    "failed; response=${activity?.responseId ?: "none"}; events=${activity?.eventCount ?: 0}; shellSteps=${activity?.shellSteps ?: 0}",
+                    error
+                )
                 appendHubExchange(
                     originChatId,
                     "[Shell]\n$prompt",
-                    "Shell не выполнил задачу: $message",
+                    if (cancelRequested.get()) message else "Shell не выполнил задачу: $message",
                     emptyList()
                 )
                 mutableState.value = mutableState.value.copy(
@@ -754,10 +842,11 @@ class OpenRouterHubController(
                     status = message
                 )
                 AsyncJobEvents.markShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }
             uploadedIds.forEach { id ->
-                scope.launch(Dispatchers.IO) {
+                ShellRuntime.scope.launch(Dispatchers.IO) {
                     runCatching {
                         filesClient.delete(
                             key,
@@ -767,6 +856,7 @@ class OpenRouterHubController(
                     }
                 }
             }
+            ShellRuntime.clear()
         }
     }
 

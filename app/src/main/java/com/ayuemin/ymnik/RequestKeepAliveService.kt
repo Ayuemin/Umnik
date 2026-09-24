@@ -32,14 +32,14 @@ class RequestKeepAliveService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_CANCEL_ALL) {
-            DiagnosticLog.record(applicationContext, "SERVICE", "All active requests cancelled from notification")
+            DiagnosticLog.record(applicationContext, "SERVICE", "All active chat requests cancelled from notification")
             RequestExecutionManager.cancelAll()
-            return START_NOT_STICKY
         }
 
         val active = RequestExecutionManager.snapshots.value
-        if (active.isEmpty()) {
-            DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service has no in-process requests; stopping orphan service")
+        val shell = AsyncJobEvents.shellActivity.value
+        if (active.isEmpty() && shell == null) {
+            DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service has no active work; stopping orphan service")
             stopSelf(startId)
             return START_NOT_STICKY
         }
@@ -49,15 +49,19 @@ class RequestKeepAliveService : Service() {
         val cancelAll = PendingIntent.getService(
             this, 1, Intent(this, RequestKeepAliveService::class.java).setAction(ACTION_CANCEL_ALL), pendingFlags
         )
-        val title = if (active.size == 1) "Umnik · модель работает" else "Umnik · работают ${active.size} чата"
-        val text = if (active.size == 1) {
-            active.first().label
-        } else {
-            active.take(2).joinToString(" · ") { it.label }.let { labels ->
-                if (active.size > 2) "$labels · ещё ${active.size - 2}" else labels
-            }
+
+        val workCount = active.size + if (shell != null) 1 else 0
+        val title = when {
+            shell != null && active.isEmpty() -> "Umnik · Shell работает"
+            workCount == 1 -> "Umnik · модель работает"
+            else -> "Umnik · активных задач: $workCount"
         }
-        val cancelLabel = if (active.size == 1) "Остановить" else "Остановить все"
+        val labels = buildList {
+            active.take(2).forEach { add(it.label) }
+            shell?.let { add("Shell · ${it.status}") }
+        }
+        val text = labels.joinToString(" · ").ifBlank { "Umnik выполняет задачу" }
+
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
         } else {
@@ -70,25 +74,41 @@ class RequestKeepAliveService : Service() {
             .setContentText(text)
             .setStyle(Notification.BigTextStyle().bigText(text))
             .setContentIntent(openChat)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, cancelLabel, cancelAll)
             .setCategory(Notification.CATEGORY_SERVICE)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+
+        if (active.isNotEmpty()) {
+            val cancelLabel = if (active.size == 1) "Остановить запрос" else "Остановить запросы"
+            builder.addAction(android.R.drawable.ic_menu_close_clear_cancel, cancelLabel, cancelAll)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             builder.setForegroundServiceBehavior(Notification.FOREGROUND_SERVICE_IMMEDIATE)
         }
         startForeground(NOTIFICATION_ID, builder.build())
-        DiagnosticLog.record(applicationContext, "SERVICE", "Foreground request service active; startId=$startId; active=${active.size}")
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "Foreground request service active; startId=$startId; chats=${active.size}; shell=${shell != null}"
+        )
         return START_STICKY
     }
 
     override fun onTaskRemoved(rootIntent: Intent?) {
-        DiagnosticLog.record(applicationContext, "SERVICE", "App task removed; active=${RequestExecutionManager.activeCount()}")
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "App task removed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
         super.onTaskRemoved(rootIntent)
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service timeout; startId=$startId; type=$fgsType; active=${RequestExecutionManager.activeCount()}")
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "Foreground service timeout; startId=$startId; type=$fgsType; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
         RequestExecutionManager.cancelAll()
         stopSelf(startId)
     }
@@ -96,7 +116,11 @@ class RequestKeepAliveService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
-        DiagnosticLog.record(applicationContext, "SERVICE", "RequestKeepAliveService destroyed; active=${RequestExecutionManager.activeCount()}")
+        DiagnosticLog.record(
+            applicationContext,
+            "SERVICE",
+            "RequestKeepAliveService destroyed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
         RequestExecutionManager.serviceStoppedUnexpectedly(applicationContext)
         super.onDestroy()
     }
@@ -111,7 +135,11 @@ class RequestKeepAliveService : Service() {
         }
 
         fun update(context: Context) {
-            if (RequestExecutionManager.hasActiveRequest()) start(context) else stop(context)
+            if (RequestExecutionManager.hasActiveRequest() || AsyncJobEvents.shellActivity.value != null) {
+                start(context)
+            } else {
+                stop(context)
+            }
         }
 
         fun stop(context: Context) {
