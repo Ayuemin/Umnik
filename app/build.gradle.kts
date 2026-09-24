@@ -2,6 +2,7 @@
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.chaquo.python")
 }
 
 val releaseKeystorePath = System.getenv("UMNIK_KEYSTORE_PATH")
@@ -28,6 +29,13 @@ android {
         targetSdk = 36
         versionCode = 159
         versionName = "1.20.0-beta.2"
+
+        // Local Shell MVP embeds Python only for 64-bit test targets.
+        // The regular Umnik app remains Android-native; this is isolated to
+        // the experimental branch until the runtime comparison is complete.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildFeatures {
@@ -88,6 +96,12 @@ android {
     }
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.13"
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
@@ -103,6 +117,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
