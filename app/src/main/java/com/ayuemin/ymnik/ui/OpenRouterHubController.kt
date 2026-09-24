@@ -2,6 +2,7 @@ package com.ayuemin.ymnik.ui
 
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
@@ -34,6 +35,7 @@ import com.ayuemin.ymnik.network.OpenRouterCatalogClient
 import com.ayuemin.ymnik.network.OpenRouterFilesClient
 import com.ayuemin.ymnik.network.OpenRouterResponsesClient
 import com.ayuemin.ymnik.network.OpenRouterVideoClient
+import com.ayuemin.ymnik.network.ShellAttachmentEnvelope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -647,17 +649,18 @@ class OpenRouterHubController(
                 shellChatId = originChatId
             )
             val uploadedIds = mutableListOf<String>()
+            val transportedAttachments = mutableListOf<ShellTransportedAttachment>()
             runCatching {
-                attachments.take(10).forEach { uri ->
+                attachments.take(10).forEachIndexed { index, uri ->
                     val attachment = withContext(Dispatchers.IO) { uriBytes(uri) }
-                    val remote = filesClient.upload(
-                        key,
-                        attachment.name,
-                        attachment.mime,
-                        attachment.bytes,
-                        viewModel.connectionTextEndpoint(profile.id)
+                    val uploaded = uploadShellAttachment(
+                        apiKey = key,
+                        attachment = attachment,
+                        index = index,
+                        baseUrl = viewModel.connectionTextEndpoint(profile.id)
                     )
-                    uploadedIds += remote.id
+                    uploadedIds += uploaded.remoteId
+                    transportedAttachments += uploaded
                 }
                 val chat = originState.chats.firstOrNull { it.id == originChatId }
                 val team = chat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
@@ -665,7 +668,16 @@ class OpenRouterHubController(
                     append(buildSystemPrompt(chat, team))
                     appendLine()
                     appendLine("===== РЕЖИМ SHELL =====")
-                    appendLine("Прикреплённые к этому запросу файлы — пользовательские вложения из Umnik. В контейнере их имена могут измениться; не говори пользователю, что эти файлы тебе недоступны.")
+                    appendLine("Прикреплённые к этому запросу файлы — пользовательские вложения из Umnik. В контейнере их имена могут получить служебный префикс OpenRouter; не говори пользователю, что эти файлы тебе недоступны.")
+                    val encodedFallbacks = transportedAttachments.filter { it.encodedFallback }
+                    if (encodedFallbacks.isNotEmpty()) {
+                        appendLine("Некоторые бинарные вложения OpenRouter Files не принял в исходном виде. Umnik передал их через транспортные текстовые файлы вида umnik_attachment_N.b64.txt.")
+                        appendLine("Перед основной задачей обязательно восстанови такие вложения. Формат транспорта: первая строка UMNIK_BASE64_ATTACHMENT_V1; original_name_base64 содержит имя исходного файла в Base64 UTF-8; mime_base64 — MIME; sha256 — контрольную сумму; полезные данные находятся между data_base64_begin и data_base64_end.")
+                        appendLine("Восстанови исходные байты Base64-декодированием в отдельную рабочую папку, проверь SHA-256 и дальше работай только с восстановленным файлом. Транспортный .b64.txt — служебная оболочка Umnik, не включай её в пользовательский результат.")
+                        encodedFallbacks.forEach { item ->
+                            appendLine("Транспорт: ${item.transportName} → исходный файл: ${item.originalName}")
+                        }
+                    }
                     appendLine("Если среди вложений есть ZIP-архив, при необходимости работай с ним как с целой папкой, проектом или набором данных. Перед изменениями зафиксируй список путей внутри исходного архива, затем распакуй его в отдельную временную рабочую папку. Исходный архив не изменяй и не перезаписывай.")
                     appendLine("Все файлы и папки, которые были в пользовательском архиве, по умолчанию считаются частью пользовательских данных. Не удаляй их только потому, что они не понадобились при анализе. Если для исправления действительно нужно удалить, переименовать или переместить исходный файл, делай это осознанно как часть задачи, а не как очистку временных данных.")
                     appendLine("Если пользователь передал ZIP с папкой или проектом и просит проверить, исправить, поправить или доработать содержимое, по умолчанию верни новый ZIP со всем обновлённым деревом, даже если пользователь отдельно не написал «верни целиком». Исключение — если он явно попросил только отдельные файлы, патч или отчёт.")
@@ -889,10 +901,91 @@ class OpenRouterHubController(
 
     private data class UriData(val name: String, val mime: String, val bytes: ByteArray)
 
+    private data class ShellTransportedAttachment(
+        val remoteId: String,
+        val originalName: String,
+        val transportName: String,
+        val encodedFallback: Boolean
+    )
+
+    private suspend fun uploadShellAttachment(
+        apiKey: String,
+        attachment: UriData,
+        index: Int,
+        baseUrl: String
+    ): ShellTransportedAttachment {
+        val direct = runCatching {
+            filesClient.upload(
+                apiKey,
+                attachment.name,
+                attachment.mime,
+                attachment.bytes,
+                baseUrl
+            )
+        }
+        direct.getOrNull()?.let { remote ->
+            DiagnosticLog.record(
+                context,
+                "SHELL_FILE",
+                "upload=direct; ext=${attachment.name.substringAfterLast('.', "")}; mime=${attachment.mime}; bytes=${attachment.bytes.size}"
+            )
+            return ShellTransportedAttachment(
+                remoteId = remote.id,
+                originalName = attachment.name,
+                transportName = remote.name ?: attachment.name,
+                encodedFallback = false
+            )
+        }
+
+        val directError = direct.exceptionOrNull() ?: error("Не удалось загрузить ${attachment.name}")
+        if (!isUnsupportedShellFileType(directError)) throw directError
+
+        val encoded = ShellAttachmentEnvelope.encode(
+            originalName = attachment.name,
+            mimeType = attachment.mime,
+            bytes = attachment.bytes,
+            index = index
+        )
+        DiagnosticLog.record(
+            context,
+            "SHELL_FILE",
+            "upload=base64-fallback; ext=${attachment.name.substringAfterLast('.', "")}; mime=${attachment.mime}; bytes=${attachment.bytes.size}; transport=${encoded.transportName}"
+        )
+        val remote = filesClient.upload(
+            apiKey,
+            encoded.transportName,
+            "text/plain",
+            encoded.bytes,
+            baseUrl
+        )
+        return ShellTransportedAttachment(
+            remoteId = remote.id,
+            originalName = attachment.name,
+            transportName = encoded.transportName,
+            encodedFallback = true
+        )
+    }
+
+    private fun isUnsupportedShellFileType(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("File type is not allowed", ignoreCase = true)
+    }
+
     private fun uriBytes(uri: Uri): UriData {
-        val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val name = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "file"
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Не удалось прочитать $name")
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri) ?: "application/octet-stream"
+        val displayName = runCatching {
+            resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (index >= 0 && cursor.moveToFirst()) cursor.getString(index) else null
+            }
+        }.getOrNull()
+        val name = displayName
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+            ?: "file"
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() } ?: error("Не удалось прочитать $name")
         return UriData(name, mime, bytes)
     }
 

@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -42,6 +43,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
@@ -2469,13 +2471,59 @@ private fun ShellPage(
                 enabled = !state.shellRunning && !state.loading,
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
             ) {
-                Text(if (files.isEmpty()) "Добавить файлы" else "Файлы: ${files.size}")
+                Text(if (files.isEmpty()) "Добавить файлы" else "Выбрано файлов: ${files.size}")
+            }
+            if (files.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    files.toList().forEach { uri ->
+                        val info = remember(uri) { shellAttachmentInfo(context, uri) }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        info.name,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    info.sizeBytes?.let { size ->
+                                        Text(
+                                            shellFileSizeLabel(size),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { files.remove(uri) },
+                                    enabled = !state.shellRunning && !state.loading
+                                ) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл")
+                                }
+                            }
+                        }
+                    }
+                }
             }
             Button(
                 onClick = {
                     controller.runShell(prompt, files.toList())
-                    prompt = ""
-                    files.clear()
                 },
                 enabled = prompt.isNotBlank() && !state.shellRunning && !state.loading,
                 modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
@@ -2689,4 +2737,37 @@ private fun copyToClipboard(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Umnik", text))
     Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
+}
+
+
+private data class ShellAttachmentInfo(val name: String, val sizeBytes: Long?)
+
+private fun shellAttachmentInfo(context: Context, uri: Uri): ShellAttachmentInfo {
+    val resolver = context.contentResolver
+    var name: String? = null
+    var size: Long? = null
+    runCatching {
+        resolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                val nameIndex = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                if (nameIndex >= 0) name = cursor.getString(nameIndex)
+                val sizeIndex = cursor.getColumnIndex(OpenableColumns.SIZE)
+                if (sizeIndex >= 0 && !cursor.isNull(sizeIndex)) size = cursor.getLong(sizeIndex)
+            }
+        }
+    }
+    val fallbackName = uri.lastPathSegment?.substringAfterLast('/')?.takeIf { it.isNotBlank() } ?: "Файл"
+    return ShellAttachmentInfo(name?.takeIf { it.isNotBlank() } ?: fallbackName, size)
+}
+
+private fun shellFileSizeLabel(bytes: Long): String = when {
+    bytes < 1024L -> "$bytes Б"
+    bytes < 1024L * 1024L -> String.format(Locale.US, "%.1f КБ", bytes / 1024.0)
+    else -> String.format(Locale.US, "%.1f МБ", bytes / (1024.0 * 1024.0))
 }
