@@ -415,7 +415,18 @@ class OpenRouterClient(
                     saveGeneratedImage(encoded, mime, index)
                 }
                 if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
-                Result("Изображение создано.", files)
+                val usage = root.getAsJsonObject("usage")
+                val costUsd = usage?.get("cost")?.takeUnless { it.isJsonNull }?.asDouble
+                val promptTokens = usage?.get("prompt_tokens")?.takeUnless { it.isJsonNull }?.asInt
+                val completionTokens = usage?.get("completion_tokens")?.takeUnless { it.isJsonNull }?.asInt
+                Result(
+                    text = "Изображение создано.",
+                    files = files,
+                    modelId = model,
+                    costUsd = costUsd,
+                    inputTokens = promptTokens,
+                    outputTokens = completionTokens
+                )
             }
         } finally {
             clearActiveCall()
