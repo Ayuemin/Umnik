@@ -1196,11 +1196,8 @@ onBranch = if (message.role == "assistant") {
                 }
             },
             text = {
-                LazyRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(WebSearchPreset.entries) { preset ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    WebSearchPreset.entries.forEach { preset ->
                         FilterChip(
                             selected = state.webSearchPreset == preset,
                             onClick = {
