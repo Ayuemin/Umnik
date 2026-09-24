@@ -1057,7 +1057,7 @@ private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
                                     ModelDetailLine(pricingFieldLabel(key), formatRawPricing(key, value))
                                 }
                                 model.pricingSkusUsd.toSortedMap().forEach { (key, value) ->
-                                    ModelDetailLine(key, formatCatalogPrice(value))
+                                    ModelDetailLine(pricingFieldLabel(key), formatSpecializedPricing(key, value))
                                 }
                             }
                         }
@@ -1292,42 +1292,114 @@ private fun capabilityFieldLabel(value: String): String = when (value) {
     else -> value
 }
 
-private fun pricingFieldLabel(value: String): String = when (value) {
-    "prompt" -> "Входные токены"
-    "completion" -> "Выходные токены"
-    "request" -> "Запрос"
-    "image" -> "Изображение"
-    "image_token" -> "Image token"
-    "image_output" -> "Image output"
-    "web_search" -> "Веб-поиск"
-    "internal_reasoning" -> "Reasoning tokens"
-    "audio" -> "Аудио"
-    else -> value
+private fun pricingFieldLabel(value: String): String {
+    val key = value.lowercase()
+    return when {
+        key == "prompt" -> "Входные токены"
+        key == "completion" -> "Выходные токены"
+        key == "request" -> "Запрос"
+        key == "image" -> "Изображение"
+        key == "image_token" -> "Image token"
+        key == "image_output" -> "Image output"
+        key == "web_search" -> "Веб-поиск"
+        key == "internal_reasoning" -> "Reasoning tokens"
+        key == "audio" -> "Аудио"
+        key.startsWith("duration_seconds_") -> "Видео ${key.removePrefix("duration_seconds_")}"
+        key == "duration_seconds" -> "Видео"
+        key.contains("character") -> "Символы"
+        key.contains("byte") -> "UTF-8 байты"
+        key.contains("megapixel") -> "Мегапиксели"
+        else -> value
+    }
 }
 
-private fun formatRawPricing(key: String, value: Double): String = when (key) {
+private fun formatRawPricing(key: String, value: Double): String = when (key.lowercase()) {
     "prompt", "completion" -> "${formatCatalogPrice(value * 1_000_000.0)} / 1M токенов"
-    else -> formatCatalogPrice(value)
+    else -> formatSpecializedPricing(key, value)
+}
+
+private fun formatSpecializedPricing(key: String, value: Double): String {
+    val normalized = key.lowercase()
+    return when {
+        normalized.startsWith("duration_seconds") || normalized.endsWith("_second") || normalized.endsWith("_seconds") ->
+            "${formatCatalogPrice(value)} / сек"
+        normalized.contains("minute") ->
+            "${formatCatalogPrice(value)} / мин"
+        normalized.contains("character") ->
+            "${formatCatalogPrice(value * 1_000_000.0)} / 1M символов"
+        normalized.contains("byte") ->
+            "${formatCatalogPrice(value * 1_000_000.0)} / 1M байт"
+        normalized.contains("megapixel") ->
+            "${formatCatalogPrice(value)} / МП"
+        normalized == "image" || normalized.endsWith("_image") ->
+            "${formatCatalogPrice(value)} / изображение"
+        normalized == "request" || normalized.endsWith("_request") ->
+            "${formatCatalogPrice(value)} / запрос"
+        else -> formatCatalogPrice(value)
+    }
 }
 
 private fun catalogPriceText(model: ModelInfo): String? {
     if (ModelVariant.FREE in model.variants) return "Цена: бесплатно (:free)"
 
-    val parts = mutableListOf<String>()
-    if (model.promptPriceUsdPerMillion != null || model.completionPriceUsdPerMillion != null) {
-        parts += "Текст / 1M: вход ${formatCatalogPrice(model.promptPriceUsdPerMillion)} · выход ${formatCatalogPrice(model.completionPriceUsdPerMillion)}"
-    }
-    if (ModelCategory.IMAGE in model.categories) {
-        model.estimatedImageOutputUsd1K?.let { estimate ->
-            if (estimate > 0.0) {
-                parts += "изображение ≈ ${formatCatalogPrice(estimate)} за 1K"
+    if (ModelCategory.VIDEO in model.categories) {
+        val videoPrices = (model.pricingSkusUsd + model.pricingUsd)
+            .filter { (key, value) -> value > 0.0 && key.lowercase().contains("duration") }
+            .toSortedMap()
+        if (videoPrices.isNotEmpty()) {
+            return "Видео: " + videoPrices.entries.take(3).joinToString(" · ") { (key, value) ->
+                val resolution = key.lowercase().removePrefix("duration_seconds_")
+                    .takeIf { it != key.lowercase() && it.isNotBlank() }
+                buildString {
+                    if (resolution != null) append("${resolution} ")
+                    append(formatSpecializedPricing(key, value))
+                }
             }
         }
     }
-    if (parts.isEmpty() && ModelCategory.IMAGE in model.categories) {
-        parts += "изображение: цена зависит от image-тарифа OpenRouter"
+
+    if (ModelCategory.IMAGE in model.categories) {
+        model.imagePriceUsd?.takeIf { it > 0.0 }?.let {
+            return "Изображение: ${formatCatalogPrice(it)} / изображение"
+        }
+        model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }?.let {
+            return "Изображение ≈ ${formatCatalogPrice(it)} за 1K"
+        }
     }
-    return parts.takeIf { it.isNotEmpty() }?.joinToString("  •  ")
+
+    if (
+        ModelCategory.SPEECH in model.categories ||
+        ModelCategory.AUDIO in model.categories ||
+        ModelCategory.TRANSCRIPTION in model.categories
+    ) {
+        val mediaPrices = (model.pricingSkusUsd + model.pricingUsd)
+            .filter { (key, value) ->
+                value > 0.0 && key.lowercase() !in setOf("prompt", "completion", "internal_reasoning", "image_token", "image_output")
+            }
+            .toSortedMap()
+        if (mediaPrices.isNotEmpty()) {
+            return mediaPrices.entries.take(2).joinToString(" · ") { (key, value) ->
+                "${pricingFieldLabel(key)}: ${formatSpecializedPricing(key, value)}"
+            }
+        }
+    }
+
+    val input = model.promptPriceUsdPerMillion
+    val output = model.completionPriceUsdPerMillion
+    if (input != null || output != null) {
+        return "Текст / 1M: вход ${formatCatalogPrice(input)} · выход ${formatCatalogPrice(output)}"
+    }
+
+    val genericSpecial = (model.pricingSkusUsd + model.pricingUsd)
+        .filterValues { it > 0.0 }
+        .toSortedMap()
+    if (genericSpecial.isNotEmpty()) {
+        return genericSpecial.entries.take(2).joinToString(" · ") { (key, value) ->
+            "${pricingFieldLabel(key)}: ${formatSpecializedPricing(key, value)}"
+        }
+    }
+
+    return null
 }
 
 private fun formatCatalogPrice(value: Double?): String = when {
