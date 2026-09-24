@@ -67,6 +67,7 @@ class OpenRouterResponsesClient(private val context: Context) {
                 add(responseInput("user", prompt))
             })
             addProperty("store", false)
+            if (tools.shell) addProperty("stream", true)
             sessionId?.takeIf { it.isNotBlank() }?.let { addProperty("session_id", it.take(256)) }
         }
         OpenRouterFeaturePayload.applyRouting(payload, routing)
@@ -86,28 +87,58 @@ class OpenRouterResponsesClient(private val context: Context) {
             .build()
 
         http.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiError(response.code, body))
-            val root = gson.fromJson(body, JsonObject::class.java)
-            val text = OpenRouterResponsesCodec.extractText(root)
-            if (text.isBlank()) error("Модель не вернула готовый текст")
-            val usage = root.getAsJsonObject("usage")
-            val artifacts = OpenRouterResponsesCodec.collectShellArtifacts(root)
-            DiagnosticLog.record(
-                context,
-                "RESPONSES",
-                "id=${root.string("id")}; model=${root.string("model")}; shellFiles=${artifacts.size}; input=${usage?.int("input_tokens")}; output=${usage?.int("output_tokens")}"
-            )
-            Result(
-                id = root.string("id"),
-                text = text,
-                model = root.string("model"),
-                costUsd = usage?.double("cost"),
-                inputTokens = usage?.int("input_tokens") ?: usage?.int("prompt_tokens"),
-                outputTokens = usage?.int("output_tokens") ?: usage?.int("completion_tokens"),
-                shellArtifacts = artifacts
-            )
+            if (!response.isSuccessful) {
+                val body = response.body?.string().orEmpty()
+                error(apiError(response.code, body))
+            }
+            val contentType = response.header("Content-Type").orEmpty()
+            val root = if (contentType.contains("text/event-stream", ignoreCase = true)) {
+                val source = response.body?.source() ?: error("OpenRouter вернул пустой поток Responses")
+                OpenRouterResponsesCodec.readCompletedResponseStream(source, gson) { type ->
+                    if (
+                        type == "response.created" ||
+                        type == "response.in_progress" ||
+                        type == "response.completed" ||
+                        type == "response.failed"
+                    ) {
+                        DiagnosticLog.record(context, "RESPONSES_STREAM", "event=$type")
+                    }
+                }
+            } else {
+                val body = response.body?.string().orEmpty()
+                gson.fromJson(body, JsonObject::class.java)
+            }
+            resultFromRoot(root)
         }
+    }
+
+    private fun resultFromRoot(root: JsonObject): Result {
+        val status = root.string("status")
+        if (status == "failed" || status == "cancelled" || status == "canceled") {
+            val detail = OpenRouterResponsesCodec.responseFailure(root)
+            error(detail ?: "OpenRouter отменил выполнение Shell")
+        }
+        val text = OpenRouterResponsesCodec.extractText(root)
+        if (text.isBlank()) {
+            val detail = OpenRouterResponsesCodec.responseFailure(root)
+            error(detail ?: "Модель не вернула готовый текст")
+        }
+        val usage = root.getAsJsonObject("usage")
+        val artifacts = OpenRouterResponsesCodec.collectShellArtifacts(root)
+        DiagnosticLog.record(
+            context,
+            "RESPONSES",
+            "id=${root.string("id")}; status=${status ?: "unknown"}; model=${root.string("model")}; shellFiles=${artifacts.size}; input=${usage?.int("input_tokens")}; output=${usage?.int("output_tokens")}"
+        )
+        return Result(
+            id = root.string("id"),
+            text = text,
+            model = root.string("model"),
+            costUsd = usage?.double("cost"),
+            inputTokens = usage?.int("input_tokens") ?: usage?.int("prompt_tokens"),
+            outputTokens = usage?.int("output_tokens") ?: usage?.int("completion_tokens"),
+            shellArtifacts = artifacts
+        )
     }
 
     private fun attachShellFiles(tools: JsonArray, fileIds: List<String>) {
@@ -162,6 +193,72 @@ class OpenRouterResponsesClient(private val context: Context) {
 }
 
 internal object OpenRouterResponsesCodec {
+    fun readCompletedResponseStream(
+        source: okio.BufferedSource,
+        gson: Gson,
+        onEvent: (String) -> Unit = {}
+    ): JsonObject {
+        var lastResponse: JsonObject? = null
+        var terminalError: String? = null
+        while (!source.exhausted()) {
+            val line = source.readUtf8Line() ?: break
+            if (!line.startsWith("data:")) continue
+            val data = line.removePrefix("data:").trim()
+            if (data.isBlank() || data == "[DONE]") continue
+
+            val event = runCatching { gson.fromJson(data, JsonObject::class.java) }.getOrNull() ?: continue
+            val type = primitiveString(event, "type").orEmpty()
+            if (type.isNotBlank()) onEvent(type)
+
+            event.get("response")
+                ?.takeIf { it.isJsonObject }
+                ?.asJsonObject
+                ?.let { lastResponse = it }
+
+            if (
+                type == "response.failed" ||
+                type == "response.cancelled" ||
+                type == "response.canceled" ||
+                type == "error"
+            ) {
+                terminalError = eventError(event)
+            }
+            if (type == "response.completed") {
+                return lastResponse ?: error("OpenRouter завершил Responses без итогового объекта")
+            }
+        }
+
+        terminalError?.let { error(it) }
+        val root = lastResponse ?: error("Поток OpenRouter Responses завершился без итогового ответа")
+        val status = primitiveString(root, "status")
+        if (status == "completed") return root
+        val fallback = status?.let { "OpenRouter прервал выполнение Shell: $it" }
+            ?: "OpenRouter прервал выполнение Shell"
+        error(responseFailure(root) ?: fallback)
+    }
+
+    fun responseFailure(root: JsonObject): String? {
+        root.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { error ->
+            primitiveString(error, "message")?.let { return it }
+            primitiveString(error, "code")?.let { return it }
+        }
+        root.get("incomplete_details")?.takeIf { it.isJsonObject }?.asJsonObject?.let { details ->
+            primitiveString(details, "reason")?.let { return it }
+        }
+        return primitiveString(root, "message")
+    }
+
+    private fun eventError(event: JsonObject): String {
+        event.get("error")?.takeIf { it.isJsonObject }?.asJsonObject?.let { error ->
+            primitiveString(error, "message")?.let { return it }
+            primitiveString(error, "code")?.let { return it }
+        }
+        event.get("response")?.takeIf { it.isJsonObject }?.asJsonObject?.let { response ->
+            responseFailure(response)?.let { return it }
+        }
+        return primitiveString(event, "message") ?: "OpenRouter отменил выполнение Shell"
+    }
+
     fun extractText(root: JsonObject): String {
         root.get("output_text")?.takeIf { it.isJsonPrimitive }?.asString
             ?.takeIf { it.isNotBlank() }

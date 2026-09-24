@@ -387,7 +387,10 @@ class OpenRouterHubController(
                         label = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.take(80) ?: "Задание ${index + 1}",
                         body = batchBuilder.build(
                             model = model,
-                            history = chat?.messages.orEmpty(),
+                            history = chat?.messages.orEmpty().filterNot { message ->
+                        message.role == "assistant" &&
+                            message.text.trimStart().startsWith("Shell не выполнил задачу:")
+                    },
                             prompt = promptWithFiles,
                             attachments = emptyList(),
                             systemPrompt = system,
