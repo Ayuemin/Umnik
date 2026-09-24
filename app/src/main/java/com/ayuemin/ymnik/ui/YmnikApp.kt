@@ -1224,7 +1224,7 @@ onBranch = if (message.role == "assistant") {
             title = { Text("О поиске") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Эти настройки относятся только к текущему чату.")
+                    Text("Включение поиска и выбранный режим относятся только к текущему чату.")
                     WebSearchPreset.entries.forEach { preset ->
                         Text(
                             "• ${webSearchPresetUiLabel(preset)} — ${webSearchPresetDescription(preset)}",
