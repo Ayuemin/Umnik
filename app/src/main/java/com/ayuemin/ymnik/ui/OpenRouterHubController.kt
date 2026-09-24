@@ -688,6 +688,8 @@ class OpenRouterHubController(
                 shellChatId = originChatId
             )
 
+            var lastKeepAliveRefreshAt = 0L
+            var lastKeepAliveLabel = ""
             fun updateShellProgress(
                 label: String,
                 responseId: String? = null,
@@ -701,7 +703,16 @@ class OpenRouterHubController(
                     shellStepDelta = shellStepDelta,
                     remoteSignal = remoteSignal
                 )
-                runCatching { RequestKeepAliveService.update(context) }
+                val now = System.currentTimeMillis()
+                val shouldRefreshKeepAlive =
+                    label != lastKeepAliveLabel ||
+                        shellStepDelta > 0 ||
+                        now - lastKeepAliveRefreshAt >= 30_000L
+                if (shouldRefreshKeepAlive) {
+                    lastKeepAliveLabel = label
+                    lastKeepAliveRefreshAt = now
+                    runCatching { RequestKeepAliveService.update(context) }
+                }
             }
 
             val uploadedIds = mutableListOf<String>()
@@ -830,6 +841,21 @@ class OpenRouterHubController(
                         "Не удалось передать файл в OpenRouter: соединение оборвалось до запуска модели. Платный запрос Shell не был запущен."
                     rawMessage.contains("Software caused connection abort", ignoreCase = true) ->
                         "Соединение с OpenRouter оборвалось. Автоматический повтор не запущен, чтобы не списать деньги повторно."
+                    rawMessage.equals("timeout", ignoreCase = true) ||
+                        rawMessage.contains("InterruptedIOException: timeout", ignoreCase = true) -> {
+                        val steps = activityBeforeFailure?.shellSteps ?: 0
+                        val events = activityBeforeFailure?.eventCount ?: 0
+                        buildString {
+                            append("Соединение с OpenRouter прервалось по таймауту")
+                            if (steps > 0 || events > 0) {
+                                append(". До обрыва Shell успел выполнить")
+                                if (steps > 0) append(" этапов: $steps")
+                                if (steps > 0 && events > 0) append(",")
+                                if (events > 0) append(" событий: $events")
+                            }
+                            append(". Автоматический повтор не запущен, чтобы не списать деньги повторно.")
+                        }
+                    }
                     else -> rawMessage
                 }
                 val activity = AsyncJobEvents.shellActivity.value

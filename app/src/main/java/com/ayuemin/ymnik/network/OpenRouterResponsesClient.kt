@@ -33,6 +33,10 @@ class OpenRouterResponsesClient(private val context: Context) {
         .callTimeout(900, TimeUnit.SECONDS)
         .build()
 
+    private val shellHttp = http.newBuilder()
+        .callTimeout(SHELL_CALL_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS)
+        .build()
+
     data class ShellArtifact(
         val containerId: String,
         val fileId: String,
@@ -103,7 +107,7 @@ class OpenRouterResponsesClient(private val context: Context) {
             .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
             .build()
 
-        val call = http.newCall(request)
+        val call = (if (tools.shell) shellHttp else http).newCall(request)
         activeCall = call
         try {
             call.execute().use { response ->
@@ -222,6 +226,7 @@ class OpenRouterResponsesClient(private val context: Context) {
 
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+        internal const val SHELL_CALL_TIMEOUT_MILLIS = 0L
     }
 }
 
