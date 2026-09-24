@@ -105,7 +105,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL }
+private enum class HubPage { MODELS, ROUTING, TOOLS, JOBS, MEDIA, REPLY_SPEECH, SHELL, LOCAL_SHELL }
 private enum class MediaSection { ALL, VIDEO, TRANSCRIPTION, SPEECH }
 internal enum class SimpleModelKind {
     ALL,
@@ -227,6 +227,12 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
                 open = true
                 AsyncJobEvents.consumeHubRequest()
             }
+            "local-shell" -> {
+                requestedPage = HubPage.LOCAL_SHELL
+                requestedMediaSection = MediaSection.ALL
+                open = true
+                AsyncJobEvents.consumeHubRequest()
+            }
         }
     }
 
@@ -314,6 +320,7 @@ private fun OpenRouterHubDialog(
                                         }
                                         HubPage.REPLY_SPEECH -> "Озвучивание ответов"
                                         HubPage.SHELL -> "OpenRouter Shell"
+                                        HubPage.LOCAL_SHELL -> "Локальный Shell"
                                     },
                                     style = MaterialTheme.typography.titleLarge,
                                     fontWeight = FontWeight.Bold
@@ -324,6 +331,7 @@ private fun OpenRouterHubDialog(
                                     HubPage.TOOLS -> "Дополнительные возможности OpenRouter"
                                     HubPage.REPLY_SPEECH -> "Отдельная модель и голос для кнопки OR"
                                     HubPage.SHELL -> "Работа с файлами, ZIP-архивами и кодом"
+                                    HubPage.LOCAL_SHELL -> "Файлы и код обрабатываются на этом устройстве"
                                     else -> null
                                 }
                                 if (subtitle != null) {
@@ -357,9 +365,13 @@ private fun OpenRouterHubDialog(
                                     title = "Что умеет Shell",
                                     text = "Shell даёт модели рабочую среду для выполнения кода и обработки файлов. Целую папку или проект удобно передать ZIP-архивом: Shell может распаковать его, сохранить структуру папок, проверить содержимое, исправить нужные файлы и вернуть новый ZIP со всем обновлённым проектом. Неизменённые файлы при этом тоже должны остаться на месте. Например, можно упаковать Android-проект в ZIP, попросить найти и исправить проблемы и получить обратно готовую папку проекта в новом архиве. Для архивов рекомендуем ZIP. RAR и 7z зависят от доступных утилит окружения и не считаются гарантированными. Добавьте файл или архив, простыми словами опишите, что нужно сделать, и запустите задачу. Ответ и готовые файлы появятся в текущем чате."
                                 )
+                                HubPage.LOCAL_SHELL -> UmnikInfoHint(
+                                    title = "О локальном Shell",
+                                    text = "Исходные вложения не загружаются в OpenRouter Shell. Umnik копирует их в отдельную рабочую папку на телефоне и выполняет локальные операции с файлами, архивами, Git и Python. Модель получает только задание и результаты тех локальных операций, которые сама запросила, включая прочитанные фрагменты файлов. Сетевой шлюз в тестовой версии разрешает только получение данных и публичный Git clone; загрузка локальных файлов и Git push отключены."
+                                )
                                 else -> Unit
                             }
-                            if (page == HubPage.MODELS || page == HubPage.JOBS || page == HubPage.MEDIA || page == HubPage.SHELL) {
+                            if (page == HubPage.MODELS || page == HubPage.JOBS || page == HubPage.MEDIA || page == HubPage.SHELL || page == HubPage.LOCAL_SHELL) {
                                 Spacer(Modifier.width(2.dp))
                             }
                             if (!showBack) {
@@ -393,7 +405,8 @@ private fun OpenRouterHubDialog(
                     val chatReturnPage = page == HubPage.JOBS ||
                         page == HubPage.MEDIA ||
                         page == HubPage.REPLY_SPEECH ||
-                        page == HubPage.SHELL
+                        page == HubPage.SHELL ||
+                        page == HubPage.LOCAL_SHELL
                     if (chatReturnPage && !returnLabel.isNullOrBlank()) {
                         Surface(
                             onClick = onDismiss,
@@ -464,6 +477,12 @@ private fun OpenRouterHubDialog(
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
                         HubPage.SHELL -> ShellPage(
+                            state = state,
+                            controller = controller,
+                            currentChatId = appState.currentChatId,
+                            onReturnToChat = onDismiss
+                        )
+                        HubPage.LOCAL_SHELL -> LocalShellPage(
                             state = state,
                             controller = controller,
                             currentChatId = appState.currentChatId,
@@ -2433,6 +2452,221 @@ private fun ReplySpeechPage(
                 }
 
             }
+        }
+    }
+}
+
+@Composable
+private fun LocalShellPage(
+    state: OpenRouterHubState,
+    controller: OpenRouterHubController,
+    currentChatId: String,
+    onReturnToChat: () -> Unit
+) {
+    var prompt by remember { mutableStateOf("") }
+    var networkEnabled by remember { mutableStateOf(true) }
+    var showResultHere by remember(state.localShellResult) { mutableStateOf(false) }
+    val files = remember { mutableStateListOf<Uri>() }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        files.clear()
+        files.addAll(uris.take(10))
+    }
+    val context = LocalContext.current
+    val belongsToCurrentChat = state.localShellChatId == null || state.localShellChatId == currentChatId
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        item {
+            OutlinedTextField(
+                value = prompt,
+                onValueChange = { prompt = it },
+                modifier = Modifier.fillMaxWidth(),
+                label = { Text("Задача") },
+                minLines = 4,
+                maxLines = 10
+            )
+        }
+
+        item {
+            FilledTonalButton(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                enabled = !state.localShellRunning,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text(if (files.isEmpty()) "Добавить файлы" else "Выбрано файлов: " + files.size)
+            }
+            if (files.isNotEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    files.toList().forEach { uri ->
+                        val info = remember(uri) { shellAttachmentInfo(context, uri) }
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLow
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(start = 10.dp, top = 7.dp, bottom = 7.dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    Icons.Outlined.Description,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(info.name, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    info.sizeBytes?.let { size ->
+                                        Text(
+                                            shellFileSizeLabel(size),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = { files.remove(uri) },
+                                    enabled = !state.localShellRunning
+                                ) {
+                                    Icon(Icons.Outlined.Close, contentDescription = "Убрать файл")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            UmnikPanel {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Сетевой шлюз", fontWeight = FontWeight.SemiBold)
+                        Text(
+                            if (networkEnabled) "GET и публичный Git clone разрешены" else "Локальная работа без сети",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Switch(
+                        checked = networkEnabled,
+                        onCheckedChange = { networkEnabled = it },
+                        enabled = !state.localShellRunning
+                    )
+                }
+            }
+        }
+
+        item {
+            if (state.localShellRunning && belongsToCurrentChat) {
+                UmnikPanel {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Локальный Shell работает", fontWeight = FontWeight.SemiBold)
+                        }
+                        state.localShellStatus?.let {
+                            Text(it, style = MaterialTheme.typography.bodySmall)
+                        }
+                        Text(
+                            buildString {
+                                append("Модель: ")
+                                append(state.localShellModel?.substringAfterLast('/') ?: "—")
+                                append(" · шагов модели: ")
+                                append(state.localShellTurns)
+                                append(" · локальных действий: ")
+                                append(state.localShellToolCalls)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Button(
+                            onClick = controller::cancelLocalShell,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Остановить")
+                        }
+                    }
+                }
+            } else {
+                Button(
+                    onClick = { controller.runLocalShell(prompt, files.toList(), networkEnabled) },
+                    enabled = prompt.isNotBlank() && !state.localShellRunning && !state.shellRunning,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("Запустить локально")
+                }
+            }
+        }
+
+        if (belongsToCurrentChat && state.localShellError != null) {
+            item {
+                Text(
+                    state.localShellError,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+
+        if (belongsToCurrentChat && state.localShellResult.isNotBlank() && !state.localShellRunning) {
+            item {
+                UmnikPanel {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(7.dp)
+                    ) {
+                        Text(
+                            "Готово · шагов модели: " + state.localShellTurns +
+                                " · локальных действий: " + state.localShellToolCalls +
+                                if (state.localShellFileCount > 0) " · файлов: " + state.localShellFileCount else "",
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        state.localShellCostUsd?.let { cost ->
+                            Text(
+                                "Стоимость модели: $" + String.format(Locale.US, "%.6f", cost),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(onClick = { showResultHere = !showResultHere }) {
+                            Text(if (showResultHere) "Скрыть ответ" else "Показать ответ")
+                        }
+                        if (showResultHere) {
+                            Text(state.localShellResult, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        FilledTonalButton(
+                            onClick = onReturnToChat,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("Вернуться в чат")
+                        }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text(
+                "MVP: Toybox, ZIP/TAR, Git, Python и сетевой шлюз работают на устройстве. " +
+                    "Исходные вложения не передаются в OpenRouter как файлы; модель получает только результаты запрошенных локальных действий.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
