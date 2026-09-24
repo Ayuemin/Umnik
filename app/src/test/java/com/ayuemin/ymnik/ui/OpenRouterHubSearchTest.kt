@@ -63,8 +63,8 @@ class OpenRouterHubSearchTest {
         )
 
         assertEquals(0.0, modelCatalogComparablePrice(free, SimpleModelKind.TEXT)!!, 0.0)
-        assertEquals(0.02, modelCatalogComparablePrice(cheap, SimpleModelKind.TEXT)!!, 0.0)
-        assertEquals(0.05, modelCatalogComparablePrice(mid, SimpleModelKind.TEXT)!!, 0.0)
+        assertEquals(0.015, modelCatalogComparablePrice(cheap, SimpleModelKind.TEXT)!!, 0.0)
+        assertEquals(0.04, modelCatalogComparablePrice(mid, SimpleModelKind.TEXT)!!, 0.0)
     }
 
     @Test
@@ -75,12 +75,54 @@ class OpenRouterHubSearchTest {
             completionPriceUsdPerMillion = 0.0,
             outputModalities = setOf("video", "text"),
             pricingSkusUsd = mapOf(
-                "duration_seconds_720p" to 0.10,
-                "duration_seconds_1080p" to 0.17
+                "per-video-second" to 0.10,
+                "per-video-second-1080p" to 0.17
             )
         )
 
         assertEquals(0.10, modelCatalogComparablePrice(video, SimpleModelKind.VIDEO)!!, 0.0)
+    }
+
+    @Test
+    fun textFilterDoesNotMixInMediaGenerators() {
+        val videoWithText = ModelInfo(
+            id = "vendor/video",
+            outputModalities = setOf("video", "text")
+        )
+        val imageWithText = ModelInfo(
+            id = "vendor/image",
+            outputModalities = setOf("image", "text")
+        )
+        val visionChat = ModelInfo(
+            id = "vendor/vision-chat",
+            inputModalities = setOf("text", "image"),
+            outputModalities = setOf("text")
+        )
+
+        assertFalse(modelMatchesSimpleKind(videoWithText, SimpleModelKind.TEXT))
+        assertFalse(modelMatchesSimpleKind(imageWithText, SimpleModelKind.TEXT))
+        assertTrue(modelMatchesSimpleKind(visionChat, SimpleModelKind.TEXT))
+    }
+
+    @Test
+    fun imagePositiveGenerationPriceBeatsZeroPlaceholder() {
+        val image = ModelInfo(
+            id = "vendor/image",
+            outputModalities = setOf("image"),
+            imagePriceUsd = 0.0,
+            imageOutputPriceUsd = 0.00001
+        )
+
+        assertEquals(0.04096, modelCatalogComparablePrice(image, SimpleModelKind.IMAGE)!!, 0.0000001)
+    }
+
+    @Test
+    fun speechFilterDoesNotTreatGenericAudioOutputAsTts() {
+        val tts = ModelInfo(id = "vendor/tts", outputModalities = setOf("speech"))
+        val audio = ModelInfo(id = "vendor/audio", outputModalities = setOf("audio"))
+
+        assertTrue(modelMatchesSimpleKind(tts, SimpleModelKind.SPEECH))
+        assertFalse(modelMatchesSimpleKind(audio, SimpleModelKind.SPEECH))
     }
 
 }
