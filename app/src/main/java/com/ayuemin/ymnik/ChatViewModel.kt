@@ -5037,6 +5037,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     role = "assistant",
                     text = result.text.ifBlank { "Готово." },
                     generatedFiles = result.files,
+                    modelId = result.modelId ?: imageModel,
+                    providerName = result.providerName,
+                    costUsd = result.costUsd,
+                    inputTokens = result.inputTokens,
+                    outputTokens = result.outputTokens,
                     imageGeneration = true
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
