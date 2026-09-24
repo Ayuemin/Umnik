@@ -1,4 +1,4 @@
-// Umnik v1.19.11 — stable release
+// Umnik v1.20.0-beta.1 — public test release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -26,8 +26,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 157
-        versionName = "1.19.11"
+        versionCode = 158
+        versionName = "1.20.0-beta.1"
     }
 
     buildFeatures {
