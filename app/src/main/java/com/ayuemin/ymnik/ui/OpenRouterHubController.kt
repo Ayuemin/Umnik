@@ -793,6 +793,7 @@ class OpenRouterHubController(
                 ): Pair<Result<OpenRouterResponsesClient.Result>, Boolean> = coroutineScope {
                     val recoveryRequested = AtomicBoolean(false)
                     var nextAssessmentAt = 0L
+                    var missingSystemModelWarned = false
                     val responseDeferred = async {
                         runCatching {
                             responsesClient.respond(
@@ -834,21 +835,26 @@ class OpenRouterHubController(
                             val silenceMs = now - lastRemote
                             if (silenceMs < SHELL_WATCHDOG_SILENCE_MS) continue
 
-                            watchdogChecks += 1
-                            val checkNumber = watchdogChecks
-                            updateShellProgress("Shell давно не отвечает. Системная модель проверяет выполнение…")
-
                             val systemModel = viewModel.state.value.systemModel.trim()
                             if (systemModel.isBlank()) {
-                                DiagnosticLog.record(
-                                    context,
-                                    "SHELL_WATCHDOG",
-                                    "check=$checkNumber; silenceSec=${silenceMs / 1000}; decision=wait; reason=system-model-missing"
-                                )
-                                updateShellProgress("Shell давно не отвечает. Системная модель не настроена — продолжаю ждать")
+                                if (!missingSystemModelWarned) {
+                                    missingSystemModelWarned = true
+                                    DiagnosticLog.record(
+                                        context,
+                                        "SHELL_WATCHDOG",
+                                        "silenceSec=${silenceMs / 1000}; passive=true; reason=system-model-missing"
+                                    )
+                                    updateShellProgress(
+                                        "Shell давно не отвечает. Системная модель не выбрана — продолжаю ждать"
+                                    )
+                                }
                                 nextAssessmentAt = now + SHELL_WATCHDOG_RECHECK_MS
                                 continue
                             }
+
+                            watchdogChecks += 1
+                            val checkNumber = watchdogChecks
+                            updateShellProgress("Shell давно не отвечает. Системная модель проверяет выполнение…")
 
                             val decision = withTimeoutOrNull(SHELL_WATCHDOG_SYSTEM_TIMEOUT_MS) {
                                 runCatching {
