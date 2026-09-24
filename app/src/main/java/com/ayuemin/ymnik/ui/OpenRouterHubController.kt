@@ -361,13 +361,17 @@ class OpenRouterHubController(
             .filter(String::isNotBlank)
         if (prompts.isEmpty()) return
         val filesPerPrompt = prompts.indices.map { index -> taskFileUris.getOrNull(index).orEmpty().take(6) }
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val originChat = originState.chats.firstOrNull { it.id == originChatId }
+        val originTeam = originChat?.teamId?.let { id -> originState.teams.firstOrNull { it.id == id } }
+        AsyncJobEvents.markHubToolRunning(originChatId, "batch", "Batch отправляется…")
 
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Отправляю Batch…", status = null)
             runCatching {
-                val appState = viewModel.state.value
-                val chat = appState.chats.firstOrNull { it.id == appState.currentChatId }
-                val team = chat?.teamId?.let { id -> appState.teams.firstOrNull { it.id == id } }
+                val chat = originChat
+                val team = originTeam
                 val modelInfo = mutableState.value.catalog.firstOrNull { it.id == model }
                 // Batch API не принимает обычные file/image parts. Текстовые файлы
                 // конкретной задачи безопасно встраиваются только в её prompt.
@@ -396,7 +400,7 @@ class OpenRouterHubController(
                     id = UUID.randomUUID().toString(),
                     remoteId = snapshot.remoteId,
                     connectionProfileId = profile.id,
-                    chatId = chat?.id,
+                    chatId = originChatId,
                     teamId = team?.id,
                     modelId = model,
                     baseModelId = model.removeSuffix(":batch"),
@@ -406,7 +410,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 batchRepository.upsert(job)
-                appendHubUserMessage(chat?.id, "[Batch: ${requests.size}${if (totalFiles > 0) " · файлов: $totalFiles" else ""}]\n$input")
+                appendHubUserMessage(originChatId, "[Batch: ${requests.size}${if (totalFiles > 0) " · файлов: $totalFiles" else ""}]\n$input")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -416,8 +420,10 @@ class OpenRouterHubController(
                     operation = null,
                     status = "Batch принят · ${job.remoteId}"
                 )
+                AsyncJobEvents.markHubToolFinished(originChatId, "batch")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(originChatId, "batch")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать Batch")
             }
         }
@@ -432,6 +438,10 @@ class OpenRouterHubController(
         if (prompt.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите описание видео"); return }
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (model.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите модель видео"); return }
+        val originState = viewModel.state.value
+        val originChatId = originState.currentChatId
+        val originTeamId = originState.chats.firstOrNull { it.id == originChatId }?.teamId
+        AsyncJobEvents.markHubToolRunning(originChatId, "video", "Видео отправляется…")
 
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Отправляю генерацию видео…", status = null)
@@ -444,14 +454,12 @@ class OpenRouterHubController(
                     options = OpenRouterVideoClient.SubmitOptions(references = refs),
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
-                val chatId = viewModel.state.value.currentChatId
-                val teamId = viewModel.state.value.chats.firstOrNull { it.id == chatId }?.teamId
                 val job = VideoJob(
                     id = UUID.randomUUID().toString(),
                     remoteId = snapshot.id,
                     connectionProfileId = profile.id,
-                    chatId = chatId,
-                    teamId = teamId,
+                    chatId = originChatId,
+                    teamId = originTeamId,
                     modelId = model,
                     prompt = prompt,
                     status = snapshot.status,
@@ -462,7 +470,7 @@ class OpenRouterHubController(
                     error = snapshot.error
                 )
                 videoRepository.upsert(job)
-                appendHubUserMessage(chatId, "[Видео · ${model.substringAfterLast('/')} ]\n$prompt")
+                appendHubUserMessage(originChatId, "[Видео · ${model.substringAfterLast('/')} ]\n$prompt")
                 OpenRouterBackgroundWorker.schedule(context, replace = false)
                 job
             }.onSuccess { job ->
@@ -472,8 +480,10 @@ class OpenRouterHubController(
                     operation = null,
                     status = "Видео принято · ${job.remoteId}"
                 )
+                AsyncJobEvents.markHubToolFinished(originChatId, "video")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(originChatId, "video")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось запустить видео")
             }
         }
@@ -487,6 +497,7 @@ class OpenRouterHubController(
         val chatId = viewModel.state.value.currentChatId
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (model.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите модель распознавания речи"); return }
+        AsyncJobEvents.markHubToolRunning(chatId, "transcription", "Распознаю аудио…")
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Распознаю аудио…", status = null)
             runCatching {
@@ -496,8 +507,10 @@ class OpenRouterHubController(
             }.onSuccess { result ->
                 appendHubExchange(chatId, "[Распознавание речи]", result.text, emptyList())
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, transcription = result.text, status = "Расшифровка готова и добавлена в чат")
+                AsyncJobEvents.markHubToolFinished(chatId, "transcription")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(chatId, "transcription")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось распознать аудио")
             }
         }
@@ -534,6 +547,7 @@ class OpenRouterHubController(
         if (text.isBlank()) { mutableState.value = mutableState.value.copy(status = "Введите текст для озвучивания"); return }
         if (profile == null || key.isBlank()) { mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен"); return }
         if (media.speechModel.isBlank()) { mutableState.value = mutableState.value.copy(status = "Сначала выберите speech-модель"); return }
+        AsyncJobEvents.markHubToolRunning(chatId, "speech", "Создаю аудио…")
         scope.launch {
             mutableState.value = mutableState.value.copy(loading = true, operation = "Создаю аудио…", status = null)
             runCatching {
@@ -549,8 +563,10 @@ class OpenRouterHubController(
             }.onSuccess { file ->
                 appendHubExchange(chatId, "[Озвучивание]\n$text", "Аудио готово: ${file.name}", listOf(file))
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, speechFile = file, status = "Аудио создано и добавлено в чат")
+                AsyncJobEvents.markHubToolFinished(chatId, "speech")
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
+                AsyncJobEvents.markHubToolFinished(chatId, "speech")
                 mutableState.value = mutableState.value.copy(loading = false, operation = null, status = error.message ?: "Не удалось создать аудио")
             }
         }

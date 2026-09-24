@@ -171,6 +171,7 @@ import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
+import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
@@ -389,12 +390,20 @@ private fun ChatScreen(
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
     val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val hubToolActivity by AsyncJobEvents.hubToolActivity.collectAsState()
     val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
+    val videoRepository = remember(context) { VideoJobRepository(context.applicationContext) }
     val activeBatchForChat = remember(state.currentChatId, asyncJobSequence) {
         batchRepository.list()
             .filter { it.chatId == state.currentChatId && !it.status.terminal }
             .maxByOrNull { it.updatedAt }
     }
+    val activeVideoForChat = remember(state.currentChatId, asyncJobSequence) {
+        videoRepository.list()
+            .filter { it.chatId == state.currentChatId && !it.status.terminal }
+            .maxByOrNull { it.updatedAt }
+    }
+    val activeHubToolHere = hubToolActivity?.takeIf { it.chatId == state.currentChatId }
     val shellActiveHere = shellActivity?.chatId == state.currentChatId
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
     val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
@@ -815,6 +824,14 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
+                activeHubToolHere?.let { activity ->
+                    BackgroundOperationBanner(
+                        title = activity.title,
+                        subtitle = "Чат доступен · операция продолжается",
+                        onClick = { AsyncJobEvents.requestHub(activity.page, "Вернуться в чат") }
+                    )
+                }
+
                 activeBatchForChat?.let { batch ->
                     BackgroundOperationBanner(
                         title = if (batch.completedItems > 0) {
@@ -824,6 +841,14 @@ onBranch = if (message.role == "assistant") {
                         },
                         subtitle = "Чат доступен · результат появится здесь",
                         onClick = { AsyncJobEvents.requestHub("batch", "Вернуться в чат") }
+                    )
+                }
+
+                activeVideoForChat?.let {
+                    BackgroundOperationBanner(
+                        title = "Видео создаётся",
+                        subtitle = "Чат доступен · результат появится здесь",
+                        onClick = { AsyncJobEvents.requestHub("video", "Вернуться в чат") }
                     )
                 }
 
