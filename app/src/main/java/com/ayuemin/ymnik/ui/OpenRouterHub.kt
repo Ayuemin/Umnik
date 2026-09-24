@@ -1203,7 +1203,7 @@ private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boo
     SimpleModelKind.TOOLS -> model.supportsTools
 }
 
-private fun modelCatalogComparablePrice(model: ModelInfo, kind: SimpleModelKind): Double? {
+internal fun modelCatalogComparablePrice(model: ModelInfo, kind: SimpleModelKind): Double? {
     if (ModelVariant.FREE in model.variants) return 0.0
 
     val textPrice = model.maxTextPriceUsdPerMillion
