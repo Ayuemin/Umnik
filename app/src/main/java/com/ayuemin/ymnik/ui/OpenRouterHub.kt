@@ -7,6 +7,11 @@ import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -541,121 +546,136 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
             IconButton(onClick = { controller.refreshCatalog(forceMessage = true) }) {
                 Icon(Icons.Outlined.Refresh, contentDescription = "Обновить каталог")
             }
-            if (!filtersExpanded) {
+            AnimatedVisibility(
+                visible = !filtersExpanded,
+                enter = fadeIn(),
+                exit = fadeOut()
+            ) {
                 FilledTonalButton(onClick = { filtersExpanded = true }) {
                     Text("Фильтры")
                 }
             }
         }
 
-        if (filtersExpanded) {
-        Text(
-            "Тип",
-            modifier = Modifier.padding(start = 14.dp, top = 1.dp),
-            style = MaterialTheme.typography.labelMedium
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
+        AnimatedVisibility(
+            visible = filtersExpanded,
+            enter = fadeIn() + expandVertically(expandFrom = Alignment.Top),
+            exit = fadeOut() + shrinkVertically(shrinkTowards = Alignment.Top)
         ) {
-            LazyRow(
-                modifier = Modifier.weight(1f),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(mainKinds) { item ->
-                    FilterChip(
-                        selected = kind == item,
-                        onClick = { kind = item },
-                        label = { Text(simpleModelKindLabel(item)) }
-                    )
-                }
-            }
-            Spacer(Modifier.width(6.dp))
-            FilterChip(
-                selected = kind in extraKinds,
-                onClick = { moreKindsOpen = true },
-                label = {
-                    Text(
-                        if (kind in extraKinds) simpleModelKindLabel(kind) else "Больше",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            )
-        }
-
-        Text(
-            "Сортировка",
-            modifier = Modifier.padding(start = 14.dp, top = 4.dp),
-            style = MaterialTheme.typography.labelMedium
-        )
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box {
-                FilterChip(
-                    selected = sort != CatalogSort.ALPHABETICAL,
-                    onClick = { sortMenuOpen = true },
-                    label = { Text("Сортировка: ${catalogSortLabel(sort)}") }
+            Column {
+                Text(
+                    "Тип",
+                    modifier = Modifier.padding(start = 14.dp, top = 1.dp),
+                    style = MaterialTheme.typography.labelMedium
                 )
-                DropdownMenu(
-                    expanded = sortMenuOpen,
-                    onDismissRequest = { sortMenuOpen = false }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CatalogSort.entries.forEach { item ->
-                        val priceSort = item == CatalogSort.CHEAPEST || item == CatalogSort.EXPENSIVE
-                        DropdownMenuItem(
-                            text = { Text(catalogSortLabel(item)) },
-                            enabled = !priceSort || kind != SimpleModelKind.ALL,
+                    LazyRow(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(mainKinds) { item ->
+                            FilterChip(
+                                selected = kind == item,
+                                onClick = { kind = item },
+                                label = { Text(simpleModelKindLabel(item)) }
+                            )
+                        }
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    FilterChip(
+                        selected = kind in extraKinds,
+                        onClick = { moreKindsOpen = true },
+                        label = {
+                            Text(
+                                if (kind in extraKinds) simpleModelKindLabel(kind) else "Больше",
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    )
+                }
+
+                Text(
+                    "Сортировка",
+                    modifier = Modifier.padding(start = 14.dp, top = 4.dp),
+                    style = MaterialTheme.typography.labelMedium
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box {
+                        FilterChip(
+                            selected = sort != CatalogSort.ALPHABETICAL,
+                            onClick = { sortMenuOpen = true },
+                            label = { Text("Сортировка: ${catalogSortLabel(sort)}") }
+                        )
+                        DropdownMenu(
+                            expanded = sortMenuOpen,
+                            onDismissRequest = { sortMenuOpen = false }
+                        ) {
+                            CatalogSort.entries.forEach { item ->
+                                val priceSort = item == CatalogSort.CHEAPEST || item == CatalogSort.EXPENSIVE
+                                DropdownMenuItem(
+                                    text = { Text(catalogSortLabel(item)) },
+                                    enabled = !priceSort || kind != SimpleModelKind.ALL,
+                                    onClick = {
+                                        sort = item
+                                        sortMenuOpen = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    if (kind != SimpleModelKind.ALL || sort != CatalogSort.ALPHABETICAL) {
+                        TextButton(
                             onClick = {
-                                sort = item
-                                sortMenuOpen = false
+                                kind = SimpleModelKind.ALL
+                                sort = CatalogSort.ALPHABETICAL
+                            }
+                        ) {
+                            Text("Сбросить")
+                        }
+                    }
+                }
+                if (kind == SimpleModelKind.ALL) {
+                    Text(
+                        "Для сортировки по цене сначала выберите тип модели.",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Text(
+                    buildString {
+                        append("Показано ${filtered.size} из ${state.catalog.size}")
+                        if (query.isNotBlank()) append(" · точные совпадения выше")
+                        append(" · ")
+                        append(
+                            when (effectiveSort) {
+                                CatalogSort.ALPHABETICAL -> "по алфавиту"
+                                CatalogSort.CHEAPEST -> "сначала бесплатные и дешёвые"
+                                CatalogSort.EXPENSIVE -> "сначала дорогие"
+                                CatalogSort.CAPABILITIES -> "больше возможностей выше"
                             }
                         )
-                    }
-                }
-            }
-            Spacer(Modifier.weight(1f))
-            if (kind != SimpleModelKind.ALL || sort != CatalogSort.ALPHABETICAL) {
-                TextButton(
-                    onClick = {
-                        kind = SimpleModelKind.ALL
-                        sort = CatalogSort.ALPHABETICAL
-                    }
-                ) {
-                    Text("Сбросить")
-                }
-            }
-        }
-        if (kind == SimpleModelKind.ALL) {
-            Text(
-                "Для сортировки по цене сначала выберите тип модели.",
-                modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-
-        Text(
-            buildString {
-                append("Показано ${filtered.size} из ${state.catalog.size}")
-                if (query.isNotBlank()) append(" · точные совпадения выше")
-                append(" · ")
-                append(
-                    when (effectiveSort) {
-                        CatalogSort.ALPHABETICAL -> "по алфавиту"
-                        CatalogSort.CHEAPEST -> "сначала бесплатные и дешёвые"
-                        CatalogSort.EXPENSIVE -> "сначала дорогие"
-                        CatalogSort.CAPABILITIES -> "больше возможностей выше"
-                    }
+                    },
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            },
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        } else {
+            }
+        }
+        AnimatedVisibility(
+            visible = !filtersExpanded,
+            enter = fadeIn(),
+            exit = fadeOut()
+        ) {
             Text(
                 "Показано ${filtered.size} из ${state.catalog.size} · фильтры свёрнуты",
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
@@ -1062,6 +1082,14 @@ private fun ModelInfoDialog(model: ModelInfo, onDismiss: () -> Unit) {
                                 model.pricingUsd.toSortedMap().forEach { (key, value) ->
                                     ModelDetailLine(pricingFieldLabel(key), formatRawPricing(key, value))
                                 }
+                                if (ModelCategory.IMAGE in model.categories) {
+                                    model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }?.let { estimate ->
+                                        ModelDetailLine(
+                                            "Генерация изображения 1K, ориентир",
+                                            formatCatalogPrice(estimate)
+                                        )
+                                    }
+                                }
                                 model.pricingSkusUsd.toSortedMap().forEach { (key, value) ->
                                     ModelDetailLine(pricingFieldLabel(key), formatSpecializedPricing(key, value))
                                 }
@@ -1271,49 +1299,35 @@ private fun tokenPriceQuote(model: ModelInfo): CatalogPriceQuote {
 }
 
 private fun imagePriceQuote(model: ModelInfo): CatalogPriceQuote {
-    val direct = model.imagePriceUsd
-    val estimated = model.estimatedImageOutputUsd1K
-    val specialized = imageSpecificPrices(model)
-
-    val positive = buildList {
-        direct?.takeIf { it > 0.0 }?.let(::add)
-        estimated?.takeIf { it > 0.0 }?.let(::add)
-        addAll(specialized.filter { it > 0.0 })
-    }
-    if (positive.isNotEmpty()) {
-        val value = positive.minOrNull()!!
-        val text = when {
-            direct != null && direct > 0.0 && direct == value ->
-                "Изображение: от ${formatCatalogPrice(value)} / изображение"
-            specialized.any { it > 0.0 && it == value } ->
-                "Изображение: от ${formatCatalogPrice(value)} / изображение"
-            else ->
-                "Изображение: ≈ ${formatCatalogPrice(value)} за 1K"
-        }
-        return CatalogPriceQuote(value, text)
+    // OpenRouter's generic `pricing.image` is the INPUT-image charge for models
+    // that accept references. It is not the generation price. For output pricing
+    // the general catalog exposes image_output/image_token; 4096 image tokens is
+    // the 1K baseline used by OpenRouter's image catalog.
+    val estimated1K = model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }
+    if (estimated1K != null) {
+        return CatalogPriceQuote(
+            estimated1K,
+            "Изображение: от ${formatCatalogPrice(estimated1K)} / изображение · 1K"
+        )
     }
 
-    val known = buildList {
-        direct?.let(::add)
-        estimated?.let(::add)
-        addAll(specialized)
-    }
-    return if (known.isNotEmpty() && known.all { it <= 0.0 }) {
-        CatalogPriceQuote(0.0, "Изображение: бесплатно")
-    } else {
-        CatalogPriceQuote(null, "Изображение: цена не указана")
-    }
-}
-
-private fun imageSpecificPrices(model: ModelInfo): List<Double> =
-    (model.pricingSkusUsd + model.pricingUsd)
-        .filter { (key, _) ->
-            val k = key.lowercase()
-            (k.contains("image") || k.contains("megapixel")) &&
-                k !in setOf("image_token", "image_output")
+    val endpointOutput = model.pricingSkusUsd
+        .filter { (key, value) ->
+            value > 0.0 && key.lowercase().let { k ->
+                k.contains("output_image") || k.contains("per-image") || k.contains("megapixel")
+            }
         }
         .values
-        .toList()
+        .minOrNull()
+    if (endpointOutput != null) {
+        return CatalogPriceQuote(
+            endpointOutput,
+            "Изображение: от ${formatCatalogPrice(endpointOutput)}"
+        )
+    }
+
+    return CatalogPriceQuote(null, "Изображение: цена генерации не указана")
+}
 
 private fun videoPriceQuote(model: ModelInfo): CatalogPriceQuote {
     val rates = videoPerSecondPrices(model)
@@ -1457,9 +1471,9 @@ private fun pricingFieldLabel(value: String): String {
         key == "prompt" -> "Входные токены"
         key == "completion" -> "Выходные токены"
         key == "request" -> "Запрос"
-        key == "image" -> "Изображение"
+        key == "image" -> "Входное изображение"
         key == "image_token" -> "Image token"
-        key == "image_output" -> "Image output"
+        key == "image_output" -> "Выходной image token"
         key == "web_search" -> "Веб-поиск"
         key == "internal_reasoning" -> "Reasoning tokens"
         key == "audio" -> "Аудио"
