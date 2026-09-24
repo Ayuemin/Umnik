@@ -192,7 +192,8 @@ internal class OpenRouterChatBatchRunner(
             completionTokens = null,
             totalTokens = null,
             reasoningTokens = null,
-            costUsd = null
+            costUsd = null,
+            costUsdExact = null
         )
     }
 

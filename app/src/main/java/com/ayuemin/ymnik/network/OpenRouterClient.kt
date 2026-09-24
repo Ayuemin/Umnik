@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
+import com.ayuemin.ymnik.RequestCostKind
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -36,7 +37,6 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.IOException
-import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -47,7 +47,8 @@ class OpenRouterClient(
     private val requestProfileId: String? = null,
     private val recoveryEnabled: Boolean = false,
     private val streamCallback: (String) -> Unit = {},
-    private val phaseCallback: (String) -> Unit = {}
+    private val phaseCallback: (String) -> Unit = {},
+    private val costSink: ((RequestCostKind, String?) -> Unit)? = null
 ) {
     private val gson = Gson()
     private val featurePrefs by lazy { OpenRouterFeaturePrefs(context.applicationContext) }
@@ -190,9 +191,8 @@ class OpenRouterClient(
         DiagnosticLog.record(context, "CONTEXT", "OpenRouter model=$model; stored=${history.size}; sent=${selectedHistory.size}; window=${modelInfo?.contextLength ?: "provider"}; output=provider; attachments=${attachments.size}")
 
         val created = mutableListOf<GeneratedFile>()
-        val knowledgeCache = mutableMapOf<String, String>()
-        var knowledgeCalls = 0
-        val effectiveKnowledgeSearchLimit = knowledgeSearchLimit.coerceIn(0, 10)
+        val knowledgeBudget = KnowledgeToolBudget(knowledgeSearchLimit)
+        val effectiveKnowledgeSearchLimit = knowledgeBudget.limit
         val maxToolLoops = maxOf(5, effectiveKnowledgeSearchLimit + 3)
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
@@ -251,6 +251,7 @@ class OpenRouterClient(
             val completion = requestCompletion(
                 apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
             )
+            costSink?.invoke(RequestCostKind.PRIMARY, completion.costUsdExact)
             val responseMessage = completion.message
             created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
@@ -298,20 +299,17 @@ class OpenRouterClient(
                         } else {
                             runCatching {
                                 val args = gson.fromJson(argsRaw, JsonObject::class.java)
-                                val query = args.get("query")?.asString.orEmpty().trim().take(12000)
-                                require(query.isNotBlank()) { "Пустой поисковый запрос" }
-                                val cacheKey = query.lowercase(Locale.ROOT)
-                                val result = knowledgeCache[cacheKey] ?: run {
-                                    require(knowledgeCalls < effectiveKnowledgeSearchLimit) {
-                                        "Достигнут лимит самостоятельных обращений к базе знаний: $effectiveKnowledgeSearchLimit"
-                                    }
-                                    knowledgeCalls += 1
+                                val query = args.get("query")?.asString.orEmpty()
+                                val beforeCalls = knowledgeBudget.usedCalls
+                                val result = knowledgeBudget.execute(query) { cleanQuery ->
+                                    callback(cleanQuery)
+                                }
+                                if (knowledgeBudget.usedCalls > beforeCalls) {
                                     DiagnosticLog.record(
                                         context,
                                         "KNOWLEDGE_TOOL",
-                                        "autonomous call=$knowledgeCalls/$effectiveKnowledgeSearchLimit"
+                                        "autonomous call=${knowledgeBudget.usedCalls}/$effectiveKnowledgeSearchLimit"
                                     )
-                                    callback(query).also { knowledgeCache[cacheKey] = it }
                                 }
                                 gson.toJson(mapOf("ok" to true, "result" to result))
                             }.getOrElse {
@@ -383,6 +381,7 @@ class OpenRouterClient(
             allowEmpty = false,
             streamToUi = false
         )
+        costSink?.invoke(RequestCostKind.SYSTEM, completion.costUsdExact)
         val content = extractText(completion.message.get("content"))
         if (content.isBlank()) error("Системная модель не вернула текст")
         Result(
@@ -453,7 +452,16 @@ class OpenRouterClient(
                 }
                 if (files.isEmpty()) error("OpenRouter вернул ответ без данных изображения")
                 val usage = root.getAsJsonObject("usage")
-                val costUsd = usage?.get("cost")?.takeUnless { it.isJsonNull }?.asDouble
+                val costExact = runCatching {
+                    (usage?.get("cost")?.takeUnless { it.isJsonNull }
+                        ?: root.get("cost")?.takeUnless { it.isJsonNull })
+                        ?.takeIf { it.isJsonPrimitive }
+                        ?.asString
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                }.getOrNull()
+                val costUsd = costExact?.toDoubleOrNull()
+                costSink?.invoke(RequestCostKind.PRIMARY, costExact)
                 val promptTokens = usage?.get("prompt_tokens")?.takeUnless { it.isJsonNull }?.asInt
                 val completionTokens = usage?.get("completion_tokens")?.takeUnless { it.isJsonNull }?.asInt
                 Result(

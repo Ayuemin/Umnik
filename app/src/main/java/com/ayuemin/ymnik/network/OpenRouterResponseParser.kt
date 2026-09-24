@@ -16,7 +16,8 @@ internal object OpenRouterResponseParser {
         val completionTokens: Int?,
         val totalTokens: Int?,
         val reasoningTokens: Int?,
-        val costUsd: Double?
+        val costUsd: Double?,
+        val costUsdExact: String?
     )
 
     fun parse(body: String, allowEmpty: Boolean = false): Completion {
@@ -42,6 +43,11 @@ internal object OpenRouterResponseParser {
         if (!allowEmpty && toolCount == 0 && imageCount == 0 && contentText(message.get("content")).isBlank()) {
             error("Модель вернула пустой текст (finish_reason=${finish.ifBlank { "не указан" }}, reasoning_tokens=${reasoningTokens ?: "неизвестно"}). Попробуйте уменьшить рассуждение или повторить запрос.")
         }
+        val costElement = usage?.get("cost")?.takeUnless { it.isJsonNull }
+            ?: root.get("cost")?.takeUnless { it.isJsonNull }
+        val costExact = runCatching {
+            costElement?.takeIf { it.isJsonPrimitive }?.asString?.trim()?.takeIf { it.isNotBlank() }
+        }.getOrNull()
         return Completion(
             message = message,
             id = root.get("id")?.takeUnless { it.isJsonNull }?.asString.orEmpty(),
@@ -53,8 +59,8 @@ internal object OpenRouterResponseParser {
             completionTokens = runCatching { usage?.get("completion_tokens")?.asInt }.getOrNull(),
             totalTokens = runCatching { usage?.get("total_tokens")?.asInt }.getOrNull(),
             reasoningTokens = reasoningTokens,
-            costUsd = runCatching { usage?.get("cost")?.asDouble }.getOrNull()
-                ?: runCatching { root.get("cost")?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull()
+            costUsd = costExact?.toDoubleOrNull(),
+            costUsdExact = costExact
         )
     }
 

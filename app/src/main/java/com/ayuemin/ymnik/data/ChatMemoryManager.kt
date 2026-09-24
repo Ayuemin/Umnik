@@ -38,7 +38,8 @@ class ChatMemoryManager(
         baseUrl: String?,
         embeddingModelId: String,
         systemModelId: String,
-        apiOverride: OpenRouterClient? = null
+        apiOverride: OpenRouterClient? = null,
+        embeddingOverride: OpenRouterEmbeddingClient? = null
     ): PreparedContext {
         if (chat == null || query.isBlank()) return PreparedContext(fullHistory)
         val mode = repository.mode(chat.id)
@@ -49,6 +50,7 @@ class ChatMemoryManager(
 
         val cleanEmbeddingModelId = embeddingModelId.trim()
         val cleanSystemModelId = systemModelId.trim()
+        val requestEmbeddings = embeddingOverride ?: embeddings
         val settings = withKnownEmbeddingLimit(
             repository.settingsForChat(chat.id),
             cleanEmbeddingModelId
@@ -83,7 +85,8 @@ class ChatMemoryManager(
                 recentCount = recentCount,
                 apiKey = apiKey,
                 baseUrl = baseUrl,
-                apiOverride = apiOverride
+                apiOverride = apiOverride,
+                embeddingClient = requestEmbeddings
             )
             val snapshot = repository.snapshot(chat.id)
             val recent = completed.takeLast(recentCount.coerceAtMost(completed.size))
@@ -100,7 +103,7 @@ class ChatMemoryManager(
                     "embedding query clipped chat=${chat.id.take(8)}; chars=${query.length}->${embeddingQuery.length}; targetTokens=${chunkPlan.targetTokens}"
                 )
             }
-            val queryVector = embeddings.embed(
+            val queryVector = requestEmbeddings.embed(
                 apiKey = apiKey,
                 modelId = cleanEmbeddingModelId,
                 inputs = listOf(embeddingQuery),
@@ -191,7 +194,8 @@ class ChatMemoryManager(
             recentCount = recent,
             apiKey = apiKey,
             baseUrl = baseUrl,
-            apiOverride = null
+            apiOverride = null,
+            embeddingClient = embeddings
         )
     }
 
@@ -204,7 +208,8 @@ class ChatMemoryManager(
         recentCount: Int,
         apiKey: String,
         baseUrl: String,
-        apiOverride: OpenRouterClient?
+        apiOverride: OpenRouterClient?,
+        embeddingClient: OpenRouterEmbeddingClient
     ) {
         val completed = ConversationContext.completedTextTurns(history)
         val keep = evenRecentCount(recentCount).coerceAtMost(completed.size)
@@ -246,7 +251,7 @@ class ChatMemoryManager(
             val chunks = chunksForCheckpoint(indexGroupId, messages, chunkPlan)
             val vectors = mutableListOf<FloatArray>()
             chunks.chunked(24).forEach { batch ->
-                vectors += embeddings.embed(
+                vectors += embeddingClient.embed(
                     apiKey = apiKey,
                     modelId = embeddingModelId,
                     inputs = batch.map { it.text },

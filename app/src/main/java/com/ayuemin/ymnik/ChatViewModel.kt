@@ -1234,6 +1234,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         query: String,
         specialistId: String? = null,
         baseOnly: Boolean = false,
+        embeddingsOverride: OpenRouterEmbeddingClient? = null,
         onSearchAttempted: () -> Unit = {},
         onRetrieved: (hitCount: Int, sources: List<String>) -> Unit = { _, _ -> }
     ): String {
@@ -1258,7 +1259,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 query = query.take(12000),
                 apiKey = apiKey,
                 baseUrl = baseUrl,
-                embeddings = embeddingApi,
+                embeddings = embeddingsOverride ?: embeddingApi,
                 embeddingModelId = _state.value.embeddingModel
             )
             val hits = retrieval.hits
@@ -1331,6 +1332,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private suspend fun knowledgeToolResult(
         owners: List<Pair<KnowledgeOwnerKind, String>>,
         query: String,
+        embeddingsOverride: OpenRouterEmbeddingClient? = null,
         onRetrieved: (hitCount: Int, sources: List<String>) -> Unit = { _, _ -> }
     ): String {
         val clean = query.trim().take(12000)
@@ -1345,7 +1347,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 query = clean,
                 apiKey = apiKey,
                 baseUrl = baseUrl,
-                embeddings = embeddingApi,
+                embeddings = embeddingsOverride ?: embeddingApi,
                 embeddingModelId = _state.value.embeddingModel
             )
             val hits = retrieval.hits
@@ -2886,19 +2888,27 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             orchestratorKnowledgeAvailable
         ) {
             val (helperKey, helperBaseUrl) = knowledgeOpenRouterCredentials()
-            val plan = prepareSystemKnowledgePlan(
-                query = workspace.userRequest,
-                history = history,
-                apiKey = helperKey,
-                baseUrl = helperBaseUrl
-            )
-            knowledgeSystemContext(
-                team = null,
-                chat = null,
-                query = plan.searchQuery,
-                specialistId = orchestrator.id,
-                baseOnly = plan.baseOnly
-            )
+            network.call(
+                chatId = orchestratorChat.id,
+                profileId = profile.id,
+                recoverable = false
+            ) { requestApi ->
+                val plan = prepareSystemKnowledgePlan(
+                    query = workspace.userRequest,
+                    history = history,
+                    apiKey = helperKey,
+                    baseUrl = helperBaseUrl,
+                    apiOverride = requestApi
+                )
+                knowledgeSystemContext(
+                    team = null,
+                    chat = null,
+                    query = plan.searchQuery,
+                    specialistId = orchestrator.id,
+                    baseOnly = plan.baseOnly,
+                    embeddingsOverride = network.embeddings()
+                )
+            }
         } else {
             ""
         }
@@ -2956,7 +2966,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 streamToUi = false,
                 webSearchPreset = orchestrator.tools.webSearchPreset,
                 knowledgeSearch = if (orchestratorKnowledgeToolEnabled) {
-                    { query -> knowledgeToolResult(orchestratorKnowledgeOwners, query) }
+                    { query ->
+                        knowledgeToolResult(
+                            orchestratorKnowledgeOwners,
+                            query,
+                            embeddingsOverride = network.embeddings()
+                        )
+                    }
                 } else {
                     null
                 },
@@ -3177,19 +3193,27 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 workerKnowledgeAvailable &&
                 memoryCredentials != null
             ) {
-                val plan = prepareSystemKnowledgePlan(
-                    query = delegatedText,
-                    history = before,
-                    apiKey = memoryCredentials.first,
-                    baseUrl = memoryCredentials.second
-                )
-                knowledgeSystemContext(
-                    team = null,
-                    chat = null,
-                    query = plan.searchQuery,
-                    specialistId = worker.id,
-                    baseOnly = plan.baseOnly
-                )
+                network.call(
+                    chatId = chat.id,
+                    profileId = profile.id,
+                    recoverable = false
+                ) { requestApi ->
+                    val plan = prepareSystemKnowledgePlan(
+                        query = delegatedText,
+                        history = before,
+                        apiKey = memoryCredentials.first,
+                        baseUrl = memoryCredentials.second,
+                        apiOverride = requestApi
+                    )
+                    knowledgeSystemContext(
+                        team = null,
+                        chat = null,
+                        query = plan.searchQuery,
+                        specialistId = worker.id,
+                        baseOnly = plan.baseOnly,
+                        embeddingsOverride = network.embeddings()
+                    )
+                }
             } else {
                 ""
             }
@@ -3208,7 +3232,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     baseUrl = memoryCredentials?.second,
                     embeddingModelId = _state.value.embeddingModel,
                     systemModelId = _state.value.systemModel,
-                    apiOverride = requestApi
+                    apiOverride = requestApi,
+                    embeddingOverride = network.embeddings()
                 )
                 requestApi.chat(
                     key,
@@ -3235,7 +3260,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     streamToUi = false,
                     webSearchPreset = worker.tools.webSearchPreset,
                     knowledgeSearch = if (workerKnowledgeToolEnabled) {
-                        { query -> knowledgeToolResult(workerKnowledgeOwners, query) }
+                        { query ->
+                            knowledgeToolResult(
+                                workerKnowledgeOwners,
+                                query,
+                                embeddingsOverride = network.embeddings()
+                            )
+                        }
                     } else {
                         null
                     },
@@ -4858,6 +4889,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                         currentChat,
                                         plan.searchQuery,
                                         baseOnly = plan.baseOnly,
+                                        embeddingsOverride = network.embeddings(),
                                         onSearchAttempted = {
                                             answerKnowledgeSearchAttempted = true
                                             answerKnowledgeHitCount = 0
@@ -4874,6 +4906,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                         query = plan.searchQuery,
                                         specialistId = requestSpecialist.id,
                                         baseOnly = plan.baseOnly,
+                                        embeddingsOverride = network.embeddings(),
                                         onSearchAttempted = {
                                             answerKnowledgeSearchAttempted = true
                                             answerKnowledgeHitCount = 0
@@ -4900,7 +4933,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 baseUrl = memoryCredentials?.second,
                                 embeddingModelId = _state.value.embeddingModel,
                                 systemModelId = _state.value.systemModel,
-                                apiOverride = requestApi
+                                apiOverride = requestApi,
+                                embeddingOverride = network.embeddings()
                             )
                             answerMemoryContextUsed = preparedContext.systemContext.isNotBlank()
                             requestApi.chat(
@@ -4935,6 +4969,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                         knowledgeToolResult(
                                             owners = knowledgeOwners,
                                             query = query,
+                                            embeddingsOverride = network.embeddings(),
                                             onRetrieved = { count, sources ->
                                                 answerKnowledgeHitCount = (answerKnowledgeHitCount ?: 0) + count
                                                 answerKnowledgeSources = (answerKnowledgeSources + sources).distinct()
@@ -5006,7 +5041,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     teamContextUsed = answerTeamContextUsed,
                     attachmentCount = answerAttachmentCount,
                     connectionName = profile.name,
-                    requestId = requestId.toString()
+                    requestId = requestId.toString(),
+                    costBreakdown = network.costSnapshot()
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(
@@ -5201,7 +5237,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     costUsd = result.costUsd,
                     inputTokens = result.inputTokens,
                     outputTokens = result.outputTokens,
-                    imageGeneration = true
+                    imageGeneration = true,
+                    costBreakdown = network.costSnapshot()
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(

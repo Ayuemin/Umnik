@@ -185,6 +185,7 @@ import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import java.math.BigDecimal
 import java.util.Locale
 
 private const val QUICK_MODEL_SEPARATOR = "\u001F"
@@ -2252,6 +2253,7 @@ private fun MessageCard(
             message.inputTokens != null ||
             message.outputTokens != null ||
             message.costUsd != null ||
+            message.costBreakdown != null ||
             message.responseDurationMs != null ||
             message.knowledgeHitCount != null ||
             message.knowledgeSearchAttempted != null ||
@@ -2447,6 +2449,7 @@ private fun AnswerInfoSheet(
     onDismiss: () -> Unit
 ) {
     var technicalOpen by remember(message.id) { mutableStateOf(false) }
+    var serviceCostsOpen by remember(message.id) { mutableStateOf(false) }
     val knowledgeCount = message.knowledgeHitCount
     val knowledgeSearchAttempted = message.knowledgeSearchAttempted == true
     val knowledgeBaseOnly = message.knowledgeBaseOnly == true
@@ -2479,15 +2482,81 @@ private fun AnswerInfoSheet(
             message.connectionName?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("Подключение", it) }
             message.responseDurationMs?.let { AnswerInfoRow("Время", formatAnswerDuration(it)) }
 
-            if (message.inputTokens != null || message.outputTokens != null || message.costUsd != null) {
+            if (
+                message.inputTokens != null ||
+                message.outputTokens != null ||
+                message.costUsd != null ||
+                message.costBreakdown != null
+            ) {
                 Spacer(Modifier.height(8.dp))
-                AnswerInfoSectionTitle("Расход")
+                AnswerInfoSectionTitle("Расходы")
                 message.inputTokens?.let { AnswerInfoRow("Вход", "$it токенов") }
                 message.outputTokens?.let { AnswerInfoRow("Выход", "$it токенов") }
                 if (message.inputTokens != null && message.outputTokens != null) {
-                    AnswerInfoRow("Всего", "${message.inputTokens + message.outputTokens} токенов")
+                    AnswerInfoRow("Всего токенов", "${message.inputTokens + message.outputTokens}")
                 }
-                message.costUsd?.takeIf { it >= 0.0 }?.let { AnswerInfoRow("Стоимость", formatAnswerCost(it)) }
+
+                val costs = message.costBreakdown
+                if (costs != null) {
+                    costs.primaryUsd?.let {
+                        AnswerInfoRow("Основной ответ", formatExactUsd(it))
+                    }
+
+                    if (costs.systemCalls + costs.embeddingCalls > 0) {
+                        TextButton(
+                            onClick = { serviceCostsOpen = !serviceCostsOpen },
+                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
+                        ) {
+                            Text("Служебные операции")
+                            costs.serviceUsd?.let {
+                                Text(
+                                    "  " + formatExactUsd(it),
+                                    modifier = Modifier.padding(start = 6.dp)
+                                )
+                            }
+                            Icon(
+                                if (serviceCostsOpen) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        if (serviceCostsOpen) {
+                            if (costs.systemCalls > 0) {
+                                AnswerInfoRow(
+                                    "Системная модель",
+                                    costs.systemUsd?.let(::formatExactUsd) ?: "Стоимость не определена"
+                                )
+                                AnswerInfoRow("Вызовов системы", costs.systemCalls.toString())
+                            }
+                            if (costs.embeddingCalls > 0) {
+                                AnswerInfoRow(
+                                    "Embeddings",
+                                    costs.embeddingsUsd?.let(::formatExactUsd) ?: "Стоимость не определена"
+                                )
+                                AnswerInfoRow("Embeddings-вызовов", costs.embeddingCalls.toString())
+                            }
+                        }
+                    }
+
+                    costs.knownTotalUsd?.let {
+                        AnswerInfoRow(
+                            if (costs.incomplete) "Учтено" else "Итого за ответ",
+                            formatExactUsd(it)
+                        )
+                    }
+                    if (costs.incomplete) {
+                        Text(
+                            "OpenRouter не сообщил стоимость части операций, поэтому показана только точно известная сумма.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
+                } else {
+                    message.costUsd?.takeIf { it >= 0.0 }?.let {
+                        AnswerInfoRow("Стоимость", formatAnswerCost(it))
+                    }
+                }
             }
 
             if (
@@ -2626,10 +2695,15 @@ private fun formatAnswerDuration(milliseconds: Long): String =
         "%.1f с".format(Locale.US, milliseconds / 1000.0)
     }
 
-private fun formatAnswerCost(value: Double): String = when {
-    value <= 0.0 -> "$0.00"
-    value < 0.01 -> "$" + "%.6f".format(Locale.US, value)
-    else -> "$" + "%.4f".format(Locale.US, value)
+private fun formatAnswerCost(value: Double): String =
+    formatExactUsd(BigDecimal.valueOf(value).toPlainString())
+
+private fun formatExactUsd(raw: String): String = runCatching {
+    val decimal = BigDecimal(raw.trim()).stripTrailingZeros()
+    val plain = if (decimal.compareTo(BigDecimal.ZERO) == 0) "0" else decimal.toPlainString()
+    "$" + plain
+}.getOrElse {
+    "$" + raw.trim()
 }
 
 private enum class MessagePartKind { PLAIN, CODE, COPY }

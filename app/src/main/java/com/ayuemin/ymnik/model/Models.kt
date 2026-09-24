@@ -333,6 +333,18 @@ data class Team(
     val updatedAt: Long = System.currentTimeMillis()
 )
 
+data class RequestCostBreakdown(
+    val primaryUsd: String? = null,
+    val systemUsd: String? = null,
+    val embeddingsUsd: String? = null,
+    val serviceUsd: String? = null,
+    val knownTotalUsd: String? = null,
+    val primaryCalls: Int = 0,
+    val systemCalls: Int = 0,
+    val embeddingCalls: Int = 0,
+    val incomplete: Boolean = false
+)
+
 data class ChatMessage(
     val id: String,
     val role: String,
@@ -362,7 +374,8 @@ data class ChatMessage(
     val teamContextUsed: Boolean? = null,
     val attachmentCount: Int? = null,
     val connectionName: String? = null,
-    val requestId: String? = null
+    val requestId: String? = null,
+    val costBreakdown: RequestCostBreakdown? = null
 )
 
 data class ChatSession(
