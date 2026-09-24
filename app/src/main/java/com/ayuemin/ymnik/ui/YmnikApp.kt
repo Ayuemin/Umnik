@@ -809,15 +809,19 @@ onBranch = if (message.role == "assistant") {
                 if (shellActiveHere) {
                     BackgroundOperationBanner(
                         title = "Shell выполняет задачу",
-                        subtitle = "Можно продолжать чат · нажмите, чтобы открыть Shell",
+                        subtitle = "Чат доступен · можно отправлять обычные сообщения",
                         onClick = { AsyncJobEvents.requestHub("shell", "Вернуться в чат") }
                     )
                 }
 
                 activeBatchForChat?.let { batch ->
                     BackgroundOperationBanner(
-                        title = "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.completedItems}/${batch.totalItems}",
-                        subtitle = "Можно продолжать чат · результат появится здесь",
+                        title = if (batch.completedItems > 0) {
+                            "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.completedItems}/${batch.totalItems}"
+                        } else {
+                            "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.totalItems} заданий"
+                        },
+                        subtitle = "Чат доступен · результат появится здесь",
                         onClick = { AsyncJobEvents.requestHub("batch", "Вернуться в чат") }
                     )
                 }

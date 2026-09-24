@@ -385,6 +385,43 @@ private fun OpenRouterHubDialog(
                             overflow = TextOverflow.Ellipsis
                         )
                     }
+                    val activeBatch = if (page == HubPage.JOBS) {
+                        state.batches.filterNot { it.status.terminal }.maxByOrNull { it.updatedAt }
+                    } else {
+                        null
+                    }
+                    if (activeBatch != null) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(10.dp))
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        if (activeBatch.completedItems > 0) {
+                                            "${batchLabel(activeBatch.status)} · ${activeBatch.completedItems}/${activeBatch.totalItems}"
+                                        } else {
+                                            "${batchLabel(activeBatch.status)} · ${activeBatch.totalItems} заданий"
+                                        },
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                    Text(
+                                        "Результат появится в исходном чате",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                TextButton(onClick = onDismiss) { Text("В чат") }
+                            }
+                        }
+                    }
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
@@ -392,8 +429,7 @@ private fun OpenRouterHubDialog(
                         HubPage.JOBS -> JobsPage(
                             state = state,
                             controller = controller,
-                            onOpenCatalog = openCatalog,
-                            onReturnToChat = onDismiss
+                            onOpenCatalog = openCatalog
                         )
                         HubPage.MEDIA -> MediaPage(state, controller, initialMediaSection, openCatalog)
                         HubPage.REPLY_SPEECH -> ReplySpeechPage(state, appState, controller, openCatalog)
@@ -1861,14 +1897,11 @@ private data class BatchDraftTask(
 private fun JobsPage(
     state: OpenRouterHubState,
     controller: OpenRouterHubController,
-    onOpenCatalog: () -> Unit,
-    onReturnToChat: () -> Unit
+    onOpenCatalog: () -> Unit
 ) {
     val tasks = remember { mutableStateListOf(BatchDraftTask()) }
     var bulkInput by remember { mutableStateOf("") }
     var fileTargetIndex by remember { mutableStateOf<Int?>(null) }
-    var clearHistoryConfirm by remember { mutableStateOf(false) }
-    var modelSettingsExpanded by remember { mutableStateOf(false) }
     val taskFilePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         val index = fileTargetIndex
         if (index != null && index in tasks.indices) {
@@ -1877,39 +1910,8 @@ private fun JobsPage(
         fileTargetIndex = null
     }
     val readyCount = tasks.count { it.text.isNotBlank() }
-    val activeBatches = state.batches.filterNot { it.status.terminal }
-    val finishedBatches = state.batches.filter { it.status.terminal }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (activeBatches.isNotEmpty()) {
-            item {
-                Text("Сейчас выполняется", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            }
-            items(activeBatches, key = { "active-${it.id}" }) { job ->
-                UmnikPanel {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(job.title, fontWeight = FontWeight.SemiBold)
-                        Text(
-                            "${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "Можно вернуться в чат. Результат появится там после завершения.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                        TextButton(
-                            onClick = onReturnToChat,
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
-                        ) { Text("Вернуться в чат") }
-                    }
-                }
-            }
-            item { HorizontalDivider() }
-        }
-
         item {
             Text("Новый пакет", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
         }
@@ -1996,66 +1998,13 @@ private fun JobsPage(
         }
 
         item {
-            UmnikInlineExpander(
-                title = "Модель и параметры",
-                subtitle = state.media.batchModel.substringAfterLast('/').ifBlank { "Модель не выбрана" },
-                expanded = modelSettingsExpanded,
-                onToggle = { modelSettingsExpanded = !modelSettingsExpanded }
+            CategoryModelPicker(
+                title = "Модель Batch",
+                current = state.media.batchModel,
+                onOpenCatalog = onOpenCatalog,
+                onApply = controller::setBatchModelId
             )
         }
-        if (modelSettingsExpanded) {
-            item {
-                CategoryModelPicker(
-                    title = "ID модели для пакетных задач",
-                    current = state.media.batchModel,
-                    onOpenCatalog = onOpenCatalog,
-                    onApply = controller::setBatchModelId
-                )
-            }
-        }
-
-        item {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text("История Batch", modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-                TextButton(
-                    onClick = { clearHistoryConfirm = true },
-                    enabled = state.batches.any { it.status.terminal }
-                ) { Text("Очистить") }
-                TextButton(onClick = controller::refreshJobs) {
-                    Icon(Icons.Outlined.Refresh, null)
-                    Spacer(Modifier.width(4.dp))
-                    Text("Обновить")
-                }
-            }
-        }
-        if (finishedBatches.isEmpty()) {
-            item { Text("Пока нет завершённых Batch-заданий", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-        }
-        items(finishedBatches, key = { it.id }) { job ->
-            UmnikPanel {
-                Column(Modifier.padding(12.dp)) {
-                    Text(job.title, fontWeight = FontWeight.SemiBold)
-                    Text("${batchLabel(job.status)} · ${job.completedItems}/${job.totalItems}", style = MaterialTheme.typography.bodySmall)
-                    Text(job.modelId, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    job.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                }
-            }
-        }
-    }
-
-    if (clearHistoryConfirm) {
-        AlertDialog(
-            onDismissRequest = { clearHistoryConfirm = false },
-            title = { Text("Очистить историю Batch?") },
-            text = { Text("Готовые, ошибочные и отменённые записи будут удалены. Активные задания останутся и продолжат выполняться.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    clearHistoryConfirm = false
-                    controller.clearFinishedBatchHistory()
-                }) { Text("Очистить") }
-            },
-            dismissButton = { TextButton(onClick = { clearHistoryConfirm = false }) { Text("Отмена") } }
-        )
     }
 }
 
