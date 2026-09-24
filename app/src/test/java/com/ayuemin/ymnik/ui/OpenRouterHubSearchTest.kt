@@ -129,4 +129,24 @@ class OpenRouterHubSearchTest {
         assertFalse(modelMatchesSimpleKind(audio, SimpleModelKind.SPEECH))
     }
 
+    @Test
+    fun transcriptionUsesPerSecondCatalogPriceInsteadOfPerMillionTokens() {
+        val asr = ModelInfo(
+            id = "qwen/qwen3-asr-1.7b",
+            outputModalities = setOf("transcription"),
+            promptPriceUsdPerMillion = 8.0,
+            completionPriceUsdPerMillion = 0.0,
+            pricingUsd = mapOf(
+                "prompt" to 0.000008,
+                "completion" to 0.0
+            )
+        )
+
+        assertEquals(
+            0.000008,
+            modelCatalogComparablePrice(asr, SimpleModelKind.TRANSCRIPTION)!!,
+            0.000000001
+        )
+    }
+
 }
