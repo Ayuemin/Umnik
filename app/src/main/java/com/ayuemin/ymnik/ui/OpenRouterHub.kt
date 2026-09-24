@@ -486,7 +486,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         )
     }
 
-    val effectiveSort = if (kind == SimpleModelKind.ALL && sort in setOf(CatalogSort.CHEAPEST, CatalogSort.EXPENSIVE)) {
+    val effectiveSort = if (!catalogPriceSortSupported(kind) && sort in setOf(CatalogSort.CHEAPEST, CatalogSort.EXPENSIVE)) {
         CatalogSort.ALPHABETICAL
     } else {
         sort
@@ -621,7 +621,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                                 val priceSort = item == CatalogSort.CHEAPEST || item == CatalogSort.EXPENSIVE
                                 DropdownMenuItem(
                                     text = { Text(catalogSortLabel(item)) },
-                                    enabled = !priceSort || kind != SimpleModelKind.ALL,
+                                    enabled = !priceSort || catalogPriceSortSupported(kind),
                                     onClick = {
                                         sort = item
                                         sortMenuOpen = false
@@ -642,13 +642,20 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
                         }
                     }
                 }
-                if (kind == SimpleModelKind.ALL) {
-                    Text(
+                when (kind) {
+                    SimpleModelKind.ALL -> Text(
                         "Для сортировки по цене сначала выберите тип модели.",
                         modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    SimpleModelKind.SPEECH -> Text(
+                        "У моделей озвучивания разные единицы тарификации, поэтому ценовая сортировка отключена.",
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    else -> Unit
                 }
 
                 Text(
@@ -1222,6 +1229,9 @@ private fun catalogSortLabel(value: CatalogSort): String = when (value) {
     CatalogSort.CAPABILITIES -> "По возможностям"
 }
 
+private fun catalogPriceSortSupported(kind: SimpleModelKind): Boolean =
+    kind != SimpleModelKind.ALL && kind != SimpleModelKind.SPEECH
+
 internal fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
     SimpleModelKind.ALL -> true
     SimpleModelKind.TEXT ->
@@ -1381,7 +1391,7 @@ private fun speechPriceQuote(model: ModelInfo): CatalogPriceQuote {
     val sortValue = known.average()
     val text = when {
         output != null && output > 0.0 ->
-            "Озвучка / 1M: вход ${formatCatalogPrice(input)} · выход ${formatCatalogPrice(output)}"
+            "Озвучка / 1M: текст-токены ${formatCatalogPrice(input)} · аудио-токены ${formatCatalogPrice(output)}"
         input != null && input > 0.0 && model.providerId == "fish-audio" ->
             "Озвучка: ${formatCatalogPrice(input)} / 1M UTF-8 байт"
         input != null && input > 0.0 ->
@@ -1392,33 +1402,33 @@ private fun speechPriceQuote(model: ModelInfo): CatalogPriceQuote {
 }
 
 private fun transcriptionPriceQuote(model: ModelInfo): CatalogPriceQuote {
-    val entries = (model.pricingSkusUsd + model.pricingUsd)
-    val perMinute = entries.mapNotNull { (key, value) ->
-        val k = key.lowercase()
-        when {
-            value < 0.0 -> null
-            k.contains("minute") -> value
-            k.contains("second") -> value * 60.0
-            else -> null
+    val explicitPerSecond = (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, value) ->
+            value >= 0.0 && key.lowercase().let { k ->
+                k.contains("per-second") || k.contains("per_second") || k.contains("second")
+            }
         }
-    }
-    val positive = perMinute.filter { it > 0.0 }
-    if (positive.isNotEmpty()) {
-        val value = positive.minOrNull()!!
-        return CatalogPriceQuote(value, "Распознавание: от ${formatCatalogPrice(value)} / мин")
-    }
-    if (perMinute.isNotEmpty() && perMinute.all { it <= 0.0 }) {
-        return CatalogPriceQuote(0.0, "Распознавание: бесплатно")
+        .values
+        .minOrNull()
+    val explicitPerMinute = (model.pricingSkusUsd + model.pricingUsd)
+        .filter { (key, value) ->
+            value >= 0.0 && key.lowercase().contains("minute")
+        }
+        .values
+        .minOrNull()
+
+    val perSecond = when {
+        explicitPerSecond != null -> explicitPerSecond
+        explicitPerMinute != null -> explicitPerMinute / 60.0
+        else -> model.pricingUsd["prompt"]
     }
 
-    val input = model.promptPriceUsdPerMillion
-    val output = model.completionPriceUsdPerMillion
-    val known = listOfNotNull(input, output)
-    if (known.isEmpty()) return CatalogPriceQuote(null, "Распознавание: цена не указана")
-    if (known.all { it <= 0.0 }) return CatalogPriceQuote(0.0, "Распознавание: бесплатно")
+    if (perSecond == null) return CatalogPriceQuote(null, "Распознавание: цена не указана")
+    if (perSecond <= 0.0) return CatalogPriceQuote(0.0, "Распознавание: бесплатно")
+
     return CatalogPriceQuote(
-        known.average(),
-        "Распознавание / 1M: вход ${formatCatalogPrice(input)} · выход ${formatCatalogPrice(output)}"
+        perSecond,
+        "Распознавание: ${formatCatalogPrice(perSecond)} / сек"
     )
 }
 
