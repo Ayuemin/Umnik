@@ -725,7 +725,13 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
 }
 
 @Composable
-private fun ModelCatalogCard(model: ModelInfo, controller: OpenRouterHubController, appState: UiState, hubState: OpenRouterHubState) {
+private fun ModelCatalogCard(
+    model: ModelInfo,
+    controller: OpenRouterHubController,
+    appState: UiState,
+    hubState: OpenRouterHubState,
+    selectedKind: SimpleModelKind
+) {
     val context = LocalContext.current
     val universality = remember(model) { ModelUniversality.score(model) }
     var menuOpen by remember(model.id) { mutableStateOf(false) }
