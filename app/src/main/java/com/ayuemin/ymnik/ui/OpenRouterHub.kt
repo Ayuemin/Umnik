@@ -112,16 +112,11 @@ internal enum class SimpleModelKind {
     TOOLS
 }
 
-internal enum class SimplePriceFilter {
-    ALL,
-    FREE,
-    FROM_0_TO_0_02,
-    FROM_0_02_TO_0_05,
-    FROM_0_05_TO_0_10,
-    FROM_0_10_TO_0_50,
-    FROM_0_50_TO_1,
-    FROM_1_TO_5,
-    OVER_5
+internal enum class CatalogSort {
+    ALPHABETICAL,
+    CHEAPEST,
+    EXPENSIVE,
+    CAPABILITIES
 }
 
 @Composable
@@ -440,9 +435,8 @@ internal fun modelMatchesSearch(model: ModelInfo, rawQuery: String): Boolean =
 private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubController, appState: UiState) {
     var query by remember { mutableStateOf("") }
     var kind by remember { mutableStateOf(SimpleModelKind.ALL) }
-    var price by remember { mutableStateOf(SimplePriceFilter.ALL) }
-    var priceMenuOpen by remember { mutableStateOf(false) }
-    var sortByCapabilities by remember { mutableStateOf(false) }
+    var sort by remember { mutableStateOf(CatalogSort.ALPHABETICAL) }
+    var sortMenuOpen by remember { mutableStateOf(false) }
     var moreKindsOpen by remember { mutableStateOf(false) }
     var filtersExpanded by remember { mutableStateOf(true) }
     val listState = rememberLazyListState()
@@ -460,7 +454,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         }
     }
 
-    LaunchedEffect(query, kind, price, sortByCapabilities) {
+    LaunchedEffect(query, kind, sort) {
         if (listState.firstVisibleItemIndex > 0 || listState.firstVisibleItemScrollOffset > 0) {
             listState.scrollToItem(0)
         }
@@ -487,30 +481,38 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         )
     }
 
-    val filtered = remember(state.catalog, query, kind, price, sortByCapabilities) {
+    val effectiveSort = if (kind == SimpleModelKind.ALL && sort in setOf(CatalogSort.CHEAPEST, CatalogSort.EXPENSIVE)) {
+        CatalogSort.ALPHABETICAL
+    } else {
+        sort
+    }
+
+    val filtered = remember(state.catalog, query, kind, effectiveSort) {
         val needle = query.trim()
-        val comparator = when {
-            needle.isNotBlank() && sortByCapabilities ->
-                compareBy<ModelInfo> { modelSearchRank(it, needle) }
-                    .thenByDescending { ModelUniversality.score(it).total }
-                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                    .thenBy { it.id }
-            needle.isNotBlank() ->
-                compareBy<ModelInfo> { modelSearchRank(it, needle) }
-                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                    .thenBy { it.id }
-            sortByCapabilities ->
+        val nameComparator = compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
+            .thenBy { it.id }
+        val sortComparator = when (effectiveSort) {
+            CatalogSort.ALPHABETICAL -> nameComparator
+            CatalogSort.CAPABILITIES ->
                 compareByDescending<ModelInfo> { ModelUniversality.score(it).total }
-                    .thenBy { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                    .thenBy { it.id }
-            else ->
-                compareBy<ModelInfo> { (it.name ?: it.id).lowercase(Locale.ROOT) }
-                    .thenBy { it.id }
+                    .then(nameComparator)
+            CatalogSort.CHEAPEST ->
+                compareBy<ModelInfo> { modelCatalogComparablePrice(it, kind) == null }
+                    .thenBy { modelCatalogComparablePrice(it, kind) ?: Double.MAX_VALUE }
+                    .then(nameComparator)
+            CatalogSort.EXPENSIVE ->
+                compareBy<ModelInfo> { modelCatalogComparablePrice(it, kind) == null }
+                    .thenByDescending { modelCatalogComparablePrice(it, kind) ?: Double.NEGATIVE_INFINITY }
+                    .then(nameComparator)
+        }
+        val comparator = if (needle.isBlank()) {
+            sortComparator
+        } else {
+            compareBy<ModelInfo> { modelSearchRank(it, needle) }.then(sortComparator)
         }
         state.catalog.asSequence()
             .filter { model -> modelMatchesSearch(model, needle) }
             .filter { model -> modelMatchesSimpleKind(model, kind) }
-            .filter { model -> modelMatchesSimplePrice(model, kind, price) }
             .sortedWith(comparator)
             .take(700)
             .toList()
@@ -583,7 +585,7 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         }
 
         Text(
-            "Стоимость",
+            "Сортировка",
             modifier = Modifier.padding(start = 14.dp, top = 4.dp),
             style = MaterialTheme.typography.labelMedium
         )
@@ -593,59 +595,61 @@ private fun ModelsPage(state: OpenRouterHubState, controller: OpenRouterHubContr
         ) {
             Box {
                 FilterChip(
-                    selected = price != SimplePriceFilter.ALL,
-                    onClick = { priceMenuOpen = true },
-                    label = { Text("Цена: ${simplePriceFilterLabel(price)}") }
+                    selected = sort != CatalogSort.ALPHABETICAL,
+                    onClick = { sortMenuOpen = true },
+                    label = { Text("Сортировка: ${catalogSortLabel(sort)}") }
                 )
                 DropdownMenu(
-                    expanded = priceMenuOpen,
-                    onDismissRequest = { priceMenuOpen = false }
+                    expanded = sortMenuOpen,
+                    onDismissRequest = { sortMenuOpen = false }
                 ) {
-                    SimplePriceFilter.entries.forEach { item ->
+                    CatalogSort.entries.forEach { item ->
+                        val priceSort = item == CatalogSort.CHEAPEST || item == CatalogSort.EXPENSIVE
                         DropdownMenuItem(
-                            text = { Text(simplePriceFilterLabel(item)) },
+                            text = { Text(catalogSortLabel(item)) },
+                            enabled = !priceSort || kind != SimpleModelKind.ALL,
                             onClick = {
-                                price = item
-                                priceMenuOpen = false
+                                sort = item
+                                sortMenuOpen = false
                             }
                         )
                     }
                 }
             }
             Spacer(Modifier.weight(1f))
-            FilterChip(
-                selected = sortByCapabilities,
-                onClick = { sortByCapabilities = !sortByCapabilities },
-                label = { Text(if (sortByCapabilities) "Возможности ↓" else "По возможностям") }
-            )
-        }
-
-        if (kind != SimpleModelKind.ALL || price != SimplePriceFilter.ALL || sortByCapabilities) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Spacer(Modifier.weight(1f))
+            if (kind != SimpleModelKind.ALL || sort != CatalogSort.ALPHABETICAL) {
                 TextButton(
                     onClick = {
                         kind = SimpleModelKind.ALL
-                        price = SimplePriceFilter.ALL
-                        sortByCapabilities = false
+                        sort = CatalogSort.ALPHABETICAL
                     }
                 ) {
                     Text("Сбросить")
                 }
             }
         }
+        if (kind == SimpleModelKind.ALL) {
+            Text(
+                "Для сортировки по цене сначала выберите тип модели.",
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 1.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
 
         Text(
             buildString {
                 append("Показано ${filtered.size} из ${state.catalog.size}")
-                when {
-                    query.isNotBlank() -> append(" · точные совпадения выше")
-                    sortByCapabilities -> append(" · больше возможностей выше")
-                    else -> append(" · по алфавиту")
-                }
+                if (query.isNotBlank()) append(" · точные совпадения выше")
+                append(" · ")
+                append(
+                    when (effectiveSort) {
+                        CatalogSort.ALPHABETICAL -> "по алфавиту"
+                        CatalogSort.CHEAPEST -> "сначала бесплатные и дешёвые"
+                        CatalogSort.EXPENSIVE -> "сначала дорогие"
+                        CatalogSort.CAPABILITIES -> "больше возможностей выше"
+                    }
+                )
             },
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 2.dp),
             style = MaterialTheme.typography.bodySmall,
@@ -1177,16 +1181,11 @@ private fun simpleModelKindLabel(value: SimpleModelKind): String = when (value) 
     SimpleModelKind.TOOLS -> "Tools"
 }
 
-private fun simplePriceFilterLabel(value: SimplePriceFilter): String = when (value) {
-    SimplePriceFilter.ALL -> "Все"
-    SimplePriceFilter.FREE -> "Бесплатные"
-    SimplePriceFilter.FROM_0_TO_0_02 -> "\$0–0,02"
-    SimplePriceFilter.FROM_0_02_TO_0_05 -> "\$0,02–0,05"
-    SimplePriceFilter.FROM_0_05_TO_0_10 -> "\$0,05–0,10"
-    SimplePriceFilter.FROM_0_10_TO_0_50 -> "\$0,10–0,50"
-    SimplePriceFilter.FROM_0_50_TO_1 -> "\$0,50–1"
-    SimplePriceFilter.FROM_1_TO_5 -> "\$1–5"
-    SimplePriceFilter.OVER_5 -> "более \$5"
+private fun catalogSortLabel(value: CatalogSort): String = when (value) {
+    CatalogSort.ALPHABETICAL -> "По алфавиту"
+    CatalogSort.CHEAPEST -> "Сначала дешёвые"
+    CatalogSort.EXPENSIVE -> "Сначала дорогие"
+    CatalogSort.CAPABILITIES -> "По возможностям"
 }
 
 private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boolean = when (kind) {
@@ -1204,77 +1203,51 @@ private fun modelMatchesSimpleKind(model: ModelInfo, kind: SimpleModelKind): Boo
     SimpleModelKind.TOOLS -> model.supportsTools
 }
 
-internal fun modelMatchesSimplePrice(
-    model: ModelInfo,
-    kind: SimpleModelKind,
-    filter: SimplePriceFilter
-): Boolean {
-    if (filter == SimplePriceFilter.ALL) return true
-    if (filter == SimplePriceFilter.FREE) return isSimpleCatalogFree(model, kind)
+private fun modelCatalogComparablePrice(model: ModelInfo, kind: SimpleModelKind): Double? {
+    if (ModelVariant.FREE in model.variants) return 0.0
 
-    val value = simpleCatalogPrice(model, kind) ?: return false
-    if (value <= 0.0 || isSimpleCatalogFree(model, kind)) return false
-    return when (filter) {
-        SimplePriceFilter.ALL, SimplePriceFilter.FREE -> true
-        SimplePriceFilter.FROM_0_TO_0_02 -> value <= 0.02
-        SimplePriceFilter.FROM_0_02_TO_0_05 -> value > 0.02 && value <= 0.05
-        SimplePriceFilter.FROM_0_05_TO_0_10 -> value > 0.05 && value <= 0.10
-        SimplePriceFilter.FROM_0_10_TO_0_50 -> value > 0.10 && value <= 0.50
-        SimplePriceFilter.FROM_0_50_TO_1 -> value > 0.50 && value <= 1.0
-        SimplePriceFilter.FROM_1_TO_5 -> value > 1.0 && value <= 5.0
-        SimplePriceFilter.OVER_5 -> value > 5.0
+    val textPrice = model.maxTextPriceUsdPerMillion
+    val imagePrice = listOfNotNull(
+        model.imagePriceUsd?.takeIf { it >= 0.0 },
+        model.estimatedImageOutputUsd1K?.takeIf { it >= 0.0 }
+    ).minOrNull()
+    val specialized = specializedPricingValues(model)
+    val specializedPositive = specialized.filter { it > 0.0 }.minOrNull()
+    val specializedKnownZero = specialized.isNotEmpty() && specialized.all { it <= 0.0 }
+
+    return when (kind) {
+        SimpleModelKind.TEXT,
+        SimpleModelKind.BATCH,
+        SimpleModelKind.EMBEDDINGS,
+        SimpleModelKind.MULTIMODAL,
+        SimpleModelKind.REASONING,
+        SimpleModelKind.TOOLS -> textPrice ?: specializedPositive ?: if (specializedKnownZero) 0.0 else null
+
+        SimpleModelKind.IMAGE -> imagePrice ?: specializedPositive ?: textPrice
+            ?: if (specializedKnownZero) 0.0 else null
+
+        SimpleModelKind.VIDEO,
+        SimpleModelKind.SPEECH,
+        SimpleModelKind.TRANSCRIPTION,
+        SimpleModelKind.AUDIO_INPUT -> specializedPositive ?: textPrice
+            ?: if (specializedKnownZero) 0.0 else null
+
+        SimpleModelKind.ALL -> null
     }
 }
 
-private fun isSimpleCatalogFree(model: ModelInfo, kind: SimpleModelKind): Boolean {
-    if (ModelVariant.FREE in model.variants) return true
-    val category = simplePriceCategory(kind, model)
-    if (category == ModelCategory.TEXT || category == ModelCategory.IMAGE) {
-        return model.isFreeFor(category)
-    }
-    val prices = simpleRawUnitPrices(model)
-    return prices.isNotEmpty() && prices.all { it <= 0.0 }
-}
-
-private fun simpleCatalogPrice(model: ModelInfo, kind: SimpleModelKind): Double? {
-    return when (simplePriceCategory(kind, model)) {
-        ModelCategory.TEXT -> model.maxTextPriceUsdPerMillion
-        ModelCategory.IMAGE -> model.estimatedImageOutputUsd1K ?: model.imagePriceUsd
-        ModelCategory.EMBEDDINGS, ModelCategory.RERANK -> model.maxTextPriceUsdPerMillion
-        else -> simpleRawUnitPrices(model).filter { it > 0.0 }.minOrNull()
-            ?: simpleRawUnitPrices(model).firstOrNull()
-            ?: model.maxTextPriceUsdPerMillion
-            ?: model.estimatedImageOutputUsd1K
+private fun specializedPricingValues(model: ModelInfo): List<Double> {
+    val genericTokenKeys = setOf("prompt", "completion", "internal_reasoning", "image_token", "image_output")
+    return buildList {
+        addAll(model.pricingSkusUsd.values)
+        addAll(
+            model.pricingUsd
+                .filterKeys { it.lowercase() !in genericTokenKeys }
+                .values
+        )
     }
 }
 
-private fun simplePriceCategory(kind: SimpleModelKind, model: ModelInfo): ModelCategory? = when (kind) {
-    SimpleModelKind.TEXT, SimpleModelKind.BATCH -> ModelCategory.TEXT
-    SimpleModelKind.IMAGE -> ModelCategory.IMAGE
-    SimpleModelKind.VIDEO -> ModelCategory.VIDEO
-    SimpleModelKind.SPEECH -> ModelCategory.SPEECH
-    SimpleModelKind.TRANSCRIPTION -> ModelCategory.TRANSCRIPTION
-    SimpleModelKind.EMBEDDINGS -> ModelCategory.EMBEDDINGS
-    SimpleModelKind.ALL, SimpleModelKind.AUDIO_INPUT, SimpleModelKind.MULTIMODAL,
-    SimpleModelKind.REASONING, SimpleModelKind.TOOLS -> when {
-        model.outputModalities == setOf("image") -> ModelCategory.IMAGE
-        ModelCategory.TEXT in model.categories -> ModelCategory.TEXT
-        ModelCategory.VIDEO in model.categories -> ModelCategory.VIDEO
-        ModelCategory.SPEECH in model.categories || ModelCategory.AUDIO in model.categories -> ModelCategory.SPEECH
-        ModelCategory.TRANSCRIPTION in model.categories -> ModelCategory.TRANSCRIPTION
-        ModelCategory.EMBEDDINGS in model.categories -> ModelCategory.EMBEDDINGS
-        ModelCategory.RERANK in model.categories -> ModelCategory.RERANK
-        else -> null
-    }
-}
-
-private fun simpleRawUnitPrices(model: ModelInfo): List<Double> {
-    val tokenKeys = setOf("prompt", "completion", "internal_reasoning", "image_token", "image_output")
-    return model.pricingUsd
-        .filterKeys { it.lowercase() !in tokenKeys }
-        .values
-        .toList()
-}
 
 
 private fun compactTokenCount(value: Int): String = when {
