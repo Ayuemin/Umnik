@@ -17,6 +17,9 @@ internal class RequestCostLedger {
     private var primaryCalls = 0
     private var systemCalls = 0
     private var embeddingCalls = 0
+    private var primaryKnown = false
+    private var systemKnown = false
+    private var embeddingsKnown = false
     private var incomplete = false
 
     fun record(kind: RequestCostKind, exactUsd: String?) {
@@ -37,9 +40,18 @@ internal class RequestCostLedger {
                 return
             }
             when (kind) {
-                RequestCostKind.PRIMARY -> primary = primary.add(amount)
-                RequestCostKind.SYSTEM -> system = system.add(amount)
-                RequestCostKind.EMBEDDINGS -> embeddings = embeddings.add(amount)
+                RequestCostKind.PRIMARY -> {
+                    primary = primary.add(amount)
+                    primaryKnown = true
+                }
+                RequestCostKind.SYSTEM -> {
+                    system = system.add(amount)
+                    systemKnown = true
+                }
+                RequestCostKind.EMBEDDINGS -> {
+                    embeddings = embeddings.add(amount)
+                    embeddingsKnown = true
+                }
             }
         }
     }
@@ -49,11 +61,11 @@ internal class RequestCostLedger {
         val service = system.add(embeddings)
         val total = primary.add(service)
         RequestCostBreakdown(
-            primaryUsd = primary.takeIf { primaryCalls > 0 }?.toExactUsd(),
-            systemUsd = system.takeIf { systemCalls > 0 }?.toExactUsd(),
-            embeddingsUsd = embeddings.takeIf { embeddingCalls > 0 }?.toExactUsd(),
-            serviceUsd = service.takeIf { systemCalls + embeddingCalls > 0 }?.toExactUsd(),
-            knownTotalUsd = total.toExactUsd(),
+            primaryUsd = primary.takeIf { primaryKnown }?.toExactUsd(),
+            systemUsd = system.takeIf { systemKnown }?.toExactUsd(),
+            embeddingsUsd = embeddings.takeIf { embeddingsKnown }?.toExactUsd(),
+            serviceUsd = service.takeIf { systemKnown || embeddingsKnown }?.toExactUsd(),
+            knownTotalUsd = total.takeIf { primaryKnown || systemKnown || embeddingsKnown }?.toExactUsd(),
             primaryCalls = primaryCalls,
             systemCalls = systemCalls,
             embeddingCalls = embeddingCalls,

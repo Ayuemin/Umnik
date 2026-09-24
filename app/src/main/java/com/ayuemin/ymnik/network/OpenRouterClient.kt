@@ -495,6 +495,7 @@ class OpenRouterClient(
             ?.any { it.isJsonPrimitive && it.asString.equals("image", ignoreCase = true) } == true
         val requestPayload = payload.deepCopy().apply {
             addProperty("stream", !requestsImageOutput)
+            add("usage", JsonObject().apply { addProperty("include", true) })
             if (!requestsImageOutput) {
                 add("stream_options", JsonObject().apply { addProperty("include_usage", true) })
             }

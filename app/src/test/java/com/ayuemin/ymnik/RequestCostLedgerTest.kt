@@ -2,6 +2,7 @@ package com.ayuemin.ymnik
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -37,6 +38,7 @@ class RequestCostLedgerTest {
         val snapshot = requireNotNull(ledger.snapshot())
         assertTrue(snapshot.incomplete)
         assertEquals(1, snapshot.embeddingCalls)
+        assertNull(snapshot.embeddingsUsd)
         assertEquals("0.001", snapshot.knownTotalUsd)
     }
 
@@ -49,5 +51,17 @@ class RequestCostLedgerTest {
         assertEquals(3, snapshot.primaryCalls)
         assertEquals(2, snapshot.systemCalls)
         assertEquals("0.0032", snapshot.knownTotalUsd)
+    }
+    @Test
+    fun unknownPrimaryCostIsNeverDisplayedAsZero() {
+        val ledger = RequestCostLedger()
+        ledger.record(RequestCostKind.PRIMARY, null)
+        ledger.record(RequestCostKind.EMBEDDINGS, "0.0000004")
+
+        val snapshot = requireNotNull(ledger.snapshot())
+        assertNull(snapshot.primaryUsd)
+        assertEquals("0.0000004", snapshot.embeddingsUsd)
+        assertEquals("0.0000004", snapshot.knownTotalUsd)
+        assertTrue(snapshot.incomplete)
     }
 }

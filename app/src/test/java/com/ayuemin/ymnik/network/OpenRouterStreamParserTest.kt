@@ -29,6 +29,7 @@ class OpenRouterStreamParserTest {
         assertEquals(2, result.completionTokens)
         assertEquals(12, result.totalTokens)
         assertEquals(0.001, result.costUsd!!, 0.000001)
+        assertEquals("0.001", result.costUsdExact)
         assertEquals(listOf("Привет", " мир"), updates)
     }
 
