@@ -4278,16 +4278,27 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return if (info?.accepts("file") == true) true to null else false to "Выбранная модель не принимает этот тип файла"
     }
 
-    private fun shouldPersistInChat(attachment: PendingAttachment): Boolean {
-        if (_state.value.mode != ChatMode.TEXT) return false
-        val mime = attachment.mimeType.lowercase()
+    private fun shouldPersistInChat(attachment: PendingAttachment): Boolean =
+        _state.value.mode == ChatMode.TEXT
+
+    private fun localOnlyChatResource(attachment: PendingAttachment): Boolean {
         val name = attachment.name.lowercase()
-        val textLike = mime.startsWith("text/") || name.endsWith(".md") || name.endsWith(".json") ||
-            name.endsWith(".csv") || name.endsWith(".yaml") || name.endsWith(".yml") || name.endsWith(".xml")
-        return textLike || mime == "application/pdf" || name.endsWith(".pdf")
+        val mime = attachment.mimeType.lowercase()
+        return mime in setOf(
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/x-tar",
+            "application/gzip",
+            "application/x-gzip",
+            "application/vnd.android.package-archive"
+        ) || name.endsWith(".zip") || name.endsWith(".tar") || name.endsWith(".tar.gz") ||
+            name.endsWith(".tgz") || name.endsWith(".gz") || name.endsWith(".7z") ||
+            name.endsWith(".apk") || name.endsWith(".aab")
     }
 
-    private fun chatFileAsAttachment(file: ChatFile): PendingAttachment = PendingAttachment(
+    private fun shouldSendAttachmentToChatModel(attachment: PendingAttachment): Boolean =
+        !localOnlyChatResource(attachment) && attachmentAllowed(attachment).first
+    private fun chatFileAsAttachment    private fun chatFileAsAttachment(file: ChatFile): PendingAttachment = PendingAttachment(
         uri = "chat://${file.id}",
         name = file.name,
         mimeType = file.mimeType,
@@ -4298,12 +4309,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private fun persistChatAttachment(attachment: PendingAttachment) {
         val chatId = _state.value.currentChatId
         val current = _state.value.chats.firstOrNull { it.id == chatId } ?: return
-        val duplicate = current.chatFiles.orEmpty().any {
+        val duplicate = current.chatFiles.orEmpty().firstOrNull {
             it.name.equals(attachment.name, ignoreCase = true) &&
                 (attachment.size <= 0L || it.size == attachment.size)
         }
-        if (duplicate) {
-            _state.value = _state.value.copy(status = "Файл «${attachment.name}» уже есть в этом чате")
+        if (duplicate != null) {
+            val pending = chatFileAsAttachment(duplicate)
+            _state.value = _state.value.copy(
+                pendingAttachments = (_state.value.pendingAttachments + pending).distinctBy { it.uri },
+                status = "Файл «${attachment.name}» уже сохранён в этом чате"
+            )
             return
         }
         runCatching { chatFilesRepository.importFile(chatId, attachment) }
@@ -4317,15 +4332,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 chatsRepository.save(chats)
                 _state.value = _state.value.copy(
                     chats = chats,
+                    pendingAttachments = (_state.value.pendingAttachments + chatFileAsAttachment(file))
+                        .distinctBy { it.uri },
                     storedFiles = storageRepository.list(),
                     storageStats = storageRepository.stats(),
-                    status = "Файл «${file.name}» закреплён за этим чатом"
+                    status = "Файл «${file.name}» сохранён в этом чате"
                 )
             }
             .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл чата") }
     }
-
-    fun removeChatFile(fileId: String) {
+    fun removeChatFile    fun removeChatFile(fileId: String) {
         if (_state.value.isLoading) return
         val chatId = _state.value.currentChatId
         val current = _state.value.chats.firstOrNull { it.id == chatId } ?: return
@@ -4353,12 +4369,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 DiagnosticLog.record(context, "ATTACHMENT", "loaded; mime=${attachment.mimeType}; bytes=${attachment.size}; imageGeneration=$forImageGeneration")
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
                     _state.value = _state.value.copy(status = "Прямое вложение ограничено $MAX_ATTACHMENT_MB МБ. Большие документы лучше добавлять в «Базу знаний».")
+                } else if (!forImageGeneration && shouldPersistInChat(attachment)) {
+                    persistChatAttachment(attachment)
                 } else {
                     val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
                         _state.value = _state.value.copy(status = reason)
-                    } else if (!forImageGeneration && shouldPersistInChat(attachment)) {
-                        persistChatAttachment(attachment)
                     } else {
                         _state.value = _state.value.copy(pendingAttachments = _state.value.pendingAttachments + attachment)
                     }
@@ -4432,155 +4448,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         _state.value = _state.value.copy(
             pendingAttachments = _state.value.pendingAttachments.filterNot { it.uri == uri }
         )
-    }
-
-    fun createTextSkill(text: String) {
-        runCatching { skills.createText(text) }
-            .onSuccess { skill ->
-                _state.value = _state.value.copy(
-                    skills = skills.list(),
-                    storedFiles = storageRepository.list(),
-                    storageStats = storageRepository.stats(),
-                    status = "Навык «${skill.name}» создан"
-                )
-            }
-            .onFailure { error ->
-                _state.value = _state.value.copy(status = error.message ?: "Не удалось создать навык")
-            }
-    }
-
-    fun importSkillFile(uri: Uri) {
-        viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { skills.importFile(uri) } }
-                .onSuccess { skill ->
-                    _state.value = _state.value.copy(
-                        skills = skills.list(),
-                        storedFiles = storageRepository.list(),
-                        storageStats = storageRepository.stats(),
-                        status = "Навык «${skill.name}» импортирован"
-                    )
-                }
-                .onFailure { _state.value = _state.value.copy(status = it.message) }
+        if (uri.startsWith("chat://")) {
+            uri.removePrefix("chat://").takeIf { it.isNotBlank() }?.let(::removeChatFile)
         }
     }
-
-    fun importSkillTree(uri: Uri) {
-        viewModelScope.launch {
-            runCatching { withContext(Dispatchers.IO) { skills.importTree(uri) } }
-                .onSuccess { skill ->
-                    _state.value = _state.value.copy(
-                        skills = skills.list(),
-                        storedFiles = storageRepository.list(),
-                        storageStats = storageRepository.stats(),
-                        status = "Папка навыка «${skill.name}» импортирована"
-                    )
-                }
-                .onFailure { _state.value = _state.value.copy(status = it.message) }
-        }
-    }
-
-    fun toggleSkill(id: String) {
-        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
-        val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }.toSet()
-        prefs.edit().putStringSet(chatSkillsKey(chat.id), next).apply()
-        if (chat.teamId != null) updateCurrentTeamRuntime { it.copy(skillIds = next) }
-        _state.value = _state.value.copy(activeSkillIds = next)
-    }
-
-    fun deleteSkill(id: String) {
-        skills.delete(id)
-        val next = _state.value.activeSkillIds - id
-        prefs.edit().putStringSet("active_skills", next).apply()
-        _state.value = _state.value.copy(
-            skills = skills.list(),
-            activeSkillIds = next,
-            storedFiles = storageRepository.list(),
-            storageStats = storageRepository.stats()
-        )
-    }
-
-    fun stopGeneration() {
-        val chatId = _state.value.currentChatId
-        val snapshot = RequestExecutionManager.snapshotForChat(chatId) ?: return
-        invalidateRequestGeneration(chatId)
-        RequestExecutionManager.fail(snapshot.requestId, "Работа остановлена. При необходимости повторите запрос вручную.")
-        RequestExecutionManager.cancel(snapshot.requestId)
-        val restore = activeRequestPending.remove(chatId).orEmpty()
-        _state.value = _state.value.copy(
-            pendingAttachments = restore,
-            busyLabel = null,
-            status = "Работа в этом чате остановлена. Уточните запрос и отправьте снова."
-        )
-    }
-
-    fun retryFailedMessage(messageId: String) {
-        if (_state.value.isLoading) return
-        val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
-            ?: return
-        if (previous.attachmentNames.isNotEmpty()) {
-            val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
-            val availableNames = (
-                _state.value.pendingAttachments.map { it.name } + current?.chatFiles.orEmpty().map { it.name }
-            ).toSet()
-            if (!availableNames.containsAll(previous.attachmentNames)) {
-                _state.value = _state.value.copy(status = "Вложения этого запроса уже недоступны. Прикрепите их заново.")
-                return
-            }
-        }
-        val chatId = _state.value.currentChatId
-        val cleanedMessages = _state.value.messages.filterNot { it.id == messageId }
-        val cleanedChats = replaceChatMessages(_state.value.chats, chatId, cleanedMessages, null)
-        chatsRepository.save(cleanedChats)
-        _state.value = _state.value.copy(
-            chats = cleanedChats,
-            messages = cleanedMessages,
-            mode = if (previous.imageGeneration) ChatMode.IMAGE else ChatMode.TEXT,
-            status = null
-        )
-        DiagnosticLog.action(context, "retry_failed_message", "chat=${chatId.take(8)}; replaced=true")
-        if (previous.imageGeneration) sendImagePrompt(previous.text) else send(previous.text)
-    }
-
-    private fun launchRequest(
-        chatId: String,
-        messageId: String,
-        label: String,
-        execute: suspend (RequestNetworkSession) -> Unit
-    ): Job? {
-        val requestId = UUID.randomUUID().toString()
-        val network = RequestNetworkSession(context, requestId)
-        return runCatching {
-            RequestExecutionManager.start(
-                context = context,
-                requestId = requestId,
-                chatId = chatId,
-                messageId = messageId,
-                label = label,
-                cancelNetworkCall = network::cancel,
-                execute = { execute(network) }
-            )
-        }.getOrElse { error ->
-            val restore = activeRequestPending.remove(chatId).orEmpty()
-            val chats = chatsRepository.finishRequest(chatId, messageId, null)
-            val restoreHere = _state.value.currentChatId == chatId && restore.isNotEmpty()
-            _state.value = _state.value.copy(
-                chats = chats,
-                messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
-                pendingAttachments = if (restoreHere) {
-                    (_state.value.pendingAttachments + restore).distinctBy { it.uri }
-                } else {
-                    _state.value.pendingAttachments
-                },
-                requestActive = RequestExecutionManager.hasActiveRequest(),
-                busyLabel = RequestExecutionManager.snapshotForChat(_state.value.currentChatId)?.label,
-                status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
-            )
-            if (!restoreHere) cleanupTempAttachments(restore)
-            null
-        }
-    }
-
-    fun prepareImageGeneration(): Boolean {
+    fun prepareImageGeneration    fun prepareImageGeneration(): Boolean {
         if (_state.value.isLoading) return false
         val profile = imageConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
