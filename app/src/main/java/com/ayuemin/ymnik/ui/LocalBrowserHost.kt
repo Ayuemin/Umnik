@@ -53,6 +53,7 @@ internal fun LocalBrowserHost() {
                 } else {
                     View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 }
+                webView.isEnabled = !visible || activity?.attentionKind != "CONFIRM_ACTION"
             },
             modifier = if (visible) {
                 Modifier.fillMaxSize().padding(top = 56.dp)
