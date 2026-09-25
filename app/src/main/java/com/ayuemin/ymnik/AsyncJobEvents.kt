@@ -15,6 +15,16 @@ internal data class ShellActivity(
     val eventCount: Int = 0,
     val shellSteps: Int = 0
 )
+internal data class LocalShellActivity(
+    val chatId: String,
+    val modelId: String = "",
+    val attachmentCount: Int = 0,
+    val maxTurns: Int = 24,
+    val status: String = "Готовлю локальную рабочую область",
+    val startedAt: Long = System.currentTimeMillis(),
+    val turn: Int = 0,
+    val toolCalls: Int = 0
+)
 internal data class HubToolActivity(
     val chatId: String,
     val page: String,
@@ -36,6 +46,9 @@ internal object AsyncJobEvents {
 
     private val mutableShellActivity = MutableStateFlow<ShellActivity?>(null)
     val shellActivity: StateFlow<ShellActivity?> = mutableShellActivity
+
+    private val mutableLocalShellActivity = MutableStateFlow<LocalShellActivity?>(null)
+    val localShellActivity: StateFlow<LocalShellActivity?> = mutableLocalShellActivity
 
     private val mutableHubToolActivity = MutableStateFlow<HubToolActivity?>(null)
     val hubToolActivity: StateFlow<HubToolActivity?> = mutableHubToolActivity
@@ -99,6 +112,32 @@ internal object AsyncJobEvents {
     fun markShellFinished(chatId: String) {
         if (mutableShellActivity.value?.chatId == chatId) {
             mutableShellActivity.value = null
+        }
+    }
+
+    fun markLocalShellRunning(chatId: String, modelId: String = "", attachmentCount: Int = 0, maxTurns: Int = 24) {
+        if (chatId.isBlank()) return
+        mutableLocalShellActivity.value = LocalShellActivity(
+            chatId = chatId,
+            modelId = modelId,
+            attachmentCount = attachmentCount.coerceAtLeast(0),
+            maxTurns = maxTurns.coerceIn(1, 1000)
+        )
+    }
+
+    fun updateLocalShellProgress(chatId: String, status: String, turn: Int, toolCalls: Int) {
+        val current = mutableLocalShellActivity.value ?: return
+        if (current.chatId != chatId) return
+        mutableLocalShellActivity.value = current.copy(
+            status = status.trim().take(160).ifBlank { current.status },
+            turn = turn.coerceAtLeast(0),
+            toolCalls = toolCalls.coerceAtLeast(0)
+        )
+    }
+
+    fun markLocalShellFinished(chatId: String) {
+        if (mutableLocalShellActivity.value?.chatId == chatId) {
+            mutableLocalShellActivity.value = null
         }
     }
 
