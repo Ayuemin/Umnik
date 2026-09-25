@@ -497,6 +497,8 @@ class OpenRouterHubController(
                     status = "Batch принят · ${job.remoteId}"
                 )
                 AsyncJobEvents.markHubToolFinished(originChatId, "batch")
+                AsyncJobEvents.markLocalShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 AsyncJobEvents.markHubToolFinished(originChatId, "batch")
@@ -701,6 +703,12 @@ class OpenRouterHubController(
         LocalShellRuntime.cancel()
     }
 
+    fun localShellMaxTurns(): Int = featurePrefs.localShellMaxTurns()
+
+    fun saveLocalShellMaxTurns(value: Int) {
+        featurePrefs.saveLocalShellMaxTurns(value)
+    }
+
     fun runLocalShell(
         promptRaw: String,
         attachments: List<Uri> = emptyList(),
@@ -718,6 +726,7 @@ class OpenRouterHubController(
         val originChatId = originState.currentChatId
         val currentModel = originState.currentChatTextModel ?: originState.textModel
         val model = currentModel.removeSuffix(":batch")
+        val maxTurns = featurePrefs.localShellMaxTurns()
 
         if (prompt.isBlank()) {
             mutableState.value = mutableState.value.copy(status = "Введите задачу для локального Shell")
@@ -727,7 +736,7 @@ class OpenRouterHubController(
             mutableState.value = mutableState.value.copy(status = "OpenRouter не настроен")
             return
         }
-        if (mutableState.value.localShellRunning) {
+        if (AsyncJobEvents.localShellActivity.value != null || mutableState.value.localShellRunning) {
             mutableState.value = mutableState.value.copy(status = "Локальный Shell уже выполняет задачу")
             return
         }
@@ -741,6 +750,8 @@ class OpenRouterHubController(
 
         val cancelRequested = AtomicBoolean(false)
         LocalShellRuntime.scope.launch {
+            AsyncJobEvents.markLocalShellRunning(originChatId, model, attachments.size, maxTurns)
+            runCatching { RequestKeepAliveService.start(context) }
             LocalShellRuntime.installCancel {
                 cancelRequested.set(true)
                 localShellClient.cancelActive()
@@ -780,7 +791,7 @@ class OpenRouterHubController(
                     appendLine("Не расходуй отдельный модельный шаг на чтение каждого маленького файла по очереди; после распаковки сначала получи дерево проекта и сгруппируй чтение, затем переходи к правкам и проверкам.")
                     appendLine("Python используй для тестов и обработки данных, когда это действительно полезно.")
                     appendLine("Сеть доступна только через local_fetch и public_clone в local_git. Не пытайся загружать локальные файлы в сеть.")
-                    appendLine("Не повторяй одинаковые действия без причины. У тебя максимум 24 модельных шага и 48 вызовов локальных инструментов; это аварийный предел, а не цель.")
+                    appendLine("Не повторяй одинаковые действия без причины. Пользователь разрешил максимум $maxTurns модельных шагов. Это потолок, а не цель: заверши раньше, как только задача действительно выполнена.")
                     appendLine("Сохраняй все исходные файлы проекта, если задача явно не требует удалить или переименовать их.")
                     appendLine("Если пользователь передал проект/ZIP и просит исправить или доработать его, перед финальным ответом обязательно вызови local_export и верни полный итоговый ZIP.")
                     appendLine("В финальном ответе кратко перечисли сделанное и результаты проверок.")
@@ -798,7 +809,15 @@ class OpenRouterHubController(
                     engine = engine,
                     routing = mutableState.value.routing,
                     reasoningEnabled = false,
+                    maxTurns = maxTurns,
                     onProgress = { progress ->
+                        AsyncJobEvents.updateLocalShellProgress(
+                            chatId = originChatId,
+                            status = progress.label,
+                            turn = progress.turn,
+                            toolCalls = progress.toolCalls
+                        )
+                        runCatching { RequestKeepAliveService.update(context) }
                         mutableState.value = mutableState.value.copy(
                             localShellStatus = progress.label,
                             localShellTurns = progress.turn,
@@ -857,6 +876,9 @@ class OpenRouterHubController(
                     localShellStatus = if (cancelRequested.get()) "Остановлено" else "Ошибка",
                     status = message
                 )
+                AsyncJobEvents.markLocalShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
+                AsyncJobEvents.notifyChanged()
             }
             LocalShellRuntime.clear()
         }
