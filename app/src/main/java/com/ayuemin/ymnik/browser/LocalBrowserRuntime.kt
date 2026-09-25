@@ -1823,6 +1823,7 @@ object LocalBrowserRuntime {
         while (true) {
             val scheme = current.scheme?.lowercase().orEmpty()
             require(scheme == "http" || scheme == "https") { "Разрешены только публичные HTTP(S)-загрузки" }
+            require(current.userInfo.isNullOrBlank()) { "Загрузка по URL с логином или паролем запрещена" }
             requirePublicHost(current.host.orEmpty())
 
             val response = downloadHttp.newCall(
