@@ -43,6 +43,8 @@ class LocalShellAgentClient(private val context: Context) {
         val toolCalls: Int
     )
 
+    private enum class TaskState { WORKING, READY_TO_FINISH }
+
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "Local Shell Model"))
@@ -93,6 +95,8 @@ class LocalShellAgentClient(private val context: Context) {
         var lastToolSignature: String? = null
         var repeatedToolSignature = 0
         var lastCompactionTurn = -100
+        var taskState = TaskState.WORKING
+        var stateReminderPending = false
 
         try {
             while (turn < safeMaxTurns) {
@@ -101,9 +105,15 @@ class LocalShellAgentClient(private val context: Context) {
                     .filter { it.isNotBlank() }
                 if (guidance.isNotEmpty()) {
                     val note = guidance.joinToString("\n\n") { "- " + it }
+                    if (taskState == TaskState.READY_TO_FINISH) {
+                        taskState = TaskState.WORKING
+                        stateReminderPending = false
+                        DiagnosticLog.record(context, "LOCAL_SHELL_LIFECYCLE", "READY_TO_FINISH -> WORKING; reason=guidance; turn=$turn")
+                    }
                     messages.add(message(
                         "system",
                         "===== ДОПОЛНИТЕЛЬНОЕ УКАЗАНИЕ ИЗ ОСНОВНОГО ЧАТА =====\n" +
+                            "STATE=WORKING. Новое указание отменяет прежнюю готовность к завершению.\n" +
                             note +
                             "\n===== КОНЕЦ ДОПОЛНИТЕЛЬНОГО УКАЗАНИЯ ====="
                     ))
@@ -113,6 +123,21 @@ class LocalShellAgentClient(private val context: Context) {
                         "LOCAL_SHELL_GUIDANCE",
                         "accepted=" + guidance.size + "; chars=" + note.length + "; turn=" + turn
                     )
+                }
+
+                if (taskState == TaskState.READY_TO_FINISH && stateReminderPending) {
+                    messages.add(message(
+                        "system",
+                        "===== СОСТОЯНИЕ LOCAL SHELL =====\n" +
+                            "STATE=READY_TO_FINISH. Пользовательский local_export успешно подготовлен. " +
+                            "Если исходная задача явно не требует следующего этапа или отдельного дополнительного результата, " +
+                            "заверши работу сейчас обычным финальным ответом БЕЗ вызовов инструментов. " +
+                            "Не выполняй повторные list/read/search/command/python/archive проверки уже проверенного результата «на всякий случай». " +
+                            "Если исходная задача действительно требует продолжения после этого пользовательского экспорта, продолжай только нужный следующий этап; " +
+                            "служебные промежуточные архивы должны создаваться через local_archive, а не local_export.\n" +
+                            "===== КОНЕЦ СОСТОЯНИЯ ====="
+                    ))
+                    stateReminderPending = false
                 }
 
                 val shouldCompact = turn > 0 &&
@@ -255,6 +280,7 @@ class LocalShellAgentClient(private val context: Context) {
                         lastToolSignature = signature
                         repeatedToolSignature = 1
                     }
+                    val wasReadyBeforeTool = taskState == TaskState.READY_TO_FINISH
                     val resultText = if (repeatedToolSignature >= 3) {
                         DiagnosticLog.record(context, "LOCAL_SHELL_WATCHDOG", "Repeated identical tool call blocked; tool=$name; turn=$turn")
                         gson.toJson(mapOf(
@@ -264,6 +290,27 @@ class LocalShellAgentClient(private val context: Context) {
                     } else {
                         engine.execute(name, args)
                     }
+                    val resultObject = runCatching { gson.fromJson(resultText, JsonObject::class.java) }.getOrNull()
+                    val toolOk = resultObject?.get("ok")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val readyForUser = resultObject?.get("ready_for_user")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+
+                    if (name == "local_export" && toolOk && readyForUser) {
+                        if (taskState != TaskState.READY_TO_FINISH) {
+                            DiagnosticLog.record(context, "LOCAL_SHELL_LIFECYCLE", "WORKING -> READY_TO_FINISH; reason=export; turn=$turn")
+                        }
+                        taskState = TaskState.READY_TO_FINISH
+                        stateReminderPending = true
+                        onProgress(Progress("Результат готов к завершению", turn, toolCalls))
+                    } else if (wasReadyBeforeTool) {
+                        taskState = TaskState.WORKING
+                        stateReminderPending = false
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_LIFECYCLE",
+                            "READY_TO_FINISH -> WORKING; reason=continued_tool:$name; turn=$turn"
+                        )
+                    }
+
                     messages.add(JsonObject().apply {
                         addProperty("role", "tool")
                         addProperty("tool_call_id", callId)
