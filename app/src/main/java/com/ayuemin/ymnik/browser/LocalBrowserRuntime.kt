@@ -65,6 +65,7 @@ private data class BrowserSession(
     @Volatile var lastTitle: String = "",
     @Volatile var lastContentHash: Int = 0,
     @Volatile var lastContent: String = "",
+    @Volatile var lastViewportContent: String = "",
     @Volatile var lastElementFingerprints: Map<Int, String> = emptyMap()
 )
 
@@ -658,6 +659,7 @@ object LocalBrowserRuntime {
         val url = page.get("url")?.asString.orEmpty().ifBlank { currentUrl(webView) }
         val title = page.get("title")?.asString.orEmpty()
         val content = page.get("content")?.asString.orEmpty()
+        val viewportContent = page.get("viewport_content")?.asString.orEmpty()
         val elements = page.getAsJsonArray("elements") ?: JsonArray()
         val currentElements = elementObjects(elements)
         val currentFingerprints = currentElements.mapValues { (_, value) -> gson.toJson(value) }
@@ -673,12 +675,14 @@ object LocalBrowserRuntime {
         val documentChanged = !initial && session.lastUrl.substringBefore('#') != url.substringBefore('#')
         val baseline = forceBaseline || initial || documentChanged
         val contentChanged = !initial && session.lastContentHash != contentHash
+        val viewportChanged = !initial && session.lastViewportContent != viewportContent
 
         val delta = JsonObject().apply {
             addProperty("initial", initial)
             addProperty("urlChanged", documentChanged)
             addProperty("titleChanged", !initial && session.lastTitle != title)
             addProperty("contentChanged", contentChanged)
+            addProperty("viewportChanged", viewportChanged)
             addProperty("navigation", if (documentChanged) "NEW_DOCUMENT" else "SAME_PAGE")
         }
 
@@ -705,12 +709,16 @@ object LocalBrowserRuntime {
             add("viewport", page.get("viewport") ?: JsonObject())
             if (baseline) {
                 addProperty("content", content)
+                if (viewportContent.isNotBlank()) addProperty("viewport_content", viewportContent)
                 add("elements", elements)
             } else {
                 if (contentChanged) {
                     addProperty("content_delta", buildContentDelta(session.lastContent, content))
                 } else {
                     addProperty("content_unchanged", true)
+                }
+                if (viewportChanged && viewportContent.isNotBlank()) {
+                    addProperty("viewport_content", viewportContent)
                 }
                 val appeared = JsonArray()
                 val changed = JsonArray()
@@ -757,6 +765,7 @@ object LocalBrowserRuntime {
         session.lastTitle = title
         session.lastContentHash = contentHash
         session.lastContent = content.take(COMPACT_TEXT_LIMIT)
+        session.lastViewportContent = viewportContent
         session.lastElementFingerprints = currentFingerprints.entries
             .take(COMPACT_ELEMENT_LIMIT)
             .associate { it.key to it.value }
@@ -856,7 +865,15 @@ object LocalBrowserRuntime {
             const style = getComputedStyle(el);
             return style.display !== 'none' && style.visibility !== 'hidden';
           });
-          const elements = all.slice(0, $elementLimit).map(el => {
+          const inViewport = (el) => {
+            const r = el.getBoundingClientRect();
+            return r.bottom >= 0 && r.top <= window.innerHeight && r.right >= 0 && r.left <= window.innerWidth;
+          };
+          const prioritized = all
+            .map((el, index) => ({el, index, viewport: inViewport(el)}))
+            .sort((a, b) => (a.viewport === b.viewport) ? (a.index - b.index) : (a.viewport ? -1 : 1))
+            .map(item => item.el);
+          const elements = prioritized.slice(0, $elementLimit).map(el => {
             const tag = (el.tagName || '').toLowerCase();
             const type = clean(el.getAttribute('type'), 40).toLowerCase();
             const role = clean(el.getAttribute('role') || tag, 40);
@@ -883,6 +900,13 @@ object LocalBrowserRuntime {
             .replace(/\r/g, '')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
+          const viewportText = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,li,label,a,button'))
+            .filter(inViewport)
+            .map(el => clean(el.innerText || el.getAttribute('aria-label') || '', 500))
+            .filter(Boolean)
+            .filter((value, index, array) => array.indexOf(value) === index)
+            .join('\n')
+            .slice(0, 3500);
           return JSON.stringify({
             url: location.href,
             title: document.title || '',
@@ -893,12 +917,55 @@ object LocalBrowserRuntime {
               documentHeight: Math.round(document.documentElement?.scrollHeight || 0)
             },
             content: bodyText.slice(0, $textLimit),
+            viewport_content: viewportText,
             elements,
             next_ref: reg.next,
             truncated: bodyText.length > $textLimit || all.length > $elementLimit
           });
         })()
     """.trimIndent()
+
+    private fun followScript(target: String): String {
+        val encodedTarget = gson.toJson(target)
+        return """
+            (() => {
+              const target = $encodedTarget;
+              const norm = (value) => String(value || '')
+                .toLowerCase()
+                .replace(/[^a-z0-9а-яё]+/gi, ' ')
+                .trim();
+              const wanted = norm(target);
+              if (!wanted) return JSON.stringify({ok:false, reason:'empty_target', candidates:[]});
+              const visible = (el) => {
+                const style = getComputedStyle(el);
+                const rect = el.getBoundingClientRect();
+                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+              };
+              const candidates = Array.from(document.querySelectorAll('a[href]'))
+                .filter(el => visible(el) && !el.hasAttribute('download') && /^https?:\/\//i.test(String(el.href || '')))
+                .map(el => {
+                  const name = String(
+                    el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || ''
+                  ).replace(/\s+/g, ' ').trim().slice(0, 180);
+                  return {el, name, key:norm(name), href:String(el.href || '')};
+                })
+                .filter(item => item.key);
+              const exact = candidates.filter(item => item.key === wanted);
+              const partial = candidates.filter(item => item.key.includes(wanted) || wanted.includes(item.key));
+              const matches = exact.length > 0 ? exact : partial;
+              if (matches.length !== 1) {
+                return JSON.stringify({
+                  ok:false,
+                  reason:matches.length === 0 ? 'target_not_found' : 'target_ambiguous',
+                  candidates:matches.slice(0, 8).map(item => ({name:item.name, href:item.href}))
+                });
+              }
+              matches[0].el.scrollIntoView({block:'center', inline:'nearest'});
+              matches[0].el.click();
+              return JSON.stringify({ok:true, href:matches[0].href, name:matches[0].name});
+            })()
+        """.trimIndent()
+    }
 
     private fun clickScript(ref: Int): String = """
         (() => {
