@@ -137,6 +137,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun chatSkillsKey(chatId: String): String = "chat_active_skills::$chatId"
 
+    private fun requiredLocalBrowserTool(prompt: String): String? {
+        val value = prompt.lowercase()
+        fun has(vararg markers: String): Boolean = markers.any(value::contains)
+        return when {
+            has("нажми", "нажать", "кликни", "кликнуть", "перейди по", "перейти по", "click ", "click on", "follow the link") ->
+                "local_browser_click"
+            has("введи", "ввести", "впиши", "вписать", "набери в поле", "заполни поле", "type ", "fill in") ->
+                "local_browser_type"
+            has("прокрути", "прокрутить", "пролистай", "scroll ") ->
+                "local_browser_scroll"
+            has("вернись назад", "назад в браузере", "go back") ->
+                "local_browser_back"
+            has("открой в браузере", "открыть в браузере", "open in browser") ->
+                "local_browser_open"
+            else -> null
+        }
+    }
+
     private val initialProfiles = loadConnectionProfiles()
     private val initialDisabledConnectionIds = loadDisabledConnectionIds()
     private val initialTeams = teamsRepository.list()
@@ -5011,6 +5029,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     null
                                 },
                                 knowledgeSearchLimit = knowledgeSearchLimit,
+                                requiredLocalBrowserTool = if (webSearchEnabled) requiredLocalBrowserTool(clean) else null,
                                 localWebFetch = if (webSearchEnabled) {
                                     { url -> localWebFetcher.fetchForTool(url) }
                                 } else {
