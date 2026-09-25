@@ -216,7 +216,7 @@ object LocalBrowserRuntime {
         }
         val session = session(chatId)
         session.lifecycle = LocalBrowserLifecycle.WORKING
-        runCommand(session, safeUrl, "открывает страницу") {
+        runCommand(session, safeUrl, "открывает страницу", "open", "target=" + safeUrl.take(220)) {
             val webView = webView()
             load(webView, safeUrl)
             snapshot(session, webView)
@@ -225,7 +225,7 @@ object LocalBrowserRuntime {
 
     suspend fun read(chatId: String): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "читает страницу") {
+        runCommand(session, session.currentUrl, "читает страницу", "read") {
             val webView = webView()
             ensureCurrent(session, webView)
             snapshot(session, webView)
@@ -234,7 +234,7 @@ object LocalBrowserRuntime {
 
     suspend fun click(chatId: String, ref: Int): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "переходит по странице") {
+        runCommand(session, session.currentUrl, "переходит по странице", "click", "ref=" + ref) {
             val webView = webView()
             ensureCurrent(session, webView)
             val before = currentUrl(webView)
@@ -276,7 +276,7 @@ object LocalBrowserRuntime {
 
     suspend fun type(chatId: String, ref: Int, text: String): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "вводит текст") {
+        runCommand(session, session.currentUrl, "вводит текст", "type", "ref=" + ref + "; chars=" + text.length) {
             val webView = webView()
             ensureCurrent(session, webView)
             val raw = evaluate(webView, typeScript(ref, text))
@@ -303,7 +303,7 @@ object LocalBrowserRuntime {
         val direction = directionRaw.trim().lowercase()
         require(direction in setOf("down", "up", "top", "bottom")) { "Неизвестное направление прокрутки" }
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "прокручивает страницу") {
+        runCommand(session, session.currentUrl, "прокручивает страницу", "scroll", "direction=" + direction) {
             val webView = webView()
             ensureCurrent(session, webView)
             val script = when (direction) {
@@ -320,7 +320,7 @@ object LocalBrowserRuntime {
 
     suspend fun back(chatId: String): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "возвращается назад") {
+        runCommand(session, session.currentUrl, "возвращается назад", "back") {
             val webView = webView()
             ensureCurrent(session, webView)
             val canGoBack = withContext(Dispatchers.Main.immediate) { webView.canGoBack() }
@@ -345,7 +345,7 @@ object LocalBrowserRuntime {
 
     suspend fun wait(chatId: String, seconds: Int): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "ждёт обновления страницы") {
+        runCommand(session, session.currentUrl, "ждёт обновления страницы", "wait", "seconds=" + seconds.coerceIn(1, 5)) {
             val webView = webView()
             ensureCurrent(session, webView)
             delay(seconds.coerceIn(1, 5) * 1_000L)
@@ -358,6 +358,12 @@ object LocalBrowserRuntime {
         session.lifecycle = LocalBrowserLifecycle.READY_TO_FINISH
         mutableActivity.value = null
         activeChatId = null
+        logAction(
+            session,
+            "done",
+            "end",
+            "state=" + session.lifecycle.name + "; url=" + session.currentUrl.take(220)
+        )
         DiagnosticLog.record(
             webView().context.applicationContext,
             "LOCAL_BROWSER",
@@ -390,15 +396,64 @@ object LocalBrowserRuntime {
         session: BrowserSession,
         url: String,
         status: String,
+        action: String,
+        detail: String = "",
         block: suspend () -> T
     ): T {
         activeChatId = session.chatId
         publish(session, status, url)
+        logAction(
+            session,
+            action,
+            "start",
+            buildString {
+                append("url=").append(url.take(220))
+                if (detail.isNotBlank()) append("; ").append(detail)
+            }
+        )
         return try {
-            block()
+            val result = block()
+            logAction(
+                session,
+                action,
+                "end",
+                "state=" + session.lifecycle.name + "; url=" + session.currentUrl.take(220)
+            )
+            result
+        } catch (error: Throwable) {
+            logAction(
+                session,
+                action,
+                "error",
+                "state=" + session.lifecycle.name + "; error=" +
+                    (error.message ?: error::class.java.simpleName).take(220)
+            )
+            throw error
         } finally {
             if (activeChatId == session.chatId) activeChatId = null
             if (mutableActivity.value?.sessionId == session.sessionId) mutableActivity.value = null
+        }
+    }
+
+    private fun logAction(
+        session: BrowserSession,
+        action: String,
+        phase: String,
+        detail: String = ""
+    ) {
+        attachedWebView?.context?.applicationContext?.let { context ->
+            DiagnosticLog.record(
+                context,
+                "LOCAL_BROWSER_ACTION",
+                buildString {
+                    append("session=").append(session.sessionId.take(8))
+                    append("; chat=").append(session.chatId.take(8))
+                    append("; action=").append(action)
+                    append("; phase=").append(phase)
+                    append("; step=").append(session.stepNumber)
+                    if (detail.isNotBlank()) append("; ").append(detail)
+                }
+            )
         }
     }
 
@@ -508,8 +563,32 @@ object LocalBrowserRuntime {
 
     private suspend fun snapshot(session: BrowserSession, webView: WebView): String {
         val startRef = session.nextElementRef.coerceAtLeast(1)
-        val raw = evaluate(webView, snapshotScript(startRef))
-        val page = decodedJson(raw)
+        var page = decodedJson(evaluate(webView, snapshotScript(startRef)))
+        var settleAttempts = 0
+
+        fun snapshotLooksEmpty(value: JsonObject): Boolean {
+            val pageUrl = value.get("url")?.asString.orEmpty()
+            val pageContent = value.get("content")?.asString.orEmpty()
+            val pageElements = value.getAsJsonArray("elements") ?: JsonArray()
+            val isWebPage = pageUrl.startsWith("http://") || pageUrl.startsWith("https://")
+            return isWebPage && pageContent.isBlank() && pageElements.size() == 0
+        }
+
+        while (snapshotLooksEmpty(page) && settleAttempts < 16) {
+            settleAttempts++
+            delay(250)
+            page = decodedJson(evaluate(webView, snapshotScript(startRef)))
+        }
+
+        if (settleAttempts > 0) {
+            DiagnosticLog.record(
+                webView.context.applicationContext,
+                "LOCAL_BROWSER",
+                "snapshot_settle session=" + session.sessionId.take(8) +
+                    " attempts=" + settleAttempts +
+                    " url=" + page.get("url")?.asString.orEmpty().take(220)
+            )
+        }
 
         val url = page.get("url")?.asString.orEmpty().ifBlank { currentUrl(webView) }
         val title = page.get("title")?.asString.orEmpty()
