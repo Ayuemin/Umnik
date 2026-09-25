@@ -24,6 +24,7 @@ import com.ayuemin.ymnik.network.LocalWebFetchPolicy
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import kotlinx.coroutines.CompletableDeferred
@@ -124,7 +125,11 @@ object LocalBrowserRuntime {
     )
 
     private val gson = Gson()
+    private val downloadDns = object : Dns {
+        override fun lookup(hostname: String) = LocalWebFetchPolicy.resolvePublic(hostname)
+    }
     private val downloadHttp = OkHttpClient.Builder()
+        .dns(downloadDns)
         .followRedirects(false)
         .followSslRedirects(false)
         .callTimeout(60, TimeUnit.SECONDS)
@@ -2147,7 +2152,7 @@ object LocalBrowserRuntime {
                     .orEmpty()
                 val pathName = current.path.substringAfterLast('/').takeIf { it.isNotBlank() }.orEmpty()
                 val name = safeDownloadName(
-                    headerName.ifBlank { suggestedName }.ifBlank { pathName }.ifBlank { "download.bin" }
+                    headerName.ifBlank { pathName }.ifBlank { suggestedName }.ifBlank { "download.bin" }
                 )
 
                 val dir = File(webView.context.applicationContext.cacheDir, "browser_downloads/" + session.sessionId)
