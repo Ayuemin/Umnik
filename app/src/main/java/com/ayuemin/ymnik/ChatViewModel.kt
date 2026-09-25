@@ -4859,11 +4859,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 },
                                 knowledgeSearchLimit = knowledgeSearchLimit,
                                 localShellStart = if (localShellToolsEnabled) {
-                                    { task, allowNetwork ->
+                                    { task, allowNetwork, requestedFiles ->
                                         startLocalShellFromChat(
                                             chatId = chatId,
                                             taskRaw = task,
-                                            attachments = allAttachments,
+                                            requestedFiles = requestedFiles,
                                             networkEnabled = allowNetwork,
                                             fallbackModel = textModel
                                         )
@@ -5415,7 +5415,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private suspend fun startLocalShellFromChat(
         chatId: String,
         taskRaw: String,
-        attachments: List<PendingAttachment>,
+        requestedFiles: List<String>,
         networkEnabled: Boolean,
         fallbackModel: String
     ): String {
@@ -5459,6 +5459,44 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         }
 
+        val chatFiles = chatsRepository.list()
+            .firstOrNull { it.id == chatId }
+            ?.chatFiles
+            .orEmpty()
+            .filter { File(it.localPath).isFile }
+
+        val requested = requestedFiles.map(String::trim).filter(String::isNotBlank).distinct()
+        val selectedFiles = if (requested.isNotEmpty()) {
+            val resolved = requested.mapNotNull { requestedName ->
+                chatFiles.firstOrNull {
+                    it.id.equals(requestedName, ignoreCase = true) ||
+                        it.name.equals(requestedName, ignoreCase = true)
+                }
+            }.distinctBy { it.id }
+            if (resolved.size != requested.size) {
+                val missing = requested.filter { value ->
+                    chatFiles.none { it.id.equals(value, true) || it.name.equals(value, true) }
+                }
+                return gson.toJson(
+                    mapOf(
+                        "ok" to false,
+                        "error" to "Не найдены файлы чата: " + missing.joinToString(", "),
+                        "available_files" to chatFiles.map { it.name }
+                    )
+                )
+            }
+            resolved
+        } else {
+            val mentioned = chatFiles.filter { file ->
+                task.contains(file.name, ignoreCase = true)
+            }
+            when {
+                mentioned.isNotEmpty() -> mentioned
+                chatFiles.size == 1 -> chatFiles
+                else -> emptyList()
+            }
+        }
+        val attachments = selectedFiles.map(::chatFileAsAttachment)
         val engine = LocalShellEngine(
             context = context,
             networkEnabled = networkEnabled
@@ -5599,6 +5637,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 "model" to model,
                 "max_turns" to maxTurns,
                 "attachments" to imported.size,
+                "files" to selectedFiles.map { it.name },
                 "network" to networkEnabled,
                 "message" to "Local Shell запущен асинхронно. Можно продолжать диалог; статус доступен через local_shell_status."
             )
@@ -5785,7 +5824,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("===== КОНЕЦ НАСТРОЕК ДИАЛОГА =====")
         }
         if (!chat?.chatFiles.isNullOrEmpty()) {
-            appendLine("Файлы этого диалога автоматически приложены к текущему запросу. Используй их как постоянный рабочий контекст этого чата.")
+            appendLine("\n===== ПОСТОЯННЫЕ ФАЙЛЫ ЭТОГО ЧАТА =====")
+            appendLine("Эти файлы сохранены локально и остаются привязаны к чату до его очистки/удаления. Их байты НЕ передаются тебе автоматически в каждом запросе.")
+            chat.chatFiles.orEmpty().forEach { file ->
+                appendLine("- ${file.name} · ${file.mimeType} · ${file.size} B")
+            }
+            appendLine("Если задача требует Local Shell, передай нужные имена в параметре files инструмента local_shell_start.")
+            appendLine("Если из контекста однозначно понятно, какой файл нужен, выбери его сам. Если подходящих файлов несколько и выбор неоднозначен — сначала уточни у пользователя, не выбирай наугад.")
+            appendLine("Не утверждай, что прочитал содержимое постоянного файла, если оно не было передано в текущем запросе и ты не запустил инструмент, который реально может с ним работать.")
+            appendLine("===== КОНЕЦ СПИСКА ФАЙЛОВ =====")
         }
         if (toolsEnabled) appendLine("У тебя есть локальный инструмент create_file. Используй его только для файлового результата, который явно запрошен пользователем или подключённой инструкцией.")
         appendLine("Если пользователь просит текст в отдельном, изолированном или удобном для копирования блоке, ОБЯЗАТЕЛЬНО используй ровно такой синтаксис:")
