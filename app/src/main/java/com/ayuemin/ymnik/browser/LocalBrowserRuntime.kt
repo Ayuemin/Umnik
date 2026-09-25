@@ -21,6 +21,8 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -75,6 +77,8 @@ object LocalBrowserRuntime {
     private const val FULL_TEXT_LIMIT = 24_000
     private const val FULL_ELEMENT_LIMIT = 120
     private const val DELTA_TEXT_LIMIT = 4_000
+    private const val COMMAND_TIMEOUT_MS = 45_000L
+    private const val FOLLOW_RENDER_RETRIES = 12
 
     private val gson = Gson()
     private val commandMutex = Mutex()
@@ -266,7 +270,26 @@ object LocalBrowserRuntime {
             val webView = webView()
             if (safeUrl != null) load(webView, safeUrl) else ensureCurrent(session, webView)
             val before = currentUrl(webView)
-            val result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+            var result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+            var renderRetries = 0
+            while (
+                result.get("ok")?.asBoolean != true &&
+                result.get("reason")?.asString == "target_not_found" &&
+                renderRetries < FOLLOW_RENDER_RETRIES
+            ) {
+                renderRetries++
+                delay(250)
+                result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+            }
+            if (renderRetries > 0) {
+                DiagnosticLog.record(
+                    webView.context.applicationContext,
+                    "LOCAL_BROWSER",
+                    "follow_settle session=" + session.sessionId.take(8) +
+                        " attempts=" + renderRetries +
+                        " target=" + cleanTarget.take(120)
+                )
+            }
             if (result.get("ok")?.asBoolean != true) {
                 session.lifecycle = LocalBrowserLifecycle.BLOCKED
                 return@runCommand gson.toJson(
@@ -471,7 +494,7 @@ object LocalBrowserRuntime {
             }
         )
         return try {
-            val result = block()
+            val result = withTimeout(COMMAND_TIMEOUT_MS) { block() }
             logAction(
                 session,
                 action,
@@ -479,6 +502,23 @@ object LocalBrowserRuntime {
                 "state=" + session.lifecycle.name + "; url=" + session.currentUrl.take(220)
             )
             result
+        } catch (timeout: TimeoutCancellationException) {
+            session.lifecycle = LocalBrowserLifecycle.BLOCKED
+            withContext(NonCancellable + Dispatchers.Main.immediate) {
+                attachedWebView?.stopLoading()
+            }
+            logAction(
+                session,
+                action,
+                "error",
+                "state=BLOCKED; reason=command_timeout; timeoutMs=" + COMMAND_TIMEOUT_MS +
+                    "; url=" + session.currentUrl.take(220)
+            )
+            throw IllegalStateException(
+                "Local Browser не завершил действие за " + (COMMAND_TIMEOUT_MS / 1_000) +
+                    " секунд. Действие остановлено; можно попробовать другой способ.",
+                timeout
+            )
         } catch (error: Throwable) {
             logAction(
                 session,
