@@ -47,7 +47,7 @@ class LocalShellAgentClient(private val context: Context) {
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "Local Shell Model"))
         .eventListenerFactory { DiagnosticNetworkEventListener(context, "Local Shell Model") }
-        .retryOnConnectionFailure(true)
+        .retryOnConnectionFailure(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(240, TimeUnit.SECONDS)
         .writeTimeout(120, TimeUnit.SECONDS)
@@ -300,8 +300,9 @@ class LocalShellAgentClient(private val context: Context) {
                 "system",
                 "Ты создаёшь точный рабочий checkpoint для продолжающейся задачи Local Shell. " +
                     "Не решай задачу заново и не добавляй новых предположений. Сохрани: что уже сделано, " +
-                    "изменённые файлы, найденные ошибки, результаты проверок, важные решения, ограничения " +
-                    "и конкретный следующий план. Пиши компактно, но не теряй данные, нужные для продолжения."
+                    "изменённые файлы, найденные ошибки, результаты проверок, важные решения, ограничения, " +
+                    "все дополнительные указания пользователя из основного чата и конкретный следующий план. " +
+                    "Пиши компактно, но не теряй данные, нужные для продолжения."
             ))
             add(message(
                 "user",
