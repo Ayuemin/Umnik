@@ -461,12 +461,29 @@ object LocalBrowserRuntime {
         left.substringBefore('#') == right.substringBefore('#')
 
     private suspend fun load(webView: WebView, url: String) {
+        val before = currentUrl(webView)
         withContext(Dispatchers.Main.immediate) {
             webView.stopLoading()
             webView.loadUrl(url)
         }
+        // about:blank is already "complete" on a newly attached WebView. Wait until
+        // the requested navigation has actually started before accepting readyState.
+        waitForNavigationStart(webView, before, url)
         waitForReady(webView)
         delay(600)
+    }
+
+    private suspend fun waitForNavigationStart(webView: WebView, beforeUrl: String, targetUrl: String) {
+        val before = beforeUrl.substringBefore('#')
+        val target = targetUrl.substringBefore('#')
+        repeat(48) {
+            delay(125)
+            val current = currentUrl(webView).substringBefore('#')
+            val isWebPage = current.startsWith("http://") || current.startsWith("https://")
+            val reachedTarget = current == target
+            val leftPreviousDocument = current.isNotBlank() && current != "about:blank" && current != before
+            if (isWebPage && (reachedTarget || leftPreviousDocument)) return
+        }
     }
 
     private suspend fun settleAfterAction(webView: WebView, beforeUrl: String) {
