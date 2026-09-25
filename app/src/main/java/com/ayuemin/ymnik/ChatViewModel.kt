@@ -4452,6 +4452,152 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             uri.removePrefix("chat://").takeIf { it.isNotBlank() }?.let(::removeChatFile)
         }
     }
+    fun createTextSkill(text: String) {
+        runCatching { skills.createText(text) }
+            .onSuccess { skill ->
+                _state.value = _state.value.copy(
+                    skills = skills.list(),
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats(),
+                    status = "Навык «${skill.name}» создан"
+                )
+            }
+            .onFailure { error ->
+                _state.value = _state.value.copy(status = error.message ?: "Не удалось создать навык")
+            }
+    }
+
+    fun importSkillFile(uri: Uri) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { skills.importFile(uri) } }
+                .onSuccess { skill ->
+                    _state.value = _state.value.copy(
+                        skills = skills.list(),
+                        storedFiles = storageRepository.list(),
+                        storageStats = storageRepository.stats(),
+                        status = "Навык «${skill.name}» импортирован"
+                    )
+                }
+                .onFailure { _state.value = _state.value.copy(status = it.message) }
+        }
+    }
+
+    fun importSkillTree(uri: Uri) {
+        viewModelScope.launch {
+            runCatching { withContext(Dispatchers.IO) { skills.importTree(uri) } }
+                .onSuccess { skill ->
+                    _state.value = _state.value.copy(
+                        skills = skills.list(),
+                        storedFiles = storageRepository.list(),
+                        storageStats = storageRepository.stats(),
+                        status = "Папка навыка «${skill.name}» импортирована"
+                    )
+                }
+                .onFailure { _state.value = _state.value.copy(status = it.message) }
+        }
+    }
+
+    fun toggleSkill(id: String) {
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
+        val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }.toSet()
+        prefs.edit().putStringSet(chatSkillsKey(chat.id), next).apply()
+        if (chat.teamId != null) updateCurrentTeamRuntime { it.copy(skillIds = next) }
+        _state.value = _state.value.copy(activeSkillIds = next)
+    }
+
+    fun deleteSkill(id: String) {
+        skills.delete(id)
+        val next = _state.value.activeSkillIds - id
+        prefs.edit().putStringSet("active_skills", next).apply()
+        _state.value = _state.value.copy(
+            skills = skills.list(),
+            activeSkillIds = next,
+            storedFiles = storageRepository.list(),
+            storageStats = storageRepository.stats()
+        )
+    }
+
+    fun stopGeneration() {
+        val chatId = _state.value.currentChatId
+        val snapshot = RequestExecutionManager.snapshotForChat(chatId) ?: return
+        invalidateRequestGeneration(chatId)
+        RequestExecutionManager.fail(snapshot.requestId, "Работа остановлена. При необходимости повторите запрос вручную.")
+        RequestExecutionManager.cancel(snapshot.requestId)
+        val restore = activeRequestPending.remove(chatId).orEmpty()
+        _state.value = _state.value.copy(
+            pendingAttachments = restore,
+            busyLabel = null,
+            status = "Работа в этом чате остановлена. Уточните запрос и отправьте снова."
+        )
+    }
+
+    fun retryFailedMessage(messageId: String) {
+        if (_state.value.isLoading) return
+        val previous = _state.value.messages.firstOrNull { it.id == messageId && it.deliveryState == "failed" }
+            ?: return
+        if (previous.attachmentNames.isNotEmpty()) {
+            val current = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId }
+            val availableNames = (
+                _state.value.pendingAttachments.map { it.name } + current?.chatFiles.orEmpty().map { it.name }
+            ).toSet()
+            if (!availableNames.containsAll(previous.attachmentNames)) {
+                _state.value = _state.value.copy(status = "Вложения этого запроса уже недоступны. Прикрепите их заново.")
+                return
+            }
+        }
+        val chatId = _state.value.currentChatId
+        val cleanedMessages = _state.value.messages.filterNot { it.id == messageId }
+        val cleanedChats = replaceChatMessages(_state.value.chats, chatId, cleanedMessages, null)
+        chatsRepository.save(cleanedChats)
+        _state.value = _state.value.copy(
+            chats = cleanedChats,
+            messages = cleanedMessages,
+            mode = if (previous.imageGeneration) ChatMode.IMAGE else ChatMode.TEXT,
+            status = null
+        )
+        DiagnosticLog.action(context, "retry_failed_message", "chat=${chatId.take(8)}; replaced=true")
+        if (previous.imageGeneration) sendImagePrompt(previous.text) else send(previous.text)
+    }
+
+    private fun launchRequest(
+        chatId: String,
+        messageId: String,
+        label: String,
+        execute: suspend (RequestNetworkSession) -> Unit
+    ): Job? {
+        val requestId = UUID.randomUUID().toString()
+        val network = RequestNetworkSession(context, requestId)
+        return runCatching {
+            RequestExecutionManager.start(
+                context = context,
+                requestId = requestId,
+                chatId = chatId,
+                messageId = messageId,
+                label = label,
+                cancelNetworkCall = network::cancel,
+                execute = { execute(network) }
+            )
+        }.getOrElse { error ->
+            val restore = activeRequestPending.remove(chatId).orEmpty()
+            val chats = chatsRepository.finishRequest(chatId, messageId, null)
+            val restoreHere = _state.value.currentChatId == chatId && restore.isNotEmpty()
+            _state.value = _state.value.copy(
+                chats = chats,
+                messages = chats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
+                pendingAttachments = if (restoreHere) {
+                    (_state.value.pendingAttachments + restore).distinctBy { it.uri }
+                } else {
+                    _state.value.pendingAttachments
+                },
+                requestActive = RequestExecutionManager.hasActiveRequest(),
+                busyLabel = RequestExecutionManager.snapshotForChat(_state.value.currentChatId)?.label,
+                status = "Не удалось запустить фоновую работу: ${error.message ?: "ошибка Android"}"
+            )
+            if (!restoreHere) cleanupTempAttachments(restore)
+            null
+        }
+    }
+
     fun prepareImageGeneration(): Boolean {
         if (_state.value.isLoading) return false
         val profile = imageConnectionProfile()
