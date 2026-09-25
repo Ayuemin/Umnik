@@ -14,9 +14,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -25,6 +27,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -44,6 +47,7 @@ import androidx.compose.material.icons.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.AlertDialog
@@ -76,7 +80,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -84,6 +90,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.LocalShellActivity
 import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.model.BatchJobStatus
 import com.ayuemin.ymnik.model.ModelCategory
@@ -137,10 +144,13 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     var requestedPage by remember { mutableStateOf(HubPage.MODELS) }
     var requestedMediaSection by remember { mutableStateOf(MediaSection.ALL) }
     var requestedReturnLabel by remember { mutableStateOf<String?>(null) }
+    var localShellOpen by remember { mutableStateOf(false) }
     val asyncSequence by AsyncJobEvents.sequence.collectAsState()
     val hubRequest by AsyncJobEvents.hubRequest.collectAsState()
     val hubReturnLabel by AsyncJobEvents.hubReturnLabel.collectAsState()
     val speechRequest by AsyncJobEvents.speechRequest.collectAsState()
+    val localShellActivity by AsyncJobEvents.localShellActivity.collectAsState()
+    val hubState by controller.state.collectAsState()
     val appState by viewModel.state.collectAsState()
 
     DisposableEffect(controller) {
@@ -228,16 +238,38 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
                 AsyncJobEvents.consumeHubRequest()
             }
             "local-shell" -> {
-                requestedPage = HubPage.LOCAL_SHELL
-                requestedMediaSection = MediaSection.ALL
-                open = true
+                localShellOpen = true
                 AsyncJobEvents.consumeHubRequest()
             }
         }
     }
 
+    LaunchedEffect(localShellActivity?.chatId) {
+        if (localShellActivity != null) localShellOpen = false
+    }
+
     UmnikTheme(appState.themeChoice, appState.customThemeColor) {
-        YmnikApp(viewModel)
+        Box(Modifier.fillMaxSize()) {
+            YmnikApp(viewModel)
+            if (localShellActivity != null && !localShellOpen) {
+                LocalShellProcessPill(
+                    activity = localShellActivity!!,
+                    currentChatId = appState.currentChatId,
+                    onClick = { localShellOpen = true },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+            if (localShellOpen) {
+                LocalShellFloatingCard(
+                    state = hubState,
+                    activity = localShellActivity,
+                    controller = controller,
+                    currentChatId = appState.currentChatId,
+                    onDismiss = { localShellOpen = false },
+                    modifier = Modifier.align(Alignment.BottomCenter)
+                )
+            }
+        }
         if (open) {
             OpenRouterHubDialog(
                 controller = controller,
