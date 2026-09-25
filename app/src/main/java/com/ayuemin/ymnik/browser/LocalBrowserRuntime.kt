@@ -63,12 +63,17 @@ private data class BrowserSession(
     @Volatile var lastSnapshotId: String? = null,
     @Volatile var lastUrl: String = "",
     @Volatile var lastTitle: String = "",
-    @Volatile var lastContentHash: Int = 0
+    @Volatile var lastContentHash: Int = 0,
+    @Volatile var lastContent: String = "",
+    @Volatile var lastElementFingerprints: Map<Int, String> = emptyMap()
 )
 
 object LocalBrowserRuntime {
-    private const val SNAPSHOT_TEXT_LIMIT = 24_000
-    private const val SNAPSHOT_ELEMENT_LIMIT = 120
+    private const val COMPACT_TEXT_LIMIT = 10_000
+    private const val COMPACT_ELEMENT_LIMIT = 72
+    private const val FULL_TEXT_LIMIT = 24_000
+    private const val FULL_ELEMENT_LIMIT = 120
+    private const val DELTA_TEXT_LIMIT = 4_000
 
     private val gson = Gson()
     private val commandMutex = Mutex()
@@ -223,11 +228,64 @@ object LocalBrowserRuntime {
         }
     }
 
-    suspend fun read(chatId: String): String = commandMutex.withLock {
+    suspend fun read(chatId: String, full: Boolean = false): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "читает страницу", "read") {
+        runCommand(
+            session,
+            session.currentUrl,
+            if (full) "читает страницу подробно" else "читает страницу",
+            "read",
+            "full=" + full
+        ) {
             val webView = webView()
             ensureCurrent(session, webView)
+            snapshot(session, webView, forceBaseline = true, expanded = full)
+        }
+    }
+
+    suspend fun follow(chatId: String, rawUrl: String?, target: String): String = commandMutex.withLock {
+        val cleanTarget = target.trim()
+        require(cleanTarget.isNotBlank()) { "Не указана ссылка, по которой нужно перейти" }
+        val safeUrl = rawUrl?.trim()?.takeIf { it.isNotBlank() }?.let { value ->
+            withContext(Dispatchers.IO) {
+                val parsed = LocalWebFetchPolicy.parseUrl(value)
+                requirePublicHost(parsed.host)
+                parsed.toString()
+            }
+        }
+        val session = if (safeUrl != null) session(chatId) else requireSession(chatId)
+        session.lifecycle = LocalBrowserLifecycle.WORKING
+        runCommand(
+            session,
+            safeUrl ?: session.currentUrl,
+            "переходит по ссылке",
+            "follow",
+            "target=" + cleanTarget.take(120) + if (safeUrl != null) "; open=true" else "; open=false"
+        ) {
+            val webView = webView()
+            if (safeUrl != null) load(webView, safeUrl) else ensureCurrent(session, webView)
+            val before = currentUrl(webView)
+            val result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+            if (result.get("ok")?.asBoolean != true) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand gson.toJson(
+                    JsonObject().apply {
+                        addProperty("ok", false)
+                        addProperty("source", "local_browser")
+                        addProperty("session_id", session.sessionId)
+                        addProperty("state", "BLOCKED")
+                        addProperty("reason", result.get("reason")?.asString ?: "target_not_unique")
+                        addProperty("recoverable", true)
+                        add("candidates", result.get("candidates") ?: JsonArray())
+                        addProperty(
+                            "message",
+                            "Локальный переход не выполнен: цель не распознана однозначно. Выбери нужный элемент по snapshot и используй обычный click."
+                        )
+                    }
+                )
+            }
+            settleAfterAction(webView, before)
+            session.lifecycle = LocalBrowserLifecycle.WORKING
             snapshot(session, webView)
         }
     }
