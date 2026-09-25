@@ -2277,13 +2277,6 @@ private fun ToolsPage(
             }
             item {
                 ToggleRow(
-                    "Открывать найденные веб-страницы",
-                    tools.webFetch,
-                    "Разрешает модели дополнительно открыть найденную страницу и прочитать её содержимое."
-                ) { controller.updateTools(tools.copy(webFetch = it)) }
-            }
-            item {
-                ToggleRow(
                     "Текущие дата и время",
                     tools.datetime,
                     "Разрешает модели запросить актуальные дату и время как серверный инструмент."
@@ -2302,13 +2295,6 @@ private fun ToolsPage(
                     tools.fusion,
                     "Продвинутый режим OpenRouter для объединения работы нескольких инструментов. Обычно не требуется."
                 ) { controller.updateTools(tools.copy(fusion = it)) }
-            }
-            item {
-                ToggleRow(
-                    "Shell",
-                    tools.shell,
-                    "Продвинутая возможность для задач с командами и рабочими файлами. Включайте только когда действительно нужна."
-                ) { controller.updateTools(tools.copy(shell = it)) }
             }
         }
     }

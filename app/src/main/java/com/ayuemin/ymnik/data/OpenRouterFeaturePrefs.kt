@@ -20,10 +20,15 @@ class OpenRouterFeaturePrefs(context: Context) {
         value.copy(
             webSearch = runCatching { value.webSearch }.getOrNull() ?: WebSearchMode.OFF,
             webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-            webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+            webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO,
+            webFetch = false,
+            shell = false
         )
     }
-    fun saveTools(value: ServerToolSettings) { prefs.edit().putString("tools", gson.toJson(value)).apply() }
+    fun saveTools(value: ServerToolSettings) {
+        val safe = value.copy(webFetch = false, shell = false)
+        prefs.edit().putString("tools", gson.toJson(safe)).apply()
+    }
 
     fun media(): OpenRouterMediaSettings = read("media", OpenRouterMediaSettings::class.java, OpenRouterMediaSettings())
     fun saveMedia(value: OpenRouterMediaSettings) { prefs.edit().putString("media", gson.toJson(value)).apply() }

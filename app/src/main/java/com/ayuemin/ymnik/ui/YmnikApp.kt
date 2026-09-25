@@ -171,6 +171,8 @@ import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.WavRecorder
+import com.ayuemin.ymnik.browser.LocalBrowserActivity
+import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.VideoJobRepository
@@ -270,6 +272,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
             }
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
+                LocalBrowserHost()
                 when (screen) {
                     0 -> ChatScreen(
                         state = state,
@@ -393,6 +396,7 @@ private fun ChatScreen(
     val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
     val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
     val localShellActivity by AsyncJobEvents.localShellActivity.collectAsState()
+    val browserActivity by LocalBrowserRuntime.activity.collectAsState()
     val hubToolActivity by AsyncJobEvents.hubToolActivity.collectAsState()
     val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
     val videoRepository = remember(context) { VideoJobRepository(context.applicationContext) }
@@ -817,6 +821,10 @@ onBranch = if (message.role == "assistant") {
                             recordingSeconds = 0
                         }
                     )
+                }
+
+                browserActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
+                    LocalBrowserInlineBanner(activity)
                 }
 
                 shellActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
@@ -1468,6 +1476,38 @@ private fun ShellBackgroundOperationBanner(
         },
         onClick = onClick
     )
+}
+
+@Composable
+private fun LocalBrowserInlineBanner(activity: LocalBrowserActivity) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Браузер · " + activity.host,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    activity.status,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
 }
 
 @Composable

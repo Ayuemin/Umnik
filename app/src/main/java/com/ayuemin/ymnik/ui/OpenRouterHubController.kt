@@ -201,8 +201,9 @@ class OpenRouterHubController(
     }
 
     fun updateTools(value: ServerToolSettings) {
-        featurePrefs.saveTools(value)
-        mutableState.value = mutableState.value.copy(tools = value, status = null)
+        val safe = value.copy(webFetch = false, shell = false)
+        featurePrefs.saveTools(safe)
+        mutableState.value = mutableState.value.copy(tools = safe, status = null)
     }
 
     fun updateMedia(value: OpenRouterMediaSettings) {
