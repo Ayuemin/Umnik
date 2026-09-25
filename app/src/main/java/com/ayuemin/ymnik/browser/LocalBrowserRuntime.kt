@@ -2122,15 +2122,17 @@ object LocalBrowserRuntime {
                     .build()
             ).execute()
 
+            if (response.code in 300..399) {
+                val location = response.header("Location").orEmpty()
+                response.close()
+                require(redirects < DOWNLOAD_MAX_REDIRECTS) { "Слишком много перенаправлений при скачивании" }
+                require(location.isNotBlank()) { "Сервер вернул перенаправление без адреса" }
+                current = current.resolve(location)
+                redirects++
+                continue
+            }
+
             response.use { res ->
-                if (res.code in 300..399) {
-                    require(redirects < DOWNLOAD_MAX_REDIRECTS) { "Слишком много перенаправлений при скачивании" }
-                    val location = res.header("Location").orEmpty()
-                    require(location.isNotBlank()) { "Сервер вернул перенаправление без адреса" }
-                    current = current.resolve(location)
-                    redirects++
-                    continue
-                }
                 require(res.isSuccessful) { "Не удалось скачать файл: HTTP " + res.code }
                 val body = res.body ?: error("Сервер вернул пустой файл")
                 val declared = body.contentLength()
