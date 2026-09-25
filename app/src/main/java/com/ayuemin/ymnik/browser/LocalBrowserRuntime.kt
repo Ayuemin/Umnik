@@ -1032,6 +1032,7 @@ object LocalBrowserRuntime {
         val content = page.get("content")?.asString.orEmpty()
         val viewportContent = page.get("viewport_content")?.asString.orEmpty()
         val elements = page.getAsJsonArray("elements") ?: JsonArray()
+        val linkIndex = page.getAsJsonArray("link_index") ?: JsonArray()
         val currentElements = elementObjects(elements)
         val currentFingerprints = currentElements.mapValues { (_, value) -> gson.toJson(value) }
         val nextRef = page.get("next_ref")?.asInt ?: startRef
@@ -1078,6 +1079,8 @@ object LocalBrowserRuntime {
                 }
             )
             add("viewport", page.get("viewport") ?: JsonObject())
+            add("link_index", linkIndex)
+            addProperty("link_index_truncated", page.get("link_index_truncated")?.asBoolean ?: false)
             if (baseline) {
                 addProperty("content", content)
                 if (viewportContent.isNotBlank()) addProperty("viewport_content", viewportContent)
@@ -1151,6 +1154,7 @@ object LocalBrowserRuntime {
                 " url=" + url.take(220) +
                 " chars=" + content.length +
                 " elements=" + elements.size() +
+                " links=" + linkIndex.size() +
                 " modelChars=" + encoded.length +
                 " truncated=" + result.get("truncated").asBoolean
         )
@@ -1267,6 +1271,34 @@ object LocalBrowserRuntime {
               disabled: !!el.disabled
             };
           });
+          const linkCandidates = all
+            .filter(el => (el.tagName || '').toLowerCase() === 'a')
+            .filter(el => !el.hasAttribute('download') && /^https?:\/\//i.test(String(el.href || '')))
+            .map((el, index) => {
+              const name = clean(
+                el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || '',
+                120
+              );
+              const navLike = !!el.closest('nav,header,[role="navigation"]');
+              return {
+                el,
+                index,
+                name,
+                href: clean(el.href, 360),
+                priority: (navLike ? 1000 : 0) + (inViewport(el) ? 200 : 0) - index
+              };
+            })
+            .filter(item => item.name && item.href)
+            .sort((a, b) => b.priority - a.priority);
+          const linkIndex = [];
+          const seenLinkHrefs = new Set();
+          for (const item of linkCandidates) {
+            const key = item.href.replace(/#.*$/, '');
+            if (seenLinkHrefs.has(key)) continue;
+            seenLinkHrefs.add(key);
+            linkIndex.push({ref:refFor(item.el), name:item.name, href:item.href});
+            if (linkIndex.length >= 48) break;
+          }
           const bodyText = String(document.body?.innerText || '')
             .replace(/\r/g, '')
             .replace(/\n{3,}/g, '\n\n')
@@ -1290,6 +1322,8 @@ object LocalBrowserRuntime {
             content: bodyText.slice(0, $textLimit),
             viewport_content: viewportText,
             elements,
+            link_index: linkIndex,
+            link_index_truncated: linkCandidates.length > linkIndex.length,
             next_ref: reg.next,
             truncated: bodyText.length > $textLimit || all.length > $elementLimit
           });
