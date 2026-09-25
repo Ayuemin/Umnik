@@ -87,17 +87,17 @@ jobs:
           test "$APK_CERT" = "$KEY_CERT"
 
           mkdir -p dist
-          cp "$APK" dist/Umnik-local-shell-update-signed.apk
+          cp "$APK" dist/Umnik-INSTALL-OVER-CURRENT-signed.apk
           (
             cd dist
-            sha256sum Umnik-local-shell-update-signed.apk > Umnik-local-shell-update-signed.apk.sha256
+            sha256sum Umnik-INSTALL-OVER-CURRENT-signed.apk > Umnik-INSTALL-OVER-CURRENT-signed.apk.sha256
           )
           printf '%s\n' "$APK_CERT" > dist/Umnik-signing-certificate-sha256.txt
 
       - name: Upload signed test APK
         uses: actions/upload-artifact@v4
         with:
-          name: Umnik-local-shell-update-signed
+          name: Umnik-INSTALL-OVER-CURRENT-signed
           path: dist/*
           if-no-files-found: error
           retention-days: 14
