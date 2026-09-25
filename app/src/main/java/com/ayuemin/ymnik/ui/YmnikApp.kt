@@ -179,6 +179,7 @@ import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.InternetMode
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
@@ -1130,9 +1131,22 @@ onBranch = if (message.role == "assistant") {
                         )
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
-                            level = webSearchPresetIndicatorLevel(state.webSearchPreset),
+                            level = when (state.internetMode) {
+                                InternetMode.BROWSER -> 4
+                                else -> webSearchPresetIndicatorLevel(state.webSearchPreset)
+                            },
                             levelCount = 4,
-                            levelDescription = if (state.webSearchEnabled) "Поиск: " + webSearchPresetUiLabel(state.webSearchPreset) else "Поиск выключен",
+                            indicatorText = when (state.internetMode) {
+                                InternetMode.SEARCH_ONLY -> null
+                                InternetMode.AUTO -> "AUTO"
+                                InternetMode.BROWSER -> "BROW"
+                            },
+                            levelDescription = when {
+                                !state.webSearchEnabled -> "Интернет выключен"
+                                state.internetMode == InternetMode.SEARCH_ONLY -> "Только поиск: " + webSearchPresetUiLabel(state.webSearchPreset)
+                                state.internetMode == InternetMode.AUTO -> "Автоматически: " + webSearchPresetUiLabel(state.webSearchPreset)
+                                else -> "Браузер"
+                            },
                             checked = state.webSearchEnabled,
                             enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
@@ -1335,28 +1349,53 @@ onBranch = if (message.role == "assistant") {
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Режим поиска", modifier = Modifier.weight(1f))
+                    Text("Интернет", modifier = Modifier.weight(1f))
                     IconButton(
                         onClick = {
                             webSearchModeOpen = false
                             webSearchModeInfoOpen = true
                         }
                     ) {
-                        Icon(Icons.Outlined.Info, contentDescription = "О режимах поиска")
+                        Icon(Icons.Outlined.Info, contentDescription = "О режимах интернета")
                     }
                 }
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    WebSearchPreset.entries.forEach { preset ->
+                    Text(
+                        "Режим",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    InternetMode.entries.forEach { mode ->
                         FilterChip(
-                            selected = state.webSearchPreset == preset,
-                            onClick = {
-                                vm.setWebSearchPreset(preset)
-                                webSearchModeOpen = false
-                            },
-                            label = { Text(webSearchPresetUiLabel(preset)) }
+                            selected = state.internetMode == mode,
+                            onClick = { vm.setInternetMode(mode) },
+                            label = {
+                                Text(
+                                    when (mode) {
+                                        InternetMode.SEARCH_ONLY -> "Только поиск"
+                                        InternetMode.AUTO -> "Автоматически"
+                                        InternetMode.BROWSER -> "Браузер"
+                                    }
+                                )
+                            }
                         )
+                    }
+                    if (state.internetMode != InternetMode.BROWSER) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Уровень поиска",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        WebSearchPreset.entries.forEach { preset ->
+                            FilterChip(
+                                selected = state.webSearchPreset == preset,
+                                onClick = { vm.setWebSearchPreset(preset) },
+                                label = { Text(webSearchPresetUiLabel(preset)) }
+                            )
+                        }
                     }
                 }
             },
@@ -1369,10 +1408,25 @@ onBranch = if (message.role == "assistant") {
     if (webSearchModeInfoOpen) {
         AlertDialog(
             onDismissRequest = { webSearchModeInfoOpen = false },
-            title = { Text("О поиске") },
+            title = { Text("Об интернете") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Включение поиска и выбранный режим относятся только к текущему чату.")
+                    Text("Режим и уровень относятся только к текущему чату.")
+                    Text(
+                        "• Только поиск — поиск и чтение найденных страниц без интерактивного WebView.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "• Автоматически — модель сама выбирает поиск, чтение страницы или Browser.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "• Браузер — интерактивная работа со страницей. Уровень поиска здесь не применяется.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     WebSearchPreset.entries.forEach { preset ->
                         Text(
                             "• ${webSearchPresetUiLabel(preset)} — ${webSearchPresetDescription(preset)}",
@@ -1380,11 +1434,6 @@ onBranch = if (message.role == "assistant") {
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Text(
-                        "Движок поиска и другие технические параметры находятся в «Каталог и модели OpenRouter → Инструменты». Там же задаются настройки поиска по умолчанию для новых чатов.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             },
             confirmButton = {
@@ -1568,6 +1617,7 @@ private fun ComposerToggleTile(
     icon: ImageVector,
     level: Int,
     levelCount: Int,
+    indicatorText: String? = null,
     levelDescription: String,
     checked: Boolean,
     enabled: Boolean,
@@ -1609,17 +1659,41 @@ private fun ComposerToggleTile(
                     horizontalArrangement = Arrangement.spacedBy(4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    repeat(levelCount.coerceAtLeast(1)) { index ->
+                    val count = levelCount.coerceAtLeast(1)
+                    repeat(count) { index ->
                         val active = enabled && checked && index < level
-                        Surface(
-                            modifier = Modifier.weight(1f).height(6.dp),
-                            shape = RoundedCornerShape(999.dp),
-                            color = if (active) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = if (enabled) 0.16f else 0.08f)
+                        if (!indicatorText.isNullOrBlank() && indicatorText.length >= count) {
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    indicatorText[index].toString(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (active) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (enabled) 0.18f else 0.08f
+                                        )
+                                    },
+                                    maxLines = 1
+                                )
                             }
-                        ) {}
+                        } else {
+                            Surface(
+                                modifier = Modifier.weight(1f).height(6.dp),
+                                shape = RoundedCornerShape(999.dp),
+                                color = if (active) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                        alpha = if (enabled) 0.16f else 0.08f
+                                    )
+                                }
+                            ) {}
+                        }
                     }
                 }
             }
