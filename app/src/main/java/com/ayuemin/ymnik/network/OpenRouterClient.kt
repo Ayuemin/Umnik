@@ -601,11 +601,25 @@ class OpenRouterClient(
             if (callId !in browserCallIds) return@forEach
             val content = obj.get("content")?.asString.orEmpty()
             if (content.contains("\"superseded\":true")) return@forEach
-            obj.addProperty(
-                "content",
-                "{\"ok\":true,\"source\":\"local_browser\",\"superseded\":true," +
-                    "\"note\":\"A newer Browser snapshot supersedes this state.\"}"
-            )
+            val previous = runCatching { gson.fromJson(content, JsonObject::class.java) }.getOrNull()
+            val artifact = previous?.getAsJsonObject("artifact")
+            val compact = JsonObject().apply {
+                addProperty("ok", true)
+                addProperty("source", "local_browser")
+                addProperty("superseded", true)
+                addProperty("note", "A newer Browser state supersedes this snapshot.")
+                artifact?.let { item ->
+                    add("artifact", JsonObject().apply {
+                        item.get("name")?.takeIf { it.isJsonPrimitive }?.let { add("name", it.deepCopy()) }
+                        item.get("chat_file_id")?.takeIf { it.isJsonPrimitive }?.let { add("chat_file_id", it.deepCopy()) }
+                        item.get("size")?.takeIf { it.isJsonPrimitive }?.let { add("size", it.deepCopy()) }
+                        item.get("available_to_shell")?.takeIf { it.isJsonPrimitive }?.let {
+                            add("available_to_shell", it.deepCopy())
+                        }
+                    })
+                }
+            }
+            obj.addProperty("content", gson.toJson(compact))
         }
     }
 
