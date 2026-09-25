@@ -6,6 +6,7 @@ import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.LocalShellRuntime
 import com.ayuemin.ymnik.OpenRouterBackgroundWorker
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.data.BatchJobRepository
@@ -109,24 +110,6 @@ private object ShellRuntime {
     }
 }
 
-private object LocalShellRuntime {
-    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
-    @Volatile
-    private var cancelCurrent: (() -> Unit)? = null
-
-    fun installCancel(cancel: () -> Unit) {
-        cancelCurrent = cancel
-    }
-
-    fun cancel() {
-        cancelCurrent?.invoke()
-    }
-
-    fun clear() {
-        cancelCurrent = null
-    }
-}
 
 class OpenRouterHubController(
     private val context: Context,
@@ -754,6 +737,7 @@ class OpenRouterHubController(
         }
 
         val cancelRequested = AtomicBoolean(false)
+        LocalShellRuntime.prepareForStart()
         LocalShellRuntime.scope.launch {
             AsyncJobEvents.markLocalShellRunning(originChatId, model, attachments.size, maxTurns)
             runCatching { RequestKeepAliveService.start(context) }
@@ -834,6 +818,7 @@ class OpenRouterHubController(
                             localShellToolCalls = progress.toolCalls
                         )
                     },
+                    externalGuidance = LocalShellRuntime::drainGuidance,
                     baseUrl = viewModel.connectionTextEndpoint(profile.id)
                 )
                 if (cancelRequested.get()) error("Локальный Shell остановлен пользователем")
