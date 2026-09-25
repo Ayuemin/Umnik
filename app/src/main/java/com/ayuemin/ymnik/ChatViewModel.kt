@@ -4508,7 +4508,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         } else {
             emptyList()
         }
-        if (clean.isBlank() && pending.isEmpty() && persistentChatFiles.isEmpty()) return
+        if (clean.isBlank() && pending.isEmpty()) return
 
         val missingChatFile = persistentChatFiles.firstOrNull { attachment ->
             attachment.localPath?.takeIf { it.isNotBlank() }?.let { !File(it).isFile } == true
@@ -4520,11 +4520,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             return
         }
 
-        val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
-        if (invalidPending != null) {
-            _state.value = _state.value.copy(status = attachmentAllowed(invalidPending).second ?: "Вложение не поддерживается выбранной моделью")
-            return
+        if (mode == ChatMode.IMAGE) {
+            val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
+            if (invalidPending != null) {
+                _state.value = _state.value.copy(status = attachmentAllowed(invalidPending).second ?: "Вложение не поддерживается выбранной моделью")
+                return
+            }
         }
+
 
         val currentSpecialist = currentChat
             ?.let { specialistConversations.specialistIdForConversation(it.id) }
@@ -4544,17 +4547,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             text = clean.ifBlank {
                 when {
                     mode == ChatMode.IMAGE -> "Создай вариант приложенного изображения"
-                    pending.isNotEmpty() && pending.all { it.mimeType.startsWith("audio/") } && persistentChatFiles.isEmpty() -> "Голосовое сообщение"
-                    persistentChatFiles.isNotEmpty() -> "[Файлы чата]"
+                    pending.isNotEmpty() && pending.all { it.mimeType.startsWith("audio/") } -> "Голосовое сообщение"
                     else -> "[Вложения]"
                 }
             },
-            attachmentNames = (pending.map { it.name } + persistentChatFiles.map { it.name }).distinct(),
+            attachmentNames = pending.map { it.name }.distinct(),
             imageGeneration = mode == ChatMode.IMAGE,
             deliveryState = "pending"
         )
         val nextMessages = before + user
-        val titleAttachments = pending.map { it.name } + currentChat?.chatFiles.orEmpty().map { it.name }
+        val titleAttachments = pending.map { it.name }
         val title = if (
             before.isEmpty() &&
             currentChat?.title == "Новый чат" &&
@@ -4635,20 +4637,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         // Teams are rooms only. Persistent work files belong to the selected specialist
         // or to the current ordinary chat, never to the team itself.
         val requestTeamTextAttachments = emptyList<PendingAttachment>()
-        val requestPersistentTextAttachments = if (mode == ChatMode.TEXT) {
-            if (requestSpecialist != null) {
-                specialistFiles.list(requestSpecialist.id).map { file ->
-                    PendingAttachment(
-                        uri = "specialist://${file.id}",
-                        name = file.name,
-                        mimeType = file.mimeType,
-                        size = file.size,
-                        localPath = file.localPath
-                    )
-                }.filter { attachmentAllowed(it).first }
-            } else {
-                persistentChatFiles.filter { attachmentAllowed(it).first }
-            }
+        val requestPersistentTextAttachments = if (mode == ChatMode.TEXT && requestSpecialist != null) {
+            specialistFiles.list(requestSpecialist.id).map { file ->
+                PendingAttachment(
+                    uri = "specialist://${file.id}",
+                    name = file.name,
+                    mimeType = file.mimeType,
+                    size = file.size,
+                    localPath = file.localPath
+                )
+            }.filter { attachmentAllowed(it).first }
         } else emptyList()
         val requestTeamImages = emptyList<PendingAttachment>()
         val requestId = nextRequestGeneration(chatId)
@@ -4720,7 +4718,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             )
                         val localShellToolsEnabled = requestSpecialist == null &&
                             (autoRouter || modelInfo?.supportsTools == true)
-                        val allAttachments = (pending + requestPersistentTextAttachments + teamFiles)
+                        val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
+                        val allAttachments = (modelPendingAttachments + requestPersistentTextAttachments + teamFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         answerAttachmentCount = allAttachments.size
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
