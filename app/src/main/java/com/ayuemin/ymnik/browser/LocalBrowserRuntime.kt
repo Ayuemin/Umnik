@@ -1723,7 +1723,18 @@ object LocalBrowserRuntime {
             const tag = (el.tagName || '').toLowerCase();
             const type = clean(el.getAttribute('type'), 40).toLowerCase();
             const role = clean(el.getAttribute('role') || tag, 40);
-            const secret = type === 'password';
+            const autoComplete = clean(el.getAttribute('autocomplete'), 80).toLowerCase();
+            const fieldMeta = [
+              el.getAttribute('name'),
+              el.getAttribute('id'),
+              el.getAttribute('aria-label'),
+              el.getAttribute('placeholder')
+            ].join(' ').toLowerCase();
+            const secret =
+              type === 'password' ||
+              type === 'file' ||
+              autoComplete === 'one-time-code' ||
+              /(^|\W)(otp|2fa|mfa)(\W|$)|verification.?code|one.?time/.test(fieldMeta);
             const name = clean(
               el.getAttribute('aria-label') ||
               el.innerText ||
