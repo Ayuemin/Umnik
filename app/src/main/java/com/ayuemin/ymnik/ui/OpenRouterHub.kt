@@ -284,6 +284,327 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
 }
 
 @Composable
+private fun LocalShellProcessPill(
+    activity: LocalShellActivity,
+    currentChatId: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 12.dp, bottom = 82.dp),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            Spacer(Modifier.width(9.dp))
+            Column(Modifier.weight(1f)) {
+                Text("Local Shell · работает", fontWeight = FontWeight.SemiBold)
+                Text(
+                    if (activity.chatId == currentChatId) {
+                        activity.status
+                    } else {
+                        "Задача выполняется в другом чате"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Text(
+                activity.turn.toString() + "/" + activity.maxTurns,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun LocalShellFloatingCard(
+    state: OpenRouterHubState,
+    activity: LocalShellActivity?,
+    controller: OpenRouterHubController,
+    currentChatId: String,
+    onDismiss: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var prompt by remember { mutableStateOf("") }
+    var networkEnabled by remember { mutableStateOf(false) }
+    var showInfo by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
+    var maxTurnsText by remember { mutableStateOf(controller.localShellMaxTurns().toString()) }
+    var cardHeight by remember { mutableStateOf(390.dp) }
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    val files = remember { mutableStateListOf<Uri>() }
+    val context = LocalContext.current
+    val density = LocalDensity.current
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        files.clear()
+        files.addAll(uris.take(10))
+    }
+
+    LaunchedEffect(activity?.startedAt) {
+        if (activity == null) return@LaunchedEffect
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000L)
+        }
+    }
+
+    LaunchedEffect(showSettings) {
+        if (showSettings) maxTurnsText = controller.localShellMaxTurns().toString()
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxSize()
+            .imePadding()
+    ) {
+        val minCardHeight = 290.dp
+        val maxCardHeight = (maxHeight * 0.74f).coerceAtLeast(minCardHeight)
+        val effectiveHeight = cardHeight.coerceIn(minCardHeight, maxCardHeight)
+
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, bottom = 78.dp)
+                .height(effectiveHeight),
+            shape = RoundedCornerShape(22.dp),
+            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(Modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(16.dp)
+                        .pointerInput(maxCardHeight) {
+                            detectVerticalDragGestures { _, dragAmount ->
+                                val delta = with(density) { (-dragAmount).toDp() }
+                                cardHeight = (cardHeight + delta).coerceIn(minCardHeight, maxCardHeight)
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    HorizontalDivider(
+                        modifier = Modifier.width(46.dp),
+                        thickness = 4.dp,
+                        color = MaterialTheme.colorScheme.outlineVariant
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (activity == null) "Local Shell" else "Local Shell · работает",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        if (activity != null) {
+                            Text(
+                                if (activity.chatId == currentChatId) activity.status else "Задача выполняется в другом чате",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    IconButton(onClick = { showInfo = true }) {
+                        Icon(Icons.Outlined.Info, contentDescription = "О Local Shell")
+                    }
+                    IconButton(onClick = onDismiss) {
+                        Icon(Icons.Outlined.Close, contentDescription = "Свернуть Local Shell")
+                    }
+                }
+
+                if (activity != null) {
+                    Spacer(Modifier.height(8.dp))
+                    UmnikPanel {
+                        Column(
+                            modifier = Modifier.fillMaxWidth().padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(9.dp))
+                                Text(activity.status, fontWeight = FontWeight.SemiBold)
+                            }
+                            Text(
+                                "Модель: " + activity.modelId.substringAfterLast('/').ifBlank { "—" },
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "Шаг модели: " + activity.turn + " из " + activity.maxTurns +
+                                    " · локальных действий: " + activity.toolCalls,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                            Text(
+                                "Время: " + localShellElapsedLabel((now - activity.startedAt).coerceAtLeast(0L)),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                "Повторный запуск недоступен, пока эта задача не завершится.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Button(
+                        onClick = controller::cancelLocalShell,
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text("Остановить")
+                    }
+                } else {
+                    OutlinedTextField(
+                        value = prompt,
+                        onValueChange = { prompt = it },
+                        modifier = Modifier.fillMaxWidth().weight(1f),
+                        label = { Text("Что нужно сделать?") },
+                        minLines = 4,
+                        maxLines = 14
+                    )
+
+                    if (files.isNotEmpty()) {
+                        Text(
+                            "Файлы: " + files.joinToString { uri -> shellAttachmentInfo(context, uri).name },
+                            modifier = Modifier.fillMaxWidth().padding(top = 5.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalButton(onClick = { picker.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Outlined.Description, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text(if (files.isEmpty()) "Файл" else "Файлы: " + files.size)
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Text("Сеть", style = MaterialTheme.typography.bodySmall)
+                        Spacer(Modifier.width(6.dp))
+                        Switch(checked = networkEnabled, onCheckedChange = { networkEnabled = it })
+                    }
+
+                    if (state.localShellError != null) {
+                        Text(
+                            state.localShellError,
+                            modifier = Modifier.padding(top = 4.dp),
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Button(
+                        onClick = { controller.runLocalShell(prompt, files.toList(), networkEnabled) },
+                        enabled = prompt.isNotBlank() && !state.shellRunning,
+                        modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+                    ) {
+                        Text("Запустить локально")
+                    }
+                }
+            }
+        }
+    }
+
+    if (showInfo) {
+        AlertDialog(
+            onDismissRequest = { showInfo = false },
+            title = { Text("О Local Shell") },
+            text = {
+                Text(
+                    "Local Shell работает с файлами и кодом на этом устройстве. Исходные вложения не отправляются в OpenRouter как файлы: модель получает только задание и результаты локальных действий, которые сама запросила. Сетевой шлюз разрешает получение данных и публичный Git clone, но не загрузку локальных файлов и не Git push."
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showInfo = false
+                    showSettings = true
+                }) { Text("Настройки") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showInfo = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+    if (showSettings) {
+        val parsedTurns = maxTurnsText.toIntOrNull()?.takeIf { it > 0 }
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("Настройки Local Shell") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = maxTurnsText,
+                        onValueChange = { value ->
+                            if (value.isEmpty() || value.all(Char::isDigit)) maxTurnsText = value.take(10)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Максимум шагов модели") },
+                        singleLine = true,
+                        supportingText = { Text("По умолчанию: 24") }
+                    )
+                    Text(
+                        "Один шаг — очередное обращение к выбранной модели OpenRouter. Больший предел позволяет дольше работать над сложной задачей, но может увеличить стоимость, время и рабочий контекст. Shell завершится раньше, если задача выполнена.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Ориентиры: 12 — небольшая задача; 24 — обычная; 50–100 — сложная работа с проектом; 100+ — длительная автономная работа.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Изменение применяется со следующего запуска и не меняет уже работающую задачу.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        parsedTurns?.let(controller::saveLocalShellMaxTurns)
+                        showSettings = false
+                    },
+                    enabled = parsedTurns != null
+                ) { Text("Сохранить") }
+            },
+            dismissButton = {
+                TextButton(onClick = { maxTurnsText = "24" }) { Text("Сбросить на 24") }
+            }
+        )
+    }
+}
+
+private fun localShellElapsedLabel(ms: Long): String {
+    val totalSeconds = ms / 1000L
+    val minutes = totalSeconds / 60L
+    val seconds = totalSeconds % 60L
+    return String.format(Locale.US, "%02d:%02d", minutes, seconds)
+}
+
+@Composable
 private fun OpenRouterHubDialog(
     controller: OpenRouterHubController,
     viewModel: ChatViewModel,
