@@ -2,6 +2,8 @@ package com.ayuemin.ymnik.browser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
@@ -54,7 +56,10 @@ data class LocalBrowserActivity(
     val host: String,
     val status: String,
     val lifecycle: LocalBrowserLifecycle,
-    val url: String
+    val url: String,
+    val attentionKind: String? = null,
+    val attentionMessage: String? = null,
+    val controlOwner: String = "MODEL"
 )
 
 private data class BrowserSession(
@@ -80,7 +85,10 @@ private data class BrowserSession(
     @Volatile var lastMainFrameError: String = "",
     @Volatile var lastBlockedFollowTarget: String = "",
     @Volatile var lastBlockedFollowFingerprint: String = "",
-    @Volatile var lastBlockedFollowCandidates: String = ""
+    @Volatile var lastBlockedFollowCandidates: String = "",
+    @Volatile var userGateKind: String? = null,
+    @Volatile var userGateMessage: String? = null,
+    @Volatile var pendingUserDecision: CompletableDeferred<String>? = null
 )
 
 object LocalBrowserRuntime {
@@ -91,6 +99,7 @@ object LocalBrowserRuntime {
     private const val DELTA_TEXT_LIMIT = 4_000
     private const val LINK_INDEX_LIMIT = 32
     private const val COMMAND_TIMEOUT_MS = 65_000L
+    private const val USER_INTERACTION_TIMEOUT_MS = 10 * 60_000L
     private const val NAVIGATION_START_WAIT_MS = 3_000L
     private const val NAVIGATION_READY_WAIT_MS = 30_000L
     private const val NAVIGATION_NETWORK_GRACE_MS = 15_000L
@@ -118,6 +127,38 @@ object LocalBrowserRuntime {
 
     private val mutableActivity = MutableStateFlow<LocalBrowserActivity?>(null)
     val activity: StateFlow<LocalBrowserActivity?> = mutableActivity.asStateFlow()
+    private val mutableUserControlVisible = MutableStateFlow(false)
+    val userControlVisible: StateFlow<Boolean> = mutableUserControlVisible.asStateFlow()
+
+    fun showUserControl(chatId: String) {
+        val session = sessions[chatId] ?: return
+        if (session.lifecycle == LocalBrowserLifecycle.WAITING_USER) {
+            mutableUserControlVisible.value = true
+        }
+    }
+
+    fun hideUserControl() {
+        mutableUserControlVisible.value = false
+    }
+
+    fun confirmPendingUserAction(chatId: String) {
+        resolveUserGate(chatId, "confirm")
+    }
+
+    fun cancelPendingUserAction(chatId: String) {
+        resolveUserGate(chatId, "cancel")
+    }
+
+    fun finishUserControl(chatId: String) {
+        resolveUserGate(chatId, "done")
+    }
+
+    private fun resolveUserGate(chatId: String, decision: String) {
+        val session = sessions[chatId] ?: return
+        val gate = session.pendingUserDecision ?: return
+        if (!gate.isCompleted) gate.complete(decision)
+        mutableUserControlVisible.value = false
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     fun attach(webView: WebView) {
@@ -606,6 +647,7 @@ object LocalBrowserRuntime {
         status: String,
         action: String,
         detail: String = "",
+        timeoutMs: Long = COMMAND_TIMEOUT_MS,
         block: suspend () -> T
     ): T {
         activeChatId = session.chatId
@@ -620,7 +662,7 @@ object LocalBrowserRuntime {
             }
         )
         return try {
-            val result = withTimeout(COMMAND_TIMEOUT_MS) { block() }
+            val result = withTimeout(timeoutMs) { block() }
             logAction(
                 session,
                 action,
@@ -637,11 +679,11 @@ object LocalBrowserRuntime {
                 session,
                 action,
                 "error",
-                "state=BLOCKED; reason=command_timeout; timeoutMs=" + COMMAND_TIMEOUT_MS +
+                "state=BLOCKED; reason=command_timeout; timeoutMs=" + timeoutMs +
                     "; url=" + session.currentUrl.take(220)
             )
             throw IllegalStateException(
-                "Local Browser не завершил действие за " + (COMMAND_TIMEOUT_MS / 1_000) +
+                "Local Browser не завершил действие за " + (timeoutMs / 1_000) +
                     " секунд. Действие остановлено; можно попробовать другой способ.",
                 timeout
             )
@@ -692,8 +734,48 @@ object LocalBrowserRuntime {
             host = host,
             status = status,
             lifecycle = session.lifecycle,
-            url = resolved
+            url = resolved,
+            attentionKind = session.userGateKind,
+            attentionMessage = session.userGateMessage,
+            controlOwner = if (session.lifecycle == LocalBrowserLifecycle.WAITING_USER) "USER" else "MODEL"
         )
+    }
+
+    private suspend fun awaitUserGate(
+        session: BrowserSession,
+        kind: String,
+        message: String
+    ): String {
+        val gate = CompletableDeferred<String>()
+        session.userGateKind = kind
+        session.userGateMessage = message
+        session.pendingUserDecision = gate
+        session.lifecycle = LocalBrowserLifecycle.WAITING_USER
+        publish(session, "ждёт пользователя", session.currentUrl)
+        playUserAttention()
+        return try {
+            withTimeout(USER_INTERACTION_TIMEOUT_MS) { gate.await() }
+        } finally {
+            session.pendingUserDecision = null
+            session.userGateKind = null
+            session.userGateMessage = null
+            mutableUserControlVisible.value = false
+        }
+    }
+
+    private fun playUserAttention() {
+        runCatching {
+            ToneGenerator(AudioManager.STREAM_NOTIFICATION, 55).let { tone ->
+                tone.startTone(ToneGenerator.TONE_PROP_BEEP, 180)
+                Thread {
+                    try {
+                        Thread.sleep(260)
+                    } finally {
+                        tone.release()
+                    }
+                }.start()
+            }
+        }
     }
 
     private fun markBlocked(reason: String, url: String) {
