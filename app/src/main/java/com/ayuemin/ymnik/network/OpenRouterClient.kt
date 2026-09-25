@@ -187,6 +187,7 @@ class OpenRouterClient(
         localBrowserScroll: (suspend (String) -> String)? = null,
         localBrowserBack: (suspend () -> String)? = null,
         localBrowserWait: (suspend (Int) -> String)? = null,
+        localBrowserTakeover: (suspend (String) -> String)? = null,
         localBrowserDone: (suspend () -> String)? = null,
         localShellStart: (suspend (String, Boolean, List<String>) -> String)? = null,
         localShellStatus: (suspend () -> String)? = null,
@@ -497,6 +498,17 @@ class OpenRouterClient(
                             callback((args.get("seconds")?.asInt ?: 1).coerceIn(1, 5))
                         }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось дождаться обновления страницы")))
+                        }
+                    }
+                    "local_browser_takeover" -> {
+                        val callback = localBrowserTakeover
+                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Ручное управление Browser недоступно"))
+                        else runCatching {
+                            val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                            val reason = args.get("reason")?.asString.orEmpty().trim()
+                            callback(reason)
+                        }.getOrElse {
+                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось передать Browser пользователю")))
                         }
                     }
                     "local_browser_done" -> {
@@ -1214,6 +1226,16 @@ class OpenRouterClient(
                 }
             ),
             required = listOf("seconds")
+        ))
+        add(functionTool(
+            name = "local_browser_takeover",
+            description = "Передать текущую Browser-страницу пользователю для ручного действия, которое модель не должна выполнять сама: пароль, CAPTCHA, одноразовый код или другая секретная проверка. Инструмент ждёт пользователя и после возврата отдаёт свежий snapshot без секретных значений.",
+            properties = mapOf(
+                "reason" to JsonObject().apply {
+                    addProperty("type", "string")
+                    addProperty("description", "Коротко объясни, какое ручное действие требуется пользователю.")
+                }
+            )
         ))
     }
 
