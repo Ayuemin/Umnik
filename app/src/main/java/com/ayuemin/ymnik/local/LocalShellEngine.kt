@@ -736,7 +736,7 @@ class LocalShellEngine(
         private val ALLOWED_TOYBOX = setOf("ls", "find", "grep", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "sha256sum", "diff", "stat")
         private val RUNTIME_CACHE_DIRS = setOf("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
         private const val MAX_ATTACHMENTS = 10
-        private const val MAX_SINGLE_FILE_BYTES = 32L * 1024L * 1024L
+        private const val MAX_SINGLE_FILE_BYTES = 50L * 1024L * 1024L
         private const val MAX_TEXT_FILE_BYTES = 2L * 1024L * 1024L
         private const val MAX_WRITE_CHARS = 1_000_000
         private const val MAX_PYTHON_CHARS = 100_000
