@@ -13,6 +13,7 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.view.View
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.LocalWebFetchPolicy
 import com.google.gson.Gson
@@ -72,6 +73,7 @@ object LocalBrowserRuntime {
     private val gson = Gson()
     private val commandMutex = Mutex()
     private val sessions = ConcurrentHashMap<String, BrowserSession>()
+    private val publicHostCache = ConcurrentHashMap<String, Boolean>()
 
     private val attachLock = Any()
     @Volatile private var attachedWebView: WebView? = null
@@ -95,7 +97,7 @@ object LocalBrowserRuntime {
         }
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
-        webView.importantForAccessibility = WebView.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        webView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
 
         CookieManager.getInstance().apply {
             setAcceptCookie(true)
@@ -121,17 +123,21 @@ object LocalBrowserRuntime {
             }
 
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-                if (!request.isForMainFrame) return null
                 val uri = request.url
+                val scheme = uri.scheme?.lowercase()
+                if (scheme != "http" && scheme != "https") {
+                    return if (request.isForMainFrame) {
+                        markBlocked("unsupported_scheme", uri.toString())
+                        blockedResponse("Umnik blocked an unsupported browser address.")
+                    } else {
+                        null
+                    }
+                }
                 return runCatching {
-                    val scheme = uri.scheme?.lowercase()
-                    require(scheme == "http" || scheme == "https") { "unsupported scheme" }
-                    val host = uri.host.orEmpty()
-                    LocalWebFetchPolicy.validateLiteralHost(host)
-                    LocalWebFetchPolicy.resolvePublic(host)
+                    requirePublicHost(uri.host.orEmpty())
                     null
                 }.getOrElse {
-                    markBlocked("blocked_address", uri.toString())
+                    if (request.isForMainFrame) markBlocked("blocked_address", uri.toString())
                     blockedResponse("Umnik blocked a local or unsafe browser address.")
                 }
             }
@@ -205,8 +211,7 @@ object LocalBrowserRuntime {
     suspend fun open(chatId: String, rawUrl: String): String = commandMutex.withLock {
         val safeUrl = withContext(Dispatchers.IO) {
             val parsed = LocalWebFetchPolicy.parseUrl(rawUrl)
-            LocalWebFetchPolicy.validateLiteralHost(parsed.host)
-            LocalWebFetchPolicy.resolvePublic(parsed.host)
+            requirePublicHost(parsed.host)
             parsed.toString()
         }
         val session = session(chatId)
@@ -427,6 +432,17 @@ object LocalBrowserRuntime {
         }
     }
 
+    private fun requirePublicHost(hostRaw: String) {
+        val host = hostRaw.trim().lowercase()
+        require(host.isNotBlank()) { "В URL нет адреса сайта" }
+        val allowed = publicHostCache[host] ?: runCatching {
+            LocalWebFetchPolicy.validateLiteralHost(host)
+            LocalWebFetchPolicy.resolvePublic(host)
+            true
+        }.getOrDefault(false).also { publicHostCache[host] = it }
+        require(allowed) { "Локальные и служебные сетевые адреса запрещены" }
+    }
+
     private suspend fun webView(): WebView {
         attachedWebView?.let { return it }
         val signal = synchronized(attachLock) { attachSignal }
@@ -449,25 +465,23 @@ object LocalBrowserRuntime {
             webView.stopLoading()
             webView.loadUrl(url)
         }
-        waitForReady(webView, expectedChangeFrom = null)
+        waitForReady(webView)
         delay(600)
     }
 
     private suspend fun settleAfterAction(webView: WebView, beforeUrl: String) {
-        delay(250)
-        waitForReady(webView, expectedChangeFrom = beforeUrl)
+        delay(350)
+        waitForReady(webView)
         delay(350)
     }
 
-    private suspend fun waitForReady(webView: WebView, expectedChangeFrom: String?) {
+    private suspend fun waitForReady(webView: WebView) {
         var stableReady = 0
         repeat(48) {
             delay(250)
             val state = runCatching { evaluatePrimitive(webView, "document.readyState") }.getOrDefault("")
-            val url = currentUrl(webView)
             val ready = state == "interactive" || state == "complete"
-            val changed = expectedChangeFrom == null || url.isBlank() || !sameDocumentUrl(url, expectedChangeFrom)
-            if (ready && changed) stableReady++ else if (ready && expectedChangeFrom == null) stableReady++
+            if (ready) stableReady++ else stableReady = 0
             if (stableReady >= 2) return
         }
     }

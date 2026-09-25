@@ -1092,7 +1092,7 @@ class OpenRouterClient(
             properties = mapOf(
                 "direction" to JsonObject().apply {
                     addProperty("type", "string")
-                    addProperty("enum", JsonArray().apply { add("down"); add("up"); add("top"); add("bottom") })
+                    add("enum", JsonArray().apply { add("down"); add("up"); add("top"); add("bottom") })
                 }
             ),
             required = listOf("direction")
