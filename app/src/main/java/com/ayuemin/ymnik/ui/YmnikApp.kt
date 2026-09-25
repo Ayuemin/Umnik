@@ -318,7 +318,7 @@ private fun ChatScreen(
     var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
     var chatSearchResultPosition by remember(state.currentChatId) { mutableIntStateOf(-1) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
-    var skillsExpanded by remember { mutableStateOf(false) }
+    var skillsDialogOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var teamToolsExpanded by remember { mutableStateOf(false) }
     var teamSkillsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
@@ -1135,26 +1135,9 @@ onBranch = if (message.role == "assistant") {
                 }
 
                 if (currentSpecialistId == null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        CompactComposerTool(
-                            Icons.Outlined.Storage,
-                            "Локальный Shell",
-                            !state.isLoading,
-                            Modifier.weight(1f)
-                        ) {
-                            actionsOpen = false
-                            com.ayuemin.ymnik.AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
-                        }
-                    }
-                }
-
-                if (currentSpecialistId == null) {
                     ComposerSectionHeader(
                         icon = Icons.Outlined.Storage,
-                        label = "Инструменты OpenRouter",
+                        label = "Инструменты",
                         expanded = openRouterToolsExpanded,
                         onClick = { openRouterToolsExpanded = !openRouterToolsExpanded }
                     )
@@ -1163,10 +1146,23 @@ onBranch = if (message.role == "assistant") {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
+                            }
+                            CompactComposerTool(Icons.Outlined.Extension, "Навыки", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                skillsDialogOpen = true
+                            }
                             CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
                                 com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt", "Вернуться в чат")
                             }
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
                             CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
                                 com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Вернуться в чат")
@@ -1175,49 +1171,10 @@ onBranch = if (message.role == "assistant") {
                                 actionsOpen = false
                                 com.ayuemin.ymnik.AsyncJobEvents.requestHub("video", "Вернуться в чат")
                             }
-                        }
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
                             CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
                                 com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs", "Вернуться в чат")
                             }
-                            CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
-                                actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell", "Вернуться в чат")
-                            }
-                            Spacer(Modifier.weight(1f))
-                        }
-                    }
-                }
-
-                if (currentSpecialistId == null) {
-                    ComposerSectionHeader(
-                        icon = Icons.Outlined.Extension,
-                        label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
-                        expanded = skillsExpanded,
-                        onClick = { skillsExpanded = !skillsExpanded }
-                    )
-                    if (skillsExpanded) {
-                        Text(
-                            "Выберите навыки для текущего чата.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (state.skills.isEmpty()) {
-                            Text(
-                                "Навыков пока нет. Добавьте их в общих настройках.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            ComposerSkillList(
-                                skills = state.skills,
-                                selectedIds = state.activeSkillIds,
-                                onToggle = vm::toggleSkill
-                            )
                         }
                     }
                 }
@@ -1226,6 +1183,63 @@ onBranch = if (message.role == "assistant") {
                 // Specialist-owned tools/skills are configured inside the specialist itself.
             }
         }
+    }
+
+    if (skillsDialogOpen) {
+        AlertDialog(
+            onDismissRequest = { skillsDialogOpen = false },
+            title = { Text("Навыки") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        "Включённые навыки применяются к следующим запросам только в этом чате.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    if (state.skills.isEmpty()) {
+                        Text(
+                            "Навыков пока нет. Добавьте их в общих настройках.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            state.skills.forEachIndexed { index, skill ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        skill.name,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Switch(
+                                        checked = skill.id in state.activeSkillIds,
+                                        onCheckedChange = { vm.toggleSkill(skill.id) }
+                                    )
+                                }
+                                if (index < state.skills.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { skillsDialogOpen = false }) { Text("Закрыть") }
+            }
+        )
     }
 
     if (reasoningModeOpen) {
