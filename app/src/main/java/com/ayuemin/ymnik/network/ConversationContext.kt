@@ -17,7 +17,14 @@ internal object ConversationContext {
                     val question = user
                     if (question != null && item.text.isNotBlank() && item.text != "Пустой ответ модели.") {
                         turns += question
-                        turns += item
+                        turns += if (item.deliveryState == "interrupted") {
+                            item.copy(
+                                text = item.text.trimEnd() +
+                                    "\n\n[Системная пометка Umnik: этот ответ был прерван пользователем и может быть неполным.]"
+                            )
+                        } else {
+                            item
+                        }
                     }
                     user = null
                 }
