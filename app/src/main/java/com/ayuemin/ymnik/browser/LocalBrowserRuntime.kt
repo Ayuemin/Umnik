@@ -24,6 +24,8 @@ import com.ayuemin.ymnik.network.LocalWebFetchPolicy
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
@@ -38,8 +40,11 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
+import java.io.File
+import java.net.URI
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.resume
 
 enum class LocalBrowserLifecycle {
@@ -100,6 +105,8 @@ object LocalBrowserRuntime {
     private const val LINK_INDEX_LIMIT = 32
     private const val COMMAND_TIMEOUT_MS = 65_000L
     private const val USER_INTERACTION_TIMEOUT_MS = 10 * 60_000L
+    private const val DOWNLOAD_MAX_BYTES = 50L * 1024L * 1024L
+    private const val DOWNLOAD_MAX_REDIRECTS = 5
     private const val NAVIGATION_START_WAIT_MS = 3_000L
     private const val NAVIGATION_READY_WAIT_MS = 30_000L
     private const val NAVIGATION_NETWORK_GRACE_MS = 15_000L
@@ -117,6 +124,11 @@ object LocalBrowserRuntime {
     )
 
     private val gson = Gson()
+    private val downloadHttp = OkHttpClient.Builder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .callTimeout(60, TimeUnit.SECONDS)
+        .build()
     private val commandMutex = Mutex()
     private val sessions = ConcurrentHashMap<String, BrowserSession>()
     private val publicHostCache = ConcurrentHashMap<String, Boolean>()
@@ -642,6 +654,51 @@ object LocalBrowserRuntime {
             }
             session.lifecycle = LocalBrowserLifecycle.WORKING
             snapshot(session, webView, forceBaseline = true)
+        }
+    }
+
+    suspend fun download(chatId: String, ref: Int): String = commandMutex.withLock {
+        val session = requireSession(chatId)
+        runCommand(session, session.currentUrl, "скачивает файл", "download", "ref=" + ref) {
+            val webView = webView()
+            ensureCurrent(session, webView)
+            val target = decodedJson(evaluate(webView, downloadTargetScript(ref)))
+            if (target.get("ok")?.asBoolean != true) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand gson.toJson(
+                    mapOf(
+                        "ok" to false,
+                        "source" to "local_browser",
+                        "session_id" to session.sessionId,
+                        "state" to "BLOCKED",
+                        "reason" to (target.get("reason")?.asString ?: "download_target_invalid"),
+                        "recoverable" to true
+                    )
+                )
+            }
+            val href = target.get("href")?.asString.orEmpty()
+            val suggestedName = target.get("name")?.asString.orEmpty()
+            val artifact = downloadPublicArtifact(
+                webView = webView,
+                session = session,
+                rawUrl = href,
+                suggestedName = suggestedName
+            )
+            session.lifecycle = LocalBrowserLifecycle.WORKING
+            gson.toJson(
+                JsonObject().apply {
+                    addProperty("ok", true)
+                    addProperty("source", "local_browser")
+                    addProperty("session_id", session.sessionId)
+                    addProperty("state", "WORKING")
+                    addProperty("url", session.currentUrl)
+                    add("artifact", artifact)
+                    addProperty(
+                        "message",
+                        "Публичный файл скачан во временное хранилище Umnik и должен быть сохранён как ресурс чата."
+                    )
+                }
+            )
         }
     }
 
@@ -1530,8 +1587,8 @@ object LocalBrowserRuntime {
                 add("open")
                 add("read")
                 add("read_full")
-                add("follow_unique_link")
                 add("click_safe")
+                add("download_public_link")
                 add("type_non_secret")
                 add("scroll")
                 add("back")
@@ -1682,7 +1739,7 @@ object LocalBrowserRuntime {
           });
           const linkCandidates = all
             .filter(el => (el.tagName || '').toLowerCase() === 'a')
-            .filter(el => !el.hasAttribute('download') && /^https?:\/\//i.test(String(el.href || '')))
+            .filter(el => /^https?:\/\//i.test(String(el.href || '')))
             .map((el, index) => {
               const name = clean(
                 el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || '',
@@ -1694,6 +1751,7 @@ object LocalBrowserRuntime {
                 index,
                 name,
                 href: clean(el.href, 360),
+                download: el.hasAttribute('download'),
                 priority: (navLike ? 1000 : 0) + (inViewport(el) ? 200 : 0) - index
               };
             })
@@ -1705,7 +1763,7 @@ object LocalBrowserRuntime {
             const key = item.href.replace(/#.*$/, '');
             if (seenLinkHrefs.has(key)) continue;
             seenLinkHrefs.add(key);
-            linkIndex.push({ref:refFor(item.el), name:item.name, href:item.href});
+            linkIndex.push({ref:refFor(item.el), name:item.name, href:item.href, download:item.download});
             if (linkIndex.length >= $LINK_INDEX_LIMIT) break;
           }
           const bodyText = String(document.body?.innerText || '')
@@ -2022,6 +2080,122 @@ object LocalBrowserRuntime {
             })()
         """.trimIndent()
     }
+
+    private fun downloadTargetScript(ref: Int): String = """
+        (() => {
+          const reg = window.__umnikRegistry;
+          const el = reg?.refs?.get($ref);
+          if (!el || !el.isConnected) return JSON.stringify({ok:false, reason:'stale_ref'});
+          const tag = (el.tagName || '').toLowerCase();
+          if (tag !== 'a') return JSON.stringify({ok:false, reason:'download_requires_link'});
+          const href = String(el.href || '');
+          if (!/^https?:\/\//i.test(href)) return JSON.stringify({ok:false, reason:'unsafe_link_scheme'});
+          const name = String(
+            el.getAttribute('download') ||
+            el.getAttribute('aria-label') ||
+            el.innerText ||
+            el.getAttribute('title') ||
+            ''
+          ).replace(/\s+/g, ' ').trim().slice(0, 180);
+          return JSON.stringify({ok:true, href, name});
+        })()
+    """.trimIndent()
+
+    private suspend fun downloadPublicArtifact(
+        webView: WebView,
+        session: BrowserSession,
+        rawUrl: String,
+        suggestedName: String
+    ): JsonObject = withContext(Dispatchers.IO) {
+        var current = URI(rawUrl)
+        var redirects = 0
+        while (true) {
+            val scheme = current.scheme?.lowercase().orEmpty()
+            require(scheme == "http" || scheme == "https") { "Разрешены только публичные HTTP(S)-загрузки" }
+            requirePublicHost(current.host.orEmpty())
+
+            val response = downloadHttp.newCall(
+                Request.Builder()
+                    .url(current.toString())
+                    .get()
+                    .header("User-Agent", "Umnik-LocalBrowser/1.0")
+                    .build()
+            ).execute()
+
+            response.use { res ->
+                if (res.code in 300..399) {
+                    require(redirects < DOWNLOAD_MAX_REDIRECTS) { "Слишком много перенаправлений при скачивании" }
+                    val location = res.header("Location").orEmpty()
+                    require(location.isNotBlank()) { "Сервер вернул перенаправление без адреса" }
+                    current = current.resolve(location)
+                    redirects++
+                    continue
+                }
+                require(res.isSuccessful) { "Не удалось скачать файл: HTTP " + res.code }
+                val body = res.body ?: error("Сервер вернул пустой файл")
+                val declared = body.contentLength()
+                require(declared < 0L || declared <= DOWNLOAD_MAX_BYTES) { "Файл больше 50 МБ" }
+
+                val disposition = res.header("Content-Disposition").orEmpty()
+                val headerName = Regex("""filename\*?=(?:UTF-8''|")?([^";]+)""", RegexOption.IGNORE_CASE)
+                    .find(disposition)
+                    ?.groupValues
+                    ?.getOrNull(1)
+                    ?.let(Uri::decode)
+                    .orEmpty()
+                val pathName = current.path.substringAfterLast('/').takeIf { it.isNotBlank() }.orEmpty()
+                val name = safeDownloadName(
+                    headerName.ifBlank { suggestedName }.ifBlank { pathName }.ifBlank { "download.bin" }
+                )
+
+                val dir = File(webView.context.applicationContext.cacheDir, "browser_downloads/" + session.sessionId)
+                    .apply { mkdirs() }
+                val target = File(dir, UUID.randomUUID().toString().take(8) + "_" + name)
+                try {
+                    body.byteStream().use { input ->
+                        target.outputStream().use { output ->
+                            val buffer = ByteArray(16 * 1024)
+                            var total = 0L
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                total += count
+                                require(total <= DOWNLOAD_MAX_BYTES) { "Файл больше 50 МБ" }
+                                output.write(buffer, 0, count)
+                            }
+                        }
+                    }
+                    require(target.isFile) { "Не удалось сохранить скачанный файл" }
+                    val mime = body.contentType()?.toString().orEmpty().ifBlank { "application/octet-stream" }
+                    DiagnosticLog.record(
+                        webView.context.applicationContext,
+                        "LOCAL_BROWSER_DOWNLOAD",
+                        "session=" + session.sessionId.take(8) +
+                            "; bytes=" + target.length() +
+                            "; url=" + current.toString().take(220) +
+                            "; name=" + name.take(120)
+                    )
+                    return@withContext JsonObject().apply {
+                        addProperty("name", name)
+                        addProperty("mime_type", mime)
+                        addProperty("size", target.length())
+                        addProperty("source_url", current.toString())
+                        addProperty("local_path", target.absolutePath)
+                    }
+                } catch (error: Throwable) {
+                    target.delete()
+                    throw error
+                }
+            }
+        }
+        error("Скачивание не завершено")
+    }
+
+    private fun safeDownloadName(value: String): String =
+        value.substringAfterLast('/').substringAfterLast('\\')
+            .replace(Regex("[^A-Za-zА-Яа-я0-9._ -]"), "_")
+            .take(120)
+            .ifBlank { "download.bin" }
 
     private fun blockedResponse(message: String): WebResourceResponse =
         WebResourceResponse(
