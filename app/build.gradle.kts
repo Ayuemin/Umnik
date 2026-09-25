@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.8 — persistent per-chat skill activation
+// Umnik v1.20.0-beta.9 — local web fetch foundation
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 165
-        versionName = "1.20.0-beta.8"
+        versionCode = 166
+        versionName = "1.20.0-beta.9"
 
         // Local Shell MVP embeds Python only for 64-bit test targets.
         // The regular Umnik app remains Android-native; this is isolated to
@@ -115,6 +115,7 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
