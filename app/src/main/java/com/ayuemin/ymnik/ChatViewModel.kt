@@ -27,6 +27,7 @@ import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
+import com.ayuemin.ymnik.local.LocalShellEngine
 import com.ayuemin.ymnik.model.SpecialistKind
 import com.ayuemin.ymnik.model.SpecialistModelRef
 import com.ayuemin.ymnik.model.OrchestratorAction
@@ -72,6 +73,7 @@ import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.ChatOutputPolicy
 import com.ayuemin.ymnik.network.ChatToolPolicy
+import com.ayuemin.ymnik.network.LocalShellAgentClient
 import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
@@ -93,6 +95,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 class ChatViewModel(private val context: Context) : ViewModel() {
     private companion object {
@@ -121,6 +124,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val storageRepository = StorageRepository(context)
     private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
+    private val localShellClient = LocalShellAgentClient(context)
     private val systemTaskPlanner = SystemTaskPlanner(api)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
     private val gson = Gson()
