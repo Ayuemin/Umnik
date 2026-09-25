@@ -366,6 +366,7 @@ data class ChatMessage(
     val knowledgeSearchAttempted: Boolean? = null,
     val knowledgeBaseOnly: Boolean? = null,
     val webSearchEnabled: Boolean? = null,
+    val internetMode: String? = null,
     val reasoningEnabled: Boolean? = null,
     val reasoningEffort: String? = null,
     val memoryContextUsed: Boolean? = null,
