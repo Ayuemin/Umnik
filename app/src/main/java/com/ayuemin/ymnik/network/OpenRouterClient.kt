@@ -177,7 +177,7 @@ class OpenRouterClient(
         requestImageOutput: Boolean = false,
         knowledgeSearch: (suspend (String) -> String)? = null,
         knowledgeSearchLimit: Int = 4,
-        localShellStart: (suspend (String, Boolean) -> String)? = null,
+        localShellStart: (suspend (String, Boolean, List<String>) -> String)? = null,
         localShellStatus: (suspend () -> String)? = null,
         localShellGuidance: (suspend (String) -> String)? = null,
         localShellStop: (suspend () -> String)? = null
@@ -335,7 +335,11 @@ class OpenRouterClient(
                                 val task = args.get("task")?.asString.orEmpty().trim()
                                 require(task.isNotBlank()) { "Не передана задача для Local Shell" }
                                 val network = runCatching { args.get("network")?.asBoolean ?: false }.getOrDefault(false)
-                                callback(task, network)
+                                val files = args.getAsJsonArray("files")
+                                    ?.mapNotNull { item -> item.takeIf { it.isJsonPrimitive }?.asString?.trim() }
+                                    ?.filter { it.isNotBlank() }
+                                    .orEmpty()
+                                callback(task, network, files)
                             }.getOrElse {
                                 gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
                             }
@@ -933,6 +937,11 @@ class OpenRouterClient(
                 "network" to JsonObject().apply {
                     addProperty("type", "boolean")
                     addProperty("description", "Разрешить Local Shell получать данные из сети. По умолчанию false.")
+                },
+                "files" to JsonObject().apply {
+                    addProperty("type", "array")
+                    addProperty("description", "Имена постоянных файлов этого чата, которые нужно передать в Local Shell. Используй точные имена из списка файлов чата. Если подходящий файл один, поле можно не заполнять.")
+                    add("items", JsonObject().apply { addProperty("type", "string") })
                 }
             ),
             required = listOf("task")
