@@ -295,7 +295,7 @@ private fun LocalShellProcessPill(
         modifier = modifier
             .fillMaxWidth()
             .navigationBarsPadding()
-            .padding(horizontal = 12.dp, bottom = 82.dp),
+            .padding(start = 12.dp, end = 12.dp, bottom = 82.dp),
         shape = RoundedCornerShape(18.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
@@ -378,7 +378,7 @@ private fun LocalShellFloatingCard(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, bottom = 78.dp)
+                .padding(start = 10.dp, end = 10.dp, bottom = 78.dp)
                 .height(effectiveHeight),
             shape = RoundedCornerShape(22.dp),
             color = MaterialTheme.colorScheme.surfaceContainerHigh,
