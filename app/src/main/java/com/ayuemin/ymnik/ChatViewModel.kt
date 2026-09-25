@@ -4554,14 +4554,45 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun stopGeneration() {
         val chatId = _state.value.currentChatId
         val snapshot = RequestExecutionManager.snapshotForChat(chatId) ?: return
+        val partial = snapshot.partialText.trim()
+            .takeIf { value -> value.any { it.isLetterOrDigit() } }
         invalidateRequestGeneration(chatId)
-        RequestExecutionManager.fail(snapshot.requestId, "Работа остановлена. При необходимости повторите запрос вручную.")
+
+        val stoppedChats = chatsRepository.finishRequest(
+            chatId = chatId,
+            messageId = snapshot.messageId,
+            assistant = partial?.let { text ->
+                ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "assistant",
+                    text = text,
+                    deliveryState = "interrupted",
+                    responseDurationMs = (System.currentTimeMillis() - snapshot.startedAt).coerceAtLeast(0L)
+                )
+            }
+        )
+
+        RequestExecutionManager.fail(snapshot.requestId, "Работа остановлена пользователем.")
         RequestExecutionManager.cancel(snapshot.requestId)
+
         val restore = activeRequestPending.remove(chatId).orEmpty()
         _state.value = _state.value.copy(
+            chats = stoppedChats,
+            messages = stoppedChats.firstOrNull { it.id == _state.value.currentChatId }?.messages.orEmpty(),
             pendingAttachments = restore,
             busyLabel = null,
-            status = "Работа в этом чате остановлена. Уточните запрос и отправьте снова."
+            status = if (partial != null) {
+                "Ответ остановлен. Уже полученная часть сохранена в чате."
+            } else {
+                "Работа в этом чате остановлена. При необходимости повторите запрос."
+            }
+        )
+        DiagnosticLog.record(
+            context,
+            "REQUEST",
+            "manual_stop chat=" + chatId.take(8) +
+                "; partialChars=" + (partial?.length ?: 0) +
+                "; preserved=" + (partial != null)
         )
     }
 
