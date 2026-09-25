@@ -180,7 +180,8 @@ class OpenRouterClient(
         requiredLocalBrowserTool: String? = null,
         localWebFetch: (suspend (String) -> String)? = null,
         localBrowserOpen: (suspend (String) -> String)? = null,
-        localBrowserRead: (suspend () -> String)? = null,
+        localBrowserRead: (suspend (Boolean) -> String)? = null,
+        localBrowserFollow: (suspend (String?, String) -> String)? = null,
         localBrowserClick: (suspend (Int) -> String)? = null,
         localBrowserType: (suspend (Int, String) -> String)? = null,
         localBrowserScroll: (suspend (String) -> String)? = null,
@@ -212,6 +213,8 @@ class OpenRouterClient(
         val requiredBrowserTool = requiredLocalBrowserTool
             ?.takeIf { localBrowserToolsEnabled && it.startsWith("local_browser_") }
         val browserToolsUsed = linkedSetOf<String>()
+        val browserToolCallIds = linkedSetOf<String>()
+        var browserCanAutoFinish = true
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
@@ -312,6 +315,19 @@ class OpenRouterClient(
                 if (content.isBlank() && created.isEmpty()) {
                     error("Модель не вернула готовый текст. Измените уровень рассуждения или повторите запрос; пустой ответ не сохранён в чат.")
                 }
+                if (browserToolsUsed.isNotEmpty() && browserCanAutoFinish) {
+                    localBrowserDone?.let { finish ->
+                        runCatching { finish() }
+                            .onFailure { error ->
+                                DiagnosticLog.record(
+                                    context,
+                                    "LOCAL_BROWSER_ROUTER",
+                                    "auto_finish_failed request=" + requestRunId +
+                                        "; error=" + (error.message ?: error::class.java.simpleName).take(180)
+                                )
+                            }
+                    }
+                }
                 return@withContext Result(
                     text = content,
                     files = created,
@@ -401,8 +417,24 @@ class OpenRouterClient(
                     "local_browser_read" -> {
                         val callback = localBrowserRead
                         if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Local Browser недоступен"))
-                        else runCatching { callback() }.getOrElse {
+                        else runCatching {
+                            val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                            callback(runCatching { args.get("full")?.asBoolean ?: false }.getOrDefault(false))
+                        }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось прочитать Browser")))
+                        }
+                    }
+                    "local_browser_follow" -> {
+                        val callback = localBrowserFollow
+                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Local Browser недоступен"))
+                        else runCatching {
+                            val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                            val target = args.get("target")?.asString.orEmpty().trim()
+                            require(target.isNotBlank()) { "Не указана ссылка для перехода" }
+                            val url = args.get("url")?.asString?.trim()?.takeIf { it.isNotBlank() }
+                            callback(url, target)
+                        }.getOrElse {
+                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось перейти по ссылке")))
                         }
                     }
                     "local_browser_click" -> {
@@ -511,14 +543,41 @@ class OpenRouterClient(
                     }
                     else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
+                if (name.startsWith("local_browser_")) {
+                    compactPreviousBrowserResults(messages, browserToolCallIds)
+                    val state = runCatching {
+                        gson.fromJson(resultText, JsonObject::class.java)?.get("state")?.asString
+                    }.getOrNull()
+                    browserCanAutoFinish = state != "WAITING_USER" && state != "BLOCKED"
+                }
                 messages.add(JsonObject().apply {
                     addProperty("role", "tool")
                     addProperty("tool_call_id", callId)
                     addProperty("content", resultText)
                 })
+                if (name.startsWith("local_browser_")) {
+                    browserToolCallIds += callId
+                }
             }
         }
         Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
+    }
+
+    private fun compactPreviousBrowserResults(messages: JsonArray, browserCallIds: Set<String>) {
+        if (browserCallIds.isEmpty()) return
+        messages.forEach { item ->
+            val obj = item.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            if (obj.get("role")?.asString != "tool") return@forEach
+            val callId = obj.get("tool_call_id")?.asString ?: return@forEach
+            if (callId !in browserCallIds) return@forEach
+            val content = obj.get("content")?.asString.orEmpty()
+            if (content.contains("\"superseded\":true")) return@forEach
+            obj.addProperty(
+                "content",
+                "{\"ok\":true,\"source\":\"local_browser\",\"superseded\":true," +
+                    "\"note\":\"A newer Browser snapshot supersedes this state.\"}"
+            )
+        }
     }
 
     /**
