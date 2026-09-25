@@ -217,7 +217,7 @@ class OpenRouterClient(
         var browserCanAutoFinish = true
         val promptHasExplicitUrl = Regex("""https?://\S+""", RegexOption.IGNORE_CASE).containsMatchIn(prompt)
         val initialBrowserTool = requiredBrowserTool
-            ?.takeIf { promptHasExplicitUrl && it in setOf("local_browser_follow", "local_browser_open") }
+            ?.takeIf { promptHasExplicitUrl && it == "local_browser_open" }
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
@@ -1169,21 +1169,6 @@ class OpenRouterClient(
                     addProperty("description", "Запросить расширенный снимок до 24 000 символов и 120 элементов. По умолчанию false.")
                 }
             )
-        ))
-        add(functionTool(
-            name = "local_browser_follow",
-            description = "Безопасно перейти по названной обычной ссылке за один локальный шаг. Локально ранжирует совпадения по имени и смыслу URL: например Releases предпочитает раздел /releases, а latest release — /releases/latest. Если уверенного победителя нет, ничего не угадывает и возвращает candidates с ref+name+href для выбора модели.",
-            properties = mapOf(
-                "url" to JsonObject().apply {
-                    addProperty("type", "string")
-                    addProperty("description", "Необязательный исходный публичный URL. Если Browser уже на нужной странице, не передавай.")
-                },
-                "target" to JsonObject().apply {
-                    addProperty("type", "string")
-                    addProperty("description", "Текст или понятное имя ссылки, например Releases.")
-                }
-            ),
-            required = listOf("target")
         ))
         add(functionTool(
             name = "local_browser_click",
