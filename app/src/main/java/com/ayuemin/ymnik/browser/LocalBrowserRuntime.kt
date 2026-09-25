@@ -303,7 +303,7 @@ object LocalBrowserRuntime {
                         add("candidates", result.get("candidates") ?: JsonArray())
                         addProperty(
                             "message",
-                            "Локальный переход не выполнен: цель не распознана однозначно. Выбери нужный элемент по snapshot и используй обычный click."
+                            "Локальный переход не выполнен однозначно. Страница уже открыта: не переоткрывай тот же URL. Сначала вызови local_browser_read, при необходимости full=true, затем выбери элемент и используй обычный click."
                         )
                     }
                 )
@@ -993,16 +993,25 @@ object LocalBrowserRuntime {
               const exact = candidates.filter(item => item.key === wanted);
               const partial = candidates.filter(item => item.key.includes(wanted) || wanted.includes(item.key));
               const matches = exact.length > 0 ? exact : partial;
-              if (matches.length !== 1) {
+              const unique = [];
+              const seenHref = new Set();
+              for (const item of matches) {
+                const key = String(item.href || '').replace(/#.*$/, '');
+                if (!seenHref.has(key)) {
+                  seenHref.add(key);
+                  unique.push(item);
+                }
+              }
+              if (unique.length !== 1) {
                 return JSON.stringify({
                   ok:false,
-                  reason:matches.length === 0 ? 'target_not_found' : 'target_ambiguous',
-                  candidates:matches.slice(0, 8).map(item => ({name:item.name, href:item.href}))
+                  reason:unique.length === 0 ? 'target_not_found' : 'target_ambiguous',
+                  candidates:unique.slice(0, 8).map(item => ({name:item.name, href:item.href}))
                 });
               }
-              matches[0].el.scrollIntoView({block:'center', inline:'nearest'});
-              matches[0].el.click();
-              return JSON.stringify({ok:true, href:matches[0].href, name:matches[0].name});
+              unique[0].el.scrollIntoView({block:'center', inline:'nearest'});
+              unique[0].el.click();
+              return JSON.stringify({ok:true, href:unique[0].href, name:unique[0].name});
             })()
         """.trimIndent()
     }
