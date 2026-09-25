@@ -6061,7 +6061,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         if (normalized in shortReplies) return false
 
-        val words = normalized.split(' ').filter { it.any(Char::isLetterOrDigit) }
+        val words = normalized.split(' ').filter { word -> word.any { ch -> ch.isLetterOrDigit() } }
         return words.size >= 3 || normalized.length >= 18
     }
 
