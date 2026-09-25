@@ -2851,6 +2851,7 @@ private fun AnswerInfoSheet(
                 message.knowledgeSearchAttempted != null ||
                 message.knowledgeBaseOnly != null ||
                 message.webSearchEnabled != null ||
+                message.internetMode != null ||
                 message.reasoningEnabled != null ||
                 message.memoryContextUsed != null ||
                 message.activeSkillCount != null ||
@@ -2891,8 +2892,15 @@ private fun AnswerInfoSheet(
                         }
                     }
                 }
-                message.webSearchEnabled?.let {
-                    AnswerInfoRow("Веб-поиск", if (it) "Включён для запроса" else "Выключен")
+                if (message.webSearchEnabled != null || !message.internetMode.isNullOrBlank()) {
+                    val internetLabel = when {
+                        message.webSearchEnabled != true -> "Выключен"
+                        message.internetMode == InternetMode.SEARCH_ONLY.name -> "Только поиск"
+                        message.internetMode == InternetMode.AUTO.name -> "Автоматически"
+                        message.internetMode == InternetMode.BROWSER.name -> "Браузер"
+                        else -> "Поиск"
+                    }
+                    AnswerInfoRow("Интернет", internetLabel)
                 }
                 message.reasoningEnabled?.let { enabled ->
                     val suffix = message.reasoningEffort?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
