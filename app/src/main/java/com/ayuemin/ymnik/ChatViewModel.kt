@@ -5800,7 +5800,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         specialist: SpecialistProfile? = null,
         knowledgeToolEnabled: Boolean = false,
         knowledgeToolInstruction: String = "",
-        knowledgeToolSearchLimit: Int = 0
+        knowledgeToolSearchLimit: Int = 0,
+        localShellToolsEnabled: Boolean = false
     ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
@@ -5817,6 +5818,28 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             knowledgeToolInstruction.trim().takeIf { it.isNotBlank() }?.let {
                 appendLine("Дополнительная инструкция пользователя по самостоятельной работе с базой:")
                 appendLine(it)
+            }
+        }
+        if (localShellToolsEnabled) {
+            appendLine("У тебя есть инструменты управления Local Shell: local_shell_start, local_shell_status, local_shell_note и local_shell_stop.")
+            appendLine("Local Shell — асинхронный локальный исполнитель на устройстве пользователя. Он может работать после завершения твоего текущего ответа, а пользователь может продолжать этот же диалог.")
+            appendLine("Запускай local_shell_start без дополнительного подтверждения, если из текущей фразы и контекста ясно, что пользователь уже просит выполнить/реализовать/исправить/проверить согласованную работу: например «делаем», «запускай», «исправь проект», «реализуй это».")
+            appendLine("Если пользователь только обсуждает идею, просит совет или ещё не дал согласия на выполнение, не запускай Shell самовольно. При необходимости предложи запуск.")
+            appendLine("При запуске сформулируй task как самодостаточное рабочее ТЗ из уже согласованных решений диалога. Не заставляй пользователя копировать ТЗ вручную.")
+            appendLine("Если Local Shell уже работает в этом чате, не запускай второй. Используй local_shell_status для проверки состояния, local_shell_note для передачи нового ограничения/уточнения пользователя, local_shell_stop — только по явной просьбе остановить.")
+            appendLine("Не утверждай, что не видишь Local Shell: если он активен, его компактное состояние приведено ниже и дополнительно доступно через local_shell_status.")
+            val shell = AsyncJobEvents.localShellActivity.value
+            when {
+                shell == null -> appendLine("Текущее состояние Local Shell: не запущен.")
+                shell.chatId == chat?.id -> {
+                    appendLine(
+                        "Текущее состояние Local Shell: работает; модель=" + shell.modelId +
+                            "; этап=" + shell.status +
+                            "; шаг=" + shell.turn + "/" + shell.maxTurns +
+                            "; локальных действий=" + shell.toolCalls + "."
+                    )
+                }
+                else -> appendLine("Текущее состояние Local Shell: занят задачей из другого чата; из этого диалога управлять ею нельзя.")
             }
         }
         val profile = _state.value.userProfile
