@@ -5148,6 +5148,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                             chatId = chatId,
                                             taskRaw = task,
                                             requestedFiles = requestedFiles,
+                                            requestAttachments = pending,
                                             networkEnabled = allowNetwork,
                                             fallbackModel = textModel
                                         )
@@ -5707,6 +5708,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatId: String,
         taskRaw: String,
         requestedFiles: List<String>,
+        requestAttachments: List<PendingAttachment> = emptyList(),
         networkEnabled: Boolean,
         fallbackModel: String
     ): String {
@@ -5756,38 +5758,57 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             .orEmpty()
             .filter { File(it.localPath).isFile }
 
+        val persistentCandidates = chatFiles.map { file ->
+            file.id to chatFileAsAttachment(file)
+        }
+        val requestCandidates = requestAttachments
+            .filter { attachment ->
+                attachment.localPath?.let { File(it).isFile } == true ||
+                    attachment.uri.isNotBlank()
+            }
+            .map { null to it }
+        val candidates = (requestCandidates + persistentCandidates)
+            .distinctBy { (_, attachment) ->
+                attachment.localPath?.takeIf { it.isNotBlank() }
+                    ?: attachment.uri.ifBlank { attachment.name.lowercase() }
+            }
+
         val requested = requestedFiles.map(String::trim).filter(String::isNotBlank).distinct()
-        val selectedFiles = if (requested.isNotEmpty()) {
+        val selectedCandidates = if (requested.isNotEmpty()) {
             val resolved = requested.mapNotNull { requestedName ->
-                chatFiles.firstOrNull {
-                    it.id.equals(requestedName, ignoreCase = true) ||
-                        it.name.equals(requestedName, ignoreCase = true)
+                candidates.firstOrNull { (id, attachment) ->
+                    id?.equals(requestedName, ignoreCase = true) == true ||
+                        attachment.name.equals(requestedName, ignoreCase = true)
                 }
-            }.distinctBy { it.id }
+            }.distinctBy { (_, attachment) ->
+                attachment.localPath?.takeIf { it.isNotBlank() } ?: attachment.uri
+            }
             if (resolved.size != requested.size) {
                 val missing = requested.filter { value ->
-                    chatFiles.none { it.id.equals(value, true) || it.name.equals(value, true) }
+                    candidates.none { (id, attachment) ->
+                        id?.equals(value, true) == true || attachment.name.equals(value, true)
+                    }
                 }
                 return gson.toJson(
                     mapOf(
                         "ok" to false,
-                        "error" to "Не найдены файлы чата: " + missing.joinToString(", "),
-                        "available_files" to chatFiles.map { it.name }
+                        "error" to "Не найдены файлы для Local Shell: " + missing.joinToString(", "),
+                        "available_files" to candidates.map { it.second.name }.distinct()
                     )
                 )
             }
             resolved
         } else {
-            val mentioned = chatFiles.filter { file ->
-                task.contains(file.name, ignoreCase = true)
+            val mentioned = candidates.filter { (_, attachment) ->
+                task.contains(attachment.name, ignoreCase = true)
             }
             when {
                 mentioned.isNotEmpty() -> mentioned
-                chatFiles.size == 1 -> chatFiles
+                candidates.size == 1 -> candidates
                 else -> emptyList()
             }
         }
-        val attachments = selectedFiles.map(::chatFileAsAttachment)
+        val attachments = selectedCandidates.map { it.second }
         val engine = LocalShellEngine(
             context = context,
             networkEnabled = networkEnabled
@@ -5928,7 +5949,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 "model" to model,
                 "max_turns" to maxTurns,
                 "attachments" to imported.size,
-                "files" to selectedFiles.map { it.name },
+                "files" to selectedCandidates.map { it.second.name },
                 "network" to networkEnabled,
                 "message" to "Local Shell запущен асинхронно. Можно продолжать диалог; статус доступен через local_shell_status."
             )
@@ -6068,6 +6089,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (localBrowserToolsEnabled) {
             appendLine("У тебя есть локальный интерактивный Browser на Android WebView: local_browser_open, local_browser_read, local_browser_click, local_browser_type, local_browser_scroll, local_browser_back и local_browser_wait.")
             appendLine("Browser — тонкий исполнитель: ты решаешь, КАКОЙ элемент или URL нужен, а Browser выполняет один конкретный шаг и возвращает фактическое состояние. Не перекладывай смысловой выбор ссылки на локальную эвристику.")
+            appendLine("Если Browser-инструменты доступны в этом запросе, никогда не утверждай, что у тебя «нет браузера». Если пользователь прямо просит открыть страницу, перейти, нажать, заполнить несекретное поле или проверить интерактивный сайт, используй Browser, а не только рассказывай, как это сделать.")
+            appendLine("Если пользователь не просил Browser явно, но интерактивная работа с сайтом заметно упростит задачу по сравнению с обычным поиском/чтением, сначала дай полезный основной ответ, а в конце одной короткой фразой предложи выполнить действие через Browser. Не превращай это в рекламу функции и не повторяй подсказку после отказа.")
             appendLine("Browser нужен для страниц, которые Fetch не может полноценно прочитать. Если local_web_fetch вернул requires_browser=true и содержимое страницы всё ещё нужно для задачи пользователя, автоматически продолжи в ЭТОМ ЖЕ ответе через local_browser_open по возвращённому URL.")
             appendLine("Если пользователь явно просит действие В БРАУЗЕРЕ и дал URL, сначала открой этот URL через local_browser_open. Затем используй link_index из PageSnapshot: сам выбери подходящую ссылку по name+href и нажми её через local_browser_click(ref).")
             appendLine("Не придумывай URL назначения, если на странице уже есть подходящие кандидаты. Если link_index недостаточен, запроси local_browser_read; full=true оставляй последним запасным вариантом.")
@@ -6080,7 +6103,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (localShellToolsEnabled) {
             appendLine("У тебя есть инструменты управления Local Shell: local_shell_start, local_shell_status, local_shell_note и local_shell_stop.")
             appendLine("Local Shell — асинхронный локальный исполнитель на устройстве пользователя. Он может работать после завершения твоего текущего ответа, а пользователь может продолжать этот же диалог.")
+            appendLine("Если local_shell_start доступен в этом запросе, никогда не утверждай, что у тебя «нет Shell» или что ты «не можешь его использовать». Текущие вложения запроса и постоянные файлы чата могут быть переданы в Local Shell.")
+            appendLine("Если пользователь прямо просит сделать что-то «в Shell», через Local Shell, локально с файлом/архивом/проектом или просит реально переименовать, распаковать, собрать, преобразовать, проверить или изменить файл, не ограничивайся советом: при ясной задаче запускай local_shell_start.")
             appendLine("Запускай local_shell_start без дополнительного подтверждения, если из текущей фразы и контекста ясно, что пользователь уже просит выполнить/реализовать/исправить/проверить согласованную работу: например «делаем», «запускай», «исправь проект», «реализуй это».")
+            appendLine("Если пользователь НЕ просил Shell явно, но работа с файлами, архивами, кодом, массовым переименованием, конвертацией или локальной проверкой была бы заметно проще/надёжнее через Local Shell, дай основной ответ как обычно и в конце одной короткой фразой предложи эту возможность. Не предлагай Shell в каждом сообщении и не повторяй предложение после отказа пользователя.")
             appendLine("Если пользователь только обсуждает идею, просит совет или ещё не дал согласия на выполнение, не запускай Shell самовольно. При необходимости предложи запуск.")
             appendLine("При запуске сформулируй task как самодостаточное рабочее ТЗ из уже согласованных решений диалога. Не заставляй пользователя копировать ТЗ вручную.")
             appendLine("Если Local Shell уже работает в этом чате, не запускай второй. Используй local_shell_status для проверки состояния, local_shell_note для передачи нового ограничения/уточнения пользователя, local_shell_stop — только по явной просьбе остановить.")
