@@ -702,8 +702,8 @@ onBranch = if (message.role == "assistant") {
             }
         }
 
-        val visibleChatFiles = if (imagePromptMode) emptyList() else currentChatFiles
-        val attachmentCount = visibleChatFiles.size + state.pendingAttachments.size
+        val visibleChatFiles = emptyList<com.ayuemin.ymnik.model.ChatFile>()
+        val attachmentCount = state.pendingAttachments.size
         if (attachmentCount > 0) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth()) {
