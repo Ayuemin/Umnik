@@ -87,7 +87,7 @@ object LocalBrowserRuntime {
     private const val FULL_TEXT_LIMIT = 24_000
     private const val FULL_ELEMENT_LIMIT = 120
     private const val DELTA_TEXT_LIMIT = 4_000
-    private const val LINK_INDEX_LIMIT = 48
+    private const val LINK_INDEX_LIMIT = 32
     private const val COMMAND_TIMEOUT_MS = 65_000L
     private const val NAVIGATION_START_WAIT_MS = 3_000L
     private const val NAVIGATION_READY_WAIT_MS = 30_000L
@@ -798,7 +798,8 @@ object LocalBrowserRuntime {
         expectedUrl: String?,
         startedBefore: Long,
         finishedBefore: Long,
-        errorsBefore: Long
+        errorsBefore: Long,
+        allowNetworkRetry: Boolean = true
     ): NavigationWaitResult {
         val beforeDocument = beforeUrl.substringBefore('#')
         val expectedDocument = expectedUrl.orEmpty().substringBefore('#')
@@ -807,11 +808,18 @@ object LocalBrowserRuntime {
 
         while (SystemClock.elapsedRealtime() < startDeadline) {
             if (session.mainFrameErrorCount > errorsBefore) {
+                val retry = recoverNavigationAfterNetworkLoss(
+                    session = session,
+                    webView = webView,
+                    expectedUrl = expectedUrl,
+                    allowNetworkRetry = allowNetworkRetry
+                )
+                if (retry != null) return retry
                 return NavigationWaitResult(
                     started = session.navigationStartedCount > startedBefore,
                     completed = false,
                     currentUrl = current,
-                    reason = "network_error"
+                    reason = if (hasUsableNetwork(webView)) "network_error" else "network_unavailable"
                 )
             }
             current = currentUrl(webView)
@@ -854,11 +862,18 @@ object LocalBrowserRuntime {
 
         while (SystemClock.elapsedRealtime() < deadline) {
             if (session.mainFrameErrorCount > errorsBefore) {
+                val retry = recoverNavigationAfterNetworkLoss(
+                    session = session,
+                    webView = webView,
+                    expectedUrl = expectedUrl,
+                    allowNetworkRetry = allowNetworkRetry
+                )
+                if (retry != null) return retry.copy(networkGraceUsed = true)
                 return NavigationWaitResult(
                     started = true,
                     completed = false,
                     currentUrl = currentUrl(webView),
-                    reason = "network_error",
+                    reason = if (hasUsableNetwork(webView)) "network_error" else "network_unavailable",
                     networkGraceUsed = networkGraceUsed
                 )
             }
@@ -924,6 +939,55 @@ object LocalBrowserRuntime {
             reason = reason,
             networkGraceUsed = networkGraceUsed
         )
+    }
+
+    private suspend fun recoverNavigationAfterNetworkLoss(
+        session: BrowserSession,
+        webView: WebView,
+        expectedUrl: String?,
+        allowNetworkRetry: Boolean
+    ): NavigationWaitResult? {
+        val retryUrl = expectedUrl?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
+            ?: return null
+        if (!allowNetworkRetry || hasUsableNetwork(webView)) return null
+
+        val recovered = waitForUsableNetwork(webView, NAVIGATION_NETWORK_GRACE_MS)
+        if (!recovered) return null
+
+        DiagnosticLog.record(
+            webView.context.applicationContext,
+            "LOCAL_BROWSER_NAV",
+            "session=" + session.sessionId.take(8) +
+                "; network_recovered=true; retry=" + retryUrl.take(180)
+        )
+
+        val retryBefore = currentUrl(webView)
+        val retryStartedBefore = session.navigationStartedCount
+        val retryFinishedBefore = session.navigationFinishedCount
+        val retryErrorsBefore = session.mainFrameErrorCount
+        withContext(Dispatchers.Main.immediate) {
+            webView.stopLoading()
+            webView.loadUrl(retryUrl)
+        }
+        return waitForNavigation(
+            session = session,
+            webView = webView,
+            beforeUrl = retryBefore,
+            expectedUrl = retryUrl,
+            startedBefore = retryStartedBefore,
+            finishedBefore = retryFinishedBefore,
+            errorsBefore = retryErrorsBefore,
+            allowNetworkRetry = false
+        )
+    }
+
+    private suspend fun waitForUsableNetwork(webView: WebView, timeoutMs: Long): Boolean {
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (hasUsableNetwork(webView)) return true
+            delay(500)
+        }
+        return hasUsableNetwork(webView)
     }
 
     private fun hasUsableNetwork(webView: WebView): Boolean {
@@ -1297,7 +1361,7 @@ object LocalBrowserRuntime {
             if (seenLinkHrefs.has(key)) continue;
             seenLinkHrefs.add(key);
             linkIndex.push({ref:refFor(item.el), name:item.name, href:item.href});
-            if (linkIndex.length >= 48) break;
+            if (linkIndex.length >= $LINK_INDEX_LIMIT) break;
           }
           const bodyText = String(document.body?.innerText || '')
             .replace(/\r/g, '')
