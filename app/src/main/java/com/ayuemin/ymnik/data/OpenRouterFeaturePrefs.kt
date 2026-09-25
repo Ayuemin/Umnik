@@ -28,6 +28,11 @@ class OpenRouterFeaturePrefs(context: Context) {
     fun media(): OpenRouterMediaSettings = read("media", OpenRouterMediaSettings::class.java, OpenRouterMediaSettings())
     fun saveMedia(value: OpenRouterMediaSettings) { prefs.edit().putString("media", gson.toJson(value)).apply() }
 
+    fun localShellMaxTurns(): Int = prefs.getInt("local_shell_max_turns", 24).coerceIn(1, 1000)
+    fun saveLocalShellMaxTurns(value: Int) {
+        prefs.edit().putInt("local_shell_max_turns", value.coerceIn(1, 1000)).apply()
+    }
+
     private fun <T> read(key: String, type: Class<T>, fallback: T): T = runCatching {
         prefs.getString(key, null)?.let { gson.fromJson(it, type) } ?: fallback
     }.getOrDefault(fallback)
