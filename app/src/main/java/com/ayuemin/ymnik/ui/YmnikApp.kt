@@ -166,6 +166,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.LocalShellActivity
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.ShellActivity
@@ -391,6 +392,7 @@ private fun ChatScreen(
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
     val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
     val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val localShellActivity by AsyncJobEvents.localShellActivity.collectAsState()
     val hubToolActivity by AsyncJobEvents.hubToolActivity.collectAsState()
     val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
     val videoRepository = remember(context) { VideoJobRepository(context.applicationContext) }
@@ -821,6 +823,14 @@ onBranch = if (message.role == "assistant") {
                     ShellBackgroundOperationBanner(
                         activity = activity,
                         onClick = { AsyncJobEvents.requestHub("shell", "Вернуться в чат") }
+                    )
+                }
+
+                localShellActivity?.let { activity ->
+                    LocalShellInlineBanner(
+                        activity = activity,
+                        currentChatId = state.currentChatId,
+                        onClick = { AsyncJobEvents.requestHub("local-shell", "Вернуться в чат") }
                     )
                 }
 
@@ -1391,6 +1401,23 @@ onBranch = if (message.role == "assistant") {
     }
 }
 
+
+@Composable
+private fun LocalShellInlineBanner(
+    activity: LocalShellActivity,
+    currentChatId: String,
+    onClick: () -> Unit
+) {
+    BackgroundOperationBanner(
+        title = "Local Shell · работает · " + activity.turn + "/" + activity.maxTurns,
+        subtitle = if (activity.chatId == currentChatId) {
+            activity.status
+        } else {
+            "Задача выполняется в другом чате"
+        },
+        onClick = onClick
+    )
+}
 
 @Composable
 private fun ShellBackgroundOperationBanner(
