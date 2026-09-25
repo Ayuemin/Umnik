@@ -1722,17 +1722,22 @@ private fun ComposerToggleTile(
                                 )
                             }
                         } else {
-                            Surface(
-                                modifier = Modifier.weight(1f).height(6.dp),
-                                shape = RoundedCornerShape(999.dp),
-                                color = if (active) {
-                                    MaterialTheme.colorScheme.primary
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(
-                                        alpha = if (enabled) 0.16f else 0.08f
-                                    )
-                                }
-                            ) {}
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    modifier = Modifier.width(14.dp).height(6.dp),
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = if (active) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (enabled) 0.16f else 0.08f
+                                        )
+                                    }
+                                ) {}
+                            }
                         }
                     }
                 }
