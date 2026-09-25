@@ -3341,7 +3341,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
         ) {
             item {
                 Text(
-                    "Навык — это постоянная инструкция и текстовые материалы для модели. После подключения Umnik добавляет их к каждому текстовому запросу. Навык сам ничего не запускает и не изменяет файлы.",
+                    "Навыки хранятся в общей библиотеке. Здесь их можно добавлять и удалять, а включение для конкретного чата доступно через «+ → Инструменты → Навыки». Навык сам ничего не запускает и не изменяет файлы.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
@@ -3384,9 +3384,9 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
                                 label = {
                                     Text(
                                         if (skill.id in state.activeSkillIds)
-                                            "Подключён к каждому чату"
+                                            "Активен в текущем чате"
                                         else
-                                            "Подключить к каждому чату"
+                                            "Включить в текущем чате"
                                     )
                                 },
                                 leadingIcon = {
