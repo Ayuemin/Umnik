@@ -177,6 +177,7 @@ class OpenRouterClient(
         requestImageOutput: Boolean = false,
         knowledgeSearch: (suspend (String) -> String)? = null,
         knowledgeSearchLimit: Int = 4,
+        requiredLocalBrowserTool: String? = null,
         localWebFetch: (suspend (String) -> String)? = null,
         localBrowserOpen: (suspend (String) -> String)? = null,
         localBrowserRead: (suspend () -> String)? = null,
@@ -208,6 +209,9 @@ class OpenRouterClient(
         val effectiveKnowledgeSearchLimit = knowledgeBudget.limit
         val localWebFetchEnabled = localWebFetch != null
         val localBrowserToolsEnabled = localBrowserOpen != null && localBrowserRead != null
+        val requiredBrowserTool = requiredLocalBrowserTool
+            ?.takeIf { localBrowserToolsEnabled && it.startsWith("local_browser_") }
+        val browserToolsUsed = linkedSetOf<String>()
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
@@ -289,6 +293,21 @@ class OpenRouterClient(
             created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
             if (toolCalls == null || toolCalls.size() == 0) {
+                if (requiredBrowserTool != null && requiredBrowserTool !in browserToolsUsed && loops < maxToolLoops) {
+                    messages.add(responseMessage.deepCopy())
+                    messages.add(
+                        message(
+                            "system",
+                            "Проверка выполнения Umnik: пользователь запросил реальное действие в браузере, но инструмент " + requiredBrowserTool + " ещё не был вызван в этом ответе. Нельзя сообщать, что действие выполнено или заблокировано без реального вызова. При необходимости сначала вызови local_browser_open или local_browser_read, затем обязательно " + requiredBrowserTool + "."
+                        )
+                    )
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_BROWSER_ROUTER",
+                        "retry required=" + requiredBrowserTool + "; used=" + browserToolsUsed.joinToString(",") + "; request=" + requestRunId
+                    )
+                    continue
+                }
                 val content = extractText(responseMessage.get("content"))
                 if (content.isBlank() && created.isEmpty()) {
                     error("Модель не вернула готовый текст. Измените уровень рассуждения или повторите запрос; пустой ответ не сохранён в чат.")
@@ -312,6 +331,7 @@ class OpenRouterClient(
                 val function = call.getAsJsonObject("function")
                 val name = function?.get("name")?.asString.orEmpty()
                 val argsRaw = function?.get("arguments")?.asString ?: "{}"
+                if (name.startsWith("local_browser_")) browserToolsUsed += name
                 val resultText = when (name) {
                     "create_file" -> runCatching {
                         val args = gson.fromJson(argsRaw, JsonObject::class.java)
