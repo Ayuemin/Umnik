@@ -74,6 +74,8 @@ private data class BrowserSession(
     @Volatile var lastElementFingerprints: Map<Int, String> = emptyMap(),
     @Volatile var navigationStartedCount: Long = 0L,
     @Volatile var navigationFinishedCount: Long = 0L,
+    @Volatile var lastNavigationStartedUrl: String = "",
+    @Volatile var lastNavigationFinishedUrl: String = "",
     @Volatile var mainFrameErrorCount: Long = 0L,
     @Volatile var lastMainFrameError: String = "",
     @Volatile var lastBlockedFollowTarget: String = "",
@@ -180,6 +182,7 @@ object LocalBrowserRuntime {
                 val chatId = activeChatId ?: return
                 val session = sessions[chatId] ?: return
                 session.navigationStartedCount += 1L
+                session.lastNavigationStartedUrl = url.orEmpty()
                 url?.let { session.currentUrl = it }
                 publish(session, "загружает страницу", url.orEmpty())
             }
@@ -188,6 +191,7 @@ object LocalBrowserRuntime {
                 val chatId = activeChatId ?: return
                 val session = sessions[chatId] ?: return
                 session.navigationFinishedCount += 1L
+                session.lastNavigationFinishedUrl = url.orEmpty()
                 url?.let { session.currentUrl = it }
                 publish(session, "читает страницу", url.orEmpty())
             }
@@ -825,19 +829,44 @@ object LocalBrowserRuntime {
             current = currentUrl(webView)
             val currentDocument = current.substringBefore('#')
             val callbackStarted = session.navigationStartedCount > startedBefore
+            val startedDocument = session.lastNavigationStartedUrl.substringBefore('#')
+            val callbackMoved = callbackStarted &&
+                startedDocument.isNotBlank() &&
+                startedDocument != "about:blank" &&
+                startedDocument != beforeDocument
             val urlMoved = currentDocument.isNotBlank() &&
                 currentDocument != "about:blank" &&
                 currentDocument != beforeDocument
             val reachedExpected = expectedDocument.isNotBlank() &&
                 currentDocument == expectedDocument &&
-                (expectedDocument != beforeDocument || callbackStarted)
-            if (callbackStarted || urlMoved || reachedExpected) break
+                expectedDocument != beforeDocument
+            val strictExpectedMove = expectedDocument.isNotBlank() && expectedDocument != beforeDocument
+            val navigationStarted = if (strictExpectedMove) {
+                callbackMoved || urlMoved || reachedExpected
+            } else {
+                callbackStarted || urlMoved || reachedExpected
+            }
+            if (navigationStarted) break
             delay(NAVIGATION_POLL_MS)
         }
 
         current = currentUrl(webView)
-        val started = session.navigationStartedCount > startedBefore ||
-            current.substringBefore('#').let { it.isNotBlank() && it != "about:blank" && it != beforeDocument }
+        val currentDocumentAfterStart = current.substringBefore('#')
+        val callbackStartedAfterWait = session.navigationStartedCount > startedBefore
+        val startedDocumentAfterWait = session.lastNavigationStartedUrl.substringBefore('#')
+        val callbackMovedAfterWait = callbackStartedAfterWait &&
+            startedDocumentAfterWait.isNotBlank() &&
+            startedDocumentAfterWait != "about:blank" &&
+            startedDocumentAfterWait != beforeDocument
+        val urlMovedAfterWait = currentDocumentAfterStart.isNotBlank() &&
+            currentDocumentAfterStart != "about:blank" &&
+            currentDocumentAfterStart != beforeDocument
+        val strictExpectedMove = expectedDocument.isNotBlank() && expectedDocument != beforeDocument
+        val started = if (strictExpectedMove) {
+            callbackMovedAfterWait || urlMovedAfterWait
+        } else {
+            callbackStartedAfterWait || urlMovedAfterWait
+        }
 
         if (!started) {
             DiagnosticLog.record(
@@ -893,22 +922,42 @@ object LocalBrowserRuntime {
             val currentDocument = current.substringBefore('#')
             val callbackStarted = session.navigationStartedCount > startedBefore
             val callbackFinished = session.navigationFinishedCount > finishedBefore
+            val startedDocument = session.lastNavigationStartedUrl.substringBefore('#')
+            val finishedDocument = session.lastNavigationFinishedUrl.substringBefore('#')
+            val callbackMoved = callbackStarted &&
+                startedDocument.isNotBlank() &&
+                startedDocument != "about:blank" &&
+                startedDocument != beforeDocument
+            val callbackFinishedMoved = callbackFinished &&
+                finishedDocument.isNotBlank() &&
+                finishedDocument != "about:blank" &&
+                finishedDocument != beforeDocument
             val urlMoved = currentDocument.isNotBlank() &&
                 currentDocument != "about:blank" &&
                 currentDocument != beforeDocument
+            val reachedExpected = expectedDocument.isNotBlank() &&
+                currentDocument == expectedDocument &&
+                expectedDocument != beforeDocument
             val state = runCatching {
                 evaluatePrimitive(webView, "document.readyState")
             }.getOrDefault("")
             val ready = state == "interactive" || state == "complete"
 
-            stableReady = if (ready && (callbackStarted || urlMoved)) stableReady + 1 else 0
-            val spaLikeMove = urlMoved && !callbackStarted
-            if (stableReady >= 2 && (callbackFinished || spaLikeMove || urlMoved)) {
+            val strictExpectedMove = expectedDocument.isNotBlank() && expectedDocument != beforeDocument
+            val realMoveObserved = if (strictExpectedMove) {
+                urlMoved || reachedExpected
+            } else {
+                urlMoved || callbackMoved || callbackFinishedMoved
+            }
+            stableReady = if (ready && realMoveObserved) stableReady + 1 else 0
+            if (stableReady >= 2 && realMoveObserved) {
                 DiagnosticLog.record(
                     webView.context.applicationContext,
                     "LOCAL_BROWSER_NAV",
                     "session=" + session.sessionId.take(8) +
                         "; result=complete" +
+                        "; before=" + beforeDocument.take(160) +
+                        "; expected=" + expectedDocument.take(160) +
                         "; url=" + current.take(180) +
                         "; networkGrace=" + networkGraceUsed
                 )
