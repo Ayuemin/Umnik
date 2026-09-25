@@ -446,7 +446,14 @@ object LocalBrowserRuntime {
 
     suspend fun click(chatId: String, ref: Int): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "переходит по странице", "click", "ref=" + ref) {
+        runCommand(
+            session,
+            session.currentUrl,
+            "переходит по странице",
+            "click",
+            "ref=" + ref,
+            timeoutMs = USER_INTERACTION_TIMEOUT_MS + COMMAND_TIMEOUT_MS
+        ) {
             val webView = webView()
             ensureCurrent(session, webView)
             val before = currentUrl(webView)
@@ -454,21 +461,58 @@ object LocalBrowserRuntime {
             val finishedBefore = session.navigationFinishedCount
             val errorsBefore = session.mainFrameErrorCount
             val raw = evaluate(webView, clickScript(ref))
-            val result = decodedJson(raw)
+            var result = decodedJson(raw)
             if (result.get("ok")?.asBoolean != true) {
                 val reason = result.get("reason")?.asString ?: "click_blocked"
                 if (result.get("confirmation_required")?.asBoolean == true) {
-                    session.lifecycle = LocalBrowserLifecycle.WAITING_USER
-                    return@runCommand gson.toJson(
-                        mapOf(
-                            "ok" to false,
-                            "source" to "local_browser",
-                            "session_id" to session.sessionId,
-                            "state" to "WAITING_USER",
-                            "reason" to reason,
-                            "message" to "Действие может иметь внешний эффект и не выполняется без отдельного подтверждения пользователя."
-                        )
+                    val label = result.get("name")?.asString.orEmpty().ifBlank { "действие на странице" }
+                    val decision = awaitUserGate(
+                        session,
+                        kind = "CONFIRM_ACTION",
+                        message = "Подтвердите: «" + label.take(120) + "». Действие может изменить данные или отправить форму."
                     )
+                    if (decision != "confirm") {
+                        session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                        return@runCommand gson.toJson(
+                            mapOf(
+                                "ok" to false,
+                                "source" to "local_browser",
+                                "session_id" to session.sessionId,
+                                "state" to "BLOCKED",
+                                "reason" to "user_cancelled",
+                                "recoverable" to false
+                            )
+                        )
+                    }
+                    session.lifecycle = LocalBrowserLifecycle.WORKING
+                    result = decodedJson(evaluate(webView, confirmedClickScript(ref)))
+                    if (result.get("ok")?.asBoolean != true) {
+                        session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                        return@runCommand gson.toJson(
+                            mapOf(
+                                "ok" to false,
+                                "source" to "local_browser",
+                                "session_id" to session.sessionId,
+                                "state" to "BLOCKED",
+                                "reason" to (result.get("reason")?.asString ?: "confirmed_click_failed"),
+                                "recoverable" to true
+                            )
+                        )
+                    }
+                    val navigation = settleOptionalNavigation(
+                        session = session,
+                        webView = webView,
+                        beforeUrl = before,
+                        startedBefore = startedBefore,
+                        finishedBefore = finishedBefore,
+                        errorsBefore = errorsBefore
+                    )
+                    if (navigation != null && !navigation.completed) {
+                        session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                        return@runCommand navigationFailureJson(session, navigation, null)
+                    }
+                    delay(250)
+                    return@runCommand snapshot(session, webView)
                 }
                 session.lifecycle = LocalBrowserLifecycle.BLOCKED
                 return@runCommand gson.toJson(
@@ -510,12 +554,43 @@ object LocalBrowserRuntime {
 
     suspend fun type(chatId: String, ref: Int, text: String): String = commandMutex.withLock {
         val session = requireSession(chatId)
-        runCommand(session, session.currentUrl, "вводит текст", "type", "ref=" + ref + "; chars=" + text.length) {
+        runCommand(
+            session,
+            session.currentUrl,
+            "вводит текст",
+            "type",
+            "ref=" + ref + "; chars=" + text.length,
+            timeoutMs = USER_INTERACTION_TIMEOUT_MS + COMMAND_TIMEOUT_MS
+        ) {
             val webView = webView()
             ensureCurrent(session, webView)
             val raw = evaluate(webView, typeScript(ref, text))
             val result = decodedJson(raw)
             if (result.get("ok")?.asBoolean != true) {
+                val reason = result.get("reason")?.asString ?: "type_blocked"
+                if (result.get("user_takeover")?.asBoolean == true) {
+                    val decision = awaitUserGate(
+                        session,
+                        kind = "TAKEOVER",
+                        message = "Нужен ручной ввод на странице. Введите пароль, код или пройдите проверку сами — секретные данные не передаются модели."
+                    )
+                    if (decision != "done") {
+                        session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                        return@runCommand gson.toJson(
+                            mapOf(
+                                "ok" to false,
+                                "source" to "local_browser",
+                                "session_id" to session.sessionId,
+                                "state" to "BLOCKED",
+                                "reason" to "user_cancelled",
+                                "recoverable" to false
+                            )
+                        )
+                    }
+                    session.lifecycle = LocalBrowserLifecycle.WORKING
+                    delay(250)
+                    return@runCommand snapshot(session, webView, forceBaseline = true)
+                }
                 session.lifecycle = LocalBrowserLifecycle.BLOCKED
                 return@runCommand gson.toJson(
                     mapOf(
@@ -523,13 +598,49 @@ object LocalBrowserRuntime {
                         "source" to "local_browser",
                         "session_id" to session.sessionId,
                         "state" to "BLOCKED",
-                        "reason" to (result.get("reason")?.asString ?: "type_blocked"),
+                        "reason" to reason,
                         "recoverable" to true
                     )
                 )
             }
             delay(250)
             snapshot(session, webView)
+        }
+    }
+
+    suspend fun takeover(chatId: String, reasonRaw: String): String = commandMutex.withLock {
+        val session = requireSession(chatId)
+        val reason = reasonRaw.trim().take(180).ifBlank { "Нужно ручное действие на странице" }
+        runCommand(
+            session,
+            session.currentUrl,
+            "ждёт ручного действия",
+            "takeover",
+            "reason=" + reason,
+            timeoutMs = USER_INTERACTION_TIMEOUT_MS + COMMAND_TIMEOUT_MS
+        ) {
+            val webView = webView()
+            ensureCurrent(session, webView)
+            val decision = awaitUserGate(
+                session,
+                kind = "TAKEOVER",
+                message = reason + ". Выполните действие на странице сами и нажмите «Вернуть модели»."
+            )
+            if (decision != "done") {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand gson.toJson(
+                    mapOf(
+                        "ok" to false,
+                        "source" to "local_browser",
+                        "session_id" to session.sessionId,
+                        "state" to "BLOCKED",
+                        "reason" to "user_cancelled",
+                        "recoverable" to false
+                    )
+                )
+            }
+            session.lifecycle = LocalBrowserLifecycle.WORKING
+            snapshot(session, webView, forceBaseline = true)
         }
     }
 
@@ -887,6 +998,41 @@ object LocalBrowserRuntime {
         finishedBefore = finishedBefore,
         errorsBefore = errorsBefore
     )
+
+    private suspend fun settleOptionalNavigation(
+        session: BrowserSession,
+        webView: WebView,
+        beforeUrl: String,
+        startedBefore: Long,
+        finishedBefore: Long,
+        errorsBefore: Long
+    ): NavigationWaitResult? {
+        val deadline = SystemClock.elapsedRealtime() + 1_500L
+        while (SystemClock.elapsedRealtime() < deadline) {
+            val actual = currentUrl(webView)
+            val callbackStarted = session.navigationStartedCount > startedBefore
+            val moved = actual.substringBefore('#').let {
+                it.isNotBlank() && it != "about:blank" && it != beforeUrl.substringBefore('#')
+            }
+            if (callbackStarted || moved) {
+                val startedUrl = session.lastNavigationStartedUrl
+                val expected = startedUrl.takeIf {
+                    it.isNotBlank() && sameDocumentUrl(it, beforeUrl)
+                }
+                return waitForNavigation(
+                    session = session,
+                    webView = webView,
+                    beforeUrl = beforeUrl,
+                    expectedUrl = expected,
+                    startedBefore = startedBefore,
+                    finishedBefore = finishedBefore,
+                    errorsBefore = errorsBefore
+                )
+            }
+            delay(125)
+        }
+        return null
+    }
 
     private suspend fun waitForNavigation(
         session: BrowserSession,
@@ -1775,11 +1921,36 @@ object LocalBrowserRuntime {
             el.click();
             return JSON.stringify({ok:true, kind:'safe_ui'});
           }
+          const name = String(
+            el.getAttribute('aria-label') ||
+            el.innerText ||
+            el.getAttribute('title') ||
+            el.getAttribute('name') ||
+            'действие'
+          ).replace(/\s+/g, ' ').trim().slice(0, 140);
           return JSON.stringify({
             ok:false,
             reason:'consequential_or_unknown_action',
-            confirmation_required:true
+            confirmation_required:true,
+            name
           });
+        })()
+    """.trimIndent()
+
+    private fun confirmedClickScript(ref: Int): String = """
+        (() => {
+          const reg = window.__umnikRegistry;
+          const el = reg?.refs?.get($ref);
+          if (!el || !el.isConnected) return JSON.stringify({ok:false, reason:'stale_ref'});
+          if (el.disabled) return JSON.stringify({ok:false, reason:'disabled'});
+          const tag = (el.tagName || '').toLowerCase();
+          const type = String(el.getAttribute('type') || '').toLowerCase();
+          if (tag === 'input' && ['file','password','hidden'].includes(type)) {
+            return JSON.stringify({ok:false, reason:'sensitive_or_unsupported_control'});
+          }
+          el.scrollIntoView({block:'center', inline:'nearest'});
+          el.click();
+          return JSON.stringify({ok:true});
         })()
     """.trimIndent()
 
@@ -1793,8 +1964,21 @@ object LocalBrowserRuntime {
               if (el.disabled || el.readOnly) return JSON.stringify({ok:false, reason:'not_editable'});
               const tag = (el.tagName || '').toLowerCase();
               const type = String(el.getAttribute('type') || 'text').toLowerCase();
-              if (['password','file','hidden'].includes(type)) {
-                return JSON.stringify({ok:false, reason:'sensitive_or_unsupported_field'});
+              const autoComplete = String(el.getAttribute('autocomplete') || '').toLowerCase();
+              const fieldMeta = [
+                el.getAttribute('name'),
+                el.getAttribute('id'),
+                el.getAttribute('aria-label'),
+                el.getAttribute('placeholder')
+              ].join(' ').toLowerCase();
+              if (type === 'password' || autoComplete === 'one-time-code' || /(^|\W)(otp|2fa|mfa)(\W|$)|verification.?code|one.?time/.test(fieldMeta)) {
+                return JSON.stringify({ok:false, reason:'sensitive_field_requires_user', user_takeover:true});
+              }
+              if (type === 'file') {
+                return JSON.stringify({ok:false, reason:'file_input_requires_user'});
+              }
+              if (type === 'hidden') {
+                return JSON.stringify({ok:false, reason:'hidden_field_blocked'});
               }
               const editable = tag === 'textarea' || tag === 'input' || el.isContentEditable;
               if (!editable) return JSON.stringify({ok:false, reason:'not_text_field'});
