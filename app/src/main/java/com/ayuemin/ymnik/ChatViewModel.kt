@@ -4846,6 +4846,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     requestSpecialist?.instruction.orEmpty()
                                 )
                             )
+                        val localShellToolsEnabled = requestSpecialist == null &&
+                            (autoRouter || modelInfo?.supportsTools == true)
                         val allAttachments = (pending + requestPersistentTextAttachments + teamFiles)
                             .distinctBy { it.localPath ?: it.uri }
                         answerAttachmentCount = allAttachments.size
@@ -4955,7 +4957,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     specialist = requestSpecialist,
                                     knowledgeToolEnabled = knowledgeToolEnabled,
                                     knowledgeToolInstruction = knowledgeInstruction,
-                                    knowledgeToolSearchLimit = knowledgeSearchLimit
+                                    knowledgeToolSearchLimit = knowledgeSearchLimit,
+                                    localShellToolsEnabled = localShellToolsEnabled
                                 ) +
                                     preparedContext.systemContext + knowledgeContext,
                                 webSearchEnabled,
@@ -4983,7 +4986,35 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 } else {
                                     null
                                 },
-                                knowledgeSearchLimit = knowledgeSearchLimit
+                                knowledgeSearchLimit = knowledgeSearchLimit,
+                                localShellStart = if (localShellToolsEnabled) {
+                                    { task, allowNetwork ->
+                                        startLocalShellFromChat(
+                                            chatId = chatId,
+                                            taskRaw = task,
+                                            attachments = allAttachments,
+                                            networkEnabled = allowNetwork,
+                                            fallbackModel = textModel
+                                        )
+                                    }
+                                } else {
+                                    null
+                                },
+                                localShellStatus = if (localShellToolsEnabled) {
+                                    { localShellStatusForChat(chatId) }
+                                } else {
+                                    null
+                                },
+                                localShellGuidance = if (localShellToolsEnabled) {
+                                    { note -> sendLocalShellGuidance(chatId, note) }
+                                } else {
+                                    null
+                                },
+                                localShellStop = if (localShellToolsEnabled) {
+                                    { stopLocalShellFromChat(chatId) }
+                                } else {
+                                    null
+                                }
                             )
                         }
                     }
