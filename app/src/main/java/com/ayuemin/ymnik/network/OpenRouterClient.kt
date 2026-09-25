@@ -215,6 +215,9 @@ class OpenRouterClient(
         val browserToolsUsed = linkedSetOf<String>()
         val browserToolCallIds = linkedSetOf<String>()
         var browserCanAutoFinish = true
+        val promptHasExplicitUrl = Regex("""https?://\S+""", RegexOption.IGNORE_CASE).containsMatchIn(prompt)
+        val initialBrowserTool = requiredBrowserTool
+            ?.takeIf { promptHasExplicitUrl && it in setOf("local_browser_follow", "local_browser_open") }
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
@@ -269,6 +272,17 @@ class OpenRouterClient(
                     OpenRouterFeaturePayload.applyServerToolBudget(this, searchSettings)
                 }
                 if (mergedTools.size() > 0) add("tools", mergedTools)
+                if (loops == 1 && initialBrowserTool != null) {
+                    add("tool_choice", JsonObject().apply {
+                        addProperty("type", "function")
+                        add("function", JsonObject().apply { addProperty("name", initialBrowserTool) })
+                    })
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_BROWSER_ROUTER",
+                        "force_initial=" + initialBrowserTool + "; request=" + requestRunId
+                    )
+                }
 
                 if (reasoningEnabled) {
                     add("reasoning", JsonObject().apply {
