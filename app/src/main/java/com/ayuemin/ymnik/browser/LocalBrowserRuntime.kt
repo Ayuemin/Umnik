@@ -298,8 +298,39 @@ object LocalBrowserRuntime {
         ) {
             val webView = webView()
             if (safeUrl != null) load(webView, safeUrl) else ensureCurrent(session, webView)
+
+            val normalizedTarget = normalizeFollowTarget(cleanTarget)
+            val fingerprint = pageFingerprint(webView)
+            if (
+                session.lastBlockedFollowTarget == normalizedTarget &&
+                session.lastBlockedFollowFingerprint == fingerprint
+            ) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand gson.toJson(
+                    JsonObject().apply {
+                        addProperty("ok", false)
+                        addProperty("source", "local_browser")
+                        addProperty("session_id", session.sessionId)
+                        addProperty("state", "BLOCKED")
+                        addProperty("reason", "repeated_unchanged_target")
+                        addProperty("recoverable", true)
+                        val stored = runCatching {
+                            gson.fromJson(session.lastBlockedFollowCandidates, JsonArray::class.java)
+                        }.getOrNull() ?: JsonArray()
+                        add("candidates", stored)
+                        addProperty(
+                            "message",
+                            "Этот же follow уже был неоднозначным на неизменившейся странице. Не повторяй его: выбери candidate.ref и используй local_browser_click либо уточни target."
+                        )
+                    }
+                )
+            }
+
             val before = currentUrl(webView)
-            var result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+            val startedBefore = session.navigationStartedCount
+            val finishedBefore = session.navigationFinishedCount
+            val errorsBefore = session.mainFrameErrorCount
+            var result = decodedJson(evaluate(webView, followScript(cleanTarget, session.nextElementRef)))
             var renderRetries = 0
             while (
                 result.get("ok")?.asBoolean != true &&
@@ -308,7 +339,10 @@ object LocalBrowserRuntime {
             ) {
                 renderRetries++
                 delay(250)
-                result = decodedJson(evaluate(webView, followScript(cleanTarget)))
+                result = decodedJson(evaluate(webView, followScript(cleanTarget, session.nextElementRef)))
+            }
+            result.get("next_ref")?.let { next ->
+                runCatching { next.asInt }.getOrNull()?.let { session.nextElementRef = maxOf(session.nextElementRef, it) }
             }
             if (renderRetries > 0) {
                 DiagnosticLog.record(
@@ -320,6 +354,10 @@ object LocalBrowserRuntime {
                 )
             }
             if (result.get("ok")?.asBoolean != true) {
+                val candidates = result.get("candidates")?.takeIf { it.isJsonArray }?.asJsonArray ?: JsonArray()
+                session.lastBlockedFollowTarget = normalizedTarget
+                session.lastBlockedFollowFingerprint = fingerprint
+                session.lastBlockedFollowCandidates = gson.toJson(candidates)
                 session.lifecycle = LocalBrowserLifecycle.BLOCKED
                 return@runCommand gson.toJson(
                     JsonObject().apply {
@@ -329,15 +367,33 @@ object LocalBrowserRuntime {
                         addProperty("state", "BLOCKED")
                         addProperty("reason", result.get("reason")?.asString ?: "target_not_unique")
                         addProperty("recoverable", true)
-                        add("candidates", result.get("candidates") ?: JsonArray())
+                        add("candidates", candidates)
                         addProperty(
                             "message",
-                            "Локальный переход не выполнен однозначно. Страница уже открыта: не переоткрывай тот же URL. Сначала вызови local_browser_read, при необходимости full=true, затем выбери элемент и используй обычный click."
+                            "Локальный переход не выбран однозначно. Кандидаты уже содержат ref, name и href: выбери нужный ref и используй local_browser_click. Full read нужен только если этих кандидатов недостаточно."
                         )
                     }
                 )
             }
-            settleAfterAction(webView, before)
+
+            session.lastBlockedFollowTarget = ""
+            session.lastBlockedFollowFingerprint = ""
+            session.lastBlockedFollowCandidates = ""
+
+            val expectedHref = result.get("href")?.asString
+            val navigation = settleAfterAction(
+                session = session,
+                webView = webView,
+                beforeUrl = before,
+                expectedUrl = expectedHref,
+                startedBefore = startedBefore,
+                finishedBefore = finishedBefore,
+                errorsBefore = errorsBefore
+            )
+            if (!navigation.completed) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand navigationFailureJson(session, navigation, expectedHref)
+            }
             session.lifecycle = LocalBrowserLifecycle.WORKING
             snapshot(session, webView)
         }
@@ -349,6 +405,9 @@ object LocalBrowserRuntime {
             val webView = webView()
             ensureCurrent(session, webView)
             val before = currentUrl(webView)
+            val startedBefore = session.navigationStartedCount
+            val finishedBefore = session.navigationFinishedCount
+            val errorsBefore = session.mainFrameErrorCount
             val raw = evaluate(webView, clickScript(ref))
             val result = decodedJson(raw)
             if (result.get("ok")?.asBoolean != true) {
@@ -379,7 +438,26 @@ object LocalBrowserRuntime {
                     )
                 )
             }
-            settleAfterAction(webView, before)
+
+            if (result.get("kind")?.asString == "navigation") {
+                val expectedHref = result.get("href")?.asString
+                val navigation = settleAfterAction(
+                    session = session,
+                    webView = webView,
+                    beforeUrl = before,
+                    expectedUrl = expectedHref,
+                    startedBefore = startedBefore,
+                    finishedBefore = finishedBefore,
+                    errorsBefore = errorsBefore
+                )
+                if (!navigation.completed) {
+                    session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                    return@runCommand navigationFailureJson(session, navigation, expectedHref)
+                }
+            } else {
+                delay(250)
+            }
+
             session.lifecycle = LocalBrowserLifecycle.WORKING
             snapshot(session, webView)
         }
@@ -448,8 +526,23 @@ object LocalBrowserRuntime {
                 )
             }
             val before = currentUrl(webView)
+            val startedBefore = session.navigationStartedCount
+            val finishedBefore = session.navigationFinishedCount
+            val errorsBefore = session.mainFrameErrorCount
             withContext(Dispatchers.Main.immediate) { webView.goBack() }
-            settleAfterAction(webView, before)
+            val navigation = settleAfterAction(
+                session = session,
+                webView = webView,
+                beforeUrl = before,
+                expectedUrl = null,
+                startedBefore = startedBefore,
+                finishedBefore = finishedBefore,
+                errorsBefore = errorsBefore
+            )
+            if (!navigation.completed) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                return@runCommand navigationFailureJson(session, navigation, null)
+            }
             snapshot(session, webView)
         }
     }
@@ -841,6 +934,48 @@ object LocalBrowserRuntime {
         val capabilities = manager.getNetworkCapabilities(network) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
+
+    private fun navigationFailureJson(
+        session: BrowserSession,
+        navigation: NavigationWaitResult,
+        expectedUrl: String?
+    ): String = gson.toJson(
+        JsonObject().apply {
+            addProperty("ok", false)
+            addProperty("source", "local_browser")
+            addProperty("session_id", session.sessionId)
+            addProperty("state", "BLOCKED")
+            addProperty("reason", navigation.reason ?: "navigation_failed")
+            addProperty("recoverable", true)
+            addProperty("navigation_started", navigation.started)
+            addProperty("current_url", navigation.currentUrl)
+            expectedUrl?.takeIf { it.isNotBlank() }?.let { addProperty("expected_url", it) }
+            addProperty("network_grace_used", navigation.networkGraceUsed)
+            addProperty(
+                "message",
+                when (navigation.reason) {
+                    "network_unavailable" -> "Сеть пропала во время перехода. Umnik дал дополнительное время, но загрузка не завершилась."
+                    "network_error" -> "WebView сообщил об ошибке сети во время перехода."
+                    "navigation_not_started" -> "Нажатие произошло, но переход на новую страницу не начался."
+                    else -> "Переход начался, но страница не завершила загрузку в отведённое время."
+                }
+            )
+        }
+    )
+
+    private fun normalizeFollowTarget(value: String): String =
+        value.lowercase()
+            .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
+            .trim()
+
+    private suspend fun pageFingerprint(webView: WebView): String {
+        val value = evaluatePrimitive(
+            webView,
+            "(location.href + '\\n' + document.title + '\\n' + String(document.body?.innerText || '').slice(0, 6000) + '\\n' + document.querySelectorAll('a[href]').length)"
+        )
+        return value.hashCode().toString()
+    }
+
 
     private suspend fun waitForReady(webView: WebView) {
         var stableReady = 0
