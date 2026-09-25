@@ -707,6 +707,12 @@ class OpenRouterHubController(
         featurePrefs.saveLocalShellMaxTurns(value)
     }
 
+    fun localShellModelOverride(): String = featurePrefs.localShellModelOverride()
+
+    fun saveLocalShellModelOverride(value: String) {
+        featurePrefs.saveLocalShellModelOverride(value)
+    }
+
     fun runLocalShell(
         promptRaw: String,
         attachments: List<Uri> = emptyList(),
@@ -723,7 +729,8 @@ class OpenRouterHubController(
         val originState = viewModel.state.value
         val originChatId = originState.currentChatId
         val currentModel = originState.currentChatTextModel ?: originState.textModel
-        val model = currentModel.removeSuffix(":batch")
+        val modelOverride = featurePrefs.localShellModelOverride()
+        val model = (modelOverride.ifBlank { currentModel }).removeSuffix(":batch")
         val maxTurns = featurePrefs.localShellMaxTurns()
 
         if (prompt.isBlank()) {
