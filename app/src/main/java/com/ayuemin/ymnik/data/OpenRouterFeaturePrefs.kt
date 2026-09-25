@@ -33,6 +33,11 @@ class OpenRouterFeaturePrefs(context: Context) {
         prefs.edit().putInt("local_shell_max_turns", value.coerceAtLeast(1)).apply()
     }
 
+    fun localShellModelOverride(): String = prefs.getString("local_shell_model_override", "").orEmpty().trim()
+    fun saveLocalShellModelOverride(value: String) {
+        prefs.edit().putString("local_shell_model_override", value.trim()).apply()
+    }
+
     private fun <T> read(key: String, type: Class<T>, fallback: T): T = runCatching {
         prefs.getString(key, null)?.let { gson.fromJson(it, type) } ?: fallback
     }.getOrDefault(fallback)
