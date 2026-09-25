@@ -5325,6 +5325,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     knowledgeSearchAttempted = if (mode == ChatMode.TEXT) answerKnowledgeSearchAttempted else null,
                     knowledgeBaseOnly = if (mode == ChatMode.TEXT) answerKnowledgeBaseOnly else null,
                     webSearchEnabled = answerWebSearchEnabled,
+                    internetMode = if (mode == ChatMode.TEXT && webSearchEnabled) internetMode.name else null,
                     reasoningEnabled = answerReasoningEnabled,
                     reasoningEffort = answerReasoningEffort,
                     memoryContextUsed = answerMemoryContextUsed,
