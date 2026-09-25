@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.7 — Local Shell finalization and unified chat tools
+// Umnik v1.20.0-beta.8 — persistent per-chat skill activation
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 164
-        versionName = "1.20.0-beta.7"
+        versionCode = 165
+        versionName = "1.20.0-beta.8"
 
         // Local Shell MVP embeds Python only for 64-bit test targets.
         // The regular Umnik app remains Android-native; this is isolated to
