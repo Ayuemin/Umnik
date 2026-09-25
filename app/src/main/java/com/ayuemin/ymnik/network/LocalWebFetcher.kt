@@ -20,8 +20,9 @@ class LocalWebFetcher(context: Context) {
     private val appContext = context.applicationContext
     private val gson = Gson()
 
-    private val safeDns = Dns { hostname ->
-        LocalWebFetchPolicy.resolvePublic(hostname)
+    private val safeDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> =
+            LocalWebFetchPolicy.resolvePublic(hostname)
     }
 
     private val http = OkHttpClient.Builder()
