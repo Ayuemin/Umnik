@@ -355,9 +355,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun setDefaultWebSearchEnabled(enabled: Boolean) {
         prefs.edit().putBoolean("web_search", enabled).apply()
-        val tools = openRouterFeaturePrefs.tools()
+        val tools = openRouterFeaturePrefs.tools().normalized()
         openRouterFeaturePrefs.saveTools(
-            tools.copy(webSearch = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF)
+            tools.copy(
+                webSearch = if (enabled && tools.internetMode != InternetMode.BROWSER) {
+                    WebSearchMode.AUTO
+                } else {
+                    WebSearchMode.OFF
+                }
+            )
         )
         _state.value = _state.value.copy(
             status = if (enabled)
@@ -2450,8 +2456,17 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 webSearchEnabled = _state.value.webSearchEnabled,
                 reasoningEnabled = _state.value.reasoningEnabled,
                 reasoningEffort = _state.value.reasoningEffort,
-                tools = openRouterFeaturePrefs.tools().copy(
-                    webSearch = if (_state.value.webSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+                tools = openRouterFeaturePrefs.tools().normalized().copy(
+                    internetMode = _state.value.internetMode,
+                    webSearchPreset = _state.value.webSearchPreset,
+                    webSearch = if (
+                        _state.value.webSearchEnabled &&
+                        _state.value.internetMode != InternetMode.BROWSER
+                    ) {
+                        WebSearchMode.AUTO
+                    } else {
+                        WebSearchMode.OFF
+                    }
                 ),
                 skillIds = newSkillIds
             )
