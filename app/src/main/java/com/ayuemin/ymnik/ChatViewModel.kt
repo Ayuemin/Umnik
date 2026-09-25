@@ -4298,7 +4298,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun shouldSendAttachmentToChatModel(attachment: PendingAttachment): Boolean =
         !localOnlyChatResource(attachment) && attachmentAllowed(attachment).first
-    private fun chatFileAsAttachment    private fun chatFileAsAttachment(file: ChatFile): PendingAttachment = PendingAttachment(
+    private fun chatFileAsAttachment(file: ChatFile): PendingAttachment = PendingAttachment(
         uri = "chat://${file.id}",
         name = file.name,
         mimeType = file.mimeType,
@@ -4341,7 +4341,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
             .onFailure { _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл чата") }
     }
-    fun removeChatFile    fun removeChatFile(fileId: String) {
+    fun removeChatFile(fileId: String) {
         if (_state.value.isLoading) return
         val chatId = _state.value.currentChatId
         val current = _state.value.chats.firstOrNull { it.id == chatId } ?: return
@@ -4452,7 +4452,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             uri.removePrefix("chat://").takeIf { it.isNotBlank() }?.let(::removeChatFile)
         }
     }
-    fun prepareImageGeneration    fun prepareImageGeneration(): Boolean {
+    fun prepareImageGeneration(): Boolean {
         if (_state.value.isLoading) return false
         val profile = imageConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
