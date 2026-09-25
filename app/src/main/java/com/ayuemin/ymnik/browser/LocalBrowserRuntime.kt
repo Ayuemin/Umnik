@@ -2,8 +2,11 @@ package com.ayuemin.ymnik.browser
 
 import android.annotation.SuppressLint
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Build
+import android.os.SystemClock
 import android.webkit.CookieManager
 import android.webkit.HttpAuthHandler
 import android.webkit.SslErrorHandler
@@ -68,7 +71,14 @@ private data class BrowserSession(
     @Volatile var lastContentHash: Int = 0,
     @Volatile var lastContent: String = "",
     @Volatile var lastViewportContent: String = "",
-    @Volatile var lastElementFingerprints: Map<Int, String> = emptyMap()
+    @Volatile var lastElementFingerprints: Map<Int, String> = emptyMap(),
+    @Volatile var navigationStartedCount: Long = 0L,
+    @Volatile var navigationFinishedCount: Long = 0L,
+    @Volatile var mainFrameErrorCount: Long = 0L,
+    @Volatile var lastMainFrameError: String = "",
+    @Volatile var lastBlockedFollowTarget: String = "",
+    @Volatile var lastBlockedFollowFingerprint: String = "",
+    @Volatile var lastBlockedFollowCandidates: String = ""
 )
 
 object LocalBrowserRuntime {
@@ -77,8 +87,14 @@ object LocalBrowserRuntime {
     private const val FULL_TEXT_LIMIT = 24_000
     private const val FULL_ELEMENT_LIMIT = 120
     private const val DELTA_TEXT_LIMIT = 4_000
-    private const val COMMAND_TIMEOUT_MS = 45_000L
+    private const val LINK_INDEX_LIMIT = 48
+    private const val COMMAND_TIMEOUT_MS = 65_000L
+    private const val NAVIGATION_START_WAIT_MS = 3_000L
+    private const val NAVIGATION_READY_WAIT_MS = 30_000L
+    private const val NAVIGATION_NETWORK_GRACE_MS = 15_000L
+    private const val NAVIGATION_POLL_MS = 125L
     private const val FOLLOW_RENDER_RETRIES = 12
+    private const val FOLLOW_SCORE_MARGIN = 20
 
     private val gson = Gson()
     private val commandMutex = Mutex()
@@ -155,6 +171,7 @@ object LocalBrowserRuntime {
             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
                 val chatId = activeChatId ?: return
                 val session = sessions[chatId] ?: return
+                session.navigationStartedCount += 1L
                 url?.let { session.currentUrl = it }
                 publish(session, "загружает страницу", url.orEmpty())
             }
@@ -162,6 +179,7 @@ object LocalBrowserRuntime {
             override fun onPageFinished(view: WebView, url: String?) {
                 val chatId = activeChatId ?: return
                 val session = sessions[chatId] ?: return
+                session.navigationFinishedCount += 1L
                 url?.let { session.currentUrl = it }
                 publish(session, "читает страницу", url.orEmpty())
             }
@@ -174,6 +192,9 @@ object LocalBrowserRuntime {
                 if (!request.isForMainFrame) return
                 val chatId = activeChatId ?: return
                 sessions[chatId]?.let { session ->
+                    session.mainFrameErrorCount += 1L
+                    session.lastMainFrameError =
+                        error.errorCode.toString() + ":" + error.description.toString().take(160)
                     session.lifecycle = LocalBrowserLifecycle.BLOCKED
                     publish(session, "ошибка загрузки", request.url.toString())
                 }
