@@ -1330,34 +1330,86 @@ object LocalBrowserRuntime {
         })()
     """.trimIndent()
 
-    private fun followScript(target: String): String {
+    private fun followScript(target: String, startRef: Int): String {
         val encodedTarget = gson.toJson(target)
         return """
             (() => {
               const target = $encodedTarget;
+              const reg = window.__umnikRegistry || (window.__umnikRegistry = {
+                next: $startRef,
+                weak: new WeakMap(),
+                refs: new Map()
+              });
+              reg.next = Math.max(reg.next || $startRef, $startRef);
+              const refFor = (el) => {
+                let ref = reg.weak.get(el);
+                if (!ref) {
+                  ref = reg.next++;
+                  reg.weak.set(el, ref);
+                  reg.refs.set(ref, el);
+                }
+                return ref;
+              };
               const norm = (value) => String(value || '')
                 .toLowerCase()
                 .replace(/[^a-z0-9а-яё]+/gi, ' ')
                 .trim();
+              const singular = (value) => {
+                const token = String(value || '');
+                return token.length > 3 && token.endsWith('s') ? token.slice(0, -1) : token;
+              };
+              const tokens = (value) => norm(value).split(' ').filter(Boolean).map(singular);
               const wanted = norm(target);
-              if (!wanted) return JSON.stringify({ok:false, reason:'empty_target', candidates:[]});
+              const wantedTokens = tokens(target);
+              if (!wanted) {
+                return JSON.stringify({
+                  ok:false,
+                  reason:'empty_target',
+                  candidates:[],
+                  next_ref:reg.next
+                });
+              }
               const visible = (el) => {
                 const style = getComputedStyle(el);
                 const rect = el.getBoundingClientRect();
-                return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+                return style.display !== 'none' &&
+                  style.visibility !== 'hidden' &&
+                  rect.width > 0 &&
+                  rect.height > 0;
               };
               const candidates = Array.from(document.querySelectorAll('a[href]'))
-                .filter(el => visible(el) && !el.hasAttribute('download') && /^https?:\/\//i.test(String(el.href || '')))
+                .filter(el =>
+                  visible(el) &&
+                  !el.hasAttribute('download') &&
+                  /^https?:\/\//i.test(String(el.href || ''))
+                )
                 .map(el => {
                   const name = String(
-                    el.getAttribute('aria-label') || el.innerText || el.getAttribute('title') || ''
+                    el.getAttribute('aria-label') ||
+                    el.innerText ||
+                    el.getAttribute('title') ||
+                    ''
                   ).replace(/\s+/g, ' ').trim().slice(0, 180);
-                  return {el, name, key:norm(name), href:String(el.href || '')};
+                  return {
+                    el,
+                    ref:refFor(el),
+                    name,
+                    key:norm(name),
+                    href:String(el.href || '')
+                  };
                 })
                 .filter(item => item.key);
+
               const exact = candidates.filter(item => item.key === wanted);
-              const partial = candidates.filter(item => item.key.includes(wanted) || wanted.includes(item.key));
-              const matches = exact.length > 0 ? exact : partial;
+              const partial = candidates.filter(item =>
+                item.key.includes(wanted) || wanted.includes(item.key)
+              );
+              const overlap = candidates.filter(item => {
+                const itemTokens = tokens(item.key);
+                return wantedTokens.some(token => itemTokens.includes(token));
+              });
+              const matches = exact.length > 0 ? exact : (partial.length > 0 ? partial : overlap);
+
               const unique = [];
               const seenHref = new Set();
               for (const item of matches) {
@@ -1367,16 +1419,98 @@ object LocalBrowserRuntime {
                   unique.push(item);
                 }
               }
-              if (unique.length !== 1) {
+
+              const scoreCandidate = (item) => {
+                let score = item.key === wanted ? 100 : 60;
+                let url;
+                try {
+                  url = new URL(item.href, location.href);
+                } catch (_) {
+                  return score;
+                }
+
+                const pathTokens = url.pathname
+                  .split('/')
+                  .filter(Boolean)
+                  .map(part => norm(decodeURIComponent(part)))
+                  .flatMap(part => part.split(' ').filter(Boolean))
+                  .map(singular);
+
+                const matchedPositions = [];
+                for (const wantedToken of wantedTokens) {
+                  const pos = pathTokens.indexOf(wantedToken);
+                  if (pos >= 0) {
+                    score += 25;
+                    matchedPositions.push(pos);
+                  } else {
+                    score -= 20;
+                  }
+                }
+
+                if (
+                  wantedTokens.length > 0 &&
+                  pathTokens.length >= wantedTokens.length
+                ) {
+                  const suffix = pathTokens.slice(pathTokens.length - wantedTokens.length);
+                  if (suffix.join(' ') === wantedTokens.join(' ')) score += 35;
+                }
+
+                if (matchedPositions.length > 0) {
+                  const lastMatched = Math.max(...matchedPositions);
+                  const trailing = pathTokens.slice(lastMatched + 1)
+                    .filter(token => !wantedTokens.includes(token));
+                  score -= trailing.length * 25;
+                }
+
+                const nameTokens = tokens(item.key);
+                const extraNameTokens = nameTokens.filter(token => !wantedTokens.includes(token));
+                if (item.key !== wanted) score -= Math.min(extraNameTokens.length * 8, 24);
+
+                return score;
+              };
+
+              const ranked = unique
+                .map(item => ({...item, score:scoreCandidate(item)}))
+                .sort((a, b) => b.score - a.score);
+
+              const publicCandidates = ranked.slice(0, 8).map(item => ({
+                ref:item.ref,
+                name:item.name,
+                href:item.href,
+                score:item.score
+              }));
+
+              if (ranked.length === 0) {
                 return JSON.stringify({
                   ok:false,
-                  reason:unique.length === 0 ? 'target_not_found' : 'target_ambiguous',
-                  candidates:unique.slice(0, 8).map(item => ({name:item.name, href:item.href}))
+                  reason:'target_not_found',
+                  candidates:[],
+                  next_ref:reg.next
                 });
               }
-              unique[0].el.scrollIntoView({block:'center', inline:'nearest'});
-              unique[0].el.click();
-              return JSON.stringify({ok:true, href:unique[0].href, name:unique[0].name});
+
+              const winner = ranked[0];
+              const runnerUp = ranked[1];
+              const decisive = !runnerUp || (winner.score - runnerUp.score) >= $FOLLOW_SCORE_MARGIN;
+              if (!decisive) {
+                return JSON.stringify({
+                  ok:false,
+                  reason:'target_ambiguous',
+                  candidates:publicCandidates,
+                  next_ref:reg.next
+                });
+              }
+
+              winner.el.scrollIntoView({block:'center', inline:'nearest'});
+              winner.el.click();
+              return JSON.stringify({
+                ok:true,
+                href:winner.href,
+                name:winner.name,
+                ref:winner.ref,
+                score:winner.score,
+                next_ref:reg.next
+              });
             })()
         """.trimIndent()
     }
