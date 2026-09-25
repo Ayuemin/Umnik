@@ -178,7 +178,7 @@ class LocalShellEngine(
         ))
         add(tool(
             "local_archive",
-            "Распаковать или упаковать ZIP, TAR или TAR.GZ локально.",
+            "Служебно распаковать или упаковать ZIP, TAR или TAR.GZ внутри рабочей области. Для итогового файла пользователю используй local_export.",
             mapOf(
                 "action" to stringProperty("unpack или pack"),
                 "source" to stringProperty("Источник"),
