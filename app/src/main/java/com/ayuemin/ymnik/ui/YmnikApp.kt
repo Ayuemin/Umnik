@@ -2507,6 +2507,14 @@ private fun MessageCard(
                 if (message.text.isNotBlank()) {
                     MessageBody(message.text, content, onGuideLink)
                 }
+                if (message.deliveryState == "interrupted") {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Ответ прерван пользователем. Показанная часть сохранена.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
                     GeneratedFileCard(file, onSave = { onSaveGenerated(file) })
