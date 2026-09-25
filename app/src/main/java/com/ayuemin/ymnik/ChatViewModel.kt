@@ -1055,17 +1055,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 chatFilesRepository.importFile(chatId, pending)
             }
 
-            val chats = _state.value.chats.map { chat ->
-                if (chat.id == chatId) {
-                    chat.copy(
-                        chatFiles = chat.chatFiles.orEmpty() + imported,
-                        updatedAt = System.currentTimeMillis()
-                    )
-                } else {
-                    chat
-                }
+            val chats = chatsRepository.updateChat(chatId) { chat ->
+                chat.copy(
+                    chatFiles = chat.chatFiles.orEmpty() + imported,
+                    updatedAt = System.currentTimeMillis()
+                )
             }
-            chatsRepository.save(chats)
             _state.update { current ->
                 current.copy(
                     chats = chats,
