@@ -251,14 +251,6 @@ fun UmnikV16Root(viewModel: ChatViewModel) {
     UmnikTheme(appState.themeChoice, appState.customThemeColor) {
         Box(Modifier.fillMaxSize()) {
             YmnikApp(viewModel)
-            if (localShellActivity != null && !localShellOpen) {
-                LocalShellProcessPill(
-                    activity = localShellActivity!!,
-                    currentChatId = appState.currentChatId,
-                    onClick = { localShellOpen = true },
-                    modifier = Modifier.align(Alignment.BottomCenter)
-                )
-            }
             if (localShellOpen) {
                 LocalShellFloatingCard(
                     state = hubState,
