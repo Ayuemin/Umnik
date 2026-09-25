@@ -181,7 +181,6 @@ class OpenRouterClient(
         localWebFetch: (suspend (String) -> String)? = null,
         localBrowserOpen: (suspend (String) -> String)? = null,
         localBrowserRead: (suspend (Boolean) -> String)? = null,
-        localBrowserFollow: (suspend (String?, String) -> String)? = null,
         localBrowserClick: (suspend (Int) -> String)? = null,
         localBrowserDownload: (suspend (Int) -> String)? = null,
         localBrowserType: (suspend (Int, String) -> String)? = null,
@@ -218,8 +217,11 @@ class OpenRouterClient(
         val browserToolCallIds = linkedSetOf<String>()
         var browserCanAutoFinish = true
         val promptHasExplicitUrl = Regex("""https?://\S+""", RegexOption.IGNORE_CASE).containsMatchIn(prompt)
-        val initialBrowserTool = requiredBrowserTool
-            ?.takeIf { promptHasExplicitUrl && it == "local_browser_open" }
+        val initialBrowserTool = if (promptHasExplicitUrl && requiredBrowserTool != null) {
+            "local_browser_open"
+        } else {
+            null
+        }
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
@@ -438,19 +440,6 @@ class OpenRouterClient(
                             callback(runCatching { args.get("full")?.asBoolean ?: false }.getOrDefault(false))
                         }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось прочитать Browser")))
-                        }
-                    }
-                    "local_browser_follow" -> {
-                        val callback = localBrowserFollow
-                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Local Browser недоступен"))
-                        else runCatching {
-                            val args = gson.fromJson(argsRaw, JsonObject::class.java)
-                            val target = args.get("target")?.asString.orEmpty().trim()
-                            require(target.isNotBlank()) { "Не указана ссылка для перехода" }
-                            val url = args.get("url")?.asString?.trim()?.takeIf { it.isNotBlank() }
-                            callback(url, target)
-                        }.getOrElse {
-                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось перейти по ссылке")))
                         }
                     }
                     "local_browser_click" -> {
