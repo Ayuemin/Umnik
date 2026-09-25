@@ -755,6 +755,7 @@ class OpenRouterHubController(
                 localShellClient.cancelActive()
             }
             val startedAt = System.currentTimeMillis()
+            var lastKeepAliveRefreshAt = 0L
             mutableState.value = mutableState.value.copy(
                 loading = true,
                 operation = "Локальный Shell выполняет задачу…",
@@ -815,7 +816,11 @@ class OpenRouterHubController(
                             turn = progress.turn,
                             toolCalls = progress.toolCalls
                         )
-                        runCatching { RequestKeepAliveService.update(context) }
+                        val now = System.currentTimeMillis()
+                        if (now - lastKeepAliveRefreshAt >= 30_000L) {
+                            lastKeepAliveRefreshAt = now
+                            runCatching { RequestKeepAliveService.update(context) }
+                        }
                         mutableState.value = mutableState.value.copy(
                             localShellStatus = progress.label,
                             localShellTurns = progress.turn,
@@ -827,8 +832,21 @@ class OpenRouterHubController(
                 if (cancelRequested.get()) error("Локальный Shell остановлен пользователем")
                 Triple(result, engine.exportedFiles(), imported.size)
             }.onSuccess { (result, generated, importedCount) ->
-                appendHubExchange(originChatId, "[Локальный Shell]\n" + prompt, result.text, generated)
                 val elapsedMs = System.currentTimeMillis() - startedAt
+                appendHubExchange(
+                    chatId = originChatId,
+                    userText = "[Локальный Shell]\n" + prompt,
+                    assistantText = result.text,
+                    files = generated,
+                    modelId = result.model ?: model,
+                    costUsd = result.costUsd,
+                    inputTokens = result.inputTokens,
+                    outputTokens = result.outputTokens,
+                    responseDurationMs = elapsedMs,
+                    attachmentCount = importedCount,
+                    connectionName = profile.name,
+                    requestId = "local-shell:" + UUID.randomUUID().toString()
+                )
                 DiagnosticLog.record(
                     context,
                     "LOCAL_SHELL",
@@ -1374,14 +1392,41 @@ class OpenRouterHubController(
         AsyncJobEvents.notifyChanged()
     }
 
-    private fun appendHubExchange(chatId: String, userText: String, assistantText: String, files: List<GeneratedFile>) {
+    private fun appendHubExchange(
+        chatId: String,
+        userText: String,
+        assistantText: String,
+        files: List<GeneratedFile>,
+        modelId: String? = null,
+        costUsd: Double? = null,
+        inputTokens: Int? = null,
+        outputTokens: Int? = null,
+        responseDurationMs: Long? = null,
+        attachmentCount: Int? = null,
+        connectionName: String? = null,
+        requestId: String? = null
+    ) {
         val all = chats.list()
         val marker = "hub:${UUID.randomUUID()}"
         val next = all.map { chat ->
             if (chat.id == chatId) chat.copy(
                 messages = chat.messages +
                     ChatMessage(UUID.randomUUID().toString(), "user", userText) +
-                    ChatMessage(UUID.randomUUID().toString(), "assistant", assistantText, generatedFiles = files, deliveryState = marker),
+                    ChatMessage(
+                        id = UUID.randomUUID().toString(),
+                        role = "assistant",
+                        text = assistantText,
+                        generatedFiles = files,
+                        deliveryState = marker,
+                        modelId = modelId,
+                        costUsd = costUsd,
+                        inputTokens = inputTokens,
+                        outputTokens = outputTokens,
+                        responseDurationMs = responseDurationMs,
+                        attachmentCount = attachmentCount,
+                        connectionName = connectionName,
+                        requestId = requestId
+                    ),
                 updatedAt = System.currentTimeMillis()
             ) else chat
         }
