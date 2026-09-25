@@ -96,6 +96,14 @@ object LocalBrowserRuntime {
     private const val FOLLOW_RENDER_RETRIES = 12
     private const val FOLLOW_SCORE_MARGIN = 20
 
+    private data class NavigationWaitResult(
+        val started: Boolean,
+        val completed: Boolean,
+        val currentUrl: String,
+        val reason: String? = null,
+        val networkGraceUsed: Boolean = false
+    )
+
     private val gson = Gson()
     private val commandMutex = Mutex()
     private val sessions = ConcurrentHashMap<String, BrowserSession>()
@@ -637,34 +645,201 @@ object LocalBrowserRuntime {
 
     private suspend fun load(webView: WebView, url: String) {
         val before = currentUrl(webView)
+        val session = activeChatId?.let(sessions::get)
+        val startedBefore = session?.navigationStartedCount ?: 0L
+        val finishedBefore = session?.navigationFinishedCount ?: 0L
+        val errorsBefore = session?.mainFrameErrorCount ?: 0L
         withContext(Dispatchers.Main.immediate) {
             webView.stopLoading()
             webView.loadUrl(url)
         }
-        // about:blank is already "complete" on a newly attached WebView. Wait until
-        // the requested navigation has actually started before accepting readyState.
-        waitForNavigationStart(webView, before, url)
-        waitForReady(webView)
-        delay(600)
-    }
-
-    private suspend fun waitForNavigationStart(webView: WebView, beforeUrl: String, targetUrl: String) {
-        val before = beforeUrl.substringBefore('#')
-        val target = targetUrl.substringBefore('#')
-        repeat(48) {
-            delay(125)
-            val current = currentUrl(webView).substringBefore('#')
-            val isWebPage = current.startsWith("http://") || current.startsWith("https://")
-            val reachedTarget = current == target
-            val leftPreviousDocument = current.isNotBlank() && current != "about:blank" && current != before
-            if (isWebPage && (reachedTarget || leftPreviousDocument)) return
+        if (session != null) {
+            val navigation = waitForNavigation(
+                session = session,
+                webView = webView,
+                beforeUrl = before,
+                expectedUrl = url,
+                startedBefore = startedBefore,
+                finishedBefore = finishedBefore,
+                errorsBefore = errorsBefore
+            )
+            if (!navigation.completed) {
+                session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                error(
+                    when (navigation.reason) {
+                        "network_unavailable" -> "Сеть временно недоступна во время открытия страницы"
+                        "network_error" -> "WebView сообщил об ошибке сети: " + session.lastMainFrameError
+                        "navigation_not_started" -> "Переход на страницу не начался"
+                        else -> "Страница не успела загрузиться: " + (navigation.reason ?: "navigation_timeout")
+                    }
+                )
+            }
+        } else {
+            waitForReady(webView)
         }
+        delay(350)
     }
 
-    private suspend fun settleAfterAction(webView: WebView, beforeUrl: String) {
-        delay(350)
-        waitForReady(webView)
-        delay(350)
+    private suspend fun settleAfterAction(
+        session: BrowserSession,
+        webView: WebView,
+        beforeUrl: String,
+        expectedUrl: String?,
+        startedBefore: Long,
+        finishedBefore: Long,
+        errorsBefore: Long
+    ): NavigationWaitResult = waitForNavigation(
+        session = session,
+        webView = webView,
+        beforeUrl = beforeUrl,
+        expectedUrl = expectedUrl,
+        startedBefore = startedBefore,
+        finishedBefore = finishedBefore,
+        errorsBefore = errorsBefore
+    )
+
+    private suspend fun waitForNavigation(
+        session: BrowserSession,
+        webView: WebView,
+        beforeUrl: String,
+        expectedUrl: String?,
+        startedBefore: Long,
+        finishedBefore: Long,
+        errorsBefore: Long
+    ): NavigationWaitResult {
+        val beforeDocument = beforeUrl.substringBefore('#')
+        val expectedDocument = expectedUrl.orEmpty().substringBefore('#')
+        val startDeadline = SystemClock.elapsedRealtime() + NAVIGATION_START_WAIT_MS
+        var current = currentUrl(webView)
+
+        while (SystemClock.elapsedRealtime() < startDeadline) {
+            if (session.mainFrameErrorCount > errorsBefore) {
+                return NavigationWaitResult(
+                    started = session.navigationStartedCount > startedBefore,
+                    completed = false,
+                    currentUrl = current,
+                    reason = "network_error"
+                )
+            }
+            current = currentUrl(webView)
+            val currentDocument = current.substringBefore('#')
+            val callbackStarted = session.navigationStartedCount > startedBefore
+            val urlMoved = currentDocument.isNotBlank() &&
+                currentDocument != "about:blank" &&
+                currentDocument != beforeDocument
+            val reachedExpected = expectedDocument.isNotBlank() &&
+                currentDocument == expectedDocument &&
+                (expectedDocument != beforeDocument || callbackStarted)
+            if (callbackStarted || urlMoved || reachedExpected) break
+            delay(NAVIGATION_POLL_MS)
+        }
+
+        current = currentUrl(webView)
+        val started = session.navigationStartedCount > startedBefore ||
+            current.substringBefore('#').let { it.isNotBlank() && it != "about:blank" && it != beforeDocument }
+
+        if (!started) {
+            DiagnosticLog.record(
+                webView.context.applicationContext,
+                "LOCAL_BROWSER_NAV",
+                "session=" + session.sessionId.take(8) +
+                    "; result=navigation_not_started" +
+                    "; before=" + beforeUrl.take(180) +
+                    "; expected=" + expectedUrl.orEmpty().take(180)
+            )
+            return NavigationWaitResult(
+                started = false,
+                completed = false,
+                currentUrl = current,
+                reason = "navigation_not_started"
+            )
+        }
+
+        var deadline = SystemClock.elapsedRealtime() + NAVIGATION_READY_WAIT_MS
+        var networkGraceUsed = false
+        var stableReady = 0
+
+        while (SystemClock.elapsedRealtime() < deadline) {
+            if (session.mainFrameErrorCount > errorsBefore) {
+                return NavigationWaitResult(
+                    started = true,
+                    completed = false,
+                    currentUrl = currentUrl(webView),
+                    reason = "network_error",
+                    networkGraceUsed = networkGraceUsed
+                )
+            }
+
+            if (!hasUsableNetwork(webView) && !networkGraceUsed) {
+                networkGraceUsed = true
+                deadline += NAVIGATION_NETWORK_GRACE_MS
+                DiagnosticLog.record(
+                    webView.context.applicationContext,
+                    "LOCAL_BROWSER_NAV",
+                    "session=" + session.sessionId.take(8) +
+                        "; network_grace_ms=" + NAVIGATION_NETWORK_GRACE_MS
+                )
+            }
+
+            current = currentUrl(webView)
+            val currentDocument = current.substringBefore('#')
+            val callbackStarted = session.navigationStartedCount > startedBefore
+            val callbackFinished = session.navigationFinishedCount > finishedBefore
+            val urlMoved = currentDocument.isNotBlank() &&
+                currentDocument != "about:blank" &&
+                currentDocument != beforeDocument
+            val state = runCatching {
+                evaluatePrimitive(webView, "document.readyState")
+            }.getOrDefault("")
+            val ready = state == "interactive" || state == "complete"
+
+            stableReady = if (ready && (callbackStarted || urlMoved)) stableReady + 1 else 0
+            val spaLikeMove = urlMoved && !callbackStarted
+            if (stableReady >= 2 && (callbackFinished || spaLikeMove || urlMoved)) {
+                DiagnosticLog.record(
+                    webView.context.applicationContext,
+                    "LOCAL_BROWSER_NAV",
+                    "session=" + session.sessionId.take(8) +
+                        "; result=complete" +
+                        "; url=" + current.take(180) +
+                        "; networkGrace=" + networkGraceUsed
+                )
+                return NavigationWaitResult(
+                    started = true,
+                    completed = true,
+                    currentUrl = current,
+                    networkGraceUsed = networkGraceUsed
+                )
+            }
+            delay(250)
+        }
+
+        val networkAvailable = hasUsableNetwork(webView)
+        val reason = if (networkAvailable) "navigation_timeout" else "network_unavailable"
+        DiagnosticLog.record(
+            webView.context.applicationContext,
+            "LOCAL_BROWSER_NAV",
+            "session=" + session.sessionId.take(8) +
+                "; result=" + reason +
+                "; url=" + currentUrl(webView).take(180) +
+                "; networkGrace=" + networkGraceUsed
+        )
+        return NavigationWaitResult(
+            started = true,
+            completed = false,
+            currentUrl = currentUrl(webView),
+            reason = reason,
+            networkGraceUsed = networkGraceUsed
+        )
+    }
+
+    private fun hasUsableNetwork(webView: WebView): Boolean {
+        val manager = webView.context.applicationContext
+            .getSystemService(ConnectivityManager::class.java)
+            ?: return true
+        val network = manager.activeNetwork ?: return false
+        val capabilities = manager.getNetworkCapabilities(network) ?: return false
+        return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
     private suspend fun waitForReady(webView: WebView) {
