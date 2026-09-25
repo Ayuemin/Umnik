@@ -172,6 +172,7 @@ import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.WavRecorder
 import com.ayuemin.ymnik.browser.LocalBrowserActivity
+import com.ayuemin.ymnik.browser.LocalBrowserLifecycle
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
@@ -273,7 +274,6 @@ fun YmnikApp(viewModel: ChatViewModel) {
             }
         ) { padding ->
             Box(Modifier.fillMaxSize().padding(padding)) {
-                LocalBrowserHost()
                 when (screen) {
                     0 -> ChatScreen(
                         state = state,
@@ -287,6 +287,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
                     1 -> SkillsScreen(state, viewModel, onBack = { screen = 0 })
                     else -> SettingsScreen(state, viewModel, onBack = { screen = 0 })
                 }
+                LocalBrowserHost()
             }
         }
     }
@@ -825,7 +826,12 @@ onBranch = if (message.role == "assistant") {
                 }
 
                 browserActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
-                    LocalBrowserInlineBanner(activity)
+                    LocalBrowserInlineBanner(
+                        activity = activity,
+                        onShowPage = { LocalBrowserRuntime.showUserControl(activity.chatId) },
+                        onConfirm = { LocalBrowserRuntime.confirmPendingUserAction(activity.chatId) },
+                        onCancel = { LocalBrowserRuntime.cancelPendingUserAction(activity.chatId) }
+                    )
                 }
 
                 shellActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
@@ -1528,32 +1534,66 @@ private fun ShellBackgroundOperationBanner(
 }
 
 @Composable
-private fun LocalBrowserInlineBanner(activity: LocalBrowserActivity) {
+private fun LocalBrowserInlineBanner(
+    activity: LocalBrowserActivity,
+    onShowPage: () -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+        border = BorderStroke(
+            1.dp,
+            if (waiting) MaterialTheme.colorScheme.primary.copy(alpha = 0.48f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+        )
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp)
         ) {
-            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(
-                    "Браузер · " + activity.host,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    activity.status,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (waiting) {
+                    Icon(
+                        Icons.Outlined.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (waiting) "Требуется действие · " + activity.host else "Браузер · " + activity.host,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        activity.attentionMessage ?: activity.status,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (waiting) 2 else 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            if (waiting) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onShowPage) { Text("Посмотреть страницу") }
+                    TextButton(onClick = onCancel) { Text("Отмена") }
+                    if (activity.attentionKind == "CONFIRM_ACTION") {
+                        Button(onClick = onConfirm) { Text("Подтвердить") }
+                    }
+                }
             }
         }
     }
