@@ -4694,12 +4694,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         val nextMessages = before + user
         val titleAttachments = pending.map { it.name }
-        val title = if (
-            before.isEmpty() &&
-            currentChat?.title == "Новый чат" &&
-            currentChat.titlePinned.not()
-        ) {
-            makeChatTitle(clean, titleAttachments)
+        val title = if (currentChat != null && !currentChat.titlePinned && currentSpecialist == null) {
+            automaticChatTitle(
+                text = clean,
+                attachmentNames = titleAttachments,
+                currentTitle = currentChat.title
+            )
         } else null
         val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
         chatsRepository.save(nextChats)
@@ -5222,7 +5222,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             deliveryState = "pending"
         )
         val nextMessages = before + user
-        val title = if (before.isEmpty()) makeChatTitle(prompt, pending.map { it.name }) else null
+        val imageChat = _state.value.chats.firstOrNull { it.id == chatId }
+        val title = if (imageChat != null && !imageChat.titlePinned) {
+            automaticChatTitle(
+                text = prompt,
+                attachmentNames = pending.map { it.name },
+                currentTitle = imageChat.title
+            )
+        } else null
         val nextChats = replaceChatMessages(_state.value.chats, chatId, nextMessages, title)
         chatsRepository.save(nextChats)
 
@@ -6022,6 +6029,40 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chats = chats,
             messages = current?.messages ?: emptyList()
         )
+    }
+
+    private fun automaticChatTitle(
+        text: String,
+        attachmentNames: List<String>,
+        currentTitle: String
+    ): String? {
+        val normalized = text.replace(Regex("\\s+"), " ").trim()
+        val candidate = when {
+            isUsefulAutoTitleMessage(normalized) -> makeChatTitle(normalized, attachmentNames)
+            currentTitle == "Новый чат" && normalized.isBlank() && attachmentNames.isNotEmpty() ->
+                makeChatTitle("", attachmentNames)
+            else -> return null
+        }
+        return candidate.takeIf { it.isNotBlank() && it != currentTitle }
+    }
+
+    private fun isUsefulAutoTitleMessage(text: String): Boolean {
+        if (text.isBlank()) return false
+        val normalized = text
+            .lowercase()
+            .trim()
+            .trim('.', ',', '!', '?', ':', ';', '…', '-', '—')
+            .replace(Regex("\\s+"), " ")
+
+        val shortReplies = setOf(
+            "да", "нет", "ок", "окей", "хорошо", "понял", "понятно", "спасибо",
+            "готово", "сделано", "делаем", "запускай", "продолжай", "дальше",
+            "зелёный", "зеленый", "красный", "как идёт", "как идет", "как дела"
+        )
+        if (normalized in shortReplies) return false
+
+        val words = normalized.split(' ').filter { it.any(Char::isLetterOrDigit) }
+        return words.size >= 3 || normalized.length >= 18
     }
 
     private fun makeChatTitle(text: String, attachmentNames: List<String>): String {
