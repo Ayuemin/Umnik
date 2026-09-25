@@ -42,7 +42,7 @@ class LocalShellEngine(
 ) {
     private val gson = Gson()
     private val root = File(context.cacheDir, "local-shell/" + runId).apply { mkdirs() }.canonicalFile
-    private val exports = mutableListOf<GeneratedFile>()
+    private val exports = linkedMapOf<String, GeneratedFile>()
     private val http = OkHttpClient.Builder()
         .dns(object : Dns {
             override fun lookup(hostname: String): List<InetAddress> {
@@ -110,7 +110,7 @@ class LocalShellEngine(
         return items.joinToString("\n") { "- input/" + it.name + " (" + it.length() + " B)" }
     }
 
-    fun exportedFiles(): List<GeneratedFile> = exports.toList()
+    fun exportedFiles(): List<GeneratedFile> = exports.values.toList()
 
     fun toolDefinitions(): JsonArray = JsonArray().apply {
         add(tool(
@@ -209,7 +209,7 @@ class LocalShellEngine(
         ))
         add(tool(
             "local_export",
-            "Подготовить итоговый ZIP для пользователя. Вызывай перед финальным ответом, когда нужно вернуть изменённый проект или папку.",
+            "Опубликовать итоговый ZIP для пользователя. Это пользовательский результат, а не служебная упаковка: для промежуточных архивов используй local_archive. Повторный экспорт с тем же именем заменяет предыдущую версию результата.",
             mapOf(
                 "source" to stringProperty("Папка или файл внутри рабочей области"),
                 "filename" to stringProperty("Имя итогового ZIP")
@@ -496,8 +496,16 @@ class LocalShellEngine(
         val stored = File(generatedDir, UUID.randomUUID().toString() + "_" + filename)
         temp.copyTo(stored, true)
         val generated = GeneratedFile(UUID.randomUUID().toString(), filename, "application/zip", stored.absolutePath, stored.length())
-        exports += generated
-        return ok(mapOf("filename" to filename, "bytes" to generated.size, "ready_for_user" to true))
+        exports.remove(filename)?.let { previous ->
+            if (previous.localPath != generated.localPath) runCatching { File(previous.localPath).delete() }
+        }
+        exports[filename] = generated
+        return ok(mapOf(
+            "filename" to filename,
+            "bytes" to generated.size,
+            "ready_for_user" to true,
+            "export_state" to "READY_TO_FINISH"
+        ))
     }
 
     private fun unzip(source: File, destination: File) {
