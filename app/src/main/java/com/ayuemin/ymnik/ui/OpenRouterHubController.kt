@@ -497,8 +497,6 @@ class OpenRouterHubController(
                     status = "Batch принят · ${job.remoteId}"
                 )
                 AsyncJobEvents.markHubToolFinished(originChatId, "batch")
-                AsyncJobEvents.markLocalShellFinished(originChatId)
-                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 AsyncJobEvents.markHubToolFinished(originChatId, "batch")
@@ -860,6 +858,8 @@ class OpenRouterHubController(
                         "Локальный Shell завершил работу · файлов: " + generated.size
                     }
                 )
+                AsyncJobEvents.markLocalShellFinished(originChatId)
+                runCatching { RequestKeepAliveService.update(context) }
                 AsyncJobEvents.notifyChanged()
             }.onFailure { error ->
                 val message = if (cancelRequested.get()) {
