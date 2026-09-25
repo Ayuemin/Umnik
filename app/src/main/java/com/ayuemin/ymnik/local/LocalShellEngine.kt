@@ -44,13 +44,15 @@ class LocalShellEngine(
     private val root = File(context.cacheDir, "local-shell/" + runId).apply { mkdirs() }.canonicalFile
     private val exports = mutableListOf<GeneratedFile>()
     private val http = OkHttpClient.Builder()
-        .dns { hostname ->
-            val addresses = Dns.SYSTEM.lookup(hostname)
-            require(addresses.isNotEmpty() && addresses.none(::isPrivateNetworkAddress)) {
-                "Доступ к локальным и служебным сетевым адресам запрещён"
+        .dns(object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> {
+                val addresses = Dns.SYSTEM.lookup(hostname)
+                require(addresses.isNotEmpty() && addresses.none(::isPrivateNetworkAddress)) {
+                    "Доступ к локальным и служебным сетевым адресам запрещён"
+                }
+                return addresses
             }
-            addresses
-        }
+        })
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
