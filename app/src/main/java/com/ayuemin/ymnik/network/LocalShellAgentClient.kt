@@ -70,6 +70,7 @@ class LocalShellAgentClient(private val context: Context) {
         routing: ProviderRoutingSettings = ProviderRoutingSettings(),
         reasoningEnabled: Boolean = false,
         reasoningEffort: String? = null,
+        maxTurns: Int = DEFAULT_MAX_TURNS,
         onProgress: (Progress) -> Unit = {},
         baseUrl: String = DEFAULT_BASE_URL
     ): Result = withContext(Dispatchers.IO) {
@@ -79,6 +80,8 @@ class LocalShellAgentClient(private val context: Context) {
         }
 
         val requestRunId = UUID.randomUUID().toString()
+        val safeMaxTurns = maxTurns.coerceIn(1, MAX_USER_TURNS)
+        val maxToolCalls = (safeMaxTurns.toLong() * 4L).coerceIn(MIN_TOOL_CALLS.toLong(), MAX_TOOL_CALLS.toLong()).toInt()
         var turn = 0
         var toolCalls = 0
         var totalInputTokens = 0
@@ -86,9 +89,11 @@ class LocalShellAgentClient(private val context: Context) {
         var totalCost = 0.0
         var costObserved = false
         var returnedModel: String? = null
+        var lastToolSignature: String? = null
+        var repeatedToolSignature = 0
 
         try {
-            while (turn < MAX_TURNS) {
+            while (turn < safeMaxTurns) {
                 turn += 1
                 onProgress(Progress("Модель планирует следующий локальный шаг", turn, toolCalls))
 
@@ -168,8 +173,8 @@ class LocalShellAgentClient(private val context: Context) {
                 messages.add(assistant.deepCopy())
                 for (element in calls) {
                     if (!element.isJsonObject) continue
-                    if (toolCalls >= MAX_TOOL_CALLS) {
-                        error("Локальный Shell достиг лимита $MAX_TOOL_CALLS вызовов инструментов")
+                    if (toolCalls >= maxToolCalls) {
+                        error("Локальный Shell достиг лимита $maxToolCalls вызовов инструментов")
                     }
                     val call = element.asJsonObject
                     val callId = call.string("id") ?: UUID.randomUUID().toString()
@@ -177,8 +182,21 @@ class LocalShellAgentClient(private val context: Context) {
                     val name = function?.string("name").orEmpty()
                     val args = function?.string("arguments") ?: "{}"
                     toolCalls += 1
-                    onProgress(Progress("Локально: " + toolLabel(name), turn, toolCalls))
-                    val resultText = engine.execute(name, args)
+                    onProgress(Progress(toolLabel(name), turn, toolCalls))
+                    val signature = name + "\n" + args.trim()
+                    if (signature == lastToolSignature) repeatedToolSignature += 1 else {
+                        lastToolSignature = signature
+                        repeatedToolSignature = 1
+                    }
+                    val resultText = if (repeatedToolSignature >= 3) {
+                        DiagnosticLog.record(context, "LOCAL_SHELL_WATCHDOG", "Repeated identical tool call blocked; tool=$name; turn=$turn")
+                        gson.toJson(mapOf(
+                            "ok" to false,
+                            "warning" to "Одинаковое локальное действие повторено несколько раз. Оно не выполнено снова: пересмотри план и выбери следующий полезный шаг."
+                        ))
+                    } else {
+                        engine.execute(name, args)
+                    }
                     messages.add(JsonObject().apply {
                         addProperty("role", "tool")
                         addProperty("tool_call_id", callId)
@@ -186,7 +204,7 @@ class LocalShellAgentClient(private val context: Context) {
                     })
                 }
             }
-            error("Локальный Shell достиг лимита $MAX_TURNS модельных шагов без завершения")
+            error("Локальный Shell достиг лимита $safeMaxTurns модельных шагов без завершения")
         } finally {
             activeCall = null
         }
@@ -225,18 +243,11 @@ class LocalShellAgentClient(private val context: Context) {
     }
 
     private fun toolLabel(name: String): String = when (name) {
-        "local_list" -> "смотрю файлы"
-        "local_read" -> "читаю файл"
-        "local_search" -> "ищу по проекту"
-        "local_write" -> "записываю файл"
-        "local_replace" -> "исправляю файл"
-        "local_command" -> "выполняю команду"
-        "local_python" -> "запускаю Python"
-        "local_archive" -> "работаю с архивом"
-        "local_git" -> "работаю с Git"
-        "local_fetch" -> "получаю данные из сети"
-        "local_export" -> "готовлю результат"
-        else -> name.ifBlank { "выполняю инструмент" }
+        "local_list", "local_read", "local_search", "local_archive", "local_git", "local_fetch" -> "Изучаю проект"
+        "local_write", "local_replace" -> "Исправляю файлы"
+        "local_command", "local_python" -> "Запускаю проверки"
+        "local_export" -> "Готовлю результат"
+        else -> "Выполняю локальное действие"
     }
 
     private fun apiError(code: Int, body: String): String {
@@ -264,7 +275,9 @@ class LocalShellAgentClient(private val context: Context) {
 
     companion object {
         private const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-        private const val MAX_TURNS = 24
-        private const val MAX_TOOL_CALLS = 48
+        private const val DEFAULT_MAX_TURNS = 24
+        private const val MAX_USER_TURNS = 1000
+        private const val MIN_TOOL_CALLS = 64
+        private const val MAX_TOOL_CALLS = 4000
     }
 }
