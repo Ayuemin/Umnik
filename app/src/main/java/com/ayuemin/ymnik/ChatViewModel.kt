@@ -5201,9 +5201,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 localBrowserRead = if (localBrowserToolsEnabled) {
                                     { full -> LocalBrowserRuntime.read(chatId, full) }
                                 } else null,
-                                localBrowserFollow = if (localBrowserToolsEnabled) {
-                                    { url, target -> LocalBrowserRuntime.follow(chatId, url, target) }
-                                } else null,
                                 localBrowserClick = if (localBrowserToolsEnabled) {
                                     { ref -> LocalBrowserRuntime.click(chatId, ref) }
                                 } else null,
