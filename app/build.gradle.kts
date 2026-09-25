@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.3 — Local Shell update
+// Umnik v1.20.0-beta.3 — signed Local Shell update
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
