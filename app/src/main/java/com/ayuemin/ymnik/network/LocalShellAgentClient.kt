@@ -80,7 +80,7 @@ class LocalShellAgentClient(private val context: Context) {
         }
 
         val requestRunId = UUID.randomUUID().toString()
-        val safeMaxTurns = maxTurns.coerceIn(1, MAX_USER_TURNS)
+        val safeMaxTurns = maxTurns.coerceAtLeast(1)
         val maxToolCalls = (safeMaxTurns.toLong() * 4L).coerceIn(MIN_TOOL_CALLS.toLong(), MAX_TOOL_CALLS.toLong()).toInt()
         var turn = 0
         var toolCalls = 0
@@ -380,9 +380,8 @@ class LocalShellAgentClient(private val context: Context) {
     companion object {
         private const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
         private const val DEFAULT_MAX_TURNS = 24
-        private const val MAX_USER_TURNS = 1000
         private const val MIN_TOOL_CALLS = 64
-        private const val MAX_TOOL_CALLS = 4000
+        private const val MAX_TOOL_CALLS = 100_000
         private const val CONTEXT_COMPACTION_TRIGGER_CHARS = 140_000
         private const val MIN_TURNS_BETWEEN_COMPACTIONS = 8
         private const val MAX_COMPACTION_SOURCE_CHARS = 260_000
