@@ -72,6 +72,7 @@ class LocalShellAgentClient(private val context: Context) {
         reasoningEffort: String? = null,
         maxTurns: Int = DEFAULT_MAX_TURNS,
         onProgress: (Progress) -> Unit = {},
+        externalGuidance: () -> List<String> = { emptyList() },
         baseUrl: String = DEFAULT_BASE_URL
     ): Result = withContext(Dispatchers.IO) {
         var messages = JsonArray().apply {
@@ -95,6 +96,25 @@ class LocalShellAgentClient(private val context: Context) {
 
         try {
             while (turn < safeMaxTurns) {
+                val guidance = externalGuidance()
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                if (guidance.isNotEmpty()) {
+                    val note = guidance.joinToString("\n\n") { "- " + it }
+                    messages.add(message(
+                        "system",
+                        "===== ДОПОЛНИТЕЛЬНОЕ УКАЗАНИЕ ИЗ ОСНОВНОГО ЧАТА =====\n" +
+                            note +
+                            "\n===== КОНЕЦ ДОПОЛНИТЕЛЬНОГО УКАЗАНИЯ ====="
+                    ))
+                    onProgress(Progress("Принял уточнение из чата", turn, toolCalls))
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_GUIDANCE",
+                        "accepted=" + guidance.size + "; chars=" + note.length + "; turn=" + turn
+                    )
+                }
+
                 val shouldCompact = turn > 0 &&
                     turn < safeMaxTurns - 1 &&
                     turn - lastCompactionTurn >= MIN_TURNS_BETWEEN_COMPACTIONS &&
