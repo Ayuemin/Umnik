@@ -1,6 +1,7 @@
 package com.ayuemin.ymnik.data
 
 import android.content.Context
+import com.ayuemin.ymnik.model.InternetMode
 import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
@@ -20,13 +21,18 @@ class OpenRouterFeaturePrefs(context: Context) {
         value.copy(
             webSearch = runCatching { value.webSearch }.getOrNull() ?: WebSearchMode.OFF,
             webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
+            internetMode = runCatching { value.internetMode }.getOrNull() ?: InternetMode.AUTO,
             webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO,
             webFetch = false,
             shell = false
         )
     }
     fun saveTools(value: ServerToolSettings) {
-        val safe = value.copy(webFetch = false, shell = false)
+        val safe = value.copy(
+            internetMode = runCatching { value.internetMode }.getOrNull() ?: InternetMode.AUTO,
+            webFetch = false,
+            shell = false
+        )
         prefs.edit().putString("tools", gson.toJson(safe)).apply()
     }
 
