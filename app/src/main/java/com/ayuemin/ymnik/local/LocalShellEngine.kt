@@ -452,7 +452,7 @@ class LocalShellEngine(
         }
         val temp = resolve("exports/" + filename)
         temp.parentFile?.mkdirs()
-        zip(source, temp)
+        zip(source, temp, cleanRuntimeArtifacts = true)
         val generatedDir = File(context.filesDir, "generated").apply { mkdirs() }
         val stored = File(generatedDir, UUID.randomUUID().toString() + "_" + filename)
         temp.copyTo(stored, true)
@@ -475,20 +475,31 @@ class LocalShellEngine(
         }
     }
 
-    private fun zip(source: File, destination: File) {
+    private fun zip(source: File, destination: File, cleanRuntimeArtifacts: Boolean = false) {
         if (destination.exists()) destination.delete()
         ZipOutputStream(BufferedOutputStream(FileOutputStream(destination))).use { output ->
             val base = if (source.isDirectory) source else source.parentFile ?: root
-            val files = if (source.isDirectory) source.walkTopDown() else sequenceOf(source)
+            val files = if (source.isDirectory) {
+                source.walkTopDown().onEnter { dir ->
+                    !cleanRuntimeArtifacts || dir == source || dir.name !in RUNTIME_CACHE_DIRS
+                }
+            } else sequenceOf(source)
             files.forEach { file ->
                 if (file == source && source.isDirectory) return@forEach
                 if (file.canonicalFile == destination.canonicalFile) return@forEach
+                if (cleanRuntimeArtifacts && isRuntimeArtifact(file)) return@forEach
                 val name = file.relativeTo(base).invariantSeparatorsPath + if (file.isDirectory) "/" else ""
                 output.putNextEntry(ZipEntry(name))
                 if (file.isFile) file.inputStream().use { it.copyTo(output) }
                 output.closeEntry()
             }
         }
+    }
+
+    private fun isRuntimeArtifact(file: File): Boolean {
+        if (file.name in RUNTIME_CACHE_DIRS) return true
+        val lower = file.name.lowercase()
+        return file.isFile && (lower.endsWith(".pyc") || lower.endsWith(".pyo"))
     }
 
     private fun untar(source: File, destination: File, gz: Boolean) {
@@ -650,6 +661,7 @@ class LocalShellEngine(
     companion object {
         private val PYTHON_LOCK = Any()
         private val ALLOWED_TOYBOX = setOf("ls", "find", "grep", "cat", "head", "tail", "wc", "sort", "uniq", "cut", "sha256sum", "diff", "stat")
+        private val RUNTIME_CACHE_DIRS = setOf("__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache")
         private const val MAX_ATTACHMENTS = 10
         private const val MAX_SINGLE_FILE_BYTES = 32L * 1024L * 1024L
         private const val MAX_TEXT_FILE_BYTES = 2L * 1024L * 1024L
