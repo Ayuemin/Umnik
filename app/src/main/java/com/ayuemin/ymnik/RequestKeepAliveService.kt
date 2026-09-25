@@ -38,7 +38,8 @@ class RequestKeepAliveService : Service() {
 
         val active = RequestExecutionManager.snapshots.value
         val shell = AsyncJobEvents.shellActivity.value
-        if (active.isEmpty() && shell == null) {
+        val localShell = AsyncJobEvents.localShellActivity.value
+        if (active.isEmpty() && shell == null && localShell == null) {
             DiagnosticLog.record(applicationContext, "SERVICE", "Foreground service has no active work; stopping orphan service")
             stopSelf(startId)
             return START_NOT_STICKY
@@ -50,15 +51,17 @@ class RequestKeepAliveService : Service() {
             this, 1, Intent(this, RequestKeepAliveService::class.java).setAction(ACTION_CANCEL_ALL), pendingFlags
         )
 
-        val workCount = active.size + if (shell != null) 1 else 0
+        val workCount = active.size + if (shell != null) 1 else 0 + if (localShell != null) 1 else 0
         val title = when {
-            shell != null && active.isEmpty() -> "Umnik · Shell работает"
+            localShell != null && shell == null && active.isEmpty() -> "Umnik · Local Shell работает"
+            shell != null && localShell == null && active.isEmpty() -> "Umnik · Shell работает"
             workCount == 1 -> "Umnik · модель работает"
             else -> "Umnik · активных задач: $workCount"
         }
         val labels = buildList {
             active.take(2).forEach { add(it.label) }
             shell?.let { add("Shell · ${it.status}") }
+            localShell?.let { add("Local Shell · ${it.status}") }
         }
         val text = labels.joinToString(" · ").ifBlank { "Umnik выполняет задачу" }
 
@@ -89,7 +92,7 @@ class RequestKeepAliveService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "SERVICE",
-            "Foreground request service active; startId=$startId; chats=${active.size}; shell=${shell != null}"
+            "Foreground request service active; startId=$startId; chats=${active.size}; shell=${shell != null}; localShell=${localShell != null}"
         )
         return START_STICKY
     }
@@ -98,7 +101,7 @@ class RequestKeepAliveService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "SERVICE",
-            "App task removed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+            "App task removed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}; localShell=${AsyncJobEvents.localShellActivity.value != null}"
         )
         super.onTaskRemoved(rootIntent)
     }
@@ -107,7 +110,7 @@ class RequestKeepAliveService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "SERVICE",
-            "Foreground service timeout; startId=$startId; type=$fgsType; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+            "Foreground service timeout; startId=$startId; type=$fgsType; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}; localShell=${AsyncJobEvents.localShellActivity.value != null}"
         )
         RequestExecutionManager.cancelAll()
         stopSelf(startId)
@@ -119,7 +122,7 @@ class RequestKeepAliveService : Service() {
         DiagnosticLog.record(
             applicationContext,
             "SERVICE",
-            "RequestKeepAliveService destroyed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}"
+            "RequestKeepAliveService destroyed; chats=${RequestExecutionManager.activeCount()}; shell=${AsyncJobEvents.shellActivity.value != null}; localShell=${AsyncJobEvents.localShellActivity.value != null}"
         )
         RequestExecutionManager.serviceStoppedUnexpectedly(applicationContext)
         super.onDestroy()
@@ -135,7 +138,7 @@ class RequestKeepAliveService : Service() {
         }
 
         fun update(context: Context) {
-            if (RequestExecutionManager.hasActiveRequest() || AsyncJobEvents.shellActivity.value != null) {
+            if (RequestExecutionManager.hasActiveRequest() || AsyncJobEvents.shellActivity.value != null || AsyncJobEvents.localShellActivity.value != null) {
                 start(context)
             } else {
                 stop(context)
