@@ -1279,7 +1279,7 @@ class OpenRouterClient(
                 },
                 "files" to JsonObject().apply {
                     addProperty("type", "array")
-                    addProperty("description", "Имена постоянных файлов этого чата, которые нужно передать в Local Shell. Используй точные имена из списка файлов чата. Если подходящий файл один, поле можно не заполнять.")
+                    addProperty("description", "Имена файлов, которые нужно передать в Local Shell. Доступны постоянные файлы чата и вложения текущего запроса. Если подходящий файл один или пользователь однозначно указывает на текущее вложение, поле можно не заполнять.")
                     add("items", JsonObject().apply { addProperty("type", "string") })
                 }
             ),
