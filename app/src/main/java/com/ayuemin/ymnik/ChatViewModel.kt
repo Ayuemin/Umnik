@@ -56,6 +56,7 @@ import com.ayuemin.ymnik.model.KnowledgeDocument
 import com.ayuemin.ymnik.model.KnowledgeIndexTask
 import com.ayuemin.ymnik.model.KnowledgeOwnerKind
 import com.ayuemin.ymnik.model.JobWorkspace
+import com.ayuemin.ymnik.model.InternetMode
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ModelCategory
 import com.ayuemin.ymnik.model.PendingAttachment
@@ -205,8 +206,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val initialImageResolution = loadImageParameter("resolution", initialImageProfile.id, initialImageModel)
     private val initialRuntime = teamAutomation.profile(initialChat.id) ?: run {
         val defaultSearchEnabled = prefs.getBoolean("web_search", false)
-        val defaultTools = openRouterFeaturePrefs.tools().copy(
-            webSearch = if (defaultSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+        val storedTools = openRouterFeaturePrefs.tools().normalized()
+        val defaultTools = storedTools.copy(
+            webSearch = if (defaultSearchEnabled && storedTools.internetMode != InternetMode.BROWSER) {
+                WebSearchMode.AUTO
+            } else {
+                WebSearchMode.OFF
+            }
         )
         ChatRuntimeProfile(
             modelId = initialChat.textModelOverride ?: loadTextModelForProfile(initialProfile),
@@ -256,6 +262,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             },
             webSearchEnabled = initialRuntime.webSearchEnabled,
             webSearchPreset = initialRuntime.tools.webSearchPreset,
+            internetMode = initialRuntime.tools.internetMode,
             reasoningEnabled = initialRuntime.reasoningEnabled,
             reasoningEffort = initialRuntime.reasoningEffort,
             reasoningEffortsByModel = loadReasoningEffortsByModel(),
@@ -916,8 +923,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun defaultRuntimeProfile(chat: ChatSession): ChatRuntimeProfile {
         val defaultSearchEnabled = prefs.getBoolean("web_search", false)
-        val tools = openRouterFeaturePrefs.tools().copy(
-            webSearch = if (defaultSearchEnabled) WebSearchMode.AUTO else WebSearchMode.OFF
+        val storedTools = openRouterFeaturePrefs.tools().normalized()
+        val tools = storedTools.copy(
+            webSearch = if (defaultSearchEnabled && storedTools.internetMode != InternetMode.BROWSER) {
+                WebSearchMode.AUTO
+            } else {
+                WebSearchMode.OFF
+            }
         )
         return ChatRuntimeProfile(
             modelId = chat.textModelOverride ?: _state.value.textModel,
@@ -954,6 +966,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             currentChatTextModel = if (current) clean.modelId else _state.value.currentChatTextModel,
             webSearchEnabled = if (current) clean.webSearchEnabled else _state.value.webSearchEnabled,
             webSearchPreset = if (current) clean.tools.webSearchPreset else _state.value.webSearchPreset,
+            internetMode = if (current) clean.tools.internetMode else _state.value.internetMode,
             reasoningEnabled = if (current) clean.reasoningEnabled else _state.value.reasoningEnabled,
             reasoningEffort = if (current) clean.reasoningEffort else _state.value.reasoningEffort,
             activeSkillIds = if (current) clean.skillIds else _state.value.activeSkillIds,
@@ -1931,6 +1944,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             availableTextModels = if (sameProfile) _state.value.availableTextModels else emptyList(),
             webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) runtime?.webSearchEnabled == true else false,
             webSearchPreset = runtime?.tools?.webSearchPreset ?: _state.value.webSearchPreset,
+            internetMode = runtime?.tools?.internetMode ?: _state.value.internetMode,
             reasoningEffort = effort,
             reasoningEnabled = keepReasoning,
             apiKeyConfigured = isProfileConfigured(profile),
@@ -1988,6 +2002,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             mode = ChatMode.TEXT,
             webSearchEnabled = profileSpecialist.webSearchEnabled,
             webSearchPreset = profileSpecialist.tools.webSearchPreset,
+            internetMode = profileSpecialist.tools.internetMode,
             reasoningEnabled = profileSpecialist.reasoningEnabled,
             reasoningEffort = profileSpecialist.reasoningEffort,
             apiKeyConfigured = isProfileConfigured(connection),
@@ -2056,7 +2071,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun persistWebSearchEnabled(chatId: String, enabled: Boolean) {
         val preset = _state.value.webSearchPreset
-        val mode = if (enabled) WebSearchMode.AUTO else WebSearchMode.OFF
+        val internetMode = _state.value.internetMode
+        val mode = if (enabled && internetMode != InternetMode.BROWSER) WebSearchMode.AUTO else WebSearchMode.OFF
         val chat = _state.value.chats.firstOrNull { it.id == chatId } ?: return
         val current = teamAutomation.profile(chatId) ?: defaultRuntimeProfile(chat)
         teamAutomation.saveProfile(
@@ -2094,6 +2110,27 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
         _state.value = _state.value.copy(webSearchPreset = preset)
         DiagnosticLog.action(context, "web_search_preset", "preset=${preset.name}; model=${currentTextModelId()}")
+    }
+
+    fun setInternetMode(mode: InternetMode) {
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
+        val current = teamAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+        val searchMode = if (current.webSearchEnabled && mode != InternetMode.BROWSER) {
+            WebSearchMode.AUTO
+        } else {
+            WebSearchMode.OFF
+        }
+        val nextTools = current.tools.copy(
+            internetMode = mode,
+            webSearch = searchMode
+        )
+        teamAutomation.saveProfile(chat.id, current.copy(tools = nextTools))
+        _state.value = _state.value.copy(internetMode = mode)
+        DiagnosticLog.action(
+            context,
+            "internet_mode",
+            "mode=${mode.name}; enabled=${current.webSearchEnabled}; model=${currentTextModelId()}"
+        )
     }
 
     fun setReasoningEnabled(enabled: Boolean) {
@@ -2358,6 +2395,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEnabled = fixed.reasoningEnabled,
             webSearchEnabled = fixed.webSearchEnabled,
             webSearchPreset = fixed.tools.webSearchPreset,
+            internetMode = fixed.tools.internetMode,
             pendingAttachments = emptyList(),
             storageStats = storageRepository.stats(),
             status = null
@@ -2419,6 +2457,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEnabled = false,
             webSearchEnabled = false,
             webSearchPreset = guideRuntime.tools.webSearchPreset,
+            internetMode = guideRuntime.tools.internetMode,
             pendingAttachments = emptyList(),
             status = null
         )
@@ -2497,6 +2536,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEnabled = branchRuntime.reasoningEnabled,
             webSearchEnabled = branchRuntime.webSearchEnabled,
             webSearchPreset = branchRuntime.tools.webSearchPreset,
+            internetMode = branchRuntime.tools.internetMode,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -2553,6 +2593,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEnabled = fixed.reasoningEnabled,
             webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) fixed.webSearchEnabled else false,
             webSearchPreset = fixed.tools.webSearchPreset,
+            internetMode = fixed.tools.internetMode,
             apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
@@ -2673,6 +2714,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             reasoningEnabled = resetRuntime.reasoningEnabled,
             webSearchEnabled = resetRuntime.webSearchEnabled,
             webSearchPreset = resetRuntime.tools.webSearchPreset,
+            internetMode = resetRuntime.tools.internetMode,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -4820,6 +4862,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         val webSearchEnabled = _state.value.webSearchEnabled
         val webSearchPreset = _state.value.webSearchPreset
+        val internetMode = _state.value.internetMode
+        val providerWebSearchEnabled = webSearchEnabled && internetMode != InternetMode.BROWSER
+        val localWebFetchEnabled = webSearchEnabled && internetMode != InternetMode.BROWSER
+        val localBrowserToolsEnabled = webSearchEnabled && internetMode != InternetMode.SEARCH_ONLY
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
@@ -5031,12 +5077,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     knowledgeToolEnabled = knowledgeToolEnabled,
                                     knowledgeToolInstruction = knowledgeInstruction,
                                     knowledgeToolSearchLimit = knowledgeSearchLimit,
-                                    localWebFetchEnabled = webSearchEnabled,
-                                    localBrowserToolsEnabled = webSearchEnabled,
+                                    localWebFetchEnabled = localWebFetchEnabled,
+                                    localBrowserToolsEnabled = localBrowserToolsEnabled,
                                     localShellToolsEnabled = localShellToolsEnabled
                                 ) +
                                     preparedContext.systemContext + knowledgeContext,
-                                webSearchEnabled,
+                                providerWebSearchEnabled,
                                 actualReasoning,
                                 effort,
                                 createFileToolEnabled,
@@ -5062,37 +5108,37 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     null
                                 },
                                 knowledgeSearchLimit = knowledgeSearchLimit,
-                                requiredLocalBrowserTool = if (webSearchEnabled) requiredLocalBrowserTool(clean) else null,
-                                localWebFetch = if (webSearchEnabled) {
+                                requiredLocalBrowserTool = if (localBrowserToolsEnabled) requiredLocalBrowserTool(clean) else null,
+                                localWebFetch = if (localWebFetchEnabled) {
                                     { url -> localWebFetcher.fetchForTool(url) }
                                 } else {
                                     null
                                 },
-                                localBrowserOpen = if (webSearchEnabled) {
+                                localBrowserOpen = if (localBrowserToolsEnabled) {
                                     { url -> LocalBrowserRuntime.open(chatId, url) }
                                 } else null,
-                                localBrowserRead = if (webSearchEnabled) {
+                                localBrowserRead = if (localBrowserToolsEnabled) {
                                     { full -> LocalBrowserRuntime.read(chatId, full) }
                                 } else null,
-                                localBrowserFollow = if (webSearchEnabled) {
+                                localBrowserFollow = if (localBrowserToolsEnabled) {
                                     { url, target -> LocalBrowserRuntime.follow(chatId, url, target) }
                                 } else null,
-                                localBrowserClick = if (webSearchEnabled) {
+                                localBrowserClick = if (localBrowserToolsEnabled) {
                                     { ref -> LocalBrowserRuntime.click(chatId, ref) }
                                 } else null,
-                                localBrowserType = if (webSearchEnabled) {
+                                localBrowserType = if (localBrowserToolsEnabled) {
                                     { ref, value -> LocalBrowserRuntime.type(chatId, ref, value) }
                                 } else null,
-                                localBrowserScroll = if (webSearchEnabled) {
+                                localBrowserScroll = if (localBrowserToolsEnabled) {
                                     { direction -> LocalBrowserRuntime.scroll(chatId, direction) }
                                 } else null,
-                                localBrowserBack = if (webSearchEnabled) {
+                                localBrowserBack = if (localBrowserToolsEnabled) {
                                     { LocalBrowserRuntime.back(chatId) }
                                 } else null,
-                                localBrowserWait = if (webSearchEnabled) {
+                                localBrowserWait = if (localBrowserToolsEnabled) {
                                     { seconds -> LocalBrowserRuntime.wait(chatId, seconds) }
                                 } else null,
-                                localBrowserDone = if (webSearchEnabled) {
+                                localBrowserDone = if (localBrowserToolsEnabled) {
                                     { LocalBrowserRuntime.done(chatId) }
                                 } else null,
                                 localShellStart = if (localShellToolsEnabled) {
