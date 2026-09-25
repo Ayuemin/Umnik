@@ -44,6 +44,28 @@ class LocalWebFetcherTest {
         assertFalse(page.content.contains("Navigation noise"))
         assertFalse(page.content.contains("ignore me"))
         assertEquals("https://example.com/download", page.links.single().url)
+        assertFalse(page.requiresBrowser)
+    }
+
+    @Test
+    fun detectsJavaScriptAppShell() {
+        val page = LocalWebTextExtractor.extract(
+            """
+                <html>
+                  <head>
+                    <title>App</title>
+                    <script src="/a.js"></script>
+                    <script src="/b.js"></script>
+                    <script type="module" src="/c.js"></script>
+                  </head>
+                  <body><div id="root"></div></body>
+                </html>
+            """.trimIndent(),
+            "https://example.com/app"
+        )
+
+        assertTrue(page.requiresBrowser)
+        assertEquals("js_required", page.browserReason)
     }
 
     @Test
