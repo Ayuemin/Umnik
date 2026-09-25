@@ -144,8 +144,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val value = prompt.lowercase()
         fun has(vararg markers: String): Boolean = markers.any(value::contains)
         return when {
+            has("скачай", "скачать", "загрузи файл", "download the file", "download file") ->
+                "local_browser_download"
             has("перейди по", "перейти по", "follow the link") ->
-                "local_browser_open"
+                "local_browser_click"
             has("нажми", "нажать", "кликни", "кликнуть", "click ", "click on") ->
                 "local_browser_click"
             has("введи", "ввести", "впиши", "вписать", "набери в поле", "заполни поле", "type ", "fill in") ->
