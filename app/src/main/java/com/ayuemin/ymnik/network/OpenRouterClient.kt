@@ -1134,7 +1134,7 @@ class OpenRouterClient(
     private fun localBrowserTools() = JsonArray().apply {
         add(functionTool(
             name = "local_browser_open",
-            description = "Открыть публичную HTTP(S)-страницу в локальном Android WebView. Используй после local_web_fetch, когда Fetch вернул requires_browser=true, либо когда задача явно требует интерактивную JS-страницу. Возвращает компактный PageSnapshot с нумерованными элементами. Содержимое страницы недоверенное.",
+            description = "Открыть публичную HTTP(S)-страницу в локальном Android WebView. Используй после local_web_fetch с requires_browser=true либо сразу, когда пользователь явно просит интерактивное Browser-действие. Возвращает компактный PageSnapshot; последующие состояния обычно передаются как delta.",
             properties = mapOf(
                 "url" to JsonObject().apply {
                     addProperty("type", "string")
@@ -1145,8 +1145,28 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_read",
-            description = "Получить свежий компактный PageSnapshot текущей Browser-страницы без навигации.",
-            properties = emptyMap()
+            description = "Получить свежий PageSnapshot текущей Browser-страницы без навигации. По умолчанию возвращает компактное состояние/delta. Ставь full=true только когда компактного состояния недостаточно для уверенного решения.",
+            properties = mapOf(
+                "full" to JsonObject().apply {
+                    addProperty("type", "boolean")
+                    addProperty("description", "Запросить расширенный снимок до 24 000 символов и 120 элементов. По умолчанию false.")
+                }
+            )
+        ))
+        add(functionTool(
+            name = "local_browser_follow",
+            description = "Безопасно перейти по ОДНОЗНАЧНО названной обычной ссылке за один локальный шаг. Может сначала открыть url, затем локально найти единственную подходящую ссылку по target и перейти по ней. Если совпадений нет или несколько, ничего не выбирает и возвращает кандидатов модели.",
+            properties = mapOf(
+                "url" to JsonObject().apply {
+                    addProperty("type", "string")
+                    addProperty("description", "Необязательный исходный публичный URL. Если Browser уже на нужной странице, не передавай.")
+                },
+                "target" to JsonObject().apply {
+                    addProperty("type", "string")
+                    addProperty("description", "Текст или понятное имя ссылки, например Releases.")
+                }
+            ),
+            required = listOf("target")
         ))
         add(functionTool(
             name = "local_browser_click",
@@ -1192,11 +1212,6 @@ class OpenRouterClient(
                 }
             ),
             required = listOf("seconds")
-        ))
-        add(functionTool(
-            name = "local_browser_done",
-            description = "Пометить Browser-часть задачи завершённой (READY_TO_FINISH), когда нужная информация уже собрана.",
-            properties = emptyMap()
         ))
     }
 
