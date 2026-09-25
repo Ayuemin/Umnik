@@ -4500,9 +4500,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     fun toggleSkill(id: String) {
         val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
         val next = _state.value.activeSkillIds.toMutableSet().apply { if (!add(id)) remove(id) }.toSet()
+
+        // Skill activation belongs to the current chat. Keep both persistent stores
+        // in sync immediately, even if the user switches chats before sending a request.
         prefs.edit().putStringSet(chatSkillsKey(chat.id), next).apply()
-        if (chat.teamId != null) updateCurrentTeamRuntime { it.copy(skillIds = next) }
+        if (specialistConversations.specialistIdForConversation(chat.id) == null) {
+            teamAutomation.saveProfile(chat.id, runtimeProfile(chat).copy(skillIds = next))
+        }
+
         _state.value = _state.value.copy(activeSkillIds = next)
+        DiagnosticLog.action(
+            context,
+            "toggle_skill",
+            "chat=${chat.id.take(8)}; skill=${id.take(8)}; active=${id in next}; total=${next.size}"
+        )
     }
 
     fun deleteSkill(id: String) {
