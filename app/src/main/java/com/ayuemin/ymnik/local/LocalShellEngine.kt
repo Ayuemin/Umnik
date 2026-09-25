@@ -12,6 +12,7 @@ import com.chaquo.python.android.AndroidPlatform
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
@@ -26,6 +27,8 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.net.InetAddress
+import java.net.URI
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipEntry
@@ -41,6 +44,13 @@ class LocalShellEngine(
     private val root = File(context.cacheDir, "local-shell/" + runId).apply { mkdirs() }.canonicalFile
     private val exports = mutableListOf<GeneratedFile>()
     private val http = OkHttpClient.Builder()
+        .dns { hostname ->
+            val addresses = Dns.SYSTEM.lookup(hostname)
+            require(addresses.isNotEmpty() && addresses.none(::isPrivateNetworkAddress)) {
+                "Доступ к локальным и служебным сетевым адресам запрещён"
+            }
+            addresses
+        }
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(45, TimeUnit.SECONDS)
         .callTimeout(60, TimeUnit.SECONDS)
@@ -381,7 +391,7 @@ class LocalShellEngine(
         if (action == "public_clone") {
             require(networkEnabled) { "Сеть для локального Shell выключена" }
             val url = args.string("arg")
-            require(url.startsWith("https://", true)) { "Для clone разрешены только публичные HTTPS URL" }
+            requirePublicNetworkUrl(url, httpsOnly = true)
             require(!url.contains("@")) { "URL с учётными данными запрещён" }
             val destination = resolve(args.string("destination").ifBlank { "repo" })
             require(!destination.exists() || destination.list().isNullOrEmpty()) { "Папка назначения уже занята" }
@@ -439,7 +449,7 @@ class LocalShellEngine(
     private fun fetch(args: JsonObject): String {
         require(networkEnabled) { "Сеть для локального Shell выключена" }
         val url = args.string("url")
-        require(url.startsWith("https://", true) || url.startsWith("http://", true)) { "Разрешены только HTTP/HTTPS URL" }
+        requirePublicNetworkUrl(url, httpsOnly = false)
         val request = Request.Builder().url(url).header("User-Agent", "Umnik-Local-Shell/1").get().build()
         http.newCall(request).execute().use { response ->
             require(response.isSuccessful) { "HTTP " + response.code }
@@ -573,6 +583,42 @@ class LocalShellEngine(
         return target
     }
 
+    private fun requirePublicNetworkUrl(url: String, httpsOnly: Boolean) {
+        val uri = runCatching { URI(url) }.getOrElse { error("Некорректный URL") }
+        val scheme = uri.scheme?.lowercase().orEmpty()
+        require(if (httpsOnly) scheme == "https" else scheme == "https" || scheme == "http") {
+            if (httpsOnly) "Для clone разрешены только публичные HTTPS URL" else "Разрешены только HTTP/HTTPS URL"
+        }
+        require(uri.userInfo.isNullOrBlank()) { "URL с учётными данными запрещён" }
+        val host = uri.host?.trim().orEmpty()
+        require(host.isNotBlank()) { "URL должен содержать имя хоста" }
+        require(!host.equals("localhost", true) && !host.endsWith(".local", true)) {
+            "Локальные адреса запрещены"
+        }
+        val addresses = runCatching { InetAddress.getAllByName(host).toList() }
+            .getOrElse { error("Не удалось проверить адрес хоста") }
+        require(addresses.isNotEmpty() && addresses.none(::isPrivateNetworkAddress)) {
+            "Доступ к локальным и служебным сетевым адресам запрещён"
+        }
+    }
+
+    private fun isPrivateNetworkAddress(address: InetAddress): Boolean {
+        if (address.isAnyLocalAddress || address.isLoopbackAddress || address.isLinkLocalAddress ||
+            address.isSiteLocalAddress || address.isMulticastAddress
+        ) return true
+        val raw = address.address
+        if (raw.size == 4) {
+            val a = raw[0].toInt() and 0xFF
+            val b = raw[1].toInt() and 0xFF
+            if (a == 0 || a == 127) return true
+            if (a == 100 && b in 64..127) return true
+            if (a == 169 && b == 254) return true
+        } else if (raw.size == 16) {
+            val first = raw[0].toInt() and 0xFF
+            if ((first and 0xFE) == 0xFC) return true
+        }
+        return false
+    }
     private fun validateCommandArg(arg: String) {
         require('\u0000' !in arg) { "Недопустимый аргумент" }
         val normalized = arg.replace('\\', '/')
