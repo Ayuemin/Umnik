@@ -140,7 +140,8 @@ class LocalShellAgentClient(private val context: Context) {
                     stateReminderPending = false
                 }
 
-                val shouldCompact = turn > 0 &&
+                val shouldCompact = taskState == TaskState.WORKING &&
+                    turn > 0 &&
                     turn < safeMaxTurns - 1 &&
                     turn - lastCompactionTurn >= MIN_TURNS_BETWEEN_COMPACTIONS &&
                     gson.toJson(messages).length >= CONTEXT_COMPACTION_TRIGGER_CHARS
