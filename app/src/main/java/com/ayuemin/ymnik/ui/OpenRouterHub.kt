@@ -344,6 +344,7 @@ private fun LocalShellFloatingCard(
     var showInfo by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var maxTurnsText by remember { mutableStateOf(controller.localShellMaxTurns().toString()) }
+    var shellModelText by remember { mutableStateOf(controller.localShellModelOverride()) }
     var cardHeight by remember { mutableStateOf(390.dp) }
     var now by remember { mutableStateOf(System.currentTimeMillis()) }
     val files = remember { mutableStateListOf<Uri>() }
@@ -363,7 +364,10 @@ private fun LocalShellFloatingCard(
     }
 
     LaunchedEffect(showSettings) {
-        if (showSettings) maxTurnsText = controller.localShellMaxTurns().toString()
+        if (showSettings) {
+            maxTurnsText = controller.localShellMaxTurns().toString()
+            shellModelText = controller.localShellModelOverride()
+        }
     }
 
     BoxWithConstraints(
@@ -567,8 +571,29 @@ private fun LocalShellFloatingCard(
                         singleLine = true,
                         supportingText = { Text("По умолчанию: 24") }
                     )
+                    OutlinedTextField(
+                        value = shellModelText,
+                        onValueChange = { shellModelText = it.trimStart().take(180) },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("Модель Local Shell") },
+                        placeholder = { Text("Текущая модель чата") },
+                        singleLine = true,
+                        supportingText = {
+                            Text(
+                                if (shellModelText.isBlank()) {
+                                    "По умолчанию Shell использует модель текущего чата."
+                                } else {
+                                    "ID модели OpenRouter, например openai/gpt-5.1-codex-mini"
+                                }
+                            )
+                        }
+                    )
                     Text(
-                        "Один шаг — очередное обращение к выбранной модели OpenRouter. Больший предел позволяет дольше работать над сложной задачей, но может увеличить стоимость, время и рабочий контекст. Shell завершится раньше, если задача выполнена.",
+                        "Отдельную модель удобно выбрать для кода и больших проектов. Если поле пустое, ничего настраивать не нужно: Local Shell наследует модель текущего чата.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Text(
+                        "Один шаг — очередное обращение к модели Local Shell. Больший предел позволяет дольше работать над сложной задачей, но может увеличить стоимость, время и рабочий контекст. Shell завершится раньше, если задача выполнена.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
@@ -586,13 +611,19 @@ private fun LocalShellFloatingCard(
                 TextButton(
                     onClick = {
                         parsedTurns?.let(controller::saveLocalShellMaxTurns)
+                        controller.saveLocalShellModelOverride(shellModelText)
                         showSettings = false
                     },
                     enabled = parsedTurns != null
                 ) { Text("Сохранить") }
             },
             dismissButton = {
-                TextButton(onClick = { maxTurnsText = "24" }) { Text("Сбросить на 24") }
+                TextButton(
+                    onClick = {
+                        maxTurnsText = "24"
+                        shellModelText = ""
+                    }
+                ) { Text("По умолчанию") }
             }
         )
     }
