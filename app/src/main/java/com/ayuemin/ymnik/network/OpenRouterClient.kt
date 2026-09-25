@@ -559,10 +559,13 @@ class OpenRouterClient(
                 }
                 if (name.startsWith("local_browser_")) {
                     compactPreviousBrowserResults(messages, browserToolCallIds)
-                    val state = runCatching {
-                        gson.fromJson(resultText, JsonObject::class.java)?.get("state")?.asString
+                    val browserResult = runCatching {
+                        gson.fromJson(resultText, JsonObject::class.java)
                     }.getOrNull()
-                    browserCanAutoFinish = state != "WAITING_USER" && state != "BLOCKED"
+                    val state = runCatching { browserResult?.get("state")?.asString }.getOrNull()
+                    val ok = runCatching { browserResult?.get("ok")?.asBoolean }.getOrNull()
+                    browserCanAutoFinish =
+                        ok != false && state != "WAITING_USER" && state != "BLOCKED"
                 }
                 messages.add(JsonObject().apply {
                     addProperty("role", "tool")
@@ -1159,7 +1162,7 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_read",
-            description = "Получить свежий PageSnapshot текущей Browser-страницы без навигации. По умолчанию возвращает компактное состояние/delta. Ставь full=true только когда компактного состояния недостаточно для уверенного решения.",
+            description = "Получить свежий PageSnapshot текущей Browser-страницы без навигации. По умолчанию возвращает компактное состояние/delta и отдельный компактный link_index с ref+name+href. Ставь full=true только когда компактного состояния и link_index недостаточно для уверенного решения.",
             properties = mapOf(
                 "full" to JsonObject().apply {
                     addProperty("type", "boolean")
@@ -1169,7 +1172,7 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_follow",
-            description = "Безопасно перейти по ОДНОЗНАЧНО названной обычной ссылке за один локальный шаг. Может сначала открыть url, затем локально найти единственную подходящую ссылку по target и перейти по ней. Если совпадений нет или несколько, ничего не выбирает и возвращает кандидатов модели.",
+            description = "Безопасно перейти по названной обычной ссылке за один локальный шаг. Локально ранжирует совпадения по имени и смыслу URL: например Releases предпочитает раздел /releases, а latest release — /releases/latest. Если уверенного победителя нет, ничего не угадывает и возвращает candidates с ref+name+href для выбора модели.",
             properties = mapOf(
                 "url" to JsonObject().apply {
                     addProperty("type", "string")
