@@ -4510,15 +4510,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         if (clean.isBlank() && pending.isEmpty()) return
 
-        val missingChatFile = persistentChatFiles.firstOrNull { attachment ->
-            attachment.localPath?.takeIf { it.isNotBlank() }?.let { !File(it).isFile } == true
-        }
-        if (missingChatFile != null) {
-            _state.value = _state.value.copy(
-                status = "Файл чата «${missingChatFile.name}» не найден. Удалите его из контекста и прикрепите заново."
-            )
-            return
-        }
 
         if (mode == ChatMode.IMAGE) {
             val invalidPending = pending.firstOrNull { !attachmentAllowed(it).first }
