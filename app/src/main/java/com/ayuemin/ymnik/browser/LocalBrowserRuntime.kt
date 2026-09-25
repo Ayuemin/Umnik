@@ -104,6 +104,7 @@ object LocalBrowserRuntime {
     private const val NAVIGATION_READY_WAIT_MS = 30_000L
     private const val NAVIGATION_NETWORK_GRACE_MS = 15_000L
     private const val NAVIGATION_POLL_MS = 125L
+    private const val SNAPSHOT_SYNC_ATTEMPTS = 24
     private const val FOLLOW_RENDER_RETRIES = 12
     private const val FOLLOW_SCORE_MARGIN = 20
 
@@ -1393,10 +1394,35 @@ object LocalBrowserRuntime {
             return isWebPage && pageContent.isBlank() && pageElements.size() == 0
         }
 
-        while (snapshotLooksEmpty(page) && settleAttempts < 16) {
+        fun snapshotMatchesWebView(value: JsonObject, actualUrl: String): Boolean {
+            val pageUrl = value.get("url")?.asString.orEmpty()
+            if (pageUrl.isBlank() || actualUrl.isBlank() || actualUrl == "about:blank") return true
+            if (!pageUrl.startsWith("http://") && !pageUrl.startsWith("https://")) return true
+            return sameDocumentUrl(pageUrl, actualUrl)
+        }
+
+        var actualUrl = currentUrl(webView)
+        while (
+            (snapshotLooksEmpty(page) || !snapshotMatchesWebView(page, actualUrl)) &&
+            settleAttempts < SNAPSHOT_SYNC_ATTEMPTS
+        ) {
             settleAttempts++
-            delay(250)
+            delay(200)
+            actualUrl = currentUrl(webView)
             page = decodedJson(evaluate(webView, snapshotScript(startRef, textLimit, elementLimit)))
+        }
+
+        actualUrl = currentUrl(webView)
+        if (!snapshotMatchesWebView(page, actualUrl)) {
+            val pageUrl = page.get("url")?.asString.orEmpty()
+            DiagnosticLog.record(
+                webView.context.applicationContext,
+                "LOCAL_BROWSER",
+                "snapshot_document_mismatch session=" + session.sessionId.take(8) +
+                    " webView=" + actualUrl.take(220) +
+                    " document=" + pageUrl.take(220)
+            )
+            error("Browser ещё переключает документ: snapshot не соответствует текущему URL")
         }
 
         if (settleAttempts > 0) {
@@ -1405,11 +1431,12 @@ object LocalBrowserRuntime {
                 "LOCAL_BROWSER",
                 "snapshot_settle session=" + session.sessionId.take(8) +
                     " attempts=" + settleAttempts +
-                    " url=" + page.get("url")?.asString.orEmpty().take(220)
+                    " webView=" + actualUrl.take(220) +
+                    " document=" + page.get("url")?.asString.orEmpty().take(220)
             )
         }
 
-        val url = page.get("url")?.asString.orEmpty().ifBlank { currentUrl(webView) }
+        val url = page.get("url")?.asString.orEmpty().ifBlank { actualUrl }
         val title = page.get("title")?.asString.orEmpty()
         val content = page.get("content")?.asString.orEmpty()
         val viewportContent = page.get("viewport_content")?.asString.orEmpty()
