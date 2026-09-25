@@ -121,7 +121,7 @@ internal object AsyncJobEvents {
             chatId = chatId,
             modelId = modelId,
             attachmentCount = attachmentCount.coerceAtLeast(0),
-            maxTurns = maxTurns.coerceIn(1, 1000)
+            maxTurns = maxTurns.coerceAtLeast(1)
         )
     }
 
