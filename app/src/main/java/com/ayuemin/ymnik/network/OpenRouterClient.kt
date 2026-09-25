@@ -176,7 +176,11 @@ class OpenRouterClient(
         webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
         requestImageOutput: Boolean = false,
         knowledgeSearch: (suspend (String) -> String)? = null,
-        knowledgeSearchLimit: Int = 4
+        knowledgeSearchLimit: Int = 4,
+        localShellStart: (suspend (String, Boolean) -> String)? = null,
+        localShellStatus: (suspend () -> String)? = null,
+        localShellGuidance: (suspend (String) -> String)? = null,
+        localShellStop: (suspend () -> String)? = null
     ): Result = withContext(Dispatchers.IO) {
         val selectedHistory = ConversationContext.select(
             history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
@@ -193,7 +197,8 @@ class OpenRouterClient(
         val created = mutableListOf<GeneratedFile>()
         val knowledgeBudget = KnowledgeToolBudget(knowledgeSearchLimit)
         val effectiveKnowledgeSearchLimit = knowledgeBudget.limit
-        val maxToolLoops = maxOf(5, effectiveKnowledgeSearchLimit + 3)
+        val localShellToolsEnabled = localShellStart != null
+        val maxToolLoops = maxOf(if (localShellToolsEnabled) 8 else 5, effectiveKnowledgeSearchLimit + 3)
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
         while (loops++ < maxToolLoops) {
@@ -214,6 +219,9 @@ class OpenRouterClient(
                 if (toolsEnabled) tools().forEach(mergedTools::add)
                 if (knowledgeSearch != null && effectiveKnowledgeSearchLimit > 0) {
                     mergedTools.add(knowledgeSearchTool())
+                }
+                if (localShellToolsEnabled) {
+                    localShellTools().forEach { mergedTools.add(it) }
                 }
                 if (webSearchEnabled) {
                     if (modelInfo?.supportsTools == false) {
@@ -315,6 +323,51 @@ class OpenRouterClient(
                             }.getOrElse {
                                 gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Ошибка поиска по базе знаний")))
                             }
+                        }
+                    }
+                    "local_shell_start" -> {
+                        val callback = localShellStart
+                        if (callback == null) {
+                            gson.toJson(mapOf("ok" to false, "error" to "Local Shell недоступен"))
+                        } else {
+                            runCatching {
+                                val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                                val task = args.get("task")?.asString.orEmpty().trim()
+                                require(task.isNotBlank()) { "Не передана задача для Local Shell" }
+                                val network = runCatching { args.get("network")?.asBoolean ?: false }.getOrDefault(false)
+                                callback(task, network)
+                            }.getOrElse {
+                                gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
+                            }
+                        }
+                    }
+                    "local_shell_status" -> {
+                        val callback = localShellStatus
+                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Статус Local Shell недоступен"))
+                        else runCatching { callback() }.getOrElse {
+                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось получить статус Local Shell")))
+                        }
+                    }
+                    "local_shell_note" -> {
+                        val callback = localShellGuidance
+                        if (callback == null) {
+                            gson.toJson(mapOf("ok" to false, "error" to "Передача указаний Local Shell недоступна"))
+                        } else {
+                            runCatching {
+                                val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                                val note = args.get("note")?.asString.orEmpty().trim()
+                                require(note.isNotBlank()) { "Уточнение пустое" }
+                                callback(note)
+                            }.getOrElse {
+                                gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось передать уточнение")))
+                            }
+                        }
+                    }
+                    "local_shell_stop" -> {
+                        val callback = localShellStop
+                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Остановка Local Shell недоступна"))
+                        else runCatching { callback() }.getOrElse {
+                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось остановить Local Shell")))
                         }
                     }
                     else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
@@ -864,6 +917,68 @@ class OpenRouterClient(
                     })
                     add("required", JsonArray().apply { add("filename"); add("content") })
                 })
+            })
+        })
+    }
+
+    private fun localShellTools() = JsonArray().apply {
+        add(functionTool(
+            name = "local_shell_start",
+            description = "Запустить асинхронный Local Shell на устройстве пользователя. Используй, когда пользователь явно просит выполнить, реализовать, исправить, собрать или проверить работу, которую разумно передать локальному агенту. Не запускай только потому, что это могло бы быть полезно. Сформулируй task из уже согласованного контекста диалога.",
+            properties = mapOf(
+                "task" to JsonObject().apply {
+                    addProperty("type", "string")
+                    addProperty("description", "Самодостаточное рабочее задание с согласованными требованиями и ограничениями из текущего диалога")
+                },
+                "network" to JsonObject().apply {
+                    addProperty("type", "boolean")
+                    addProperty("description", "Разрешить Local Shell получать данные из сети. По умолчанию false.")
+                }
+            ),
+            required = listOf("task")
+        ))
+        add(functionTool(
+            name = "local_shell_status",
+            description = "Получить компактный статус Local Shell, запущенного в этом чате: этап, модель, шаги и локальные действия.",
+            properties = emptyMap()
+        ))
+        add(functionTool(
+            name = "local_shell_note",
+            description = "Передать уже работающему Local Shell новое важное уточнение пользователя или ограничение. Оно будет принято перед следующим модельным шагом.",
+            properties = mapOf(
+                "note" to JsonObject().apply {
+                    addProperty("type", "string")
+                    addProperty("description", "Короткое конкретное уточнение для текущей задачи Local Shell")
+                }
+            ),
+            required = listOf("note")
+        ))
+        add(functionTool(
+            name = "local_shell_stop",
+            description = "Остановить Local Shell в этом чате, если пользователь прямо попросил остановить или отменить работу.",
+            properties = emptyMap()
+        ))
+    }
+
+    private fun functionTool(
+        name: String,
+        description: String,
+        properties: Map<String, JsonObject>,
+        required: List<String> = emptyList()
+    ) = JsonObject().apply {
+        addProperty("type", "function")
+        add("function", JsonObject().apply {
+            addProperty("name", name)
+            addProperty("description", description)
+            add("parameters", JsonObject().apply {
+                addProperty("type", "object")
+                add("properties", JsonObject().apply {
+                    properties.forEach { (key, value) -> add(key, value) }
+                })
+                if (required.isNotEmpty()) {
+                    add("required", JsonArray().apply { required.forEach { add(it) } })
+                }
+                addProperty("additionalProperties", false)
             })
         })
     }
