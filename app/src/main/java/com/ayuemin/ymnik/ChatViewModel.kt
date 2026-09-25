@@ -72,6 +72,7 @@ import com.ayuemin.ymnik.model.UserProfile
 import com.ayuemin.ymnik.model.UserProfileScope
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
+import com.ayuemin.ymnik.model.normalized
 import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.ChatOutputPolicy
 import com.ayuemin.ymnik.network.ChatToolPolicy
