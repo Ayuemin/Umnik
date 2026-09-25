@@ -183,6 +183,7 @@ class OpenRouterClient(
         localBrowserRead: (suspend (Boolean) -> String)? = null,
         localBrowserFollow: (suspend (String?, String) -> String)? = null,
         localBrowserClick: (suspend (Int) -> String)? = null,
+        localBrowserDownload: (suspend (Int) -> String)? = null,
         localBrowserType: (suspend (Int, String) -> String)? = null,
         localBrowserScroll: (suspend (String) -> String)? = null,
         localBrowserBack: (suspend () -> String)? = null,
@@ -460,6 +461,16 @@ class OpenRouterClient(
                             callback(args.get("ref")?.asInt ?: error("Не передан ref"))
                         }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось нажать элемент")))
+                        }
+                    }
+                    "local_browser_download" -> {
+                        val callback = localBrowserDownload
+                        if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Загрузка Browser недоступна"))
+                        else runCatching {
+                            val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                            callback(args.get("ref")?.asInt ?: error("Не передан ref"))
+                        }.getOrElse {
+                            gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось скачать файл")))
                         }
                     }
                     "local_browser_type" -> {
@@ -1184,9 +1195,20 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_click",
-            description = "Нажать элемент PageSnapshot по ref. Автоматически разрешены только обычные навигационные ссылки и явно безопасные UI-раскрытия; потенциально значимые действия блокируются.",
+            description = "Нажать элемент PageSnapshot по ref. Автоматически разрешены только обычные навигационные ссылки и явно безопасные UI-раскрытия; потенциально значимые действия требуют подтверждения пользователя.",
             properties = mapOf(
                 "ref" to JsonObject().apply { addProperty("type", "integer") }
+            ),
+            required = listOf("ref")
+        ))
+        add(functionTool(
+            name = "local_browser_download",
+            description = "Скачать публичный HTTP(S)-файл по ссылке PageSnapshot с выбранным ref. Umnik ограничивает размер, проверяет перенаправления и сохраняет результат как ресурс текущего чата, доступный Local Shell. Не используй для локальных, приватных или секретных адресов.",
+            properties = mapOf(
+                "ref" to JsonObject().apply {
+                    addProperty("type", "integer")
+                    addProperty("description", "ref конкретной ссылки из elements или link_index")
+                }
             ),
             required = listOf("ref")
         ))
