@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.PendingAttachment
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import com.google.gson.Gson
@@ -57,6 +58,32 @@ class LocalShellEngine(
             context.contentResolver.openInputStream(uri)?.use { input ->
                 target.outputStream().use { output -> input.copyTo(output) }
             } ?: error("Не удалось прочитать " + displayName)
+            require(target.length() <= MAX_SINGLE_FILE_BYTES) {
+                "Файл " + displayName + " слишком большой для локального теста"
+            }
+            ImportedFile("input/" + safe, target.length())
+        }
+    }
+
+    fun prepareAttachments(items: List<PendingAttachment>): List<ImportedFile> {
+        cleanupOldRuns()
+        val inputDir = resolve("input").apply { mkdirs() }
+        return items.take(MAX_ATTACHMENTS).mapIndexed { index, item ->
+            val displayName = item.name.trim().ifBlank { "attachment_" + (index + 1) }
+            val safe = uniqueName(inputDir, safeName(displayName))
+            val target = File(inputDir, safe)
+            val input = item.localPath
+                ?.takeIf { it.isNotBlank() }
+                ?.let { path ->
+                    val file = File(path)
+                    require(file.isFile) { "Файл не найден: " + displayName }
+                    file.inputStream()
+                }
+                ?: context.contentResolver.openInputStream(Uri.parse(item.uri))
+                ?: error("Не удалось прочитать " + displayName)
+            input.use { source ->
+                target.outputStream().use { output -> source.copyTo(output) }
+            }
             require(target.length() <= MAX_SINGLE_FILE_BYTES) {
                 "Файл " + displayName + " слишком большой для локального теста"
             }
