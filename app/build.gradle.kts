@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.14 — Browser cost optimization
+// Umnik v1.20.0-beta.15 — Browser timeout and interrupted reply preservation
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 171
-        versionName = "1.20.0-beta.14"
+        versionCode = 172
+        versionName = "1.20.0-beta.15"
 
         // Local Shell MVP embeds Python only for 64-bit test targets.
         // The regular Umnik app remains Android-native; this is isolated to
