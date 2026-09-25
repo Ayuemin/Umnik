@@ -1042,7 +1042,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
 
         return try {
-            val name = artifact.get("name")?.asString.orEmpty().ifBlank { temp.name }
+            val requestedName = artifact.get("name")?.asString.orEmpty().ifBlank { temp.name }
+            val existingNames = chatsRepository.list()
+                .firstOrNull { it.id == chatId }
+                ?.chatFiles
+                .orEmpty()
+                .map { it.name.lowercase() }
+                .toSet()
+            val name = uniqueBrowserDownloadName(requestedName, existingNames)
             val mimeType = artifact.get("mime_type")?.asString.orEmpty().ifBlank { "application/octet-stream" }
             val pending = PendingAttachment(
                 uri = "browser-download://" + UUID.randomUUID(),
@@ -1093,6 +1100,21 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         } finally {
             runCatching { temp.delete() }
         }
+    }
+
+    private fun uniqueBrowserDownloadName(rawName: String, existingLowercase: Set<String>): String {
+        val clean = rawName.trim().ifBlank { "download.bin" }
+        if (clean.lowercase() !in existingLowercase) return clean
+        val dot = clean.lastIndexOf('.').takeIf { it > 0 && it < clean.lastIndex } ?: -1
+        val base = if (dot > 0) clean.substring(0, dot) else clean
+        val extension = if (dot > 0) clean.substring(dot) else ""
+        var index = 2
+        while (index < 10_000) {
+            val candidate = "$base ($index)$extension"
+            if (candidate.lowercase() !in existingLowercase) return candidate
+            index++
+        }
+        return base + "_" + UUID.randomUUID().toString().take(8) + extension
     }
 
     fun removeChatContextFile(chatId: String, fileId: String) {
