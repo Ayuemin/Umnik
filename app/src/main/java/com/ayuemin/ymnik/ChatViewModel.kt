@@ -5510,6 +5510,288 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         answerSoundPlayer.play(_state.value)
     }
 
+    private suspend fun startLocalShellFromChat(
+        chatId: String,
+        taskRaw: String,
+        attachments: List<PendingAttachment>,
+        networkEnabled: Boolean,
+        fallbackModel: String
+    ): String {
+        val task = taskRaw.trim()
+        if (task.isBlank()) {
+            return gson.toJson(mapOf("ok" to false, "error" to "Задача Local Shell пустая"))
+        }
+
+        val active = AsyncJobEvents.localShellActivity.value
+        if (active != null) {
+            return if (active.chatId == chatId) {
+                localShellStatusForChat(chatId)
+            } else {
+                gson.toJson(
+                    mapOf(
+                        "ok" to false,
+                        "running" to true,
+                        "error" to "Local Shell уже выполняет задачу в другом чате"
+                    )
+                )
+            }
+        }
+
+        val profile = activeConnectionProfile()
+        val key = secrets.getProfileApiKey(profile.id).orEmpty()
+        if (key.isBlank()) {
+            return gson.toJson(mapOf("ok" to false, "error" to "OpenRouter не настроен"))
+        }
+
+        val modelOverride = openRouterFeaturePrefs.localShellModelOverride()
+        val model = modelOverride.ifBlank { fallbackModel }.removeSuffix(":batch")
+        val maxTurns = openRouterFeaturePrefs.localShellMaxTurns()
+        val knownModel = modelInfoForId(model)
+        if (knownModel?.supportsTools == false) {
+            return gson.toJson(
+                mapOf(
+                    "ok" to false,
+                    "error" to "Выбранная модель Local Shell не поддерживает tools",
+                    "model" to model
+                )
+            )
+        }
+
+        val engine = LocalShellEngine(
+            context = context,
+            networkEnabled = networkEnabled
+        )
+        val taskId = UUID.randomUUID().toString()
+        val cancelRequested = AtomicBoolean(false)
+
+        LocalShellRuntime.prepareForStart()
+        AsyncJobEvents.markLocalShellRunning(chatId, model, attachments.size, maxTurns)
+        runCatching { RequestKeepAliveService.start(context) }
+
+        val imported = runCatching {
+            withContext(Dispatchers.IO) { engine.prepareAttachments(attachments) }
+        }.getOrElse { error ->
+            AsyncJobEvents.markLocalShellFinished(chatId)
+            runCatching { RequestKeepAliveService.update(context) }
+            LocalShellRuntime.clear()
+            return gson.toJson(
+                mapOf(
+                    "ok" to false,
+                    "error" to (error.message ?: "Не удалось подготовить файлы для Local Shell")
+                )
+            )
+        }
+
+        LocalShellRuntime.installCancel {
+            cancelRequested.set(true)
+            localShellClient.cancelActive()
+        }
+
+        val startedAt = System.currentTimeMillis()
+        LocalShellRuntime.scope.launch {
+            var lastKeepAliveRefreshAt = 0L
+            runCatching {
+                localShellClient.run(
+                    apiKey = key,
+                    model = model,
+                    prompt = task,
+                    systemPrompt = localShellWorkerSystemPrompt(maxTurns, engine),
+                    engine = engine,
+                    routing = openRouterFeaturePrefs.routing(),
+                    reasoningEnabled = false,
+                    maxTurns = maxTurns,
+                    onProgress = { progress ->
+                        AsyncJobEvents.updateLocalShellProgress(
+                            chatId = chatId,
+                            status = progress.label,
+                            turn = progress.turn,
+                            toolCalls = progress.toolCalls
+                        )
+                        val now = System.currentTimeMillis()
+                        if (now - lastKeepAliveRefreshAt >= 30_000L) {
+                            lastKeepAliveRefreshAt = now
+                            runCatching { RequestKeepAliveService.update(context) }
+                        }
+                    },
+                    externalGuidance = LocalShellRuntime::drainGuidance,
+                    baseUrl = effectiveTextBaseUrl(profile)
+                )
+            }.onSuccess { result ->
+                val elapsedMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
+                val files = engine.exportedFiles()
+                val assistant = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "assistant",
+                    text = "Local Shell завершил работу.\n\n" + result.text,
+                    generatedFiles = files,
+                    modelId = result.model ?: model,
+                    providerName = "Local Shell",
+                    costUsd = result.costUsd,
+                    inputTokens = result.inputTokens,
+                    outputTokens = result.outputTokens,
+                    responseDurationMs = elapsedMs,
+                    attachmentCount = imported.size,
+                    connectionName = profile.name,
+                    requestId = "local-shell:" + taskId
+                )
+                val updated = chatsRepository.appendAssistantIfMissing(
+                    chatId = chatId,
+                    sourceKey = taskId,
+                    assistant = assistant
+                )
+                publishChats(updated)
+                DiagnosticLog.record(
+                    context,
+                    "LOCAL_SHELL_CHAT",
+                    "completed; task=" + taskId.take(8) +
+                        "; elapsedMs=" + elapsedMs +
+                        "; turns=" + result.turns +
+                        "; toolCalls=" + result.toolCalls +
+                        "; files=" + files.size +
+                        "; model=" + (result.model ?: model)
+                )
+                playReadySound()
+                refreshProviderUsage()
+            }.onFailure { error ->
+                val stopped = cancelRequested.get()
+                val message = if (stopped) {
+                    "Local Shell остановлен пользователем."
+                } else {
+                    "Local Shell не завершил задачу: " + (error.message ?: "неизвестная ошибка")
+                }
+                val assistant = ChatMessage(
+                    id = UUID.randomUUID().toString(),
+                    role = "assistant",
+                    text = message,
+                    modelId = model,
+                    providerName = "Local Shell",
+                    responseDurationMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L),
+                    attachmentCount = imported.size,
+                    connectionName = profile.name,
+                    requestId = "local-shell:" + taskId
+                )
+                val updated = chatsRepository.appendAssistantIfMissing(
+                    chatId = chatId,
+                    sourceKey = taskId,
+                    assistant = assistant
+                )
+                publishChats(updated)
+                DiagnosticLog.record(
+                    context,
+                    "LOCAL_SHELL_CHAT",
+                    "failed; task=" + taskId.take(8) + "; " + message,
+                    error
+                )
+            }
+            AsyncJobEvents.markLocalShellFinished(chatId)
+            runCatching { RequestKeepAliveService.update(context) }
+            AsyncJobEvents.notifyChanged()
+            LocalShellRuntime.clear()
+        }
+
+        return gson.toJson(
+            mapOf(
+                "ok" to true,
+                "started" to true,
+                "task_id" to taskId,
+                "model" to model,
+                "max_turns" to maxTurns,
+                "attachments" to imported.size,
+                "network" to networkEnabled,
+                "message" to "Local Shell запущен асинхронно. Можно продолжать диалог; статус доступен через local_shell_status."
+            )
+        )
+    }
+
+    private fun localShellStatusForChat(chatId: String): String {
+        val active = AsyncJobEvents.localShellActivity.value
+            ?: return gson.toJson(mapOf("ok" to true, "running" to false))
+        if (active.chatId != chatId) {
+            return gson.toJson(
+                mapOf(
+                    "ok" to true,
+                    "running" to true,
+                    "in_this_chat" to false,
+                    "message" to "Local Shell занят задачей из другого чата"
+                )
+            )
+        }
+        return gson.toJson(
+            mapOf(
+                "ok" to true,
+                "running" to true,
+                "in_this_chat" to true,
+                "model" to active.modelId,
+                "status" to active.status,
+                "turn" to active.turn,
+                "max_turns" to active.maxTurns,
+                "tool_calls" to active.toolCalls,
+                "attachments" to active.attachmentCount,
+                "elapsed_seconds" to ((System.currentTimeMillis() - active.startedAt).coerceAtLeast(0L) / 1000L)
+            )
+        )
+    }
+
+    private fun sendLocalShellGuidance(chatId: String, note: String): String {
+        val active = AsyncJobEvents.localShellActivity.value
+        if (active == null) {
+            return gson.toJson(mapOf("ok" to false, "error" to "Local Shell сейчас не запущен"))
+        }
+        if (active.chatId != chatId) {
+            return gson.toJson(mapOf("ok" to false, "error" to "Активный Local Shell относится к другому чату"))
+        }
+        val accepted = LocalShellRuntime.addGuidance(note)
+        return gson.toJson(
+            mapOf(
+                "ok" to accepted,
+                "accepted" to accepted,
+                "message" to if (accepted) {
+                    "Уточнение будет передано Local Shell перед следующим модельным шагом"
+                } else {
+                    "Не удалось передать уточнение"
+                }
+            )
+        )
+    }
+
+    private fun stopLocalShellFromChat(chatId: String): String {
+        val active = AsyncJobEvents.localShellActivity.value
+        if (active == null) {
+            return gson.toJson(mapOf("ok" to true, "running" to false, "message" to "Local Shell уже не работает"))
+        }
+        if (active.chatId != chatId) {
+            return gson.toJson(mapOf("ok" to false, "error" to "Активный Local Shell относится к другому чату"))
+        }
+        val requested = LocalShellRuntime.cancel()
+        return gson.toJson(
+            mapOf(
+                "ok" to requested,
+                "stop_requested" to requested,
+                "message" to if (requested) "Остановка Local Shell запрошена" else "Не удалось отправить команду остановки"
+            )
+        )
+    }
+
+    private fun localShellWorkerSystemPrompt(maxTurns: Int, engine: LocalShellEngine): String = buildString {
+        appendLine("Ты выполняешь задачу пользователя через Local Shell Umnik.")
+        appendLine("Инструменты работают на Android-устройстве пользователя в отдельной рабочей папке задачи.")
+        appendLine("Исходные вложения уже находятся в папке input. Не проси загрузить их повторно.")
+        appendLine("Начни с local_list. Для ZIP/TAR сначала распакуй архив через local_archive в отдельную рабочую папку.")
+        appendLine("Для поиска по проекту предпочитай local_search/local_read, для малых правок local_replace.")
+        appendLine("Группируй независимые local_read/local_search в один модельный шаг, когда пути уже известны.")
+        appendLine("Python используй для тестов и обработки данных, когда это действительно полезно.")
+        appendLine("Сеть доступна только через local_fetch и public_clone в local_git, если шлюз разрешён.")
+        appendLine("Не загружай локальные файлы в сеть и не пытайся делать Git push.")
+        appendLine("Не повторяй одинаковые действия без причины. Максимум модельных шагов: " + maxTurns + ". Это потолок, а не цель.")
+        appendLine("Сохраняй исходные файлы проекта, если задача явно не требует удалить или переименовать их.")
+        appendLine("Если работаешь с проектом/ZIP и меняешь его, перед финальным ответом обязательно вызови local_export и верни полный итоговый ZIP.")
+        appendLine("Дополнительные указания из основного чата могут поступать во время работы. Считай их актуальными уточнениями пользователя и учитывай с ближайшего следующего шага.")
+        appendLine("В финальном ответе кратко перечисли сделанное и результаты проверок.")
+        appendLine()
+        appendLine("Вложения в локальной рабочей области:")
+        append(engine.importedSummary())
+    }
+
     private fun buildSystemPrompt(
         skillText: String,
         team: Team?,
