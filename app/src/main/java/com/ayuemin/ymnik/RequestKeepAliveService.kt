@@ -51,7 +51,7 @@ class RequestKeepAliveService : Service() {
             this, 1, Intent(this, RequestKeepAliveService::class.java).setAction(ACTION_CANCEL_ALL), pendingFlags
         )
 
-        val workCount = active.size + if (shell != null) 1 else 0 + if (localShell != null) 1 else 0
+        val workCount = active.size + (if (shell != null) 1 else 0) + (if (localShell != null) 1 else 0)
         val title = when {
             localShell != null && shell == null && active.isEmpty() -> "Umnik · Local Shell работает"
             shell != null && localShell == null && active.isEmpty() -> "Umnik · Shell работает"
