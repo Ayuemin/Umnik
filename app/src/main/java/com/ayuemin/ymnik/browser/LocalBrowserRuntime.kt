@@ -302,6 +302,7 @@ object LocalBrowserRuntime {
             attachedWebView = null
             if (attachSignal.isCompleted) attachSignal = CompletableDeferred()
         }
+        mutableUserControlVisible.value = false
         if (mutableActivity.value != null) mutableActivity.value = null
     }
 
@@ -652,6 +653,7 @@ object LocalBrowserRuntime {
     suspend fun done(chatId: String): String = commandMutex.withLock {
         val session = requireSession(chatId)
         session.lifecycle = LocalBrowserLifecycle.READY_TO_FINISH
+        mutableUserControlVisible.value = false
         mutableActivity.value = null
         activeChatId = null
         logAction(
@@ -1684,6 +1686,25 @@ object LocalBrowserRuntime {
             const href = String(el.href || '');
             if (!/^https?:\/\//i.test(href)) return JSON.stringify({ok:false, reason:'unsafe_link_scheme'});
             if (el.hasAttribute('download')) return JSON.stringify({ok:false, reason:'download_requires_artifact_pipeline'});
+            const label = String(
+              el.getAttribute('aria-label') ||
+              el.innerText ||
+              el.getAttribute('title') ||
+              ''
+            ).replace(/\s+/g, ' ').trim().slice(0, 140);
+            const method = String(el.getAttribute('data-method') || el.getAttribute('formmethod') || '').toLowerCase();
+            const signal = (label + ' ' + href).toLowerCase();
+            const consequential =
+              (method && method !== 'get') ||
+              /(delete|remove|logout|log out|signout|sign out|unsubscribe|purchase|checkout|pay now|place order|confirm order|удал|выйти|отпис|оплат|купить|оформить заказ)/i.test(signal);
+            if (consequential) {
+              return JSON.stringify({
+                ok:false,
+                reason:'consequential_link',
+                confirmation_required:true,
+                name:label || 'действие по ссылке'
+              });
+            }
             el.click();
             return JSON.stringify({ok:true, kind:'navigation', href});
           }
