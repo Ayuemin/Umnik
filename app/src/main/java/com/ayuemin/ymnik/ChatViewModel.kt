@@ -82,6 +82,7 @@ import com.ayuemin.ymnik.network.OpenRouterClient
 import com.ayuemin.ymnik.network.OpenRouterEmbeddingClient
 import com.ayuemin.ymnik.network.OpenRouterRecoveryStore
 import com.google.gson.Gson
+import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1009,6 +1010,85 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onFailure {
                 _state.value = _state.value.copy(status = it.message ?: "Не удалось сохранить файл")
             }
+        }
+    }
+
+    private suspend fun persistBrowserDownload(chatId: String, rawResult: String): String {
+        val result = runCatching { gson.fromJson(rawResult, JsonObject::class.java) }.getOrNull()
+            ?: return rawResult
+        if (result.get("ok")?.asBoolean != true) return rawResult
+        val artifact = result.getAsJsonObject("artifact") ?: return rawResult
+        val tempPath = artifact.get("local_path")?.asString.orEmpty()
+        val temp = tempPath.takeIf { it.isNotBlank() }?.let(::File)
+            ?: return rawResult
+        if (!temp.isFile) {
+            return gson.toJson(
+                mapOf(
+                    "ok" to false,
+                    "source" to "local_browser",
+                    "state" to "BLOCKED",
+                    "reason" to "download_temp_missing",
+                    "message" to "Скачанный файл не найден во временном хранилище"
+                )
+            )
+        }
+
+        return try {
+            val name = artifact.get("name")?.asString.orEmpty().ifBlank { temp.name }
+            val mimeType = artifact.get("mime_type")?.asString.orEmpty().ifBlank { "application/octet-stream" }
+            val pending = PendingAttachment(
+                uri = "browser-download://" + UUID.randomUUID(),
+                name = name,
+                mimeType = mimeType,
+                size = temp.length(),
+                localPath = temp.absolutePath
+            )
+            val imported = withContext(Dispatchers.IO) {
+                chatFilesRepository.importFile(chatId, pending)
+            }
+
+            val chats = _state.value.chats.map { chat ->
+                if (chat.id == chatId) {
+                    chat.copy(
+                        chatFiles = chat.chatFiles.orEmpty() + imported,
+                        updatedAt = System.currentTimeMillis()
+                    )
+                } else {
+                    chat
+                }
+            }
+            chatsRepository.save(chats)
+            _state.update { current ->
+                current.copy(
+                    chats = chats,
+                    storedFiles = storageRepository.list(),
+                    storageStats = storageRepository.stats()
+                )
+            }
+
+            artifact.remove("local_path")
+            artifact.addProperty("chat_file_id", imported.id)
+            artifact.addProperty("name", imported.name)
+            artifact.addProperty("mime_type", imported.mimeType)
+            artifact.addProperty("size", imported.size)
+            artifact.addProperty("available_to_shell", true)
+            result.addProperty(
+                "message",
+                "Файл сохранён в текущем чате и доступен Local Shell: " + imported.name
+            )
+            gson.toJson(result)
+        } catch (error: Throwable) {
+            gson.toJson(
+                mapOf(
+                    "ok" to false,
+                    "source" to "local_browser",
+                    "state" to "BLOCKED",
+                    "reason" to "artifact_import_failed",
+                    "message" to (error.message ?: "Не удалось сохранить скачанный файл в чате")
+                )
+            )
+        } finally {
+            runCatching { temp.delete() }
         }
     }
 
@@ -5127,6 +5207,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 localBrowserClick = if (localBrowserToolsEnabled) {
                                     { ref -> LocalBrowserRuntime.click(chatId, ref) }
                                 } else null,
+                                localBrowserDownload = if (localBrowserToolsEnabled) {
+                                    { ref ->
+                                        persistBrowserDownload(
+                                            chatId,
+                                            LocalBrowserRuntime.download(chatId, ref)
+                                        )
+                                    }
+                                } else null,
                                 localBrowserType = if (localBrowserToolsEnabled) {
                                     { ref, value -> LocalBrowserRuntime.type(chatId, ref, value) }
                                 } else null,
@@ -6097,6 +6185,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("Browser нужен для страниц, которые Fetch не может полноценно прочитать. Если local_web_fetch вернул requires_browser=true и содержимое страницы всё ещё нужно для задачи пользователя, автоматически продолжи в ЭТОМ ЖЕ ответе через local_browser_open по возвращённому URL.")
             appendLine("Если пользователь явно просит действие В БРАУЗЕРЕ и дал URL, сначала открой этот URL через local_browser_open. Затем используй link_index из PageSnapshot: сам выбери подходящую ссылку по name+href и нажми её через local_browser_click(ref).")
             appendLine("Не придумывай URL назначения, если на странице уже есть подходящие кандидаты. Если link_index недостаточен, запроси local_browser_read; full=true оставляй последним запасным вариантом.")
+            appendLine("Если пользователь просит скачать публичный файл со страницы, выбери конкретный ref ссылки и используй local_browser_download. Успешная загрузка сохраняется как файл текущего чата и сразу доступна Local Shell; не скачивай через обычный click.")
             appendLine("После tool-result с ok=false, BLOCKED или ошибкой не утверждай, что действие выполнено. Выбери другой фактически обоснованный шаг либо честно сообщи ограничение.")
             appendLine("Никогда не утверждай, что ты нажал, перешёл, ввёл, прокрутил или прочитал через Browser, если соответствующий local_browser_* вызов реально не произошёл в ТЕКУЩЕМ ответе.")
             appendLine("Первый PageSnapshot компактный, последующие обычно содержат только изменения. Каждый snapshot также содержит компактный link_index с ref, name и href важных ссылок. Экономия контекста не важнее правильного решения.")
