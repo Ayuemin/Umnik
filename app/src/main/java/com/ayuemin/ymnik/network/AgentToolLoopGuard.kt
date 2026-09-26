@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.network
 
+import java.security.MessageDigest
+
 internal data class AgentToolLoopDecision(
     val patternSize: Int,
     val strike: Int,
@@ -13,9 +15,8 @@ internal data class AgentToolLoopDecision(
  * parent agent loop itself, where repeated tool batches could otherwise keep causing paid
  * model completions even when no useful state changes.
  *
- * actionKey should describe the normalized tool call/batch. stateKey should fingerprint the
- * normalized result/progress observed after that action. Repeating a tool while state changes
- * is therefore treated as progress, not a loop.
+ * Repeating a tool while its observed result changes is progress, not a loop. Raw arguments
+ * and results can be large, so [observeTool] fingerprints them before they enter the trace.
  */
 internal class AgentToolLoopGuard(
     private val exactRepeatThreshold: Int = 3,
@@ -25,6 +26,12 @@ internal class AgentToolLoopGuard(
     private val trace = mutableListOf<String>()
     private var strikes = 0
     private var progressSinceLoop = 0
+
+    fun observeTool(name: String, arguments: String, result: String): AgentToolLoopDecision? =
+        observe(
+            actionKey = name.trim() + ":" + fingerprint(arguments),
+            stateKey = fingerprint(result)
+        )
 
     fun observe(actionKey: String, stateKey: String): AgentToolLoopDecision? {
         trace += "$actionKey|$stateKey"
@@ -78,5 +85,12 @@ internal class AgentToolLoopGuard(
             ) return patternSize
         }
         return null
+    }
+
+    private fun fingerprint(value: String): String {
+        val normalized = value.trim().replace(Regex("\\s+"), " ")
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(normalized.toByteArray(Charsets.UTF_8))
+        return digest.take(10).joinToString("") { byte -> "%02x".format(byte) }
     }
 }
