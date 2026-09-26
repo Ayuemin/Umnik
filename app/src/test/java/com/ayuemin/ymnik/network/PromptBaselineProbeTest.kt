@@ -12,7 +12,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import sun.misc.Unsafe
-import java.io.File
 import java.nio.file.Files
 
 class PromptBaselineProbeTest {
@@ -21,7 +20,7 @@ class PromptBaselineProbeTest {
     }
 
     @Test
-    fun printPreDietPromptBaselines() {
+    fun printPromptMeasurementsAndGuardDiet() {
         val viewModel = allocate(ChatViewModel::class.java)
         putObject(viewModel, "_state", MutableStateFlow(UiState()))
         val chat = ChatSession(id = "baseline", title = "Baseline")
@@ -35,15 +34,15 @@ class PromptBaselineProbeTest {
 
         val rows = linkedMapOf<String, BaselineRow>()
         rows["ordinary_chat"] = measure(
-            system = systemPrompt(viewModel, chat = chat, agent = false),
-            tools = JsonArray()
+            systemPrompt(viewModel, chat = chat, agent = false),
+            JsonArray()
         )
         rows["agent_on"] = measure(
-            system = systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true),
-            tools = combine(genericTools, shellTools)
+            systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true),
+            combine(genericTools, shellTools)
         )
         rows["agent_fetch"] = measure(
-            system = systemPrompt(
+            systemPrompt(
                 viewModel,
                 chat = chat,
                 toolsEnabled = true,
@@ -51,10 +50,10 @@ class PromptBaselineProbeTest {
                 shell = true,
                 agent = true
             ),
-            tools = combine(genericTools, fetchTool, shellTools)
+            combine(genericTools, fetchTool, shellTools)
         )
         rows["agent_fetch_browser_shell"] = measure(
-            system = systemPrompt(
+            systemPrompt(
                 viewModel,
                 chat = chat,
                 toolsEnabled = true,
@@ -63,23 +62,22 @@ class PromptBaselineProbeTest {
                 shell = true,
                 agent = true
             ),
-            tools = combine(genericTools, fetchTool, browserTools, shellTools)
+            combine(genericTools, fetchTool, browserTools, shellTools)
         )
         rows["knowledge_rag_enabled"] = measure(
-            system = systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false),
-            tools = combine(knowledgeTool)
+            systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false),
+            combine(knowledgeTool)
         )
         rows["active_skill_one_char"] = measure(
-            system = systemPrompt(viewModel, chat = chat, skillText = "X", agent = false),
-            tools = JsonArray()
+            systemPrompt(viewModel, chat = chat, skillText = "X", agent = false),
+            JsonArray()
         )
 
         val engine = allocate(LocalShellEngine::class.java)
         val tempRoot = Files.createTempDirectory("umnik-prompt-baseline").toFile().canonicalFile
         putObject(engine, "root", tempRoot)
         val workerPrompt = localShellWorkerPrompt(viewModel, engine, maxTurns = 500)
-        val workerTools = engine.toolDefinitions()
-        rows["local_shell_worker"] = measure(workerPrompt, workerTools)
+        rows["local_shell_worker"] = measure(workerPrompt, engine.toolDefinitions())
         tempRoot.deleteRecursively()
 
         rows.forEach { (name, row) ->
@@ -93,13 +91,10 @@ class PromptBaselineProbeTest {
             )
         }
 
-        assertTrue(rows.values.all { it.systemChars > 0 && it.systemBytes > 0 })
-        assertTrue(rows["agent_on"]!!.toolsBytes > 0)
-        assertTrue(rows["agent_fetch_browser_shell"]!!.toolsBytes > rows["agent_fetch"]!!.toolsBytes)
-        assertTrue(rows["active_skill_one_char"]!!.skillsBytes > 1)
         assertWithinPreDietCeilings(rows)
-        assertPrimaryPromptDietActuallyShrank(rows)
-        assertFirstStageDidNotChangeToolsOrWorker(rows)
+        assertPrimaryDietStable(rows)
+        assertWorkerDietStable(rows)
+        assertToolSchemasUnchanged(rows)
         assertCriticalBehaviorStillExplicit(viewModel, chat, workerPrompt)
     }
 
@@ -115,29 +110,38 @@ class PromptBaselineProbeTest {
         )
         ceilings.forEach { (name, ceiling) ->
             val current = rows.getValue(name)
-            assertTrue("$name system chars grew: ${current.systemChars} > ${ceiling.systemChars}", current.systemChars <= ceiling.systemChars)
-            assertTrue("$name system bytes grew: ${current.systemBytes} > ${ceiling.systemBytes}", current.systemBytes <= ceiling.systemBytes)
-            assertTrue("$name tools bytes grew: ${current.toolsBytes} > ${ceiling.toolsBytes}", current.toolsBytes <= ceiling.toolsBytes)
-            assertTrue("$name skill chars grew: ${current.skillsChars} > ${ceiling.skillsChars}", current.skillsChars <= ceiling.skillsChars)
-            assertTrue("$name skill bytes grew: ${current.skillsBytes} > ${ceiling.skillsBytes}", current.skillsBytes <= ceiling.skillsBytes)
+            assertTrue("$name system chars grew", current.systemChars <= ceiling.systemChars)
+            assertTrue("$name system bytes grew", current.systemBytes <= ceiling.systemBytes)
+            assertTrue("$name tools bytes grew", current.toolsBytes <= ceiling.toolsBytes)
+            assertTrue("$name skill chars grew", current.skillsChars <= ceiling.skillsChars)
+            assertTrue("$name skill bytes grew", current.skillsBytes <= ceiling.skillsBytes)
         }
     }
 
-    private fun assertPrimaryPromptDietActuallyShrank(rows: Map<String, BaselineRow>) {
-        assertTrue(rows.getValue("ordinary_chat").systemChars < 2012)
-        assertTrue(rows.getValue("agent_on").systemChars < 6104)
-        assertTrue(rows.getValue("agent_fetch").systemChars < 7385)
-        assertTrue(rows.getValue("agent_fetch_browser_shell").systemChars < 10493)
-        assertTrue(rows.getValue("knowledge_rag_enabled").systemChars < 2553)
+    private fun assertPrimaryDietStable(rows: Map<String, BaselineRow>) {
+        val expected = mapOf(
+            "ordinary_chat" to BaselineRow(1227, 2163, 0, 0, 0),
+            "agent_on" to BaselineRow(3335, 5876, 3718, 0, 0),
+            "agent_fetch" to BaselineRow(3785, 6614, 4854, 0, 0),
+            "agent_fetch_browser_shell" to BaselineRow(5355, 9105, 9795, 0, 0),
+            "knowledge_rag_enabled" to BaselineRow(1512, 2640, 820, 0, 0),
+            "active_skill_one_char" to BaselineRow(1226, 2162, 0, 82, 131)
+        )
+        expected.forEach { (name, value) -> assertEquals("$name changed unexpectedly", value, rows.getValue(name)) }
     }
 
-    private fun assertFirstStageDidNotChangeToolsOrWorker(rows: Map<String, BaselineRow>) {
+    private fun assertWorkerDietStable(rows: Map<String, BaselineRow>) {
+        val worker = rows.getValue("local_shell_worker")
+        assertEquals(1510, worker.systemChars)
+        assertEquals(2468, worker.systemBytes)
+        assertEquals(6546, worker.toolsBytes)
+    }
+
+    private fun assertToolSchemasUnchanged(rows: Map<String, BaselineRow>) {
         assertEquals(3718, rows.getValue("agent_on").toolsBytes)
         assertEquals(4854, rows.getValue("agent_fetch").toolsBytes)
         assertEquals(9795, rows.getValue("agent_fetch_browser_shell").toolsBytes)
         assertEquals(820, rows.getValue("knowledge_rag_enabled").toolsBytes)
-        assertEquals(2218, rows.getValue("local_shell_worker").systemChars)
-        assertEquals(3801, rows.getValue("local_shell_worker").systemBytes)
         assertEquals(6546, rows.getValue("local_shell_worker").toolsBytes)
     }
 
@@ -183,10 +187,25 @@ class PromptBaselineProbeTest {
         assertTrue(skill.contains("явный текущий запрос пользователя приоритетнее"))
         assertTrue(skill.contains("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="))
 
-        assertTrue(workerPrompt.contains("WORKING"))
-        assertTrue(workerPrompt.contains("READY_TO_FINISH"))
-        assertTrue(workerPrompt.contains("local_export"))
-        assertTrue(workerPrompt.contains("local_archive"))
+        listOf(
+            "input",
+            "local_list",
+            "local_archive",
+            "local_search/local_read",
+            "local_replace",
+            "local_fetch",
+            "public_clone",
+            "Git push",
+            "local_export",
+            "полный итоговый ZIP",
+            "READY_TO_FINISH",
+            "guidance",
+            "WORKING",
+            "Максимум модельных шагов: 500",
+            "потолок, не цель"
+        ).forEach { required ->
+            assertTrue("worker prompt lost: $required", workerPrompt.contains(required))
+        }
     }
 
     private fun systemPrompt(
