@@ -51,13 +51,11 @@ jobs:
 
       - name: Commit one-shot beta.29 source patch
         if: success() && steps.dev_patch.outputs.applied == 'true'
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           rm -f .github/dev/apply_beta29_step1.py
-          git show "$BEFORE_SHA:.github/workflows/android-ci.yml" > .github/workflows/android-ci.yml
+          git show af1bc335790ba6355ff045ff05f327959e0fe707:.github/workflows/android-ci.yml > .github/workflows/android-ci.yml
           git add -A
           if git diff --cached --quiet; then
             echo "No source changes to commit"
