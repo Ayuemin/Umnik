@@ -145,13 +145,29 @@ object LocalBrowserRuntime {
 
     fun showUserControl(chatId: String) {
         val session = sessions[chatId] ?: return
-        if (session.lifecycle == LocalBrowserLifecycle.WAITING_USER) {
-            mutableUserControlVisible.value = true
+        if (
+            session.currentUrl.isBlank() ||
+            session.lifecycle == LocalBrowserLifecycle.READY_TO_FINISH ||
+            session.lifecycle == LocalBrowserLifecycle.DONE
+        ) return
+        mutableUserControlVisible.value = true
+        attachedWebView?.context?.applicationContext?.let { context ->
+            DiagnosticLog.record(
+                context,
+                "LOCAL_BROWSER",
+                "user_view_open session=" + session.sessionId.take(8) +
+                    " state=" + session.lifecycle.name +
+                    " url=" + session.currentUrl.take(220)
+            )
         }
     }
 
     fun hideUserControl() {
         mutableUserControlVisible.value = false
+        attachedWebView?.context?.applicationContext?.let { context ->
+            DiagnosticLog.record(context, "LOCAL_BROWSER", "user_view_close")
+        }
+        if (activeChatId == null) mutableActivity.value = null
     }
 
     fun confirmPendingUserAction(chatId: String) {
@@ -747,7 +763,9 @@ object LocalBrowserRuntime {
             throw error
         } finally {
             if (activeChatId == session.chatId) activeChatId = null
-            if (mutableActivity.value?.sessionId == session.sessionId) mutableActivity.value = null
+            if (!mutableUserControlVisible.value && mutableActivity.value?.sessionId == session.sessionId) {
+                mutableActivity.value = null
+            }
         }
     }
 
@@ -1391,6 +1409,8 @@ object LocalBrowserRuntime {
 
         val snapshotId = UUID.randomUUID().toString()
         val contentHash = content.hashCode()
+        val pageStateHash = url.substringBefore('#').hashCode().toString() + ":" +
+            contentHash.toString() + ":" + viewportContent.hashCode().toString()
         val initial = session.lastSnapshotId == null
         val documentChanged = !initial && session.lastUrl.substringBefore('#') != url.substringBefore('#')
         val baseline = forceBaseline || initial || documentChanged
@@ -1414,6 +1434,7 @@ object LocalBrowserRuntime {
             addProperty("sessionId", session.sessionId)
             addProperty("pageId", url.substringBefore('#'))
             addProperty("stepNumber", session.stepNumber)
+            addProperty("page_state_hash", pageStateHash)
             addProperty("profileId", session.profileId)
             addProperty("url", url)
             addProperty("title", title)

@@ -225,13 +225,35 @@ class OpenRouterClient(
         val localShellToolsEnabled = localShellStart != null
         val maxToolLoops = maxOf(
             when {
-                localBrowserToolsEnabled -> 12
+                // Browser tasks can legitimately require many distinct actions. A
+                // state-aware guard below stops repetition while allowing progress.
+                localBrowserToolsEnabled -> 64
                 localShellToolsEnabled -> 8
                 localWebFetchEnabled -> 6
                 else -> 5
             },
             effectiveKnowledgeSearchLimit + 3
         )
+        val browserActionTrace = mutableListOf<String>()
+        fun repeatedBrowserPattern(): Int? {
+            if (browserActionTrace.size >= 4) {
+                val tail = browserActionTrace.takeLast(4)
+                if (tail.distinct().size == 1) return 1
+            }
+            for (patternSize in 2..4) {
+                val repeats = 3
+                val needed = patternSize * repeats
+                if (browserActionTrace.size < needed) continue
+                val tail = browserActionTrace.takeLast(needed)
+                val pattern = tail.take(patternSize)
+                if ((1 until repeats).all { repeatIndex ->
+                        val from = repeatIndex * patternSize
+                        tail.subList(from, from + patternSize) == pattern
+                    }
+                ) return patternSize
+            }
+            return null
+        }
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
         while (loops++ < maxToolLoops) {
@@ -578,6 +600,40 @@ class OpenRouterClient(
                     val ok = runCatching { browserResult?.get("ok")?.asBoolean }.getOrNull()
                     browserCanAutoFinish =
                         ok != false && state != "WAITING_USER" && state != "BLOCKED"
+
+                    val normalizedArgs = runCatching {
+                        gson.toJson(gson.fromJson(argsRaw, JsonElement::class.java))
+                    }.getOrDefault(argsRaw.trim())
+                    val stateKey = runCatching {
+                        browserResult?.get("page_state_hash")?.asString
+                    }.getOrNull() ?: buildString {
+                        append(
+                            runCatching { browserResult?.get("url")?.asString }.getOrNull()
+                                ?: runCatching { browserResult?.get("current_url")?.asString }.getOrNull().orEmpty()
+                        )
+                        append('|').append(state.orEmpty())
+                        append('|').append(
+                            runCatching { browserResult?.get("reason")?.asString }.getOrNull().orEmpty()
+                        )
+                    }
+                    browserActionTrace += name + "|" + normalizedArgs + "|" + stateKey
+                    while (browserActionTrace.size > 16) browserActionTrace.removeAt(0)
+                    val repeatedPatternSize = repeatedBrowserPattern()
+                    if (repeatedPatternSize != null) {
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_BROWSER_ROUTER",
+                            "loop_guard request=" + requestRunId +
+                                "; pattern=" + repeatedPatternSize +
+                                "; trace=" + browserActionTrace.takeLast(minOf(8, browserActionTrace.size)).joinToString(" -> ").take(900)
+                        )
+                        localBrowserDone?.let { finish -> runCatching { finish() } }
+                        return@withContext Result(
+                            "Local Browser остановлен: обнаружен повторяющийся цикл без изменения состояния страницы. " +
+                                "Разные действия и длинные задачи этим правилом не ограничиваются.",
+                            created
+                        )
+                    }
                 }
                 messages.add(JsonObject().apply {
                     addProperty("role", "tool")
@@ -589,7 +645,15 @@ class OpenRouterClient(
                 }
             }
         }
-        Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
+        Result(
+            if (localBrowserToolsEnabled) {
+                "Local Browser достиг аварийного предела $maxToolLoops циклов без завершения. " +
+                    "Операция остановлена как последняя защита от бесконтрольных расходов."
+            } else {
+                "Модель слишком много раз вызывала инструменты. Операция остановлена."
+            },
+            created
+        )
     }
 
     private fun compactPreviousBrowserResults(messages: JsonArray, browserCallIds: Set<String>) {
