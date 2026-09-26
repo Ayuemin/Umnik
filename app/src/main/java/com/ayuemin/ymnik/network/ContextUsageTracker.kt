@@ -22,6 +22,7 @@ internal object ContextUsageTracker {
     private data class AttachmentStats(val count: Int, val bytes: Long)
 
     private val entries = LinkedHashMap<String, Entry>()
+    private val messageAliases = LinkedHashMap<String, String>()
 
     @Synchronized
     fun capture(requestId: String?, payload: JsonObject): ContextUsageBreakdown? {
@@ -31,22 +32,63 @@ internal object ContextUsageTracker {
         prune(now)
         entries[key] = Entry(now, usage)
         while (entries.size > MAX_ENTRIES) {
-            entries.entries.firstOrNull()?.key?.let(entries::remove) ?: break
+            entries.entries.firstOrNull()?.key?.let(::removeRequest) ?: break
         }
         return usage
+    }
+
+    /**
+     * Links the network request UUID to the originating chat message. ChatViewModel also keeps
+     * a separate per-chat generation counter, so the persisted ChatMessage.requestId is not
+     * guaranteed to be the UUID used by the HTTP client. This stable alias keeps persistence
+     * correlated without changing the existing request-generation semantics.
+     */
+    @Synchronized
+    fun linkToMessage(requestId: String?, chatId: String?, messageId: String?) {
+        val requestKey = requestId?.trim()?.takeIf { it.isNotBlank() } ?: return
+        val alias = messageKey(chatId, messageId) ?: return
+        val now = System.currentTimeMillis()
+        prune(now)
+        if (requestKey in entries) messageAliases[alias] = requestKey
     }
 
     @Synchronized
     fun consume(requestId: String): ContextUsageBreakdown? {
         val now = System.currentTimeMillis()
         prune(now)
-        return entries.remove(requestId)?.usage
+        return removeRequest(requestId)
+    }
+
+    @Synchronized
+    fun consumeForMessage(chatId: String, messageId: String): ContextUsageBreakdown? {
+        val now = System.currentTimeMillis()
+        prune(now)
+        val alias = messageKey(chatId, messageId) ?: return null
+        val requestKey = messageAliases.remove(alias) ?: return null
+        return removeRequest(requestKey)
+    }
+
+    private fun messageKey(chatId: String?, messageId: String?): String? {
+        val chat = chatId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val message = messageId?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        return "$chat\u001F$message"
+    }
+
+    private fun removeRequest(requestKey: String): ContextUsageBreakdown? {
+        val usage = entries.remove(requestKey)?.usage
+        if (usage != null) {
+            val aliases = messageAliases.filterValues { it == requestKey }.keys.toList()
+            aliases.forEach(messageAliases::remove)
+        }
+        return usage
     }
 
     @Synchronized
     private fun prune(now: Long) {
         val stale = entries.filterValues { now - it.capturedAt > TTL_MS }.keys.toList()
-        stale.forEach(entries::remove)
+        stale.forEach(::removeRequest)
+        val orphanedAliases = messageAliases.filterValues { it !in entries }.keys.toList()
+        orphanedAliases.forEach(messageAliases::remove)
     }
 
     internal fun measurePayload(payload: JsonObject): ContextUsageBreakdown {
