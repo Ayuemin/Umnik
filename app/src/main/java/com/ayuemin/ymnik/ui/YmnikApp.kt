@@ -208,7 +208,7 @@ private fun imageParameterSummary(state: UiState): String =
         .joinToString(" · ")
 
 private fun formatUsd(value: Double): String =
-    "$" + "%.2f".format(Locale.US, value.coerceAtLeast(0.0))
+    "$" + "%.5f".format(Locale.US, value.coerceAtLeast(0.0))
 
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
