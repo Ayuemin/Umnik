@@ -925,6 +925,12 @@ onBranch = if (message.role == "assistant") {
                                     description = "Поиск в сети включён"
                                 )
                             }
+                            if (!imagePromptMode && state.agentEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.SmartToy,
+                                    description = "Агентный режим включён"
+                                )
+                            }
                         }
                     },
                     trailingIcon = {

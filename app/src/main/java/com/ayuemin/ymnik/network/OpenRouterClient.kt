@@ -254,6 +254,7 @@ class OpenRouterClient(
             }
             return null
         }
+        val agentToolLoopGuard = AgentToolLoopGuard()
         val requestRunId = UUID.randomUUID().toString()
         var loops = 0
         while (loops++ < maxToolLoops) {
@@ -381,6 +382,7 @@ class OpenRouterClient(
 
             phaseCallback("Выполняю инструменты…")
             messages.add(responseMessage.deepCopy())
+            var agentLoopDecisionForBatch: AgentToolLoopDecision? = null
             for (callElement in toolCalls) {
                 val call = callElement.asJsonObject
                 val callId = call.get("id")?.asString ?: UUID.randomUUID().toString()
@@ -591,6 +593,12 @@ class OpenRouterClient(
                     }
                     else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
+                val agentLoopDecision = agentToolLoopGuard.observeTool(name, argsRaw, resultText)
+                if (agentLoopDecision != null &&
+                    (agentLoopDecisionForBatch == null || agentLoopDecision.shouldStop)
+                ) {
+                    agentLoopDecisionForBatch = agentLoopDecision
+                }
                 if (name.startsWith("local_browser_")) {
                     compactPreviousBrowserResults(messages, browserToolCallIds)
                     val browserResult = runCatching {
@@ -644,13 +652,35 @@ class OpenRouterClient(
                     browserToolCallIds += callId
                 }
             }
+            agentLoopDecisionForBatch?.let { decision ->
+                DiagnosticLog.record(
+                    context,
+                    "AGENT_TOOL_LOOP_GUARD",
+                    "pattern=${decision.patternSize}; strike=${decision.strike}; stop=${decision.shouldStop}; request=$requestRunId; step=$loops"
+                )
+                if (decision.shouldStop) {
+                    error(
+                        "Агент остановлен: повторяющийся цикл инструментов не меняет состояние после попытки перестроить план. " +
+                            "Операция остановлена до аварийного лимита как защита от лишних расходов."
+                    )
+                }
+                messages.add(
+                    message(
+                        "system",
+                        "Защита Umnik обнаружила повторяющийся цикл инструментов без изменения результата. " +
+                            "Это первое предупреждение: перестрой план и не повторяй ту же последовательность. " +
+                            "Если цикл повторится до заметного прогресса, выполнение будет остановлено."
+                    )
+                )
+            }
         }
         Result(
-            if (localBrowserToolsEnabled) {
+            if (localBrowserToolsEnabled && !localShellToolsEnabled && !localWebFetchEnabled) {
                 "Local Browser достиг аварийного предела $maxToolLoops циклов без завершения. " +
                     "Операция остановлена как последняя защита от бесконтрольных расходов."
             } else {
-                "Модель слишком много раз вызывала инструменты. Операция остановлена."
+                "Агент достиг аварийного предела $maxToolLoops автономных циклов без завершения. " +
+                    "Операция остановлена как последняя защита от бесконтрольных расходов."
             },
             created
         )

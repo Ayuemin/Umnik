@@ -6004,6 +6004,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val startedAt = System.currentTimeMillis()
         LocalShellRuntime.scope.launch {
             var lastKeepAliveRefreshAt = 0L
+            val parentOwned = originUserMessageId != null
+            val parentWatcher = if (parentOwned) {
+                launch {
+                    while (RequestExecutionManager.hasActiveChat(chatId)) {
+                        delay(100L)
+                    }
+                    cancelRequested.set(true)
+                    localShellClient.cancelActive()
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_LIFECYCLE",
+                        "parent request ended; cancelling child shell chat=${chatId.take(8)} task=${taskId.take(8)}"
+                    )
+                }
+            } else {
+                null
+            }
             runCatching {
                 localShellClient.run(
                     apiKey = key,
@@ -6108,6 +6125,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     error
                 )
             }
+            parentWatcher?.cancel()
             AsyncJobEvents.markLocalShellFinished(chatId)
             runCatching { RequestKeepAliveService.update(context) }
             AsyncJobEvents.notifyChanged()
