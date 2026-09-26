@@ -87,6 +87,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -5310,7 +5311,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                             requestedFiles = requestedFiles,
                                             requestAttachments = pending,
                                             networkEnabled = allowNetwork,
-                                            fallbackModel = textModel
+                                            fallbackModel = textModel,
+                                            requestNetwork = network
                                         )
                                     }
                                 } else {
@@ -5872,7 +5874,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         requestedFiles: List<String>,
         requestAttachments: List<PendingAttachment> = emptyList(),
         networkEnabled: Boolean,
-        fallbackModel: String
+        fallbackModel: String,
+        requestNetwork: RequestNetworkSession? = null
     ): String {
         val task = taskRaw.trim()
         if (task.isBlank()) {
@@ -6001,26 +6004,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             localShellClient.cancelActive()
         }
 
+        val childCancellationId = "local-shell:$taskId"
         val startedAt = System.currentTimeMillis()
-        LocalShellRuntime.scope.launch {
+        lateinit var shellJob: Job
+        shellJob = LocalShellRuntime.scope.launch(start = CoroutineStart.LAZY) {
             var lastKeepAliveRefreshAt = 0L
-            val parentOwned = originUserMessageId != null
-            val parentWatcher = if (parentOwned) {
-                launch {
-                    while (RequestExecutionManager.hasActiveChat(chatId)) {
-                        delay(100L)
-                    }
-                    cancelRequested.set(true)
-                    localShellClient.cancelActive()
-                    DiagnosticLog.record(
-                        context,
-                        "LOCAL_SHELL_LIFECYCLE",
-                        "parent request ended; cancelling child shell chat=${chatId.take(8)} task=${taskId.take(8)}"
-                    )
-                }
-            } else {
-                null
-            }
             runCatching {
                 localShellClient.run(
                     apiKey = key,
@@ -6125,12 +6113,35 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     error
                 )
             }
-            parentWatcher?.cancel()
+            requestNetwork?.unregisterChildCancellation(childCancellationId)
             AsyncJobEvents.markLocalShellFinished(chatId)
             runCatching { RequestKeepAliveService.update(context) }
             AsyncJobEvents.notifyChanged()
             LocalShellRuntime.clear()
         }
+
+        val parentAccepted = requestNetwork?.registerChildCancellation(childCancellationId) {
+            cancelRequested.set(true)
+            shellJob.cancel(CancellationException("Parent request cancelled"))
+            localShellClient.cancelActive()
+            DiagnosticLog.record(
+                context,
+                "LOCAL_SHELL_LIFECYCLE",
+                "parent cancellation cascaded to child shell chat=${chatId.take(8)} task=${taskId.take(8)}"
+            )
+        } ?: true
+        if (!parentAccepted) {
+            AsyncJobEvents.markLocalShellFinished(chatId)
+            runCatching { RequestKeepAliveService.update(context) }
+            LocalShellRuntime.clear()
+            return gson.toJson(
+                mapOf(
+                    "ok" to false,
+                    "error" to "Родительский запрос уже остановлен; Local Shell не запущен"
+                )
+            )
+        }
+        shellJob.start()
 
         return gson.toJson(
             mapOf(
