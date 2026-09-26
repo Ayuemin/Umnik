@@ -9,6 +9,7 @@ on:
       - .github/workflows/prompt-baseline-probe.yml
       - app/src/test/java/com/ayuemin/ymnik/network/PromptBaselineProbeTest.kt
       - app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
+      - app/src/main/java/com/ayuemin/ymnik/PromptDiet.kt
       - app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt
       - app/src/main/java/com/ayuemin/ymnik/local/LocalShellEngine.kt
       - app/src/main/java/com/ayuemin/ymnik/network/LocalShellAgentClient.kt

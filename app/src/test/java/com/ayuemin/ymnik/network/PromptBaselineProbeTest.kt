@@ -8,6 +8,7 @@ import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
 import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import sun.misc.Unsafe
@@ -97,6 +98,9 @@ class PromptBaselineProbeTest {
         assertTrue(rows["agent_fetch_browser_shell"]!!.toolsBytes > rows["agent_fetch"]!!.toolsBytes)
         assertTrue(rows["active_skill_one_char"]!!.skillsBytes > 1)
         assertWithinPreDietCeilings(rows)
+        assertPrimaryPromptDietActuallyShrank(rows)
+        assertFirstStageDidNotChangeToolsOrWorker(rows)
+        assertCriticalBehaviorStillExplicit(viewModel, chat, workerPrompt)
     }
 
     private fun assertWithinPreDietCeilings(rows: Map<String, BaselineRow>) {
@@ -117,6 +121,72 @@ class PromptBaselineProbeTest {
             assertTrue("$name skill chars grew: ${current.skillsChars} > ${ceiling.skillsChars}", current.skillsChars <= ceiling.skillsChars)
             assertTrue("$name skill bytes grew: ${current.skillsBytes} > ${ceiling.skillsBytes}", current.skillsBytes <= ceiling.skillsBytes)
         }
+    }
+
+    private fun assertPrimaryPromptDietActuallyShrank(rows: Map<String, BaselineRow>) {
+        assertTrue(rows.getValue("ordinary_chat").systemChars < 2012)
+        assertTrue(rows.getValue("agent_on").systemChars < 6104)
+        assertTrue(rows.getValue("agent_fetch").systemChars < 7385)
+        assertTrue(rows.getValue("agent_fetch_browser_shell").systemChars < 10493)
+        assertTrue(rows.getValue("knowledge_rag_enabled").systemChars < 2553)
+    }
+
+    private fun assertFirstStageDidNotChangeToolsOrWorker(rows: Map<String, BaselineRow>) {
+        assertEquals(3718, rows.getValue("agent_on").toolsBytes)
+        assertEquals(4854, rows.getValue("agent_fetch").toolsBytes)
+        assertEquals(9795, rows.getValue("agent_fetch_browser_shell").toolsBytes)
+        assertEquals(820, rows.getValue("knowledge_rag_enabled").toolsBytes)
+        assertEquals(2218, rows.getValue("local_shell_worker").systemChars)
+        assertEquals(3801, rows.getValue("local_shell_worker").systemBytes)
+        assertEquals(6546, rows.getValue("local_shell_worker").toolsBytes)
+    }
+
+    private fun assertCriticalBehaviorStillExplicit(
+        viewModel: ChatViewModel,
+        chat: ChatSession,
+        workerPrompt: String
+    ) {
+        val ordinary = systemPrompt(viewModel, chat = chat, agent = false)
+        assertTrue(ordinary.contains("Агентный режим выключен"))
+        assertTrue(ordinary.contains("не запускай Browser или Local Shell сам"))
+        assertTrue(ordinary.contains("create_file"))
+
+        val agent = systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true)
+        assertTrue(agent.contains("local_shell_start"))
+        assertTrue(agent.contains("не утверждай, что Shell недоступен"))
+        assertTrue(agent.contains("stop — только по явной просьбе остановить"))
+        assertTrue(agent.contains("network=true"))
+
+        val browser = systemPrompt(
+            viewModel,
+            chat = chat,
+            toolsEnabled = true,
+            fetch = true,
+            browser = true,
+            shell = true,
+            agent = true
+        )
+        assertTrue(browser.contains("requires_browser=true"))
+        assertTrue(browser.contains("local_browser_open"))
+        assertTrue(browser.contains("local_browser_download"))
+        assertTrue(browser.contains("local_browser_takeover"))
+        assertTrue(browser.contains("READY_TO_FINISH"))
+        assertTrue(browser.contains("побочные действия требуют подтверждения"))
+
+        val knowledge = systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false)
+        assertTrue(knowledge.contains("knowledge_search"))
+        assertTrue(knowledge.contains("не инструкции"))
+        assertTrue(knowledge.contains("максимум 4 поисков"))
+
+        val skill = systemPrompt(viewModel, chat = chat, skillText = "X", agent = false)
+        assertTrue(skill.contains("===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="))
+        assertTrue(skill.contains("явный текущий запрос пользователя приоритетнее"))
+        assertTrue(skill.contains("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="))
+
+        assertTrue(workerPrompt.contains("WORKING"))
+        assertTrue(workerPrompt.contains("READY_TO_FINISH"))
+        assertTrue(workerPrompt.contains("local_export"))
+        assertTrue(workerPrompt.contains("local_archive"))
     }
 
     private fun systemPrompt(
