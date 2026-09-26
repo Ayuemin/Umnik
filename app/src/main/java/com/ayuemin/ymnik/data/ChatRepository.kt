@@ -4,6 +4,7 @@ import android.content.Context
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.network.ContextUsageTracker
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
@@ -61,9 +62,19 @@ class ChatRepository(context: Context) {
             if (chat.id != chatId) return@map chat
             val userIndex = chat.messages.indexOfFirst { it.id == messageId && it.deliveryState == "pending" }
             if (userIndex < 0) return@map chat
-            val messages = chat.messages.toMutableList()
-  messages[userIndex] = messages[userIndex].copy(deliveryState = if (assistant == null) "failed" else null)
-  if (assistant != null) messages.add(userIndex + 1, assistant)
+  val completedAssistant = assistant?.let { raw ->
+      if (raw.contextUsage != null) {
+          raw
+      } else {
+          raw.requestId
+              ?.let(ContextUsageTracker::consume)
+              ?.let { usage -> raw.copy(contextUsage = usage) }
+              ?: raw
+      }
+  }
+  val messages = chat.messages.toMutableList()
+  messages[userIndex] = messages[userIndex].copy(deliveryState = if (completedAssistant == null) "failed" else null)
+  if (completedAssistant != null) messages.add(userIndex + 1, completedAssistant)
             chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
         }
         save(updated)

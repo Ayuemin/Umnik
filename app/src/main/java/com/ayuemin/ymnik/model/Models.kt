@@ -345,6 +345,24 @@ data class RequestCostBreakdown(
     val incomplete: Boolean = false
 )
 
+data class ContextLayerUsage(
+    val chars: Int = 0,
+    val bytes: Int = 0,
+    val estimatedTokens: Int = 0
+)
+
+data class ContextUsageBreakdown(
+    val systemPrompt: ContextLayerUsage = ContextLayerUsage(),
+    val tools: ContextLayerUsage = ContextLayerUsage(),
+    val history: ContextLayerUsage = ContextLayerUsage(),
+    val memoryRag: ContextLayerUsage = ContextLayerUsage(),
+    val skills: ContextLayerUsage = ContextLayerUsage(),
+    val currentUserPrompt: ContextLayerUsage = ContextLayerUsage(),
+    val attachmentCount: Int = 0,
+    val attachmentBytes: Long = 0L,
+    val capturedAt: Long = System.currentTimeMillis()
+)
+
 data class ChatMessage(
     val id: String,
     val role: String,
@@ -376,7 +394,8 @@ data class ChatMessage(
     val attachmentCount: Int? = null,
     val connectionName: String? = null,
     val requestId: String? = null,
-    val costBreakdown: RequestCostBreakdown? = null
+    val costBreakdown: RequestCostBreakdown? = null,
+    val contextUsage: ContextUsageBreakdown? = null
 )
 
 data class ChatSession(

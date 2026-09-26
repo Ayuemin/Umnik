@@ -179,6 +179,8 @@ import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.ContextLayerUsage
+import com.ayuemin.ymnik.model.ContextUsageBreakdown
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.InternetMode
@@ -2576,6 +2578,7 @@ private fun MessageCard(
             message.outputTokens != null ||
             message.costUsd != null ||
             message.costBreakdown != null ||
+            message.contextUsage != null ||
             message.responseDurationMs != null ||
             message.knowledgeHitCount != null ||
             message.knowledgeSearchAttempted != null ||
@@ -2857,11 +2860,13 @@ private fun AnswerInfoSheet(
                 message.reasoningEnabled != null ||
                 message.memoryContextUsed != null ||
                 message.activeSkillCount != null ||
+                message.contextUsage != null ||
                 message.teamContextUsed != null ||
                 message.attachmentCount != null
             ) {
                 Spacer(Modifier.height(8.dp))
                 AnswerInfoSectionTitle("Контекст")
+                message.contextUsage?.let { ContextUsageBreakdownRows(it) }
                 if (knowledgeCount != null || knowledgeSearchAttempted || knowledgeBaseOnly) {
                     val knowledgeStatus = when {
                         knowledgeSearchAttempted && (knowledgeCount ?: 0) > 0 ->
@@ -2948,6 +2953,27 @@ private fun AnswerInfoSheet(
         }
     }
 }
+
+@Composable
+private fun ContextUsageBreakdownRows(usage: ContextUsageBreakdown) {
+    AnswerInfoRow("Системный prompt", formatContextLayer(usage.systemPrompt))
+    AnswerInfoRow("Схемы tools", formatContextLayer(usage.tools))
+    AnswerInfoRow("История", formatContextLayer(usage.history))
+    AnswerInfoRow("Память / RAG", formatContextLayer(usage.memoryRag))
+    AnswerInfoRow("Навыки", formatContextLayer(usage.skills))
+    AnswerInfoRow("Текущий запрос", formatContextLayer(usage.currentUserPrompt))
+    if (usage.attachmentCount > 0 || usage.attachmentBytes > 0L) {
+        AnswerInfoRow("Вложения", "${usage.attachmentCount} шт. · ${usage.attachmentBytes} Б")
+    }
+    Text(
+        "Символы и байты точные; ≈ токены — локальная оценка.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+private fun formatContextLayer(layer: ContextLayerUsage): String =
+    "${layer.chars} зн. · ${layer.bytes} Б · ≈ ${layer.estimatedTokens} ток."
 
 @Composable
 private fun AnswerInfoSectionTitle(title: String) {

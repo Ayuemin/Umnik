@@ -78,6 +78,21 @@ internal class OpenRouterRequestEnhancer(
             payload.add("tools", merged)
         }
 
+        ContextUsageTracker.capture(requestId, payload)?.let { usage ->
+  com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
+      context,
+      "CONTEXT_USAGE",
+      "request=" + requestId.orEmpty().take(8) +
+          "; system=" + usage.systemPrompt.chars + "ch/" + usage.systemPrompt.bytes + "B" +
+          "; tools=" + usage.tools.bytes + "B" +
+          "; history=" + usage.history.chars + "ch/" + usage.history.bytes + "B" +
+          "; memoryRag=" + usage.memoryRag.chars + "ch/" + usage.memoryRag.bytes + "B" +
+          "; skills=" + usage.skills.chars + "ch/" + usage.skills.bytes + "B" +
+          "; user=" + usage.currentUserPrompt.chars + "ch/" + usage.currentUserPrompt.bytes + "B" +
+          "; attachments=" + usage.attachmentCount + "/" + usage.attachmentBytes + "B"
+  )
+        }
+
         // Small one-off attachments are sent directly. Large or reusable documents
         // use the persistent knowledge base; there is no separate attachment-RAG path.
         val model = payload.string("model").orEmpty()
