@@ -3,10 +3,11 @@ package com.ayuemin.ymnik.ui
 import android.view.View
 import android.webkit.WebView
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -34,7 +35,9 @@ internal fun LocalBrowserHost() {
         LocalBrowserRuntime.hideUserControl()
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val hiddenOffset = maxWidth + 16.dp
+
         AndroidView(
             factory = { context ->
                 WebView(context).also { webView ->
@@ -56,8 +59,9 @@ internal fun LocalBrowserHost() {
                 } else {
                     View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 }
-                // User gestures must stay available while a confirmation is shown:
-                // scrolling and pinch-to-zoom are needed to inspect the page before deciding.
+                // Keep the hidden browser measured at the real screen size, but move its
+                // Compose/AndroidView hit area completely off-screen. This preserves a
+                // realistic browser viewport without blocking touches in the chat UI.
                 webView.isEnabled = visible
                 webView.isVerticalScrollBarEnabled = visible
                 webView.isHorizontalScrollBarEnabled = visible
@@ -68,7 +72,10 @@ internal fun LocalBrowserHost() {
                     }
                 }
             },
-            modifier = Modifier.fillMaxSize().padding(top = 56.dp)
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = 56.dp)
+                .offset(x = if (visible) 0.dp else hiddenOffset)
         )
 
         if (visible) {
