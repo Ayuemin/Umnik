@@ -1,0 +1,152 @@
+name: Main screen links and fonts
+
+on:
+  push:
+    branches: [work/local-shell-mvp]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.event_name == 'workflow_dispatch' || !contains(github.event.head_commit.message, '[ui-links-fonts-applied]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/local-shell-mvp
+          fetch-depth: 0
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v4
+      - name: Apply guarded UI edits
+        shell: python
+        run: |
+          from pathlib import Path
+
+          app = Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
+          text = app.read_text()
+
+          old = '''import androidx.compose.ui.text.SpanStyle\nimport androidx.compose.ui.text.buildAnnotatedString\n'''
+          new = '''import androidx.compose.ui.text.LinkAnnotation\nimport androidx.compose.ui.text.SpanStyle\nimport androidx.compose.ui.text.TextLinkStyles\nimport androidx.compose.ui.text.buildAnnotatedString\nimport androidx.compose.ui.text.withLink\n'''
+          if old not in text:
+              raise SystemExit('YmnikApp text imports anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    val context = LocalContext.current\n    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->\n'''
+          new = '''    val context = LocalContext.current\n    UserFontStore.initialize(context.applicationContext)\n    val userFontState by UserFontStore.state.collectAsState()\n    val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->\n'''
+          if old not in text:
+              raise SystemExit('YmnikApp font state anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    UmnikTheme(state.themeChoice, state.customThemeColor) {\n'''
+          new = '''    UmnikTheme(\n        choice = state.themeChoice,\n        customColor = state.customThemeColor,\n        customFontPath = userFontState.selected?.localPath\n    ) {\n'''
+          if old not in text:
+              raise SystemExit('YmnikTheme call anchor not found')
+          text = text.replace(old, new, 1)
+
+          start = text.index('@Composable\nprivate fun markdownInline(source: String): androidx.compose.ui.text.AnnotatedString {')
+          end = text.index('\n@Composable\nprivate fun IsolatedBlock(', start)
+          replacement = r'''@Composable
+private fun markdownInline(source: String): androidx.compose.ui.text.AnnotatedString {
+    val codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
+    val linkColor = MaterialTheme.colorScheme.primary
+    val linkStyles = TextLinkStyles(
+        style = SpanStyle(
+            color = linkColor,
+            textDecoration = TextDecoration.Underline,
+            fontWeight = FontWeight.Medium
+        )
+    )
+    return buildAnnotatedString {
+        val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)|(https?://[^\\s<>()]+)")
+        var cursor = 0
+        regex.findAll(source).forEach { match ->
+            if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
+            when {
+                match.groupValues[1].isNotEmpty() -> withStyle(
+                    SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        background = codeBackground
+                    )
+                ) { append(match.groupValues[1]) }
+                match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
+                match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
+                match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
+                match.groupValues[5].isNotEmpty() -> {
+                    val label = match.groupValues[5]
+                    val target = match.groupValues[6].trim()
+                    if (target.startsWith("https://", true) || target.startsWith("http://", true)) {
+                        withLink(LinkAnnotation.Url(target, linkStyles)) { append(label) }
+                    } else {
+                        withStyle(SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)) {
+                            append(label)
+                        }
+                    }
+                }
+                match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
+                match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
+                match.groupValues[9].isNotEmpty() -> {
+                    val rawUrl = match.groupValues[9]
+                    val url = rawUrl.trimEnd('.', ',', ';', ':', '!', '?')
+                    val suffix = rawUrl.substring(url.length)
+                    withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
+                    append(suffix)
+                }
+                else -> append(match.value)
+            }
+            cursor = match.range.last + 1
+        }
+        if (cursor < source.length) append(source.substring(cursor))
+    }
+}
+'''
+          text = text[:start] + replacement + text[end:]
+          app.write_text(text)
+
+          settings = Path('app/src/main/java/com/ayuemin/ymnik/ui/SettingsScreen.kt')
+          text = settings.read_text()
+
+          old = '''import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.LaunchedEffect\n'''
+          new = '''import androidx.compose.runtime.Composable\nimport androidx.compose.runtime.LaunchedEffect\nimport androidx.compose.runtime.collectAsState\n'''
+          if old not in text:
+              raise SystemExit('Settings runtime imports anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {\n    val context = LocalContext.current\n'''
+          new = '''internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {\n    val context = LocalContext.current\n    UserFontStore.initialize(context.applicationContext)\n    val userFontState by UserFontStore.state.collectAsState()\n'''
+          if old not in text:
+              raise SystemExit('Settings font state anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    var themeExpanded by remember { mutableStateOf(false) }\n    var connectionsExpanded by remember { mutableStateOf(false) }\n'''
+          new = '''    var themeExpanded by remember { mutableStateOf(false) }\n    var fontExpanded by remember { mutableStateOf(false) }\n    var connectionsExpanded by remember { mutableStateOf(false) }\n'''
+          if old not in text:
+              raise SystemExit('Settings font expanded anchor not found')
+          text = text.replace(old, new, 1)
+
+          old = '''    val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->\n        uri?.let(vm::importAnswerSound)\n    }\n'''
+          new = '''    val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->\n        uri?.let(vm::importAnswerSound)\n    }\n    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->\n        uri ?: return@rememberLauncherForActivityResult\n        UserFontStore.importFont(context, uri)\n            .onSuccess { font -> Toast.makeText(context, "Шрифт «${font.name}» применён", Toast.LENGTH_SHORT).show() }\n            .onFailure { error -> Toast.makeText(context, error.message ?: "Не удалось добавить шрифт", Toast.LENGTH_LONG).show() }\n    }\n'''
+          if old not in text:
+              raise SystemExit('Settings font picker anchor not found')
+          text = text.replace(old, new, 1)
+
+          color_anchor = '''                item {\n                    ExpandableSettingsCard(\n                        title = "Цветовая схема",\n'''
+          if color_anchor not in text:
+              raise SystemExit('Settings color scheme anchor not found')
+          font_block = '''                item {\n                    ExpandableSettingsCard(\n                        title = "Шрифт интерфейса",\n                        subtitle = userFontState.selected?.name ?: "Системный",\n                        icon = Icons.Outlined.TextFields,\n                        expanded = fontExpanded,\n                        onToggle = { fontExpanded = !fontExpanded },\n                        info = "Поддерживаются файлы TTF и OTF, включая переменные шрифты в этих форматах. Файл копируется во внутреннюю память Umnik, не показывается в «Хранилище Umnik» и удаляется только здесь."\n                    ) {\n                        FilterChip(\n                            selected = userFontState.selectedId == null,\n                            onClick = { UserFontStore.select(context, null) },\n                            label = { Text("Системный") },\n                            leadingIcon = if (userFontState.selectedId == null) {\n                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }\n                            } else null\n                        )\n                        if (userFontState.fonts.isNotEmpty()) {\n                            Spacer(Modifier.height(6.dp))\n                            userFontState.fonts.forEach { font ->\n                                Row(\n                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),\n                                    verticalAlignment = Alignment.CenterVertically\n                                ) {\n                                    FilterChip(\n                                        selected = userFontState.selectedId == font.id,\n                                        onClick = { UserFontStore.select(context, font.id) },\n                                        label = { Text(font.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },\n                                        leadingIcon = if (userFontState.selectedId == font.id) {\n                                            { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }\n                                        } else null,\n                                        modifier = Modifier.weight(1f)\n                                    )\n                                    Spacer(Modifier.width(4.dp))\n                                    IconButton(onClick = { UserFontStore.delete(context, font.id) }) {\n                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить шрифт")\n                                    }\n                                }\n                            }\n                        }\n                        Spacer(Modifier.height(8.dp))\n                        FilledTonalButton(\n                            onClick = { fontPicker.launch(arrayOf("font/ttf", "font/otf", "application/x-font-ttf", "application/x-font-opentype", "application/octet-stream")) },\n                            modifier = Modifier.fillMaxWidth()\n                        ) {\n                            Icon(Icons.Outlined.Add, contentDescription = null)\n                            Spacer(Modifier.width(7.dp))\n                            Text("Добавить шрифт")\n                        }\n                    }\n                }\n\n'''
+          text = text.replace(color_anchor, font_block + color_anchor, 1)
+          settings.write_text(text)
+      - name: Build and tests
+        run: ./gradlew testDebugUnitTest assembleDebug --no-daemon
+      - name: Commit UI changes
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt app/src/main/java/com/ayuemin/ymnik/ui/SettingsScreen.kt
+          git diff --cached --check
+          git commit -m "[ui-links-fonts-applied] Add clickable links and custom fonts"
+          git push origin HEAD:work/local-shell-mvp
