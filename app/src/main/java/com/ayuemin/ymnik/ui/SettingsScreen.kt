@@ -54,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -252,6 +253,8 @@ private fun SettingsActionCard(
 @Composable
 internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
+    UserFontStore.initialize(context.applicationContext)
+    val userFontState by UserFontStore.state.collectAsState()
     val appVersion = remember(context) {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
@@ -274,6 +277,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var soundExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
+    var fontExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
     var diagnosticLoggingEnabled by remember { mutableStateOf(vm.isDiagnosticLoggingEnabled()) }
@@ -297,6 +301,12 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::importAnswerSound)
+    }
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        UserFontStore.importFont(context, uri)
+            .onSuccess { font -> Toast.makeText(context, "Шрифт «${font.name}» применён", Toast.LENGTH_SHORT).show() }
+            .onFailure { error -> Toast.makeText(context, error.message ?: "Не удалось добавить шрифт", Toast.LENGTH_LONG).show() }
     }
     val diagnosticSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
         val file = diagnosticFileToSave
@@ -821,6 +831,58 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                 Spacer(Modifier.width(7.dp))
                                 Text("Проверить звук")
                             }
+                        }
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Шрифт интерфейса",
+                        subtitle = userFontState.selected?.name ?: "Системный",
+                        icon = Icons.Outlined.TextFields,
+                        expanded = fontExpanded,
+                        onToggle = { fontExpanded = !fontExpanded },
+                        info = "Поддерживаются файлы TTF и OTF. Файл копируется во внутреннюю память Umnik, не показывается в «Хранилище Umnik» и удаляется только здесь."
+                    ) {
+                        FilterChip(
+                            selected = userFontState.selectedId == null,
+                            onClick = { UserFontStore.select(context, null) },
+                            label = { Text("Системный") },
+                            leadingIcon = if (userFontState.selectedId == null) {
+                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null
+                        )
+                        if (userFontState.fonts.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            userFontState.fonts.forEach { font ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FilterChip(
+                                        selected = userFontState.selectedId == font.id,
+                                        onClick = { UserFontStore.select(context, font.id) },
+                                        label = { Text(font.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        leadingIcon = if (userFontState.selectedId == font.id) {
+                                            { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(onClick = { UserFontStore.delete(context, font.id) }) {
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить шрифт")
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { fontPicker.launch(arrayOf("*/*")) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Добавить шрифт")
                         }
                     }
                 }

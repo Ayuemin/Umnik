@@ -150,8 +150,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -218,6 +221,8 @@ fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    UserFontStore.initialize(context.applicationContext)
+    val userFontState by UserFontStore.state.collectAsState()
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) RequestKeepAliveService.update(context.applicationContext)
     }
@@ -259,7 +264,11 @@ fun YmnikApp(viewModel: ChatViewModel) {
         }
     }
 
-    UmnikTheme(state.themeChoice, state.customThemeColor) {
+    UmnikTheme(
+        choice = state.themeChoice,
+        customColor = state.customThemeColor,
+        customFontPath = userFontState.selected?.localPath
+    ) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = {
@@ -3269,31 +3278,54 @@ private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.g
 @Composable
 private fun markdownInline(source: String): androidx.compose.ui.text.AnnotatedString {
     val codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
+    val linkColor = MaterialTheme.colorScheme.primary
+    val linkStyles = TextLinkStyles(
+        style = SpanStyle(
+            color = linkColor,
+            textDecoration = TextDecoration.Underline,
+            fontWeight = FontWeight.Medium
+        )
+    )
     return buildAnnotatedString {
-    val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
-    var cursor = 0
-    regex.findAll(source).forEach { match ->
-        if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
-        when {
-            match.groupValues[1].isNotEmpty() -> withStyle(
-                SpanStyle(
-                    fontFamily = FontFamily.Monospace,
-                    background = codeBackground
-                )
-            ) { append(match.groupValues[1]) }
-            match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
-            match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
-            match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
-            match.groupValues[5].isNotEmpty() -> withStyle(
-                SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)
-            ) { append(match.groupValues[5]) }
-            match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
-            match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
-            else -> append(match.value)
+        val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)|(https?://[^\\s<>()]+)")
+        var cursor = 0
+        regex.findAll(source).forEach { match ->
+            if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
+            when {
+                match.groupValues[1].isNotEmpty() -> withStyle(
+                    SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        background = codeBackground
+                    )
+                ) { append(match.groupValues[1]) }
+                match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
+                match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
+                match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
+                match.groupValues[5].isNotEmpty() -> {
+                    val label = match.groupValues[5]
+                    val target = match.groupValues[6].trim()
+                    if (target.startsWith("https://", true) || target.startsWith("http://", true)) {
+                        withLink(LinkAnnotation.Url(target, linkStyles)) { append(label) }
+                    } else {
+                        withStyle(SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)) {
+                            append(label)
+                        }
+                    }
+                }
+                match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
+                match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
+                match.groupValues[9].isNotEmpty() -> {
+                    val rawUrl = match.groupValues[9]
+                    val url = rawUrl.trimEnd('.', ',', ';', ':', '!', '?', '"', '\'')
+                    val suffix = rawUrl.substring(url.length)
+                    withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
+                    append(suffix)
+                }
+                else -> append(match.value)
+            }
+            cursor = match.range.last + 1
         }
-        cursor = match.range.last + 1
-    }
-    if (cursor < source.length) append(source.substring(cursor))
+        if (cursor < source.length) append(source.substring(cursor))
     }
 }
 
