@@ -1,7 +1,7 @@
 PROMPT_BASELINE name=ordinary_chat system_chars=2012 system_bytes=3623 tools_bytes=0 skills_chars=0 skills_bytes=0
-PROMPT_BASELINE name=agent_on system_chars=5830 system_bytes=10287 tools_bytes=2837 skills_chars=0 skills_bytes=0
-PROMPT_BASELINE name=agent_fetch system_chars=7111 system_bytes=12521 tools_bytes=3973 skills_chars=0 skills_bytes=0
-PROMPT_BASELINE name=agent_fetch_browser_shell system_chars=10219 system_bytes=17645 tools_bytes=8914 skills_chars=0 skills_bytes=0
+PROMPT_BASELINE name=agent_on system_chars=6104 system_bytes=10780 tools_bytes=3718 skills_chars=0 skills_bytes=0
+PROMPT_BASELINE name=agent_fetch system_chars=7385 system_bytes=13014 tools_bytes=4854 skills_chars=0 skills_bytes=0
+PROMPT_BASELINE name=agent_fetch_browser_shell system_chars=10493 system_bytes=18138 tools_bytes=9795 skills_chars=0 skills_bytes=0
 PROMPT_BASELINE name=knowledge_rag_enabled system_chars=2553 system_bytes=4588 tools_bytes=820 skills_chars=0 skills_bytes=0
 PROMPT_BASELINE name=active_skill_one_char system_chars=2011 system_bytes=3622 tools_bytes=0 skills_chars=82 skills_bytes=131
 PROMPT_BASELINE name=local_shell_worker system_chars=2218 system_bytes=3801 tools_bytes=6546 skills_chars=0 skills_bytes=0
