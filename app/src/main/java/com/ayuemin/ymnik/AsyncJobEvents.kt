@@ -19,7 +19,7 @@ internal data class LocalShellActivity(
     val chatId: String,
     val modelId: String = "",
     val attachmentCount: Int = 0,
-    val maxTurns: Int = 24,
+    val maxTurns: Int = 500,
     val status: String = "Готовлю локальную рабочую область",
     val startedAt: Long = System.currentTimeMillis(),
     val turn: Int = 0,
@@ -115,7 +115,7 @@ internal object AsyncJobEvents {
         }
     }
 
-    fun markLocalShellRunning(chatId: String, modelId: String = "", attachmentCount: Int = 0, maxTurns: Int = 24) {
+    fun markLocalShellRunning(chatId: String, modelId: String = "", attachmentCount: Int = 0, maxTurns: Int = 500) {
         if (chatId.isBlank()) return
         mutableLocalShellActivity.value = LocalShellActivity(
             chatId = chatId,

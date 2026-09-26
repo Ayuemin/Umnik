@@ -39,9 +39,14 @@ class OpenRouterFeaturePrefs(context: Context) {
     fun media(): OpenRouterMediaSettings = read("media", OpenRouterMediaSettings::class.java, OpenRouterMediaSettings())
     fun saveMedia(value: OpenRouterMediaSettings) { prefs.edit().putString("media", gson.toJson(value)).apply() }
 
-    fun localShellMaxTurns(): Int = prefs.getInt("local_shell_max_turns", 24).coerceAtLeast(1)
+    fun localShellMaxTurns(): Int {
+        val stored = prefs.getInt("local_shell_max_turns", 500)
+        val value = if (stored == 24) 500 else stored.coerceIn(1, 500)
+        if (value != stored) prefs.edit().putInt("local_shell_max_turns", value).apply()
+        return value
+    }
     fun saveLocalShellMaxTurns(value: Int) {
-        prefs.edit().putInt("local_shell_max_turns", value.coerceAtLeast(1)).apply()
+        prefs.edit().putInt("local_shell_max_turns", value.coerceIn(1, 500)).apply()
     }
 
     fun localShellModelOverride(): String = prefs.getString("local_shell_model_override", "").orEmpty().trim()

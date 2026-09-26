@@ -547,7 +547,7 @@ private fun LocalShellFloatingCard(
     }
 
     if (showSettings) {
-        val parsedTurns = maxTurnsText.toIntOrNull()?.takeIf { it > 0 }
+        val parsedTurns = maxTurnsText.toIntOrNull()?.takeIf { it in 1..500 }
         AlertDialog(
             onDismissRequest = { showSettings = false },
             title = { Text("Настройки Local Shell") },
@@ -612,7 +612,7 @@ private fun LocalShellFloatingCard(
             dismissButton = {
                 TextButton(
                     onClick = {
-                        maxTurnsText = "24"
+                        maxTurnsText = "500"
                         shellModelText = ""
                     }
                 ) { Text("По умолчанию") }
