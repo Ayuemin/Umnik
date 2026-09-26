@@ -1,0 +1,29 @@
+name: One-time Local Shell cancellation patch
+
+on:
+  push:
+    branches: [ "work/local-shell-mvp" ]
+    paths: [ ".github/one-time-shell-cancel.py" ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: work/local-shell-mvp
+          fetch-depth: 0
+      - run: python3 .github/one-time-shell-cancel.py
+      - name: Commit patch and remove temporary helpers
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-time-shell-cancel.yml .github/one-time-shell-cancel.py
+          git add app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt \
+                  app/src/test/java/com/ayuemin/ymnik/network/AgentLocalShellAwaitRegressionTest.kt
+          git commit -m "Preserve cancellation while Agent waits for Shell"
+          git push origin HEAD:work/local-shell-mvp
