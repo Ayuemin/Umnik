@@ -18,6 +18,7 @@ class AgentLocalShellAwaitRegressionTest {
         assertTrue(branch.contains("LocalShellRuntime.awaitTerminal()"))
         assertTrue(branch.contains("LocalShellRuntime.markParentConsumesTerminal()"))
         assertFalse(branch.contains("localShellStatus"))
+        assertTrue(branch.contains("if (it is CancellationException) throw it"))
         assertTrue(source.contains("localShellToolsEnabled -> 8"))
         assertTrue(source.contains("AgentToolLoopGuard()"))
     }

@@ -26,6 +26,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -596,6 +597,7 @@ class OpenRouterClient(
                                     )
                                 }
                             }.getOrElse {
+                                if (it is CancellationException) throw it
                                 gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
                             }
                         }
