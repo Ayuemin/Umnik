@@ -8,7 +8,7 @@ on:
       - .github/workflows/prompt-baseline-probe.yml
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   probe:
@@ -30,5 +30,18 @@ jobs:
           ./gradlew --no-daemon :app:testDebugUnitTest --tests com.ayuemin.ymnik.network.PromptBaselineProbeTest --info 2>&1 | tee /tmp/prompt-baseline.log
           echo "--- BASELINE ROWS ---"
           grep "PROMPT_BASELINE" /tmp/prompt-baseline.log
+          grep "PROMPT_BASELINE" /tmp/prompt-baseline.log | sed 's/^.*PROMPT_BASELINE/PROMPT_BASELINE/' > .github/prompt-baseline-beta32.txt
+      - name: Persist beta.32 pre-diet baseline
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .github/prompt-baseline-beta32.txt
+          if git diff --cached --quiet; then
+            echo "Baseline snapshot unchanged"
+          else
+            git commit -m "Record beta.32 pre-diet prompt baseline"
+            git push
+          fi
 
 # beta.32 pre-diet baseline capture
