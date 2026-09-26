@@ -561,7 +561,7 @@ private fun LocalShellFloatingCard(
                         modifier = Modifier.fillMaxWidth(),
                         label = { Text("Максимум шагов модели") },
                         singleLine = true,
-                        supportingText = { Text("По умолчанию: 24") }
+                        supportingText = { Text("По умолчанию: 500 · аварийный максимум: 500") }
                     )
                     OutlinedTextField(
                         value = shellModelText,
@@ -585,11 +585,11 @@ private fun LocalShellFloatingCard(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "Один шаг — очередное обращение к модели Local Shell. Больший предел позволяет дольше работать над сложной задачей, но может увеличить стоимость, время и рабочий контекст. Shell завершится раньше, если задача выполнена.",
+                        "Один шаг — очередное обращение к модели Local Shell. 500 — аварийный потолок, а не цель. Shell завершится раньше, когда задача выполнена, а повторяющиеся циклы без прогресса отслеживаются автоматически.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                        "Ориентиры: 12 — небольшая задача; 24 — обычная; 50–100 — сложная работа с проектом; 100+ — длительная автономная работа.",
+                        "Обычно лимит менять не нужно. Если важнее жёстко ограничить расходы, можно вручную поставить значение меньше 500; защита от зацикливания работает независимо от выбранного лимита.",
                         style = MaterialTheme.typography.bodySmall
                     )
                     Text(
