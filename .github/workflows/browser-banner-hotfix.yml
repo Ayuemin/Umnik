@@ -1,46 +1,9 @@
-name: Browser banner hotfix
+name: BrowserBannerHotfix
 
-on:
-  push:
-    branches: [work/local-shell-mvp]
-
-permissions:
-  contents: write
+on: push
 
 jobs:
   patch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: work/local-shell-mvp
-      - name: Patch banner
-        run: |
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
-          s = p.read_text()
-          old = """    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
-    Surface(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-"""
-          new = """    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
-    Surface(
-        onClick = onShowPage,
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
-"""
-          if old not in s:
-              print('Banner already patched or target missing; nothing to commit.')
-          else:
-              p.write_text(s.replace(old, new, 1))
-          PY
-      - name: Commit if changed
-        run: |
-          if git diff --quiet; then
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
-          git commit -m "Make Local Browser banner open current page"
-          git push origin HEAD:work/local-shell-mvp
+      - run: echo ready
