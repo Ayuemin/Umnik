@@ -1,15 +1,38 @@
 package com.ayuemin.ymnik
 
+import com.ayuemin.ymnik.model.GeneratedFile
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import java.util.concurrent.ConcurrentLinkedQueue
+
+internal enum class LocalShellTerminalState {
+    DONE,
+    STOPPED,
+    FAILED
+}
+
+internal data class LocalShellTerminalResult(
+    val state: LocalShellTerminalState,
+    val text: String = "",
+    val files: List<GeneratedFile> = emptyList(),
+    val modelId: String? = null,
+    val turns: Int = 0,
+    val toolCalls: Int = 0,
+    val error: String? = null
+) {
+    val ok: Boolean
+        get() = state == LocalShellTerminalState.DONE
+}
 
 /**
  * Process-wide runtime bridge for the single active Local Shell task.
  *
  * UI and the main chat model share the same cancel hook and guidance queue,
  * so a task started from either surface is still one Local Shell process.
+ * The terminal deferred lets the parent agent suspend without spending model
+ * calls on local_shell_status polling while the child keeps running normally.
  */
 internal object LocalShellRuntime {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -17,11 +40,15 @@ internal object LocalShellRuntime {
     @Volatile
     private var cancelCurrent: (() -> Unit)? = null
 
+    @Volatile
+    private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
+
     private val guidanceQueue = ConcurrentLinkedQueue<String>()
 
     fun prepareForStart() {
         guidanceQueue.clear()
         cancelCurrent = null
+        terminalResult = CompletableDeferred()
     }
 
     fun installCancel(cancel: () -> Unit) {
@@ -51,8 +78,15 @@ internal object LocalShellRuntime {
         return items
     }
 
+    fun completeTerminal(result: LocalShellTerminalResult): Boolean =
+        terminalResult.complete(result)
+
+    suspend fun awaitTerminal(): LocalShellTerminalResult = terminalResult.await()
+
     fun clear() {
         cancelCurrent = null
         guidanceQueue.clear()
+        // Keep the completed deferred until the next prepareForStart(). The parent
+        // can start awaiting a few milliseconds after the worker has already ended.
     }
 }
