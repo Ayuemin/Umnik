@@ -1,0 +1,47 @@
+name: Browser banner hotfix
+
+on:
+  push:
+    branches:
+      - work/local-shell-mvp
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: ${{ github.event.head_commit.message != 'Make Local Browser banner open current page' && github.actor != 'github-actions[bot]' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/local-shell-mvp
+      - name: Patch Local Browser banner
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt')
+          text = path.read_text()
+          old = '''    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+'''
+          new = '''    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
+    Surface(
+        onClick = onShowPage,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+'''
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one Local Browser banner target, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Commit patch
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt
+          git commit -m "Make Local Browser banner open current page"
+          git push origin HEAD:work/local-shell-mvp
