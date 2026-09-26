@@ -66,10 +66,10 @@ class ChatRepository(context: Context) {
                 if (raw.contextUsage != null) {
                     raw
                 } else {
-                    raw.requestId
+                    val usage = raw.requestId
                         ?.let(ContextUsageTracker::consume)
-                        ?.let { usage -> raw.copy(contextUsage = usage) }
-                        ?: raw
+                        ?: ContextUsageTracker.consumeForMessage(chatId, messageId)
+                    usage?.let { raw.copy(contextUsage = it) } ?: raw
                 }
             }
             val messages = chat.messages.toMutableList()

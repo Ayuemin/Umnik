@@ -47,6 +47,25 @@ class ContextUsageTrackerTest {
         assertEquals(4L, usage.attachmentBytes)
     }
 
+    @Test
+    fun messageAliasRecoversUsageWhenPersistedRequestIdIsGenerationCounter() {
+        val payload = JsonObject().apply {
+            add("messages", JsonArray().apply {
+                add(message("system", "base rule"))
+                add(message("user", "hello"))
+            })
+        }
+
+        val captured = ContextUsageTracker.capture("network-uuid", payload)
+        assertTrue(captured != null)
+        ContextUsageTracker.linkToMessage("network-uuid", "chat-1", "user-message-1")
+
+        assertEquals(null, ContextUsageTracker.consume("1"))
+        val recovered = ContextUsageTracker.consumeForMessage("chat-1", "user-message-1")
+        assertEquals(captured, recovered)
+        assertEquals(null, ContextUsageTracker.consume("network-uuid"))
+    }
+
     private fun message(role: String, text: String) = JsonObject().apply {
         addProperty("role", role)
         addProperty("content", text)

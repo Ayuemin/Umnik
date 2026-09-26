@@ -79,6 +79,9 @@ internal class OpenRouterRequestEnhancer(
         }
 
         ContextUsageTracker.capture(requestId, payload)?.let { usage ->
+            val snapshot = activeSnapshot()
+            val messageId = snapshot?.takeIf { it.chatId == activeChatId }?.messageId
+            ContextUsageTracker.linkToMessage(requestId, activeChatId, messageId)
   com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
       context,
       "CONTEXT_USAGE",
