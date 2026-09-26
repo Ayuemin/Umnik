@@ -10,6 +10,7 @@ permissions:
 
 jobs:
   patch:
+    # One-shot branch helper; deleted immediately after the source patch lands.
     if: ${{ github.event.head_commit.message != 'Make Local Browser banner open current page' && github.actor != 'github-actions[bot]' }}
     runs-on: ubuntu-latest
     steps:
