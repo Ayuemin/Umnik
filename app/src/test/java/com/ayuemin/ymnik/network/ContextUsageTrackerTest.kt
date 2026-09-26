@@ -11,35 +11,36 @@ class ContextUsageTrackerTest {
     fun measurePayloadSeparatesContextLayersAndAttachments() {
         val skillBlock = "===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====\nskill rule\n===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="
         val memoryBlock = "===== ДОЛГОВРЕМЕННАЯ ПАМЯТЬ ЭТОГО ЧАТА =====\nold fact\n===== КОНЕЦ ДОЛГОВРЕМЕННОЙ ПАМЯТИ ====="
+        val ragBlock = "===== СКРЫТЫЙ СПРАВОЧНЫЙ КОНТЕКСТ UMNIK =====\n[Документ: test.fb2]\nretrieved fact\n===== КОНЕЦ СКРЫТОГО СПРАВОЧНОГО КОНТЕКСТА ====="
         val payload = JsonObject().apply {
-  add("messages", JsonArray().apply {
-      add(message("system", "base rule\n$skillBlock\n$memoryBlock"))
-      add(message("user", "older question"))
-      add(message("assistant", "older answer"))
-      add(JsonObject().apply {
-          addProperty("role", "user")
-          add("content", JsonArray().apply {
-              add(JsonObject().apply {
-                  addProperty("type", "text")
-                  addProperty("text", "current question")
-              })
-              add(JsonObject().apply {
-                  addProperty("type", "image_url")
-                  add("image_url", JsonObject().apply {
-                      addProperty("url", "data:image/png;base64,AQIDBA==")
-                  })
-              })
-          })
-      })
-  })
-  add("tools", JsonArray().apply {
-      add(JsonObject().apply { addProperty("type", "function") })
-  })
+            add("messages", JsonArray().apply {
+                add(message("system", "base rule\n$skillBlock\n$memoryBlock\n$ragBlock"))
+                add(message("user", "older question"))
+                add(message("assistant", "older answer"))
+                add(JsonObject().apply {
+                    addProperty("role", "user")
+                    add("content", JsonArray().apply {
+                        add(JsonObject().apply {
+                            addProperty("type", "text")
+                            addProperty("text", "current question")
+                        })
+                        add(JsonObject().apply {
+                            addProperty("type", "image_url")
+                            add("image_url", JsonObject().apply {
+                                addProperty("url", "data:image/png;base64,AQIDBA==")
+                            })
+                        })
+                    })
+                })
+            })
+            add("tools", JsonArray().apply {
+                add(JsonObject().apply { addProperty("type", "function") })
+            })
         }
         val usage = ContextUsageTracker.measurePayload(payload)
-        assertTrue(usage.systemPrompt.chars > 0)
+        assertEquals("base rule".length, usage.systemPrompt.chars)
         assertTrue(usage.skills.chars > 0)
-        assertTrue(usage.memoryRag.chars > 0)
+        assertTrue(usage.memoryRag.chars >= memoryBlock.length + ragBlock.length)
         assertTrue(usage.history.chars > 0)
         assertTrue(usage.tools.bytes > 0)
         assertEquals("current question".length, usage.currentUserPrompt.chars)
