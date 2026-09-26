@@ -416,6 +416,7 @@ private fun ChatScreen(
     val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
     val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
     val localShellActivity by AsyncJobEvents.localShellActivity.collectAsState()
+    val localShellGuidanceHere = requestActiveHere && localShellActivity?.chatId == state.currentChatId
     val browserActivity by LocalBrowserRuntime.activity.collectAsState()
     val hubToolActivity by AsyncJobEvents.hubToolActivity.collectAsState()
     val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
@@ -946,7 +947,7 @@ onBranch = if (message.role == "assistant") {
                     },
                     trailingIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!imagePromptMode) {
+                            if (!imagePromptMode && !requestActiveHere) {
                                 IconButton(
                                     onClick = {
                                         if (isRecording) {
@@ -978,6 +979,22 @@ onBranch = if (message.role == "assistant") {
                                             microphoneAvailable -> MaterialTheme.colorScheme.onSurfaceVariant
                                             else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
                                         }
+                                    )
+                                }
+                            }
+                            if (localShellGuidanceHere && text.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        vm.send(text)
+                                        text = ""
+                                    },
+                                    enabled = !nonRequestBusy,
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Send,
+                                        contentDescription = "Передать уточнение Local Shell",
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
@@ -1026,6 +1043,13 @@ onBranch = if (message.role == "assistant") {
                     },
                     placeholder = {
                         when {
+                            localShellGuidanceHere -> Text(
+                                text = "Local Shell · ${formatRequestDuration(requestElapsedSeconds)} · можно уточнить задачу",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                            )
                             requestActiveHere -> Text(
                                 text = formatRequestDuration(requestElapsedSeconds),
                                 modifier = Modifier.fillMaxWidth(),

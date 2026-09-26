@@ -4867,12 +4867,55 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return true
     }
 
+    private fun trySendActiveLocalShellGuidance(text: String): Boolean {
+        val chatId = _state.value.currentChatId
+        val active = AsyncJobEvents.localShellActivity.value ?: return false
+        if (active.chatId != chatId || !RequestExecutionManager.hasActiveChat(chatId)) return false
+        if (_state.value.mode != ChatMode.TEXT) return false
+
+        val clean = text.trim()
+        if (clean.isBlank()) return false
+        if (!LocalShellRuntime.addGuidance(clean)) {
+            _state.value = _state.value.copy(status = "Local Shell уже завершает работу. Дождитесь итогового ответа.")
+            return true
+        }
+
+        val guidance = ChatMessage(
+            id = UUID.randomUUID().toString(),
+            role = "user",
+            text = clean,
+            deliveryState = "guidance"
+        )
+        val chats = chatsRepository.updateChat(chatId) { chat ->
+            chat.copy(
+                messages = chat.messages + guidance,
+                updatedAt = System.currentTimeMillis()
+            )
+        }
+        publishChats(chats)
+        val pendingCount = _state.value.pendingAttachments.size
+        _state.value = _state.value.copy(
+            status = if (pendingCount > 0) {
+                "Уточнение передано Local Shell. Новые вложения останутся для следующего запроса."
+            } else {
+                "Уточнение передано Local Shell"
+            }
+        )
+        DiagnosticLog.record(
+            context,
+            "LOCAL_SHELL_GUIDANCE",
+            "chat guidance queued; chat=${chatId.take(8)}; chars=${clean.length}; pendingAttachments=$pendingCount"
+        )
+        return true
+    }
+
     fun send(text: String) {
         DiagnosticLog.action(
             context,
             "send_pressed",
             "chat=${_state.value.currentChatId.take(8)}; mode=${_state.value.mode}; model=${currentTextModelId()}; promptChars=${text.length}; pending=${_state.value.pendingAttachments.size}"
         )
+        if (trySendActiveLocalShellGuidance(text)) return
         val profile = if (_state.value.mode == ChatMode.IMAGE) imageConnectionProfile() else activeConnectionProfile()
         if (profile.id in _state.value.disabledConnectionIds) {
             _state.value = _state.value.copy(status = "Подключение OpenRouter недоступно")

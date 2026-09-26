@@ -74,7 +74,13 @@ class ChatRepository(context: Context) {
             }
             val messages = chat.messages.toMutableList()
             messages[userIndex] = messages[userIndex].copy(deliveryState = if (completedAssistant == null) "failed" else null)
-            if (completedAssistant != null) messages.add(userIndex + 1, completedAssistant)
+            if (completedAssistant != null) {
+                val lastGuidanceIndex = (userIndex + 1 until messages.size).lastOrNull { index ->
+                    messages[index].role == "user" && messages[index].deliveryState == "guidance"
+                }
+                val assistantIndex = lastGuidanceIndex?.plus(1) ?: (userIndex + 1)
+                messages.add(assistantIndex.coerceAtMost(messages.size), completedAssistant)
+            }
             chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
         }
         save(updated)
