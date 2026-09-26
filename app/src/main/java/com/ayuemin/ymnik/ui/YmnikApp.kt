@@ -93,6 +93,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
@@ -318,6 +319,7 @@ private fun ChatScreen(
     var reasoningModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var agentModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
@@ -358,9 +360,14 @@ private fun ChatScreen(
         !activeTextModel.endsWith(":batch", ignoreCase = true) && textModelInfo?.accepts("image") == true
     }
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true
-    val reasoningLevelSelectable = reasoningAvailable &&
-        textModelInfo?.supportsReasoningEffort == true &&
-        textModelInfo.reasoningEfforts.isNotEmpty()
+    val supportedReasoningEfforts = if (
+        reasoningAvailable && textModelInfo?.supportsReasoningEffort == true
+    ) {
+        ReasoningEffort.entries.filter { effort -> effort.apiValue in textModelInfo.reasoningEfforts }
+    } else {
+        emptyList()
+    }
+    val reasoningLevelSelectable = supportedReasoningEfforts.isNotEmpty()
     val webSearchAvailable = !imagePromptMode && openRouterProfile && textModelInfo?.supportsTools == true
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
     val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
@@ -1122,12 +1129,14 @@ onBranch = if (message.role == "assistant") {
                 if (!imagePromptMode && currentSpecialistId == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
-                            level = if (reasoningLevelSelectable) reasoningEffortIndicatorLevel(state.reasoningEffort) else 0,
-                            levelCount = 3,
+                            level = supportedReasoningEfforts.indexOf(state.reasoningEffort).let { index ->
+                                if (index >= 0) index + 1 else 0
+                            },
+                            levelCount = supportedReasoningEfforts.size.coerceAtLeast(1),
                             levelDescription = if (state.reasoningEnabled) "Размышление: " + reasoningEffortUiLabel(state.reasoningEffort) else "Размышление выключено",
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
@@ -1158,6 +1167,18 @@ onBranch = if (message.role == "assistant") {
                             modifier = Modifier.weight(1f),
                             onOpenSettings = { webSearchModeOpen = true },
                             onCheckedChange = vm::setWebSearchEnabled
+                        )
+                        ComposerToggleTile(
+                            icon = Icons.Outlined.SmartToy,
+                            level = 5,
+                            levelCount = 5,
+                            indicatorText = "АГЕНТ",
+                            levelDescription = if (state.agentEnabled) "Агентный режим включён" else "Агентный режим выключен",
+                            checked = state.agentEnabled,
+                            enabled = openRouterProfile,
+                            modifier = Modifier.weight(1f),
+                            onOpenSettings = { agentModeInfoOpen = true },
+                            onCheckedChange = vm::setAgentEnabled
                         )
                     }
                 }
@@ -1271,22 +1292,7 @@ onBranch = if (message.role == "assistant") {
     }
 
     if (reasoningModeOpen) {
-        val supportedEfforts = if (textModelInfo?.supportsReasoningEffort == true) {
-            ReasoningEffort.entries.filter { effort ->
-                textModelInfo.reasoningEfforts.isNotEmpty() && effort.apiValue in textModelInfo.reasoningEfforts
-            }
-        } else {
-            emptyList()
-        }
-        val controllableEfforts = if (supportedEfforts.size <= 3) {
-            supportedEfforts
-        } else {
-            listOfNotNull(
-                supportedEfforts.firstOrNull { it == ReasoningEffort.LOW } ?: supportedEfforts.firstOrNull(),
-                supportedEfforts.firstOrNull { it == ReasoningEffort.HIGH } ?: supportedEfforts.getOrNull(supportedEfforts.lastIndex / 2),
-                supportedEfforts.firstOrNull { it == ReasoningEffort.MAX } ?: supportedEfforts.lastOrNull()
-            ).distinct()
-        }
+        val controllableEfforts = supportedReasoningEfforts
         AlertDialog(
             onDismissRequest = { reasoningModeOpen = false },
             title = {
@@ -1444,6 +1450,25 @@ onBranch = if (message.role == "assistant") {
             },
             confirmButton = {
                 TextButton(onClick = { webSearchModeInfoOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+
+    if (agentModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { agentModeInfoOpen = false },
+            title = { Text("Агентный режим") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Настройка относится только к текущему чату.")
+                    Text("Когда Агент выключен, Umnik не запускает Browser или Local Shell по собственной инициативе. Если инструмент заметно помог бы, модель может предложить его.")
+                    Text("Прямая команда пользователя имеет приоритет: если вы сами попросили Browser или Local Shell, конкретный инструмент можно запустить и при выключенном Агенте.")
+                    Text("Когда Агент включён, модель может сама выбирать и сочетать доступные инструменты. Длинная работа может увеличить расход OpenRouter.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { agentModeInfoOpen = false }) { Text("Понятно") }
             }
         )
     }
@@ -1672,7 +1697,7 @@ private fun ComposerToggleTile(
         color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -1690,14 +1715,20 @@ private fun ComposerToggleTile(
                 Icon(
                     icon,
                     contentDescription = levelDescription,
-                    modifier = Modifier.size(20.dp),
+                    modifier = Modifier.size(18.dp),
                     tint = if (enabled) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                 )
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(5.dp))
                 Row(
                     modifier = Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(
+                        when {
+                            levelCount >= 5 -> 1.dp
+                            levelCount >= 4 -> 2.dp
+                            else -> 3.dp
+                        }
+                    ),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     val count = levelCount.coerceAtLeast(1)
@@ -1710,7 +1741,7 @@ private fun ComposerToggleTile(
                             ) {
                                 Text(
                                     indicatorText[index].toString(),
-                                    style = MaterialTheme.typography.labelMedium,
+                                    style = if (indicatorText.length >= 5) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
                                     fontWeight = FontWeight.Bold,
                                     color = if (active) {
                                         MaterialTheme.colorScheme.primary
@@ -1728,7 +1759,7 @@ private fun ComposerToggleTile(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Surface(
-                                    modifier = Modifier.width(14.dp).height(6.dp),
+                                    modifier = Modifier.fillMaxWidth().height(6.dp),
                                     shape = RoundedCornerShape(999.dp),
                                     color = if (active) {
                                         MaterialTheme.colorScheme.primary
@@ -1743,8 +1774,13 @@ private fun ComposerToggleTile(
                     }
                 }
             }
-            Spacer(Modifier.width(8.dp))
-            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+            Spacer(Modifier.width(4.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                enabled = enabled,
+                modifier = Modifier.width(42.dp).scale(0.86f)
+            )
         }
     }
 }

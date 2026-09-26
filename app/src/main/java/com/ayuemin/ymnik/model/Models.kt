@@ -455,6 +455,7 @@ data class UiState(
     val internetMode: InternetMode = InternetMode.AUTO,
     val reasoningEnabled: Boolean = false,
     val reasoningEffort: ReasoningEffort = ReasoningEffort.MEDIUM,
+    val agentEnabled: Boolean = false,
     val reasoningEffortsByModel: Map<String, ReasoningEffort> = emptyMap(),
     val userProfile: UserProfile = UserProfile(),
     val userProfileScope: UserProfileScope = UserProfileScope.OFF,

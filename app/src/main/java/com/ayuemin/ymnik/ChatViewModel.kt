@@ -77,6 +77,7 @@ import com.ayuemin.ymnik.model.normalized
 import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.ChatOutputPolicy
 import com.ayuemin.ymnik.network.ChatToolPolicy
+import com.ayuemin.ymnik.network.AgentModePolicy
 import com.ayuemin.ymnik.network.LocalShellAgentClient
 import com.ayuemin.ymnik.network.LocalWebFetcher
 import com.ayuemin.ymnik.network.OpenRouterClient
@@ -270,6 +271,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             internetMode = initialRuntime.tools.internetMode,
             reasoningEnabled = initialRuntime.reasoningEnabled,
             reasoningEffort = initialRuntime.reasoningEffort,
+            agentEnabled = initialRuntime.agentEnabled,
             reasoningEffortsByModel = loadReasoningEffortsByModel(),
             userProfile = UserProfile(
                 name = prefs.getString("profile_name", "").orEmpty(),
@@ -980,6 +982,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             internetMode = if (current) clean.tools.internetMode else _state.value.internetMode,
             reasoningEnabled = if (current) clean.reasoningEnabled else _state.value.reasoningEnabled,
             reasoningEffort = if (current) clean.reasoningEffort else _state.value.reasoningEffort,
+            agentEnabled = if (current) clean.agentEnabled else _state.value.agentEnabled,
             activeSkillIds = if (current) clean.skillIds else _state.value.activeSkillIds,
             status = "Параметры работы чата сохранены"
         )
@@ -2240,6 +2243,20 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
+    fun setAgentEnabled(enabled: Boolean) {
+        if (_state.value.isLoading || _state.value.requestActive) return
+        val chat = _state.value.chats.firstOrNull { it.id == _state.value.currentChatId } ?: return
+        if (specialistConversations.specialistIdForConversation(chat.id) != null) return
+        val current = teamAutomation.profile(chat.id) ?: defaultRuntimeProfile(chat)
+        teamAutomation.saveProfile(chat.id, current.copy(agentEnabled = enabled))
+        _state.value = _state.value.copy(agentEnabled = enabled)
+        DiagnosticLog.action(
+            context,
+            "agent_mode_toggle",
+            "enabled=$enabled; chat=${chat.id.take(8)}; model=${currentTextModelId()}"
+        )
+    }
+
     fun setReasoningEnabled(enabled: Boolean) {
         DiagnosticLog.action(context, "reasoning_toggle", "enabled=$enabled; model=${currentTextModelId()}; effort=${_state.value.reasoningEffort.name}")
         var effort = _state.value.reasoningEffort
@@ -2512,6 +2529,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             webSearchEnabled = fixed.webSearchEnabled,
             webSearchPreset = fixed.tools.webSearchPreset,
             internetMode = fixed.tools.internetMode,
+            agentEnabled = fixed.agentEnabled,
             pendingAttachments = emptyList(),
             storageStats = storageRepository.stats(),
             status = null
@@ -2574,6 +2592,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             webSearchEnabled = false,
             webSearchPreset = guideRuntime.tools.webSearchPreset,
             internetMode = guideRuntime.tools.internetMode,
+            agentEnabled = guideRuntime.agentEnabled,
             pendingAttachments = emptyList(),
             status = null
         )
@@ -2653,6 +2672,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             webSearchEnabled = branchRuntime.webSearchEnabled,
             webSearchPreset = branchRuntime.tools.webSearchPreset,
             internetMode = branchRuntime.tools.internetMode,
+            agentEnabled = branchRuntime.agentEnabled,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -2710,6 +2730,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             webSearchEnabled = if (profile.type == ProviderType.OPENROUTER) fixed.webSearchEnabled else false,
             webSearchPreset = fixed.tools.webSearchPreset,
             internetMode = fixed.tools.internetMode,
+            agentEnabled = fixed.agentEnabled,
             apiKeyConfigured = isProfileConfigured(profile),
             pendingAttachments = emptyList()
         )
@@ -2831,6 +2852,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             webSearchEnabled = resetRuntime.webSearchEnabled,
             webSearchPreset = resetRuntime.tools.webSearchPreset,
             internetMode = resetRuntime.tools.internetMode,
+            agentEnabled = resetRuntime.agentEnabled,
             pendingAttachments = emptyList(),
             storedFiles = storageRepository.list(),
             storageStats = storageRepository.stats(),
@@ -4979,9 +5001,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val webSearchEnabled = _state.value.webSearchEnabled
         val webSearchPreset = _state.value.webSearchPreset
         val internetMode = _state.value.internetMode
+        val agentEnabled = _state.value.agentEnabled
         val providerWebSearchEnabled = webSearchEnabled && internetMode != InternetMode.BROWSER
         val localWebFetchEnabled = webSearchEnabled && internetMode != InternetMode.BROWSER
-        val localBrowserToolsEnabled = webSearchEnabled && internetMode != InternetMode.SEARCH_ONLY
+        val localBrowserRequested = AgentModePolicy.browserRequested(
+            agentEnabled = agentEnabled,
+            webSearchEnabled = webSearchEnabled,
+            internetMode = internetMode,
+            prompt = clean
+        )
+        val localShellRequested = AgentModePolicy.shellRequested(agentEnabled, clean)
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
@@ -5071,7 +5100,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         }
                         answerReasoningEnabled = actualReasoning
                         answerReasoningEffort = effort
-                        val createFileToolEnabled = (autoRouter || modelInfo?.supportsTools == true) &&
+                        val modelToolsAvailable = autoRouter || modelInfo?.supportsTools == true
+                        val createFileToolEnabled = modelToolsAvailable &&
                             ChatToolPolicy.needsCreateFile(
                                 prompt = clean,
                                 instructions = listOf(
@@ -5080,8 +5110,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     requestSpecialist?.instruction.orEmpty()
                                 )
                             )
+                        val localBrowserToolsEnabled = modelToolsAvailable && if (requestSpecialist != null) {
+                            webSearchEnabled && internetMode != InternetMode.SEARCH_ONLY
+                        } else {
+                            localBrowserRequested
+                        }
                         val localShellToolsEnabled = requestSpecialist == null &&
-                            (autoRouter || modelInfo?.supportsTools == true)
+                            modelToolsAvailable && localShellRequested
                         val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
                         val allAttachments = (modelPendingAttachments + requestPersistentTextAttachments + teamFiles)
                             .distinctBy { it.localPath ?: it.uri }
@@ -5195,7 +5230,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     knowledgeToolSearchLimit = knowledgeSearchLimit,
                                     localWebFetchEnabled = localWebFetchEnabled,
                                     localBrowserToolsEnabled = localBrowserToolsEnabled,
-                                    localShellToolsEnabled = localShellToolsEnabled
+                                    localShellToolsEnabled = localShellToolsEnabled,
+                                    agentModeEnabled = agentEnabled
                                 ) +
                                     preparedContext.systemContext + knowledgeContext,
                                 providerWebSearchEnabled,
@@ -6234,11 +6270,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         knowledgeToolSearchLimit: Int = 0,
         localWebFetchEnabled: Boolean = false,
         localBrowserToolsEnabled: Boolean = false,
-        localShellToolsEnabled: Boolean = false
+        localShellToolsEnabled: Boolean = false,
+        agentModeEnabled: Boolean = false
     ): String = buildString {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
+        if (specialist == null && !agentModeEnabled) {
+            appendLine("Агентный режим этого чата выключен. Не инициируй Browser или Local Shell самостоятельно. Если они могли бы заметно упростить задачу, можешь кратко предложить пользователю включить «Агент» или прямо попросить нужный инструмент.")
+            appendLine("Если Browser или Local Shell всё же доступен среди инструментов текущего запроса, это означает явное разрешение пользователя: он прямо попросил этот инструмент либо выбрал соответствующий режим. В таком случае выполняй задачу без повторного согласования и не спорь с выбором пользователя.")
+        }
         if (toolsEnabled) {
             appendLine("Инструмент create_file доступен только для явно запрошенного файлового результата. Используй его, если пользователь прямо просит файл/скачивание либо подключённая инструкция явно требует вернуть результат файлом.")
         } else {
@@ -6289,6 +6330,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             appendLine("Local Shell — асинхронный локальный исполнитель на устройстве пользователя. Он может работать после завершения твоего текущего ответа, а пользователь может продолжать этот же диалог.")
             appendLine("Если local_shell_start доступен в этом запросе, никогда не утверждай, что у тебя «нет Shell» или что ты «не можешь его использовать». Текущие вложения запроса и постоянные файлы чата могут быть переданы в Local Shell.")
             appendLine("Если пользователь прямо просит сделать что-то «в Shell», через Local Shell, локально с файлом/архивом/проектом или просит реально переименовать, распаковать, собрать, преобразовать, проверить или изменить файл, не ограничивайся советом: при ясной задаче запускай local_shell_start.")
+            appendLine("Если пользователь прямо просит запустить Local Shell именно для технического теста или диагностики, не заменяй реальный запуск рассуждением о том, что тест «не нужен». Повторы и зацикливание контролирует сама среда Local Shell; задача модели — выполнить явно запрошенный безопасный тест и дать среде показать результат защиты.")
             appendLine("Запускай local_shell_start без дополнительного подтверждения, если из текущей фразы и контекста ясно, что пользователь уже просит выполнить/реализовать/исправить/проверить согласованную работу: например «делаем», «запускай», «исправь проект», «реализуй это».")
             appendLine("Если пользователь просит выполнить конкретную задачу и Local Shell заметно упрощает или делает надёжнее нужный этап, запускай Local Shell самостоятельно, даже если пользователь не назвал Shell. Это относится не только к коду: ориентируйся на характер работы — много файлов или объектов, повторяющиеся операции, локальный поиск/фильтрация, преобразования, архивы, структурный анализ и пакетная обработка.")
             appendLine("Если задача Local Shell требует получить публичные данные или проект из сети, разрешай сеть параметром network=true; если сеть этапу не нужна, не включай её без причины.")
