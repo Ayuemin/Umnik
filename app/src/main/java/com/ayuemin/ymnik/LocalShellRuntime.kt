@@ -20,6 +20,9 @@ internal data class LocalShellTerminalResult(
     val modelId: String? = null,
     val turns: Int = 0,
     val toolCalls: Int = 0,
+    val costUsd: Double? = null,
+    val inputTokens: Int? = null,
+    val outputTokens: Int? = null,
     val error: String? = null
 ) {
     val ok: Boolean
@@ -43,11 +46,15 @@ internal object LocalShellRuntime {
     @Volatile
     private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
 
+    @Volatile
+    private var parentConsumesTerminal = false
+
     private val guidanceQueue = ConcurrentLinkedQueue<String>()
 
     fun prepareForStart() {
         guidanceQueue.clear()
         cancelCurrent = null
+        parentConsumesTerminal = false
         terminalResult = CompletableDeferred()
     }
 
@@ -78,6 +85,12 @@ internal object LocalShellRuntime {
         return items
     }
 
+    fun markParentConsumesTerminal() {
+        parentConsumesTerminal = true
+    }
+
+    fun parentConsumesTerminal(): Boolean = parentConsumesTerminal
+
     fun completeTerminal(result: LocalShellTerminalResult): Boolean =
         terminalResult.complete(result)
 
@@ -94,7 +107,7 @@ internal object LocalShellRuntime {
                 )
             )
         }
-        // Keep the completed deferred until the next prepareForStart(). The parent
-        // can start awaiting a few milliseconds after the worker has already ended.
+        // Keep the completed deferred and parent-consumption flag until the next
+        // prepareForStart(). This avoids races between child cleanup and parent resume.
     }
 }
