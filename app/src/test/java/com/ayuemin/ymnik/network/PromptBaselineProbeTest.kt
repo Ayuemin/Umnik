@@ -96,6 +96,27 @@ class PromptBaselineProbeTest {
         assertTrue(rows["agent_on"]!!.toolsBytes > 0)
         assertTrue(rows["agent_fetch_browser_shell"]!!.toolsBytes > rows["agent_fetch"]!!.toolsBytes)
         assertTrue(rows["active_skill_one_char"]!!.skillsBytes > 1)
+        assertWithinPreDietCeilings(rows)
+    }
+
+    private fun assertWithinPreDietCeilings(rows: Map<String, BaselineRow>) {
+        val ceilings = mapOf(
+            "ordinary_chat" to BaselineRow(2012, 3623, 0, 0, 0),
+            "agent_on" to BaselineRow(6104, 10780, 3718, 0, 0),
+            "agent_fetch" to BaselineRow(7385, 13014, 4854, 0, 0),
+            "agent_fetch_browser_shell" to BaselineRow(10493, 18138, 9795, 0, 0),
+            "knowledge_rag_enabled" to BaselineRow(2553, 4588, 820, 0, 0),
+            "active_skill_one_char" to BaselineRow(2011, 3622, 0, 82, 131),
+            "local_shell_worker" to BaselineRow(2218, 3801, 6546, 0, 0)
+        )
+        ceilings.forEach { (name, ceiling) ->
+            val current = rows.getValue(name)
+            assertTrue("$name system chars grew: ${current.systemChars} > ${ceiling.systemChars}", current.systemChars <= ceiling.systemChars)
+            assertTrue("$name system bytes grew: ${current.systemBytes} > ${ceiling.systemBytes}", current.systemBytes <= ceiling.systemBytes)
+            assertTrue("$name tools bytes grew: ${current.toolsBytes} > ${ceiling.toolsBytes}", current.toolsBytes <= ceiling.toolsBytes)
+            assertTrue("$name skill chars grew: ${current.skillsChars} > ${ceiling.skillsChars}", current.skillsChars <= ceiling.skillsChars)
+            assertTrue("$name skill bytes grew: ${current.skillsBytes} > ${ceiling.skillsBytes}", current.skillsBytes <= ceiling.skillsBytes)
+        }
     }
 
     private fun systemPrompt(

@@ -8,9 +8,13 @@ on:
     paths:
       - .github/workflows/prompt-baseline-probe.yml
       - app/src/test/java/com/ayuemin/ymnik/network/PromptBaselineProbeTest.kt
+      - app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
+      - app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt
+      - app/src/main/java/com/ayuemin/ymnik/local/LocalShellEngine.kt
+      - app/src/main/java/com/ayuemin/ymnik/network/LocalShellAgentClient.kt
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   probe:
@@ -25,23 +29,10 @@ jobs:
       - name: Install Android platform
         run: sdkmanager "platforms;android-37.0" "build-tools;37.0.0"
       - uses: gradle/actions/setup-gradle@v4
-      - name: Measure current prompts
+      - name: Measure and guard prompt sizes
         shell: bash
         run: |
           set -o pipefail
           ./gradlew --no-daemon :app:testDebugUnitTest --tests com.ayuemin.ymnik.network.PromptBaselineProbeTest --info 2>&1 | tee /tmp/prompt-baseline.log
-          echo "--- BASELINE ROWS ---"
+          echo "--- PROMPT SIZE ROWS ---"
           grep "PROMPT_BASELINE" /tmp/prompt-baseline.log
-          grep "PROMPT_BASELINE" /tmp/prompt-baseline.log | sed 's/^.*PROMPT_BASELINE/PROMPT_BASELINE/' > .github/prompt-baseline-beta32.txt
-      - name: Persist beta.32 pre-diet baseline
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .github/prompt-baseline-beta32.txt
-          if git diff --cached --quiet; then
-            echo "Baseline snapshot unchanged"
-          else
-            git commit -m "Record beta.32 pre-diet prompt baseline"
-            git push
-          fi
