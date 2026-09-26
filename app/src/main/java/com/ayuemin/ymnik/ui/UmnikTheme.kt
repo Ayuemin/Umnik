@@ -2,23 +2,33 @@ package com.ayuemin.ymnik.ui
 
 import android.os.Build
 import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
+import androidx.compose.material3.Typography
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.unit.dp
 import com.ayuemin.ymnik.model.ThemeChoice
+import java.io.File
 
 @Composable
-fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () -> Unit) {
+fun UmnikTheme(
+    choice: ThemeChoice,
+    customColor: Int,
+    customFontPath: String? = null,
+    content: @Composable () -> Unit
+) {
     val dark = isSystemInDarkTheme()
     val context = LocalContext.current
 
@@ -37,11 +47,42 @@ fun UmnikTheme(choice: ThemeChoice, customColor: Int, content: @Composable () ->
     }
 
     val colors = harmonizeVisiblePalette(baseColors, dark)
+    val fontFamily = remember(customFontPath) {
+        customFontPath
+            ?.let(::File)
+            ?.takeIf { it.isFile }
+            ?.let { file -> runCatching { FontFamily(Font(file)) }.getOrNull() }
+    }
+    val typography = remember(fontFamily) {
+        fontFamily?.let(::typographyWithFontFamily) ?: Typography()
+    }
 
     MaterialTheme(
         colorScheme = colors,
+        typography = typography,
         shapes = UmnikShapes,
         content = content
+    )
+}
+
+private fun typographyWithFontFamily(fontFamily: FontFamily): Typography {
+    val base = Typography()
+    return Typography(
+        displayLarge = base.displayLarge.copy(fontFamily = fontFamily),
+        displayMedium = base.displayMedium.copy(fontFamily = fontFamily),
+        displaySmall = base.displaySmall.copy(fontFamily = fontFamily),
+        headlineLarge = base.headlineLarge.copy(fontFamily = fontFamily),
+        headlineMedium = base.headlineMedium.copy(fontFamily = fontFamily),
+        headlineSmall = base.headlineSmall.copy(fontFamily = fontFamily),
+        titleLarge = base.titleLarge.copy(fontFamily = fontFamily),
+        titleMedium = base.titleMedium.copy(fontFamily = fontFamily),
+        titleSmall = base.titleSmall.copy(fontFamily = fontFamily),
+        bodyLarge = base.bodyLarge.copy(fontFamily = fontFamily),
+        bodyMedium = base.bodyMedium.copy(fontFamily = fontFamily),
+        bodySmall = base.bodySmall.copy(fontFamily = fontFamily),
+        labelLarge = base.labelLarge.copy(fontFamily = fontFamily),
+        labelMedium = base.labelMedium.copy(fontFamily = fontFamily),
+        labelSmall = base.labelSmall.copy(fontFamily = fontFamily)
     )
 }
 
