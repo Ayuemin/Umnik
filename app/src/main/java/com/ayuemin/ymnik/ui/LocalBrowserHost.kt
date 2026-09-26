@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
@@ -16,7 +15,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.material3.Button
@@ -36,29 +34,41 @@ internal fun LocalBrowserHost() {
         LocalBrowserRuntime.hideUserControl()
     }
 
-    Box(
-        modifier = if (visible) Modifier.fillMaxSize() else Modifier.size(1.dp)
-    ) {
+    Box(modifier = Modifier.fillMaxSize()) {
         AndroidView(
             factory = { context ->
                 WebView(context).also { webView ->
                     holder[0] = webView
+                    webView.settings.apply {
+                        setSupportZoom(true)
+                        builtInZoomControls = true
+                        displayZoomControls = false
+                        useWideViewPort = true
+                        loadWithOverviewMode = true
+                    }
                     LocalBrowserRuntime.attach(webView)
                 }
             },
             update = { webView ->
+                webView.visibility = if (visible) View.VISIBLE else View.INVISIBLE
                 webView.importantForAccessibility = if (visible) {
                     View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
                 } else {
                     View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
                 }
-                webView.isEnabled = visible && activity?.attentionKind != "CONFIRM_ACTION"
+                // User gestures must stay available while a confirmation is shown:
+                // scrolling and pinch-to-zoom are needed to inspect the page before deciding.
+                webView.isEnabled = visible
+                webView.isVerticalScrollBarEnabled = visible
+                webView.isHorizontalScrollBarEnabled = visible
+                if (visible) {
+                    webView.post {
+                        webView.requestLayout()
+                        webView.invalidate()
+                    }
+                }
             },
-            modifier = if (visible) {
-                Modifier.fillMaxSize().padding(top = 56.dp)
-            } else {
-                Modifier.size(1.dp).graphicsLayer(alpha = 0f)
-            }
+            modifier = Modifier.fillMaxSize().padding(top = 56.dp)
         )
 
         if (visible) {
