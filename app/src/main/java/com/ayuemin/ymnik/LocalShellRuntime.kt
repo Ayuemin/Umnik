@@ -86,6 +86,14 @@ internal object LocalShellRuntime {
     fun clear() {
         cancelCurrent = null
         guidanceQueue.clear()
+        if (!terminalResult.isCompleted) {
+            terminalResult.complete(
+                LocalShellTerminalResult(
+                    state = LocalShellTerminalState.FAILED,
+                    error = "Local Shell завершился без итогового результата"
+                )
+            )
+        }
         // Keep the completed deferred until the next prepareForStart(). The parent
         // can start awaiting a few milliseconds after the worker has already ended.
     }
