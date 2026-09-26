@@ -1319,8 +1319,24 @@ object LocalBrowserRuntime {
 
         fun snapshotMatchesWebView(value: JsonObject, actualUrl: String): Boolean {
             val pageUrl = value.get("url")?.asString.orEmpty()
-            if (pageUrl.isBlank() || actualUrl.isBlank() || actualUrl == "about:blank") return true
-            if (!pageUrl.startsWith("http://") && !pageUrl.startsWith("https://")) return true
+            fun isWebUrl(url: String): Boolean =
+                url.startsWith("http://") || url.startsWith("https://")
+
+            val expectedWebUrl = sequenceOf(
+                session.lastNavigationFinishedUrl,
+                session.lastNavigationStartedUrl,
+                session.currentUrl
+            ).firstOrNull(::isWebUrl).orEmpty()
+
+            if (expectedWebUrl.isNotBlank()) {
+                if (!isWebUrl(actualUrl) || !isWebUrl(pageUrl)) return false
+                return sameDocumentUrl(pageUrl, actualUrl) &&
+                    sameDocumentUrl(pageUrl, expectedWebUrl)
+            }
+
+            if (pageUrl.isBlank() || actualUrl.isBlank()) return true
+            if (pageUrl == "about:blank" || actualUrl == "about:blank") return pageUrl == actualUrl
+            if (!isWebUrl(pageUrl) || !isWebUrl(actualUrl)) return pageUrl == actualUrl
             return sameDocumentUrl(pageUrl, actualUrl)
         }
 
