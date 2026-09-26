@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik
 
+import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,6 +18,20 @@ class MainActivity : ComponentActivity() {
         DiagnosticLog.recordPreviousProcessExit(applicationContext)
         enableEdgeToEdge()
         setContent { UmnikV16Root(viewModel) }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val orientation = when (newConfig.orientation) {
+            Configuration.ORIENTATION_LANDSCAPE -> "landscape"
+            Configuration.ORIENTATION_PORTRAIT -> "portrait"
+            else -> "undefined"
+        }
+        DiagnosticLog.record(
+            applicationContext,
+            "LIFECYCLE",
+            "MainActivity onConfigurationChanged; orientation=$orientation; shell=${AsyncJobEvents.shellActivity.value != null}"
+        )
     }
 
     override fun onStart() {
