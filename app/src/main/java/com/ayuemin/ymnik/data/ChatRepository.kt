@@ -62,8 +62,8 @@ class ChatRepository(context: Context) {
             val userIndex = chat.messages.indexOfFirst { it.id == messageId && it.deliveryState == "pending" }
             if (userIndex < 0) return@map chat
             val messages = chat.messages.toMutableList()
-            messages[userIndex] = messages[userIndex].copy(deliveryState = if (assistant == null) "failed" else null)
-            if (assistant != null) messages.add(userIndex + 1, assistant)
+  messages[userIndex] = messages[userIndex].copy(deliveryState = if (assistant == null) "failed" else null)
+  if (assistant != null) messages.add(userIndex + 1, assistant)
             chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
         }
         save(updated)
