@@ -6062,6 +6062,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     baseUrl = effectiveTextBaseUrl(profile)
                 )
             }.onSuccess { result ->
+                if (LocalShellRuntime.parentConsumesTerminal()) {
+                    DiagnosticLog.record(context, "LOCAL_SHELL_CHAT", "terminal result delegated to parent Agent; duplicate assistant suppressed")
+                    return@onSuccess
+                }
                 val elapsedMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
                 val files = engine.exportedFiles()
                 var parentWaits = 0
@@ -6109,6 +6113,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 playReadySound()
                 refreshProviderUsage()
             }.onFailure { error ->
+                if (LocalShellRuntime.parentConsumesTerminal()) {
+                    DiagnosticLog.record(context, "LOCAL_SHELL_CHAT", "terminal failure delegated to parent Agent; duplicate assistant suppressed", error)
+                    return@onFailure
+                }
                 val stopped = cancelRequested.get()
                 val message = if (stopped) {
                     "Local Shell остановлен пользователем."

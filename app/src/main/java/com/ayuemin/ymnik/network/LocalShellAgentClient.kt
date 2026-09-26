@@ -272,7 +272,10 @@ class LocalShellAgentClient(private val context: Context) {
                             files = engine.exportedFiles(),
                             modelId = result.model,
                             turns = result.turns,
-                            toolCalls = result.toolCalls
+                            toolCalls = result.toolCalls,
+                            costUsd = result.costUsd,
+                            inputTokens = result.inputTokens,
+                            outputTokens = result.outputTokens
                         )
                     )
                     return@withContext result
@@ -364,6 +367,9 @@ class LocalShellAgentClient(private val context: Context) {
                     modelId = returnedModel ?: model,
                     turns = turn,
                     toolCalls = toolCalls,
+                    costUsd = totalCost.takeIf { costObserved },
+                    inputTokens = totalInputTokens.takeIf { it > 0 },
+                    outputTokens = totalOutputTokens.takeIf { it > 0 },
                     error = "Local Shell остановлен"
                 )
             )
@@ -376,6 +382,9 @@ class LocalShellAgentClient(private val context: Context) {
                     modelId = returnedModel ?: model,
                     turns = turn,
                     toolCalls = toolCalls,
+                    costUsd = totalCost.takeIf { costObserved },
+                    inputTokens = totalInputTokens.takeIf { it > 0 },
+                    outputTokens = totalOutputTokens.takeIf { it > 0 },
                     error = error.message ?: error::class.java.simpleName
                 )
             )

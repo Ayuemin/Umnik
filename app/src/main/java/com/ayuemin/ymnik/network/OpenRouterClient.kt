@@ -8,6 +8,7 @@ import android.os.SystemClock
 import android.provider.OpenableColumns
 import android.util.Base64
 import com.ayuemin.ymnik.OpenRouterRecoveryWorker
+import com.ayuemin.ymnik.LocalShellRuntime
 import com.ayuemin.ymnik.RequestCostKind
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
@@ -556,7 +557,44 @@ class OpenRouterClient(
                                     ?.mapNotNull { item -> item.takeIf { it.isJsonPrimitive }?.asString?.trim() }
                                     ?.filter { it.isNotBlank() }
                                     .orEmpty()
-                                callback(task, network, files)
+                                val startResult = callback(task, network, files)
+                                val startObject = runCatching { gson.fromJson(startResult, JsonObject::class.java) }.getOrNull()
+                                val started = runCatching { startObject?.get("started")?.asBoolean }.getOrNull() == true
+                                val startOk = runCatching { startObject?.get("ok")?.asBoolean }.getOrNull()
+                                if (!started || startOk == false) {
+                                    startResult
+                                } else {
+                                    LocalShellRuntime.markParentConsumesTerminal()
+                                    phaseCallback("Local Shell работает…")
+                                    DiagnosticLog.record(context, "LOCAL_SHELL_PARENT_WAIT", "suspend; request=$requestRunId; step=$loops")
+                                    val terminal = LocalShellRuntime.awaitTerminal()
+                                    terminal.costUsd?.let { shellCost ->
+                                        costSink?.invoke(RequestCostKind.PRIMARY, shellCost.toString())
+                                    }
+                                    terminal.files.forEach { file ->
+                                        if (created.none { existing -> existing.id == file.id }) created += file
+                                    }
+                                    DiagnosticLog.record(
+                                        context,
+                                        "LOCAL_SHELL_PARENT_WAIT",
+                                        "resume; state=${terminal.state.name}; turns=${terminal.turns}; tools=${terminal.toolCalls}; files=${terminal.files.size}; request=$requestRunId"
+                                    )
+                                    gson.toJson(
+                                        linkedMapOf<String, Any?>(
+                                            "ok" to terminal.ok,
+                                            "source" to "local_shell",
+                                            "state" to terminal.state.name,
+                                            "result" to terminal.text.takeIf { it.isNotBlank() },
+                                            "error" to terminal.error?.takeIf { it.isNotBlank() },
+                                            "model" to terminal.modelId,
+                                            "turns" to terminal.turns,
+                                            "tool_calls" to terminal.toolCalls,
+                                            "files" to terminal.files.map { file ->
+                                                mapOf("name" to file.name, "mime_type" to file.mimeType, "size" to file.size)
+                                            }
+                                        ).filterValues { it != null }
+                                    )
+                                }
                             }.getOrElse {
                                 gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
                             }
@@ -1361,7 +1399,7 @@ class OpenRouterClient(
     private fun localShellTools() = JsonArray().apply {
         add(functionTool(
             name = "local_shell_start",
-            description = "Запустить асинхронный Local Shell на устройстве пользователя. Используй, когда пользователь явно просит выполнить, реализовать, исправить, собрать или проверить работу, которую разумно передать локальному агенту. Не запускай только потому, что это могло бы быть полезно. Сформулируй task из уже согласованного контекста диалога.",
+            description = "Запустить Local Shell на устройстве пользователя. Worker асинхронен для UI, но этот tool-вызов сам дождётся завершения без платного status-поллинга и вернёт итог. После собственного local_shell_start не вызывай local_shell_status в этом же ответе. Сформулируй task из уже согласованного контекста диалога.",
             properties = mapOf(
                 "task" to JsonObject().apply {
                     addProperty("type", "string")
@@ -1381,7 +1419,7 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_shell_status",
-            description = "Получить компактный статус Local Shell, запущенного в этом чате: этап, модель, шаги и локальные действия.",
+            description = "Получить статус уже работающего Local Shell из другого шага диалога. Не используй сразу после собственного local_shell_start: тот вызов сам ждёт терминальный результат.",
             properties = emptyMap()
         ))
         add(functionTool(
