@@ -78,6 +78,7 @@ import com.ayuemin.ymnik.model.userProfileApplies
 import com.ayuemin.ymnik.network.ChatOutputPolicy
 import com.ayuemin.ymnik.network.ChatToolPolicy
 import com.ayuemin.ymnik.network.AgentModePolicy
+import com.ayuemin.ymnik.network.HistoricalAttachmentPolicy
 import com.ayuemin.ymnik.network.LocalShellAgentClient
 import com.ayuemin.ymnik.network.LocalWebFetcher
 import com.ayuemin.ymnik.network.OpenRouterClient
@@ -4595,6 +4596,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 if (attachment.size > MAX_ATTACHMENT_BYTES) {
                     File(localPath).delete()
                     _state.value = _state.value.copy(status = "Фото превышает ограничение $MAX_ATTACHMENT_MB МБ")
+                } else if (!forImageGeneration && shouldPersistInChat(attachment)) {
+                    persistChatAttachment(attachment)
+                    File(localPath).delete()
                 } else {
                     val (allowed, reason) = if (forImageGeneration) imageAttachmentAllowed(attachment) else attachmentAllowed(attachment)
                     if (!allowed) {
@@ -5119,8 +5123,30 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         val localShellToolsEnabled = requestSpecialist == null &&
                             modelToolsAvailable && localShellRequested
                         val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
-                        val allAttachments = (modelPendingAttachments + requestPersistentTextAttachments + teamFiles)
+                        val historicalAttachments = if (requestSpecialist == null) {
+                            HistoricalAttachmentPolicy.select(
+                                prompt = clean,
+                                history = before,
+                                files = currentChat?.chatFiles.orEmpty()
+                            )
+                                .map(::chatFileAsAttachment)
+                                .filter(::shouldSendAttachmentToChatModel)
+                        } else {
+                            emptyList()
+                        }
+                        val allAttachments = (
+                            modelPendingAttachments + historicalAttachments +
+                                requestPersistentTextAttachments + teamFiles
+                            )
                             .distinctBy { it.localPath ?: it.uri }
+                        if (historicalAttachments.isNotEmpty()) {
+                            DiagnosticLog.record(
+                                context,
+                                "ATTACHMENT",
+                                "rehydrated historical=${historicalAttachments.size}; names=" +
+                                    historicalAttachments.joinToString(",") { it.name.take(80) }
+                            )
+                        }
                         answerAttachmentCount = allAttachments.size
                         val memoryCredentials = runCatching { knowledgeOpenRouterCredentials() }.getOrNull()
                         val knowledgeOwners = if (requestSpecialist != null) {
@@ -6305,6 +6331,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         appendLine("Ты работаешь внутри Android-приложения «Umnik». Отвечай на языке пользователя, если он не попросил иначе.")
         appendLine("Считай текущий запрос продолжением этого диалога. Ссылки вроде «это», «предыдущий текст», «эта статья», «второй вариант», «сделай короче» относятся к уже переданной истории или памяти чата, если из контекста понятно, о чём речь.")
         appendLine("Не проси пользователя повторно прислать материал, если нужный текст, результат или сведения уже присутствуют в переданной истории, долговременной памяти, базе знаний или приложенных файлах.")
+        appendLine("Если пользователь просит точно прочитать или переписать текст с изображения, не достраивай неразборчивые слова по смыслу. Помечай неуверенные места и не выдавай предположение за точную расшифровку.")
         if (specialist == null && !agentModeEnabled) {
             appendLine("Агентный режим этого чата выключен. Не инициируй Browser или Local Shell самостоятельно. Если они могли бы заметно упростить задачу, можешь кратко предложить пользователю включить «Агент» или прямо попросить нужный инструмент.")
             appendLine("Если Browser или Local Shell всё же доступен среди инструментов текущего запроса, это означает явное разрешение пользователя: он прямо попросил этот инструмент либо выбрал соответствующий режим. В таком случае выполняй задачу без повторного согласования и не спорь с выбором пользователя.")
