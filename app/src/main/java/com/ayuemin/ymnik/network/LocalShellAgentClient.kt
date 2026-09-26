@@ -1,7 +1,9 @@
-
 package com.ayuemin.ymnik.network
 
 import android.content.Context
+import com.ayuemin.ymnik.LocalShellRuntime
+import com.ayuemin.ymnik.LocalShellTerminalResult
+import com.ayuemin.ymnik.LocalShellTerminalState
 import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
@@ -11,6 +13,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Call
@@ -253,7 +256,7 @@ class LocalShellAgentClient(private val context: Context) {
                         "LOCAL_SHELL_AGENT",
                         "done; turns=$turn; toolCalls=$toolCalls; input=$totalInputTokens; output=$totalOutputTokens"
                     )
-                    return@withContext Result(
+                    val result = Result(
                         text = text,
                         model = returnedModel ?: model,
                         turns = turn,
@@ -262,6 +265,17 @@ class LocalShellAgentClient(private val context: Context) {
                         inputTokens = totalInputTokens.takeIf { it > 0 },
                         outputTokens = totalOutputTokens.takeIf { it > 0 }
                     )
+                    LocalShellRuntime.completeTerminal(
+                        LocalShellTerminalResult(
+                            state = LocalShellTerminalState.DONE,
+                            text = result.text,
+                            files = engine.exportedFiles(),
+                            modelId = result.model,
+                            turns = result.turns,
+                            toolCalls = result.toolCalls
+                        )
+                    )
+                    return@withContext result
                 }
 
                 messages.add(assistant.deepCopy())
@@ -342,6 +356,30 @@ class LocalShellAgentClient(private val context: Context) {
                 }
             }
             error("Локальный Shell достиг лимита $safeMaxTurns модельных шагов без завершения")
+        } catch (cancelled: CancellationException) {
+            LocalShellRuntime.completeTerminal(
+                LocalShellTerminalResult(
+                    state = LocalShellTerminalState.STOPPED,
+                    files = engine.exportedFiles(),
+                    modelId = returnedModel ?: model,
+                    turns = turn,
+                    toolCalls = toolCalls,
+                    error = "Local Shell остановлен"
+                )
+            )
+            throw cancelled
+        } catch (error: Throwable) {
+            LocalShellRuntime.completeTerminal(
+                LocalShellTerminalResult(
+                    state = LocalShellTerminalState.FAILED,
+                    files = engine.exportedFiles(),
+                    modelId = returnedModel ?: model,
+                    turns = turn,
+                    toolCalls = toolCalls,
+                    error = error.message ?: error::class.java.simpleName
+                )
+            )
+            throw error
         } finally {
             activeCall = null
         }
