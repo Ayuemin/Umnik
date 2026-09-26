@@ -1542,6 +1542,7 @@ private fun LocalBrowserInlineBanner(
 ) {
     val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
     Surface(
+        onClick = onShowPage,
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
