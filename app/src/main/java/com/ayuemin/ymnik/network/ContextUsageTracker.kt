@@ -20,6 +20,7 @@ internal object ContextUsageTracker {
 
     private data class Entry(val capturedAt: Long, val usage: ContextUsageBreakdown)
     private data class AttachmentStats(val count: Int, val bytes: Long)
+
     private val entries = LinkedHashMap<String, Entry>()
 
     @Synchronized
@@ -30,7 +31,7 @@ internal object ContextUsageTracker {
         prune(now)
         entries[key] = Entry(now, usage)
         while (entries.size > MAX_ENTRIES) {
-  entries.entries.firstOrNull()?.key?.let(entries::remove) ?: break
+            entries.entries.firstOrNull()?.key?.let(entries::remove) ?: break
         }
         return usage
     }
@@ -50,15 +51,15 @@ internal object ContextUsageTracker {
 
     internal fun measurePayload(payload: JsonObject): ContextUsageBreakdown {
         val messages = payload.get("messages")
-  ?.takeIf { it.isJsonArray }
-  ?.asJsonArray
-  ?.mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
-  .orEmpty()
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
+            .orEmpty()
 
         val currentUserIndex = messages.indexOfLast { it.string("role") == "user" }
         val systemText = messages
-  .filter { it.string("role") == "system" }
-  .joinToString("\n") { messageText(it) }
+            .filter { it.string("role") == "system" }
+            .joinToString("\n") { messageText(it) }
         val (withoutSkills, skillText) = peelMarkedBlock(systemText, SKILL_START, SKILL_END)
         val (baseSystemText, memorySystemText) = peelMarkedBlock(withoutSkills, MEMORY_START, MEMORY_END)
 
@@ -68,47 +69,47 @@ internal object ContextUsageTracker {
         if (memorySystemText.isNotBlank()) ragParts += memorySystemText
 
         messages.forEachIndexed { index, message ->
-  val role = message.string("role").orEmpty()
-  if (role == "assistant") {
-      message.get("tool_calls")
-          ?.takeIf { it.isJsonArray }
-          ?.asJsonArray
-          ?.forEach { element ->
-              val call = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-              val id = call.string("id") ?: return@forEach
-              val name = call.getAsJsonObject("function")?.string("name") ?: return@forEach
-              toolNamesById[id] = name
-          }
-  }
-  if (role == "system" || index == currentUserIndex) return@forEachIndexed
-  if (role == "tool") {
-      val toolCallId = message.string("tool_call_id")
-      if (toolCallId != null && toolNamesById[toolCallId] == "knowledge_search") {
-          ragParts += message.toString()
-          return@forEachIndexed
-      }
-  }
-  historyParts += message.toString()
+            val role = message.string("role").orEmpty()
+            if (role == "assistant") {
+                message.get("tool_calls")
+                    ?.takeIf { it.isJsonArray }
+                    ?.asJsonArray
+                    ?.forEach { element ->
+                        val call = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+                        val id = call.string("id") ?: return@forEach
+                        val name = call.getAsJsonObject("function")?.string("name") ?: return@forEach
+                        toolNamesById[id] = name
+                    }
+            }
+            if (role == "system" || index == currentUserIndex) return@forEachIndexed
+            if (role == "tool") {
+                val toolCallId = message.string("tool_call_id")
+                if (toolCallId != null && toolNamesById[toolCallId] == "knowledge_search") {
+                    ragParts += message.toString()
+                    return@forEachIndexed
+                }
+            }
+            historyParts += message.toString()
         }
 
         val currentUser = messages.getOrNull(currentUserIndex)
         val currentPrompt = currentUser?.let(::messageText).orEmpty()
         val attachments = currentUser?.let(::attachmentStats) ?: AttachmentStats(0, 0L)
         val toolsJson = payload.get("tools")
-  ?.takeIf { it.isJsonArray }
-  ?.asJsonArray
-  ?.toString()
-  .orEmpty()
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.toString()
+            .orEmpty()
 
         return ContextUsageBreakdown(
-  systemPrompt = layer(baseSystemText),
-  tools = layer(toolsJson),
-  history = layer(historyParts.joinToString("\n")),
-  memoryRag = layer(ragParts.joinToString("\n")),
-  skills = layer(skillText),
-  currentUserPrompt = layer(currentPrompt),
-  attachmentCount = attachments.count,
-  attachmentBytes = attachments.bytes
+            systemPrompt = layer(baseSystemText),
+            tools = layer(toolsJson),
+            history = layer(historyParts.joinToString("\n")),
+            memoryRag = layer(ragParts.joinToString("\n")),
+            skills = layer(skillText),
+            currentUserPrompt = layer(currentPrompt),
+            attachmentCount = attachments.count,
+            attachmentBytes = attachments.bytes
         )
     }
 
@@ -135,34 +136,34 @@ internal object ContextUsageTracker {
         if (content.isJsonPrimitive) return content.asString
         if (!content.isJsonArray) return content.toString()
         return content.asJsonArray.mapNotNull { part ->
-  val obj = part.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
-  if (obj.string("type") == "text") obj.string("text") else null
+            val obj = part.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
+            if (obj.string("type") == "text") obj.string("text") else null
         }.joinToString("\n")
     }
 
     private fun attachmentStats(message: JsonObject): AttachmentStats {
         val content = message.get("content")?.takeIf { it.isJsonArray }?.asJsonArray
-  ?: return AttachmentStats(0, 0L)
+            ?: return AttachmentStats(0, 0L)
         var count = 0
         var bytes = 0L
         content.forEach { element ->
-  val part = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
-  when (part.string("type")) {
-      "file" -> {
-          count += 1
-          bytes += part.getAsJsonObject("file")?.string("file_data")?.let(::dataUrlBytes) ?: 0L
-      }
-      "image_url", "video_url" -> {
-          count += 1
-          val key = if (part.string("type") == "image_url") "image_url" else "video_url"
-          bytes += part.getAsJsonObject(key)?.string("url")?.let(::dataUrlBytes) ?: 0L
-      }
-      "input_audio" -> {
-          count += 1
-          bytes += part.getAsJsonObject("input_audio")?.string("data")
-              ?.let { base64DecodedBytes(it, 0) } ?: 0L
-      }
-  }
+            val part = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@forEach
+            when (part.string("type")) {
+                "file" -> {
+                    count += 1
+                    bytes += part.getAsJsonObject("file")?.string("file_data")?.let(::dataUrlBytes) ?: 0L
+                }
+                "image_url", "video_url" -> {
+                    count += 1
+                    val key = if (part.string("type") == "image_url") "image_url" else "video_url"
+                    bytes += part.getAsJsonObject(key)?.string("url")?.let(::dataUrlBytes) ?: 0L
+                }
+                "input_audio" -> {
+                    count += 1
+                    bytes += part.getAsJsonObject("input_audio")?.string("data")
+                        ?.let { base64DecodedBytes(it, 0) } ?: 0L
+                }
+            }
         }
         return AttachmentStats(count, bytes)
     }
@@ -178,18 +179,18 @@ internal object ContextUsageTracker {
         var meaningful = 0L
         var padding = 0L
         for (index in start until value.length) {
-  val c = value[index]
-  if (c.isWhitespace()) continue
-  meaningful += 1
-  if (c == '=') padding += 1
+            val c = value[index]
+            if (c.isWhitespace()) continue
+            meaningful += 1
+            if (c == '=') padding += 1
         }
         if (meaningful == 0L) return 0L
         val groups = meaningful / 4L
         val remainder = meaningful % 4L
         val decoded = groups * 3L + when (remainder.toInt()) {
-  2 -> 1L
-  3 -> 2L
-  else -> 0L
+            2 -> 1L
+            3 -> 2L
+            else -> 0L
         } - padding
         return decoded.coerceAtLeast(0L)
     }
