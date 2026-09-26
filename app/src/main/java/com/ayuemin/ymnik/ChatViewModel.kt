@@ -64,6 +64,7 @@ import com.ayuemin.ymnik.model.Team
 import com.ayuemin.ymnik.model.ChatRuntimeProfile
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ProviderUsage
+import com.ayuemin.ymnik.model.RequestCostBreakdown
 import com.ayuemin.ymnik.model.ReasoningEffort
 import com.ayuemin.ymnik.model.StoredFile
 import com.ayuemin.ymnik.model.ThemeChoice
@@ -5268,6 +5269,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     { task, allowNetwork, requestedFiles ->
                                         startLocalShellFromChat(
                                             chatId = chatId,
+                                            originUserMessageId = user.id,
                                             taskRaw = task,
                                             requestedFiles = requestedFiles,
                                             requestAttachments = pending,
@@ -5829,6 +5831,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private suspend fun startLocalShellFromChat(
         chatId: String,
+        originUserMessageId: String? = null,
         taskRaw: String,
         requestedFiles: List<String>,
         requestAttachments: List<PendingAttachment> = emptyList(),
@@ -5994,6 +5997,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }.onSuccess { result ->
                 val elapsedMs = (System.currentTimeMillis() - startedAt).coerceAtLeast(0L)
                 val files = engine.exportedFiles()
+                var parentWaits = 0
+                while (RequestExecutionManager.hasActiveChat(chatId) && parentWaits < 100) {
+                    delay(50L)
+                    parentWaits += 1
+                }
+                val combinedCost = combinedLocalShellCost(
+                    chatId = chatId,
+                    originUserMessageId = originUserMessageId,
+                    shellCostUsd = result.costUsd
+                )
                 val assistant = ChatMessage(
                     id = UUID.randomUUID().toString(),
                     role = "assistant",
@@ -6007,7 +6020,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     responseDurationMs = elapsedMs,
                     attachmentCount = imported.size,
                     connectionName = profile.name,
-                    requestId = "local-shell:" + taskId
+                    requestId = "local-shell:" + taskId,
+                    costBreakdown = combinedCost
                 )
                 val updated = chatsRepository.appendAssistantIfMissing(
                     chatId = chatId,
@@ -6076,6 +6090,42 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 "network" to networkEnabled,
                 "message" to "Local Shell запущен асинхронно. Можно продолжать диалог; статус доступен через local_shell_status."
             )
+        )
+    }
+
+    private fun combinedLocalShellCost(
+        chatId: String,
+        originUserMessageId: String?,
+        shellCostUsd: Double?
+    ): RequestCostBreakdown? {
+        val messages = chatsRepository.list().firstOrNull { it.id == chatId }?.messages.orEmpty()
+        val originIndex = originUserMessageId
+            ?.let { id -> messages.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 }
+        val parentAssistant = originIndex?.let { index ->
+            messages.drop(index + 1).firstOrNull { message ->
+                message.role == "assistant" && !message.requestId.orEmpty().startsWith("local-shell:")
+            }
+        }
+        val parentBreakdown = parentAssistant?.costBreakdown
+        val parentAmount = parentBreakdown?.knownTotalUsd
+            ?.let { raw -> runCatching { java.math.BigDecimal(raw) }.getOrNull() }
+            ?: parentAssistant?.costUsd
+                ?.takeIf { it >= 0.0 }
+                ?.let(java.math.BigDecimal::valueOf)
+        val shellAmount = shellCostUsd
+            ?.takeIf { it >= 0.0 }
+            ?.let(java.math.BigDecimal::valueOf)
+        val total = listOfNotNull(parentAmount, shellAmount)
+            .takeIf { it.isNotEmpty() }
+            ?.fold(java.math.BigDecimal.ZERO, java.math.BigDecimal::add)
+            ?: return null
+        val exact = total.stripTrailingZeros().let { value ->
+            if (value.compareTo(java.math.BigDecimal.ZERO) == 0) "0" else value.toPlainString()
+        }
+        return RequestCostBreakdown(
+            knownTotalUsd = exact,
+            incomplete = parentBreakdown?.incomplete == true || shellCostUsd == null
         )
     }
 

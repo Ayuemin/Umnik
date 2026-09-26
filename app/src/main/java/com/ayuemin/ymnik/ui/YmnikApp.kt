@@ -2737,7 +2737,6 @@ private fun AnswerInfoSheet(
     onDismiss: () -> Unit
 ) {
     var technicalOpen by remember(message.id) { mutableStateOf(false) }
-    var serviceCostsOpen by remember(message.id) { mutableStateOf(false) }
     val knowledgeCount = message.knowledgeHitCount
     val knowledgeSearchAttempted = message.knowledgeSearchAttempted == true
     val knowledgeBaseOnly = message.knowledgeBaseOnly == true
@@ -2786,49 +2785,9 @@ private fun AnswerInfoSheet(
 
                 val costs = message.costBreakdown
                 if (costs != null) {
-                    costs.primaryUsd?.let {
-                        AnswerInfoRow("Основной ответ", formatExactUsd(it))
-                    }
-
-                    if (costs.systemCalls + costs.embeddingCalls > 0) {
-                        TextButton(
-                            onClick = { serviceCostsOpen = !serviceCostsOpen },
-                            contentPadding = PaddingValues(horizontal = 0.dp, vertical = 2.dp)
-                        ) {
-                            Text("Служебные операции")
-                            costs.serviceUsd?.let {
-                                Text(
-                                    "  " + formatExactUsd(it),
-                                    modifier = Modifier.padding(start = 6.dp)
-                                )
-                            }
-                            Icon(
-                                if (serviceCostsOpen) Icons.Outlined.KeyboardArrowUp else Icons.Outlined.KeyboardArrowDown,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
-                        if (serviceCostsOpen) {
-                            if (costs.systemCalls > 0) {
-                                AnswerInfoRow(
-                                    "Системная модель",
-                                    costs.systemUsd?.let(::formatExactUsd) ?: "Стоимость не определена"
-                                )
-                                AnswerInfoRow("Вызовов системы", costs.systemCalls.toString())
-                            }
-                            if (costs.embeddingCalls > 0) {
-                                AnswerInfoRow(
-                                    "Embeddings",
-                                    costs.embeddingsUsd?.let(::formatExactUsd) ?: "Стоимость не определена"
-                                )
-                                AnswerInfoRow("Embeddings-вызовов", costs.embeddingCalls.toString())
-                            }
-                        }
-                    }
-
                     costs.knownTotalUsd?.let {
                         AnswerInfoRow(
-                            if (costs.incomplete) "Учтено" else "Итого за ответ",
+                            if (costs.incomplete) "Учтено за запрос" else "Стоимость запроса",
                             formatExactUsd(it)
                         )
                     }
@@ -2842,7 +2801,7 @@ private fun AnswerInfoSheet(
                     }
                 } else {
                     message.costUsd?.takeIf { it >= 0.0 }?.let {
-                        AnswerInfoRow("Стоимость", formatAnswerCost(it))
+                        AnswerInfoRow("Стоимость запроса", formatAnswerCost(it))
                     }
                 }
             }
