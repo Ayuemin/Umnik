@@ -12,6 +12,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: work/local-shell-mvp
+
       - name: Allow viewing Browser while model works
         run: |
           python3 - <<'PY'
@@ -57,29 +58,172 @@ jobs:
     }
 '''
           if old in s:
-              p.write_text(s.replace(old, new, 1))
-          else:
-              print('Runtime user-view block already patched or target missing; nothing to do.')
+              s = s.replace(old, new, 1)
+          preserve_old = '''            if (activeChatId == session.chatId) activeChatId = null
+            if (mutableActivity.value?.sessionId == session.sessionId) mutableActivity.value = null
+'''
+          preserve_new = '''            if (activeChatId == session.chatId) activeChatId = null
+            if (!mutableUserControlVisible.value && mutableActivity.value?.sessionId == session.sessionId) {
+                mutableActivity.value = null
+            }
+'''
+          if preserve_old in s:
+              s = s.replace(preserve_old, preserve_new, 1)
+          p.write_text(s)
           PY
-      - name: Preserve Browser activity while visible
+
+      - name: Add stable Browser state fingerprint
         run: |
           python3 - <<'PY'
           from pathlib import Path
           p = Path('app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt')
           s = p.read_text()
-          old = '''            if (activeChatId == session.chatId) activeChatId = null
-            if (mutableActivity.value?.sessionId == session.sessionId) mutableActivity.value = null
+          old = '''        val snapshotId = UUID.randomUUID().toString()
+        val contentHash = content.hashCode()
+        val initial = session.lastSnapshotId == null
 '''
-          new = '''            if (activeChatId == session.chatId) activeChatId = null
-            if (!mutableUserControlVisible.value && mutableActivity.value?.sessionId == session.sessionId) {
-                mutableActivity.value = null
-            }
+          new = '''        val snapshotId = UUID.randomUUID().toString()
+        val contentHash = content.hashCode()
+        val pageStateHash = url.substringBefore('#').hashCode().toString() + ":" +
+            contentHash.toString() + ":" + viewportContent.hashCode().toString()
+        val initial = session.lastSnapshotId == null
 '''
           if old in s:
-              p.write_text(s.replace(old, new, 1))
-          else:
-              print('Runtime activity-preserve block already patched or target missing; nothing to do.')
+              s = s.replace(old, new, 1)
+          marker = '''            addProperty("stepNumber", session.stepNumber)
+            addProperty("profileId", session.profileId)
+'''
+          replacement = '''            addProperty("stepNumber", session.stepNumber)
+            addProperty("page_state_hash", pageStateHash)
+            addProperty("profileId", session.profileId)
+'''
+          if marker in s:
+              s = s.replace(marker, replacement, 1)
+          p.write_text(s)
           PY
+
+      - name: Replace small Browser loop cap with progress-aware guard
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt')
+          s = p.read_text()
+
+          old_limit = '''        val maxToolLoops = maxOf(
+            when {
+                localBrowserToolsEnabled -> 12
+                localShellToolsEnabled -> 8
+                localWebFetchEnabled -> 6
+                else -> 5
+            },
+            effectiveKnowledgeSearchLimit + 3
+        )
+        val requestRunId = UUID.randomUUID().toString()
+'''
+          new_limit = '''        val maxToolLoops = maxOf(
+            when {
+                // Local Browser tasks can legitimately require many distinct actions.
+                // A separate state-aware loop guard below stops repetition without
+                // penalizing long tasks which continue to make progress.
+                localBrowserToolsEnabled -> 64
+                localShellToolsEnabled -> 8
+                localWebFetchEnabled -> 6
+                else -> 5
+            },
+            effectiveKnowledgeSearchLimit + 3
+        )
+        val browserActionTrace = mutableListOf<String>()
+        fun repeatedBrowserPattern(): Int? {
+            if (browserActionTrace.size >= 4) {
+                val tail = browserActionTrace.takeLast(4)
+                if (tail.distinct().size == 1) return 1
+            }
+            for (patternSize in 2..4) {
+                val repeats = 3
+                val needed = patternSize * repeats
+                if (browserActionTrace.size < needed) continue
+                val tail = browserActionTrace.takeLast(needed)
+                val pattern = tail.take(patternSize)
+                if ((1 until repeats).all { repeatIndex ->
+                        val from = repeatIndex * patternSize
+                        tail.subList(from, from + patternSize) == pattern
+                    }
+                ) return patternSize
+            }
+            return null
+        }
+        val requestRunId = UUID.randomUUID().toString()
+'''
+          if old_limit not in s:
+              raise SystemExit('maxToolLoops target not found')
+          s = s.replace(old_limit, new_limit, 1)
+
+          old_guard = '''                    browserCanAutoFinish =
+                        ok != false && state != "WAITING_USER" && state != "BLOCKED"
+                }
+                messages.add(JsonObject().apply {
+'''
+          new_guard = '''                    browserCanAutoFinish =
+                        ok != false && state != "WAITING_USER" && state != "BLOCKED"
+
+                    val normalizedArgs = runCatching {
+                        gson.toJson(gson.fromJson(argsRaw, JsonElement::class.java))
+                    }.getOrDefault(argsRaw.trim())
+                    val stateKey = runCatching {
+                        browserResult?.get("page_state_hash")?.asString
+                    }.getOrNull() ?: buildString {
+                        append(
+                            runCatching { browserResult?.get("url")?.asString }.getOrNull()
+                                ?: runCatching { browserResult?.get("current_url")?.asString }.getOrNull().orEmpty()
+                        )
+                        append('|').append(state.orEmpty())
+                        append('|').append(
+                            runCatching { browserResult?.get("reason")?.asString }.getOrNull().orEmpty()
+                        )
+                    }
+                    browserActionTrace += name + "|" + normalizedArgs + "|" + stateKey
+                    while (browserActionTrace.size > 16) browserActionTrace.removeAt(0)
+                    val repeatedPatternSize = repeatedBrowserPattern()
+                    if (repeatedPatternSize != null) {
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_BROWSER_ROUTER",
+                            "loop_guard request=" + requestRunId +
+                                "; pattern=" + repeatedPatternSize +
+                                "; trace=" + browserActionTrace.takeLast(minOf(8, browserActionTrace.size)).joinToString(" -> ").take(900)
+                        )
+                        localBrowserDone?.let { finish -> runCatching { finish() } }
+                        return@withContext Result(
+                            "Local Browser остановлен: обнаружен повторяющийся цикл без изменения состояния страницы. " +
+                                "Разные действия и длинные задачи не ограничиваются этим правилом.",
+                            created
+                        )
+                    }
+                }
+                messages.add(JsonObject().apply {
+'''
+          if old_guard not in s:
+              raise SystemExit('browser result guard target not found')
+          s = s.replace(old_guard, new_guard, 1)
+
+          old_end = '''        Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
+'''
+          new_end = '''        Result(
+            if (localBrowserToolsEnabled) {
+                "Local Browser достиг аварийного предела $maxToolLoops циклов без завершения. " +
+                    "Операция остановлена как последняя защита от бесконтрольных расходов."
+            } else {
+                "Модель слишком много раз вызывала инструменты. Операция остановлена."
+            },
+            created
+        )
+'''
+          if old_end not in s:
+              raise SystemExit('tool loop end target not found')
+          s = s.replace(old_end, new_end, 1)
+          p.write_text(s)
+          PY
+
       - name: Commit if changed
         run: |
           if git diff --quiet; then
@@ -87,6 +231,6 @@ jobs:
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt
-          git commit -m "Allow inspecting Local Browser while model works"
+          git add app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt
+          git commit -m "Allow long Browser tasks with loop protection"
           git push origin HEAD:work/local-shell-mvp
