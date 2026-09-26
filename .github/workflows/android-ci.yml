@@ -7,7 +7,7 @@ on:
     branches: [ "main" ]
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-ci-${{ github.ref }}
@@ -20,20 +20,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
-
-      - name: Apply request-cost UX patch on test branch
-        if: github.ref == 'refs/heads/work/local-shell-mvp'
-        run: |
-          python3 .github/scripts/cost_cycle_patch.py
-          if git diff --quiet -- app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt; then
-            echo "Expected request-cost changes were not applied"
-            exit 1
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt
-          git commit -m "Show one total cost for each user request"
-          git push origin HEAD:work/local-shell-mvp
 
       - name: Set up JDK 17
         uses: actions/setup-java@v6
