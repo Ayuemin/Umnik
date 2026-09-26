@@ -17,6 +17,8 @@ internal object ContextUsageTracker {
     private const val SKILL_END = "===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="
     private const val MEMORY_START = "===== ДОЛГОВРЕМЕННАЯ ПАМЯТЬ ЭТОГО ЧАТА ====="
     private const val MEMORY_END = "===== КОНЕЦ ДОЛГОВРЕМЕННОЙ ПАМЯТИ ====="
+    private const val RAG_START = "===== СКРЫТЫЙ СПРАВОЧНЫЙ КОНТЕКСТ UMNIK ====="
+    private const val RAG_END = "===== КОНЕЦ СКРЫТОГО СПРАВОЧНОГО КОНТЕКСТА ====="
 
     private data class Entry(val capturedAt: Long, val usage: ContextUsageBreakdown)
     private data class AttachmentStats(val count: Int, val bytes: Long)
@@ -103,12 +105,14 @@ internal object ContextUsageTracker {
             .filter { it.string("role") == "system" }
             .joinToString("\n") { messageText(it) }
         val (withoutSkills, skillText) = peelMarkedBlock(systemText, SKILL_START, SKILL_END)
-        val (baseSystemText, memorySystemText) = peelMarkedBlock(withoutSkills, MEMORY_START, MEMORY_END)
+        val (withoutMemory, memorySystemText) = peelMarkedBlock(withoutSkills, MEMORY_START, MEMORY_END)
+        val (baseSystemText, ragSystemText) = peelMarkedBlock(withoutMemory, RAG_START, RAG_END)
 
         val toolNamesById = mutableMapOf<String, String>()
         val historyParts = mutableListOf<String>()
         val ragParts = mutableListOf<String>()
         if (memorySystemText.isNotBlank()) ragParts += memorySystemText
+        if (ragSystemText.isNotBlank()) ragParts += ragSystemText
 
         messages.forEachIndexed { index, message ->
             val role = message.string("role").orEmpty()
