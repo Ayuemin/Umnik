@@ -25,42 +25,42 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           path = Path("app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt")
           text = path.read_text(encoding="utf-8")
-          old = '''        fun snapshotMatchesWebView(value: JsonObject, actualUrl: String): Boolean {
-              val pageUrl = value.get("url")?.asString.orEmpty()
-              if (pageUrl.isBlank() || actualUrl.isBlank() || actualUrl == "about:blank") return true
-              if (!pageUrl.startsWith("http://") && !pageUrl.startsWith("https://")) return true
-              return sameDocumentUrl(pageUrl, actualUrl)
-          }
-          '''
-          new = '''        fun snapshotMatchesWebView(value: JsonObject, actualUrl: String): Boolean {
-              val pageUrl = value.get("url")?.asString.orEmpty()
-              fun isWebUrl(url: String): Boolean =
-                  url.startsWith("http://") || url.startsWith("https://")
+          pattern = re.compile(
+              r'        fun snapshotMatchesWebView\(value: JsonObject, actualUrl: String\): Boolean \{.*?^        \}\n\n        var actualUrl = currentUrl\(webView\)',
+              re.MULTILINE | re.DOTALL,
+          )
+          new_function = '''        fun snapshotMatchesWebView(value: JsonObject, actualUrl: String): Boolean {
+            val pageUrl = value.get("url")?.asString.orEmpty()
+            fun isWebUrl(url: String): Boolean =
+                url.startsWith("http://") || url.startsWith("https://")
 
-              val expectedWebUrl = sequenceOf(
-                  session.lastNavigationFinishedUrl,
-                  session.lastNavigationStartedUrl,
-                  session.currentUrl
-              ).firstOrNull(::isWebUrl).orEmpty()
+            val expectedWebUrl = sequenceOf(
+                session.lastNavigationFinishedUrl,
+                session.lastNavigationStartedUrl,
+                session.currentUrl
+            ).firstOrNull(::isWebUrl).orEmpty()
 
-              if (expectedWebUrl.isNotBlank()) {
-                  if (!isWebUrl(actualUrl) || !isWebUrl(pageUrl)) return false
-                  return sameDocumentUrl(pageUrl, actualUrl) &&
-                      sameDocumentUrl(pageUrl, expectedWebUrl)
-              }
+            if (expectedWebUrl.isNotBlank()) {
+                if (!isWebUrl(actualUrl) || !isWebUrl(pageUrl)) return false
+                return sameDocumentUrl(pageUrl, actualUrl) &&
+                    sameDocumentUrl(pageUrl, expectedWebUrl)
+            }
 
-              if (pageUrl.isBlank() || actualUrl.isBlank()) return true
-              if (pageUrl == "about:blank" || actualUrl == "about:blank") return pageUrl == actualUrl
-              if (!isWebUrl(pageUrl) || !isWebUrl(actualUrl)) return pageUrl == actualUrl
-              return sameDocumentUrl(pageUrl, actualUrl)
-          }
-          '''
-          if text.count(old) != 1:
-              raise SystemExit(f"Expected snapshot guard exactly once, found {text.count(old)}")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+            if (pageUrl.isBlank() || actualUrl.isBlank()) return true
+            if (pageUrl == "about:blank" || actualUrl == "about:blank") return pageUrl == actualUrl
+            if (!isWebUrl(pageUrl) || !isWebUrl(actualUrl)) return pageUrl == actualUrl
+            return sameDocumentUrl(pageUrl, actualUrl)
+        }
+
+        var actualUrl = currentUrl(webView)'''
+          patched, count = pattern.subn(new_function, text, count=1)
+          if count != 1:
+              raise SystemExit(f"Expected snapshot guard exactly once, found {count}")
+          path.write_text(patched, encoding="utf-8")
           PY
 
       - name: Verify patch
