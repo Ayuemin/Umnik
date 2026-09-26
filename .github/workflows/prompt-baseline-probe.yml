@@ -30,3 +30,5 @@ jobs:
           ./gradlew --no-daemon :app:testDebugUnitTest --tests com.ayuemin.ymnik.network.PromptBaselineProbeTest --info 2>&1 | tee /tmp/prompt-baseline.log
           echo "--- BASELINE ROWS ---"
           grep "PROMPT_BASELINE" /tmp/prompt-baseline.log
+
+# beta.32 pre-diet baseline capture
