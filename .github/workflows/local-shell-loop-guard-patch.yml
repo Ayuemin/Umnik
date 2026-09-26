@@ -26,15 +26,17 @@ jobs:
         run: |
           git diff --check
           git diff -- app/src/main/java/com/ayuemin/ymnik/network/LocalShellAgentClient.kt
-          git diff -- app/src/main/java/com/ayuemin/ymnik/network/LocalShellLoopGuard.kt
-          git diff -- app/src/test/java/com/ayuemin/ymnik/network/LocalShellLoopGuardTest.kt
+          git diff -- app/src/main/java/com/ayuemin/ymnik/data/OpenRouterFeaturePrefs.kt
+          git diff -- app/src/main/java/com/ayuemin/ymnik/AsyncJobEvents.kt
+          git diff -- app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
 
       - name: Commit product changes
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add app/src/main/java/com/ayuemin/ymnik/network/LocalShellAgentClient.kt
-          git add app/src/main/java/com/ayuemin/ymnik/network/LocalShellLoopGuard.kt
-          git add app/src/test/java/com/ayuemin/ymnik/network/LocalShellLoopGuardTest.kt
-          git commit -m "Add state-aware Local Shell loop protection"
+          git add app/src/main/java/com/ayuemin/ymnik/data/OpenRouterFeaturePrefs.kt
+          git add app/src/main/java/com/ayuemin/ymnik/AsyncJobEvents.kt
+          git add app/src/main/java/com/ayuemin/ymnik/ui/OpenRouterHub.kt
+          git commit -m "Raise guarded Local Shell emergency limit to 500"
           git push origin HEAD:work/local-shell-mvp
