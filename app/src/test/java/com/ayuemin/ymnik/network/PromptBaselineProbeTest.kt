@@ -26,6 +26,7 @@ class PromptBaselineProbeTest {
         val chat = ChatSession(id = "baseline", title = "Baseline")
 
         val client = allocate(OpenRouterClient::class.java)
+        val genericTools = invokeNoArg<JsonArray>(client, "tools")
         val fetchTool = invokeNoArg<JsonObject>(client, "localWebFetchTool")
         val browserTools = invokeNoArg<JsonArray>(client, "localBrowserTools")
         val shellTools = invokeNoArg<JsonArray>(client, "localShellTools")
@@ -37,16 +38,31 @@ class PromptBaselineProbeTest {
             tools = JsonArray()
         )
         rows["agent_on"] = measure(
-            system = systemPrompt(viewModel, chat = chat, shell = true, agent = true),
-            tools = combine(shellTools)
+            system = systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true),
+            tools = combine(genericTools, shellTools)
         )
         rows["agent_fetch"] = measure(
-            system = systemPrompt(viewModel, chat = chat, fetch = true, shell = true, agent = true),
-            tools = combine(fetchTool, shellTools)
+            system = systemPrompt(
+                viewModel,
+                chat = chat,
+                toolsEnabled = true,
+                fetch = true,
+                shell = true,
+                agent = true
+            ),
+            tools = combine(genericTools, fetchTool, shellTools)
         )
         rows["agent_fetch_browser_shell"] = measure(
-            system = systemPrompt(viewModel, chat = chat, fetch = true, browser = true, shell = true, agent = true),
-            tools = combine(fetchTool, browserTools, shellTools)
+            system = systemPrompt(
+                viewModel,
+                chat = chat,
+                toolsEnabled = true,
+                fetch = true,
+                browser = true,
+                shell = true,
+                agent = true
+            ),
+            tools = combine(genericTools, fetchTool, browserTools, shellTools)
         )
         rows["knowledge_rag_enabled"] = measure(
             system = systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false),

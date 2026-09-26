@@ -1,11 +1,13 @@
 name: Prompt baseline probe
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - work/local-shell-mvp
     paths:
       - .github/workflows/prompt-baseline-probe.yml
+      - app/src/test/java/com/ayuemin/ymnik/network/PromptBaselineProbeTest.kt
 
 permissions:
   contents: write
@@ -43,5 +45,3 @@ jobs:
             git commit -m "Record beta.32 pre-diet prompt baseline"
             git push
           fi
-
-# beta.32 pre-diet baseline capture
