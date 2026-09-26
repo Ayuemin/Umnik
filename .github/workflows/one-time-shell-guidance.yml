@@ -1,0 +1,31 @@
+name: One-time Local Shell guidance patch
+
+on:
+  push:
+    branches: [ "work/local-shell-mvp" ]
+    paths: [ ".github/one-time-shell-guidance.py" ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: work/local-shell-mvp
+          fetch-depth: 0
+      - run: python3 .github/one-time-shell-guidance.py
+      - name: Commit patch and remove temporary helpers
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-time-shell-guidance.yml .github/one-time-shell-guidance.py
+          git add app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt \
+                  app/src/main/java/com/ayuemin/ymnik/data/ChatRepository.kt \
+                  app/src/main/java/com/ayuemin/ymnik/ui/YmnikApp.kt \
+                  app/src/test/java/com/ayuemin/ymnik/network/AgentLocalShellAwaitRegressionTest.kt
+          git commit -m "Route chat guidance to active Local Shell"
+          git push origin HEAD:work/local-shell-mvp
