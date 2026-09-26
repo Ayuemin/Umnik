@@ -1,0 +1,199 @@
+from pathlib import Path
+
+runtime = Path('app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt')
+s = runtime.read_text()
+
+old = """    fun showUserControl(chatId: String) {
+        val session = sessions[chatId] ?: return
+        if (session.lifecycle == LocalBrowserLifecycle.WAITING_USER) {
+            mutableUserControlVisible.value = true
+        }
+    }
+
+    fun hideUserControl() {
+        mutableUserControlVisible.value = false
+    }
+"""
+new = """    fun showUserControl(chatId: String) {
+        val session = sessions[chatId] ?: return
+        if (
+            session.currentUrl.isBlank() ||
+            session.lifecycle == LocalBrowserLifecycle.READY_TO_FINISH ||
+            session.lifecycle == LocalBrowserLifecycle.DONE
+        ) return
+        mutableUserControlVisible.value = true
+        attachedWebView?.context?.applicationContext?.let { context ->
+            DiagnosticLog.record(
+                context,
+                "LOCAL_BROWSER",
+                "user_view_open session=" + session.sessionId.take(8) +
+                    " state=" + session.lifecycle.name +
+                    " url=" + session.currentUrl.take(220)
+            )
+        }
+    }
+
+    fun hideUserControl() {
+        mutableUserControlVisible.value = false
+        attachedWebView?.context?.applicationContext?.let { context ->
+            DiagnosticLog.record(context, "LOCAL_BROWSER", "user_view_close")
+        }
+        if (activeChatId == null) mutableActivity.value = null
+    }
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+
+old = """            if (activeChatId == session.chatId) activeChatId = null
+            if (mutableActivity.value?.sessionId == session.sessionId) mutableActivity.value = null
+"""
+new = """            if (activeChatId == session.chatId) activeChatId = null
+            if (!mutableUserControlVisible.value && mutableActivity.value?.sessionId == session.sessionId) {
+                mutableActivity.value = null
+            }
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+
+old = """        val snapshotId = UUID.randomUUID().toString()
+        val contentHash = content.hashCode()
+        val initial = session.lastSnapshotId == null
+"""
+new = """        val snapshotId = UUID.randomUUID().toString()
+        val contentHash = content.hashCode()
+        val pageStateHash = url.substringBefore('#').hashCode().toString() + ":" +
+            contentHash.toString() + ":" + viewportContent.hashCode().toString()
+        val initial = session.lastSnapshotId == null
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+
+old = """            addProperty("stepNumber", session.stepNumber)
+            addProperty("profileId", session.profileId)
+"""
+new = """            addProperty("stepNumber", session.stepNumber)
+            addProperty("page_state_hash", pageStateHash)
+            addProperty("profileId", session.profileId)
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+
+runtime.write_text(s)
+
+client = Path('app/src/main/java/com/ayuemin/ymnik/network/OpenRouterClient.kt')
+s = client.read_text()
+
+old = """        val maxToolLoops = maxOf(
+            when {
+                localBrowserToolsEnabled -> 12
+                localShellToolsEnabled -> 8
+                localWebFetchEnabled -> 6
+                else -> 5
+            },
+            effectiveKnowledgeSearchLimit + 3
+        )
+        val requestRunId = UUID.randomUUID().toString()
+"""
+new = """        val maxToolLoops = maxOf(
+            when {
+                // Browser tasks can legitimately require many distinct actions. A
+                // state-aware guard below stops repetition while allowing progress.
+                localBrowserToolsEnabled -> 64
+                localShellToolsEnabled -> 8
+                localWebFetchEnabled -> 6
+                else -> 5
+            },
+            effectiveKnowledgeSearchLimit + 3
+        )
+        val browserActionTrace = mutableListOf<String>()
+        fun repeatedBrowserPattern(): Int? {
+            if (browserActionTrace.size >= 4) {
+                val tail = browserActionTrace.takeLast(4)
+                if (tail.distinct().size == 1) return 1
+            }
+            for (patternSize in 2..4) {
+                val repeats = 3
+                val needed = patternSize * repeats
+                if (browserActionTrace.size < needed) continue
+                val tail = browserActionTrace.takeLast(needed)
+                val pattern = tail.take(patternSize)
+                if ((1 until repeats).all { repeatIndex ->
+                        val from = repeatIndex * patternSize
+                        tail.subList(from, from + patternSize) == pattern
+                    }
+                ) return patternSize
+            }
+            return null
+        }
+        val requestRunId = UUID.randomUUID().toString()
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+elif 'localBrowserToolsEnabled -> 64' not in s:
+    raise SystemExit('maxToolLoops target not found')
+
+old = """                    browserCanAutoFinish =
+                        ok != false && state != "WAITING_USER" && state != "BLOCKED"
+                }
+                messages.add(JsonObject().apply {
+"""
+new = """                    browserCanAutoFinish =
+                        ok != false && state != "WAITING_USER" && state != "BLOCKED"
+
+                    val normalizedArgs = runCatching {
+                        gson.toJson(gson.fromJson(argsRaw, JsonElement::class.java))
+                    }.getOrDefault(argsRaw.trim())
+                    val stateKey = runCatching {
+                        browserResult?.get("page_state_hash")?.asString
+                    }.getOrNull() ?: buildString {
+                        append(
+                            runCatching { browserResult?.get("url")?.asString }.getOrNull()
+                                ?: runCatching { browserResult?.get("current_url")?.asString }.getOrNull().orEmpty()
+                        )
+                        append('|').append(state.orEmpty())
+                        append('|').append(
+                            runCatching { browserResult?.get("reason")?.asString }.getOrNull().orEmpty()
+                        )
+                    }
+                    browserActionTrace += name + "|" + normalizedArgs + "|" + stateKey
+                    while (browserActionTrace.size > 16) browserActionTrace.removeAt(0)
+                    val repeatedPatternSize = repeatedBrowserPattern()
+                    if (repeatedPatternSize != null) {
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_BROWSER_ROUTER",
+                            "loop_guard request=" + requestRunId +
+                                "; pattern=" + repeatedPatternSize +
+                                "; trace=" + browserActionTrace.takeLast(minOf(8, browserActionTrace.size)).joinToString(" -> ").take(900)
+                        )
+                        localBrowserDone?.let { finish -> runCatching { finish() } }
+                        return@withContext Result(
+                            "Local Browser остановлен: обнаружен повторяющийся цикл без изменения состояния страницы. " +
+                                "Разные действия и длинные задачи этим правилом не ограничиваются.",
+                            created
+                        )
+                    }
+                }
+                messages.add(JsonObject().apply {
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+elif 'val normalizedArgs = runCatching' not in s:
+    raise SystemExit('browser loop guard target not found')
+
+old = """        Result("Модель слишком много раз вызывала инструменты. Операция остановлена.", created)
+"""
+new = """        Result(
+            if (localBrowserToolsEnabled) {
+                "Local Browser достиг аварийного предела $maxToolLoops циклов без завершения. " +
+                    "Операция остановлена как последняя защита от бесконтрольных расходов."
+            } else {
+                "Модель слишком много раз вызывала инструменты. Операция остановлена."
+            },
+            created
+        )
+"""
+if old in s:
+    s = s.replace(old, new, 1)
+
+client.write_text(s)
