@@ -18,6 +18,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -92,8 +93,7 @@ class LocalShellAgentClient(private val context: Context) {
         var totalCost = 0.0
         var costObserved = false
         var returnedModel: String? = null
-        var lastToolSignature: String? = null
-        var repeatedToolSignature = 0
+        val loopGuard = LocalShellLoopGuard()
         var lastCompactionTurn = -100
         var taskState = TaskState.WORKING
         var stateReminderPending = false
@@ -104,6 +104,7 @@ class LocalShellAgentClient(private val context: Context) {
                     .map { it.trim() }
                     .filter { it.isNotBlank() }
                 if (guidance.isNotEmpty()) {
+                    loopGuard.reset()
                     val note = guidance.joinToString("\n\n") { "- " + it }
                     if (taskState == TaskState.READY_TO_FINISH) {
                         taskState = TaskState.WORKING
@@ -264,10 +265,11 @@ class LocalShellAgentClient(private val context: Context) {
                 }
 
                 messages.add(assistant.deepCopy())
+                var loopDecisionForTurn: LocalShellLoopDecision? = null
                 for (element in calls) {
                     if (!element.isJsonObject) continue
                     if (toolCalls >= maxToolCalls) {
-                        error("Локальный Shell достиг лимита $maxToolCalls вызовов инструментов")
+                        error("Локальный Shell достиг аварийного предела $maxToolCalls вызовов инструментов")
                     }
                     val call = element.asJsonObject
                     val callId = call.string("id") ?: UUID.randomUUID().toString()
@@ -276,20 +278,28 @@ class LocalShellAgentClient(private val context: Context) {
                     val args = function?.string("arguments") ?: "{}"
                     toolCalls += 1
                     onProgress(Progress(toolLabel(name), turn, toolCalls))
-                    val signature = name + "\n" + args.trim()
-                    if (signature == lastToolSignature) repeatedToolSignature += 1 else {
-                        lastToolSignature = signature
-                        repeatedToolSignature = 1
-                    }
                     val wasReadyBeforeTool = taskState == TaskState.READY_TO_FINISH
-                    val resultText = if (repeatedToolSignature >= 3) {
-                        DiagnosticLog.record(context, "LOCAL_SHELL_WATCHDOG", "Repeated identical tool call blocked; tool=$name; turn=$turn")
-                        gson.toJson(mapOf(
-                            "ok" to false,
-                            "warning" to "Одинаковое локальное действие повторено несколько раз. Оно не выполнено снова: пересмотри план и выбери следующий полезный шаг."
-                        ))
-                    } else {
-                        engine.execute(name, args)
+                    val resultText = engine.execute(name, args)
+
+                    // The guard is state-aware: repeating the same read/search is allowed when
+                    // its real result changes. Only a repeated action+result pattern counts.
+                    val actionKey = name + ":" + stableFingerprint(normalizeJson(args))
+                    val stateKey = stableFingerprint(normalizeJson(resultText))
+                    val loopDecision = loopGuard.observe(actionKey, stateKey)
+                    if (loopDecision != null) {
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_LOOP_GUARD",
+                            "pattern=${loopDecision.patternSize}; strike=${loopDecision.strike}; stop=${loopDecision.shouldStop}; " +
+                                "tool=$name; turn=$turn; action=$actionKey; state=$stateKey"
+                        )
+                        if (loopDecision.shouldStop) {
+                            error(
+                                "Local Shell остановлен: повторяющийся цикл не изменяет состояние после попытки перестроить план. " +
+                                    "Аварийный лимит шагов не достигнут."
+                            )
+                        }
+                        loopDecisionForTurn = loopDecision
                     }
                     val resultObject = runCatching { gson.fromJson(resultText, JsonObject::class.java) }.getOrNull()
                     val toolOk = resultObject?.get("ok")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
@@ -317,6 +327,18 @@ class LocalShellAgentClient(private val context: Context) {
                         addProperty("tool_call_id", callId)
                         addProperty("content", resultText)
                     })
+                }
+                loopDecisionForTurn?.let { decision ->
+                    messages.add(message(
+                        "system",
+                        "===== ЗАЩИТА LOCAL SHELL ОТ ЗАЦИКЛИВАНИЯ =====\n" +
+                            "Обнаружен повторяющийся цикл из ${decision.patternSize} локальных действий без изменения результата. " +
+                            "Это первое предупреждение, задача НЕ остановлена. Перестрой план: выбери другой инструмент, " +
+                            "другой запрос, файл, диапазон или способ проверки. Не повторяй тот же цикл. " +
+                            "Если такой цикл возникнет снова до заметного прогресса, Local Shell будет остановлен.\n" +
+                            "===== КОНЕЦ ПРЕДУПРЕЖДЕНИЯ ====="
+                    ))
+                    onProgress(Progress("Перестраиваю план после повторяющегося цикла", turn, toolCalls))
                 }
             }
             error("Локальный Shell достиг лимита $safeMaxTurns модельных шагов без завершения")
@@ -415,6 +437,15 @@ class LocalShellAgentClient(private val context: Context) {
         return content.toString()
     }
 
+    private fun normalizeJson(raw: String): String = runCatching {
+        gson.toJson(gson.fromJson(raw.ifBlank { "null" }, JsonElement::class.java))
+    }.getOrDefault(raw.trim())
+
+    private fun stableFingerprint(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.take(12).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
     private fun toolLabel(name: String): String = when (name) {
         "local_list", "local_read", "local_search", "local_archive", "local_git", "local_fetch" -> "Изучаю проект"
         "local_write", "local_replace" -> "Исправляю файлы"
@@ -448,7 +479,7 @@ class LocalShellAgentClient(private val context: Context) {
 
     companion object {
         private const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
-        private const val DEFAULT_MAX_TURNS = 24
+        private const val DEFAULT_MAX_TURNS = 500
         private const val MIN_TOOL_CALLS = 64
         private const val MAX_TOOL_CALLS = 100_000
         private const val CONTEXT_COMPACTION_TRIGGER_CHARS = 140_000
