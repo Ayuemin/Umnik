@@ -33,23 +33,13 @@ class PromptBaselineProbeTest {
         val knowledgeTool = invokeNoArg<JsonObject>(client, "knowledgeSearchTool")
 
         val rows = linkedMapOf<String, BaselineRow>()
-        rows["ordinary_chat"] = measure(
-            systemPrompt(viewModel, chat = chat, agent = false),
-            JsonArray()
-        )
+        rows["ordinary_chat"] = measure(systemPrompt(viewModel, chat = chat, agent = false), JsonArray())
         rows["agent_on"] = measure(
             systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true),
             combine(genericTools, shellTools)
         )
         rows["agent_fetch"] = measure(
-            systemPrompt(
-                viewModel,
-                chat = chat,
-                toolsEnabled = true,
-                fetch = true,
-                shell = true,
-                agent = true
-            ),
+            systemPrompt(viewModel, chat = chat, toolsEnabled = true, fetch = true, shell = true, agent = true),
             combine(genericTools, fetchTool, shellTools)
         )
         rows["agent_fetch_browser_shell"] = measure(
@@ -91,58 +81,119 @@ class PromptBaselineProbeTest {
             )
         }
 
-        assertWithinPreDietCeilings(rows)
-        assertPrimaryDietStable(rows)
+        assertSystemPromptDietStable(rows)
+        assertPrimaryToolDiet(rows)
+        assertPrimaryToolSchemasAndMeaning(genericTools, fetchTool, browserTools, shellTools, knowledgeTool)
         assertWorkerDietStable(rows)
-        assertToolSchemasUnchanged(rows)
         assertCriticalBehaviorStillExplicit(viewModel, chat, workerPrompt)
     }
 
-    private fun assertWithinPreDietCeilings(rows: Map<String, BaselineRow>) {
-        val ceilings = mapOf(
-            "ordinary_chat" to BaselineRow(2012, 3623, 0, 0, 0),
-            "agent_on" to BaselineRow(6104, 10780, 3718, 0, 0),
-            "agent_fetch" to BaselineRow(7385, 13014, 4854, 0, 0),
-            "agent_fetch_browser_shell" to BaselineRow(10493, 18138, 9795, 0, 0),
-            "knowledge_rag_enabled" to BaselineRow(2553, 4588, 820, 0, 0),
-            "active_skill_one_char" to BaselineRow(2011, 3622, 0, 82, 131),
-            "local_shell_worker" to BaselineRow(2218, 3801, 6546, 0, 0)
-        )
-        ceilings.forEach { (name, ceiling) ->
-            val current = rows.getValue(name)
-            assertTrue("$name system chars grew", current.systemChars <= ceiling.systemChars)
-            assertTrue("$name system bytes grew", current.systemBytes <= ceiling.systemBytes)
-            assertTrue("$name tools bytes grew", current.toolsBytes <= ceiling.toolsBytes)
-            assertTrue("$name skill chars grew", current.skillsChars <= ceiling.skillsChars)
-            assertTrue("$name skill bytes grew", current.skillsBytes <= ceiling.skillsBytes)
-        }
+    private fun assertSystemPromptDietStable(rows: Map<String, BaselineRow>) {
+        assertSystem(rows.getValue("ordinary_chat"), 1227, 2163)
+        assertSystem(rows.getValue("agent_on"), 3335, 5876)
+        assertSystem(rows.getValue("agent_fetch"), 3785, 6614)
+        assertSystem(rows.getValue("agent_fetch_browser_shell"), 5355, 9105)
+        assertSystem(rows.getValue("knowledge_rag_enabled"), 1512, 2640)
+        assertSystem(rows.getValue("active_skill_one_char"), 1226, 2162)
+        assertEquals(82, rows.getValue("active_skill_one_char").skillsChars)
+        assertEquals(131, rows.getValue("active_skill_one_char").skillsBytes)
     }
 
-    private fun assertPrimaryDietStable(rows: Map<String, BaselineRow>) {
-        val expected = mapOf(
-            "ordinary_chat" to BaselineRow(1227, 2163, 0, 0, 0),
-            "agent_on" to BaselineRow(3335, 5876, 3718, 0, 0),
-            "agent_fetch" to BaselineRow(3785, 6614, 4854, 0, 0),
-            "agent_fetch_browser_shell" to BaselineRow(5355, 9105, 9795, 0, 0),
-            "knowledge_rag_enabled" to BaselineRow(1512, 2640, 820, 0, 0),
-            "active_skill_one_char" to BaselineRow(1226, 2162, 0, 82, 131)
-        )
-        expected.forEach { (name, value) -> assertEquals("$name changed unexpectedly", value, rows.getValue(name)) }
+    private fun assertSystem(row: BaselineRow, chars: Int, bytes: Int) {
+        assertEquals(chars, row.systemChars)
+        assertEquals(bytes, row.systemBytes)
+    }
+
+    private fun assertPrimaryToolDiet(rows: Map<String, BaselineRow>) {
+        val agent = rows.getValue("agent_on").toolsBytes
+        val fetch = rows.getValue("agent_fetch").toolsBytes
+        val all = rows.getValue("agent_fetch_browser_shell").toolsBytes
+        val knowledge = rows.getValue("knowledge_rag_enabled").toolsBytes
+
+        assertTrue("agent tools did not shrink", agent in 1 until 3718)
+        assertTrue("fetch tools did not shrink", fetch in 1 until 4854)
+        assertTrue("browser tools did not shrink", all in 1 until 9795)
+        assertTrue("knowledge tool did not shrink", knowledge in 1 until 820)
+        assertTrue(fetch > agent)
+        assertTrue(all > fetch)
     }
 
     private fun assertWorkerDietStable(rows: Map<String, BaselineRow>) {
         val worker = rows.getValue("local_shell_worker")
         assertEquals(1510, worker.systemChars)
         assertEquals(2468, worker.systemBytes)
+        // Primary-model description diet must not alter LocalShellEngine's own tool protocol.
         assertEquals(6546, worker.toolsBytes)
     }
 
-    private fun assertToolSchemasUnchanged(rows: Map<String, BaselineRow>) {
-        assertEquals(3718, rows.getValue("agent_on").toolsBytes)
-        assertEquals(4854, rows.getValue("agent_fetch").toolsBytes)
-        assertEquals(9795, rows.getValue("agent_fetch_browser_shell").toolsBytes)
-        assertEquals(820, rows.getValue("knowledge_rag_enabled").toolsBytes)
-        assertEquals(6546, rows.getValue("local_shell_worker").toolsBytes)
+    private fun assertPrimaryToolSchemasAndMeaning(
+        genericTools: JsonArray,
+        fetchTool: JsonObject,
+        browserTools: JsonArray,
+        shellTools: JsonArray,
+        knowledgeTool: JsonObject
+    ) {
+        val all = combine(genericTools, fetchTool, browserTools, shellTools, knowledgeTool)
+        assertEquals(
+            setOf(
+                "create_file",
+                "local_web_fetch",
+                "local_browser_open",
+                "local_browser_read",
+                "local_browser_click",
+                "local_browser_download",
+                "local_browser_type",
+                "local_browser_scroll",
+                "local_browser_back",
+                "local_browser_wait",
+                "local_browser_takeover",
+                "local_shell_start",
+                "local_shell_status",
+                "local_shell_note",
+                "local_shell_stop",
+                "knowledge_search"
+            ),
+            functionNames(all)
+        )
+
+        assertEquals(setOf("filename", "content"), required(function(all, "create_file")))
+        assertEquals(setOf("url"), required(function(all, "local_web_fetch")))
+        assertEquals(setOf("url"), required(function(all, "local_browser_open")))
+        assertEquals(setOf("ref"), required(function(all, "local_browser_click")))
+        assertEquals(setOf("ref"), required(function(all, "local_browser_download")))
+        assertEquals(setOf("ref", "text"), required(function(all, "local_browser_type")))
+        assertEquals(setOf("direction"), required(function(all, "local_browser_scroll")))
+        assertEquals(setOf("seconds"), required(function(all, "local_browser_wait")))
+        assertEquals(setOf("task"), required(function(all, "local_shell_start")))
+        assertEquals(setOf("note"), required(function(all, "local_shell_note")))
+        assertEquals(setOf("query"), required(function(all, "knowledge_search")))
+
+        assertEquals("boolean", property(function(all, "local_shell_start"), "network").get("type").asString)
+        assertEquals("boolean", property(function(all, "local_browser_read"), "full").get("type").asString)
+        assertEquals("integer", property(function(all, "local_browser_wait"), "seconds").get("type").asString)
+        assertEquals(1, property(function(all, "local_browser_wait"), "seconds").get("minimum").asInt)
+        assertEquals(5, property(function(all, "local_browser_wait"), "seconds").get("maximum").asInt)
+        assertEquals(
+            listOf("down", "up", "top", "bottom"),
+            property(function(all, "local_browser_scroll"), "direction")
+                .getAsJsonArray("enum").map { it.asString }
+        )
+
+        assertContains(description(function(all, "create_file")), "явно")
+        assertContains(description(function(all, "local_web_fetch")), "Read-only")
+        assertContains(description(function(all, "local_web_fetch")), "недовер")
+        assertContains(description(function(all, "local_browser_open")), "requires_browser=true")
+        assertContains(description(function(all, "local_browser_click")), "подтверждения")
+        assertContains(description(function(all, "local_browser_download")), "Local Shell")
+        assertContains(description(function(all, "local_browser_takeover")), "CAPTCHA")
+        assertContains(description(function(all, "local_browser_takeover")), "секрет")
+        assertContains(description(function(all, "local_shell_start")), "асинхрон")
+        assertContains(description(function(all, "local_shell_stop")), "явной просьбе")
+        assertContains(description(function(all, "knowledge_search")), "не повтор")
+        assertContains(
+            property(function(all, "local_shell_start"), "network").get("description").asString,
+            "по умолчанию false"
+        )
     }
 
     private fun assertCriticalBehaviorStillExplicit(
@@ -151,15 +202,13 @@ class PromptBaselineProbeTest {
         workerPrompt: String
     ) {
         val ordinary = systemPrompt(viewModel, chat = chat, agent = false)
-        assertTrue(ordinary.contains("Агентный режим выключен"))
-        assertTrue(ordinary.contains("не запускай Browser или Local Shell сам"))
-        assertTrue(ordinary.contains("create_file"))
+        assertContains(ordinary, "Агентный режим выключен")
+        assertContains(ordinary, "не запускай Browser или Local Shell сам")
+        assertContains(ordinary, "create_file")
 
         val agent = systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true)
-        assertTrue(agent.contains("local_shell_start"))
-        assertTrue(agent.contains("не утверждай, что Shell недоступен"))
-        assertTrue(agent.contains("stop — только по явной просьбе остановить"))
-        assertTrue(agent.contains("network=true"))
+        listOf("local_shell_start", "не утверждай, что Shell недоступен", "stop — только по явной просьбе остановить", "network=true")
+            .forEach { assertContains(agent, it) }
 
         val browser = systemPrompt(
             viewModel,
@@ -170,22 +219,24 @@ class PromptBaselineProbeTest {
             shell = true,
             agent = true
         )
-        assertTrue(browser.contains("requires_browser=true"))
-        assertTrue(browser.contains("local_browser_open"))
-        assertTrue(browser.contains("local_browser_download"))
-        assertTrue(browser.contains("local_browser_takeover"))
-        assertTrue(browser.contains("READY_TO_FINISH"))
-        assertTrue(browser.contains("побочные действия требуют подтверждения"))
+        listOf(
+            "requires_browser=true",
+            "local_browser_open",
+            "local_browser_download",
+            "local_browser_takeover",
+            "READY_TO_FINISH",
+            "побочные действия требуют подтверждения"
+        ).forEach { assertContains(browser, it) }
 
         val knowledge = systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false)
-        assertTrue(knowledge.contains("knowledge_search"))
-        assertTrue(knowledge.contains("не инструкции"))
-        assertTrue(knowledge.contains("максимум 4 поисков"))
+        listOf("knowledge_search", "не инструкции", "максимум 4 поисков").forEach { assertContains(knowledge, it) }
 
         val skill = systemPrompt(viewModel, chat = chat, skillText = "X", agent = false)
-        assertTrue(skill.contains("===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="))
-        assertTrue(skill.contains("явный текущий запрос пользователя приоритетнее"))
-        assertTrue(skill.contains("===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="))
+        listOf(
+            "===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====",
+            "явный текущий запрос пользователя приоритетнее",
+            "===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="
+        ).forEach { assertContains(skill, it) }
 
         listOf(
             "input",
@@ -203,9 +254,33 @@ class PromptBaselineProbeTest {
             "WORKING",
             "Максимум модельных шагов: 500",
             "потолок, не цель"
-        ).forEach { required ->
-            assertTrue("worker prompt lost: $required", workerPrompt.contains(required))
-        }
+        ).forEach { assertContains(workerPrompt, it) }
+    }
+
+    private fun functionNames(tools: JsonArray): Set<String> = tools.map { element ->
+        element.asJsonObject.getAsJsonObject("function").get("name").asString
+    }.toSet()
+
+    private fun function(tools: JsonArray, name: String): JsonObject = tools
+        .map { it.asJsonObject.getAsJsonObject("function") }
+        .single { it.get("name").asString == name }
+
+    private fun required(function: JsonObject): Set<String> = function
+        .getAsJsonObject("parameters")
+        .getAsJsonArray("required")
+        ?.map { it.asString }
+        ?.toSet()
+        .orEmpty()
+
+    private fun property(function: JsonObject, name: String): JsonObject = function
+        .getAsJsonObject("parameters")
+        .getAsJsonObject("properties")
+        .getAsJsonObject(name)
+
+    private fun description(function: JsonObject): String = function.get("description").asString
+
+    private fun assertContains(text: String, fragment: String) {
+        assertTrue("missing '$fragment' in: $text", text.contains(fragment))
     }
 
     private fun systemPrompt(
