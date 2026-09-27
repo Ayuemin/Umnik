@@ -261,7 +261,7 @@ class PromptBaselineProbeTest {
             "Дополнительные указания из основного чата",
             "WORKING",
             "Максимум модельных шагов: 500",
-            "потолок, не цель"
+            "потолок, а не цель"
         ).forEach { assertContains(workerPrompt, it) }
     }
 
