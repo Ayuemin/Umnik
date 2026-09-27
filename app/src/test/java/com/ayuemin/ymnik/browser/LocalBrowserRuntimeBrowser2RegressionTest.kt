@@ -31,6 +31,7 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(s.contains("page_class: pageClass"))
         assertTrue(s.contains("blocked_by: blockedBy"))
         assertTrue(s.contains("canvas_count: canvasCount"))
+        assertTrue(s.contains("iframe_cross_origin: crossOriginFrames > 0"))
         assertTrue(s.contains("'captcha'"))
         assertTrue(s.contains("'antibot'"))
         assertFalse(s.contains("captcha_detected value="))
@@ -43,6 +44,9 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(s.contains("UMNIK OPEN SHADOW"))
         assertTrue(s.contains("UMNIK SLOT"))
         assertTrue(s.contains("UMNIK DOCUMENT"))
+        assertTrue(s.contains("data-umnik-redacted"))
+        assertTrue(s.contains("type === 'hidden'"))
+        assertTrue(s.contains("autoComplete === 'one-time-code'"))
         assertTrue(s.contains("\"browser_dom/\" + session.sessionId"))
         assertTrue(s.contains("addProperty(\"local_path\", target.absolutePath)"))
 

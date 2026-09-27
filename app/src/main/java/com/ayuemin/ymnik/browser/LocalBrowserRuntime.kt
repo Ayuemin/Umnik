@@ -1874,6 +1874,31 @@ object LocalBrowserRuntime {
             }
           };
           const clean = (value, n = 180) => String(value || '').replace(/\s+/g, ' ').trim().slice(0, n);
+          const secretField = (el) => {
+            const type = String(el.getAttribute?.('type') || '').toLowerCase();
+            const autoComplete = String(el.getAttribute?.('autocomplete') || '').toLowerCase();
+            const meta = [
+              el.getAttribute?.('name'),
+              el.getAttribute?.('id'),
+              el.getAttribute?.('aria-label'),
+              el.getAttribute?.('placeholder'),
+              autoComplete
+            ].join(' ').toLowerCase();
+            return type === 'password' || type === 'hidden' || type === 'file' ||
+              autoComplete === 'one-time-code' ||
+              /(^|\W)(otp|2fa|mfa|password|passwd|passcode|secret|token)(\W|$)|verification.?code|one.?time/.test(meta);
+          };
+          const sanitizeMarkup = (source) => {
+            const template = document.createElement('template');
+            template.innerHTML = String(source || '');
+            for (const field of Array.from(template.content.querySelectorAll('input,textarea'))) {
+              if (!secretField(field)) continue;
+              field.removeAttribute('value');
+              field.setAttribute('data-umnik-redacted', 'secret');
+              if ((field.tagName || '').toLowerCase() === 'textarea') field.textContent = '';
+            }
+            return template.innerHTML;
+          };
           let serializeDocument;
           const scanRoot = (root, label) => {
             const nodes = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
@@ -1883,14 +1908,14 @@ object LocalBrowserRuntime {
                 seenShadows.add(node.shadowRoot);
                 shadowRoots++;
                 push('\n<!-- UMNIK OPEN SHADOW ' + label + ' host=' + clean(node.tagName + '#' + (node.id || '')) + ' -->\n');
-                push(node.shadowRoot.innerHTML || node.shadowRoot.textContent || '');
+                push(sanitizeMarkup(node.shadowRoot.innerHTML || node.shadowRoot.textContent || ''));
                 scanRoot(node.shadowRoot, label + '/shadow' + shadowRoots);
               }
               if ((node.tagName || '').toLowerCase() === 'slot' && typeof node.assignedElements === 'function') {
                 const assigned = node.assignedElements({flatten:true});
                 if (assigned.length) {
                   push('\n<!-- UMNIK SLOT ' + label + ' assigned=' + assigned.length + ' -->\n');
-                  for (const item of assigned) push(item.outerHTML || item.textContent || '');
+                  for (const item of assigned) push(sanitizeMarkup(item.outerHTML || item.textContent || ''));
                 }
               }
               if ((node.tagName || '').toLowerCase() === 'iframe') {
@@ -1915,7 +1940,7 @@ object LocalBrowserRuntime {
             if (!doc || seenDocs.has(doc) || truncated) return;
             seenDocs.add(doc);
             push('\n<!-- UMNIK DOCUMENT ' + label + ' url=' + clean(doc.location?.href || '', 500) + ' -->\n');
-            push(doc.documentElement?.outerHTML || doc.body?.innerHTML || doc.body?.innerText || '');
+            push(sanitizeMarkup(doc.documentElement?.outerHTML || doc.body?.innerHTML || doc.body?.innerText || ''));
             scanRoot(doc, label);
           };
           serializeDocument(document, 'main');
@@ -2171,6 +2196,7 @@ object LocalBrowserRuntime {
               interactive_count: all.length,
               shadow_hosts: shadowRoots,
               iframe_count: sameOriginFrames + crossOriginFrames,
+              iframe_cross_origin: crossOriginFrames > 0,
               canvas_count: canvasCount
             },
             next_ref: reg.next,
