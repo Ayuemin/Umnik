@@ -61,4 +61,29 @@ class AgentToolLoopGuardTest {
         assertTrue(decision != null)
         assertFalse(decision!!.shouldStop)
     }
+
+    @Test
+    fun `browser same failure warns then stops across different actions`() {
+        val guard = AgentToolLoopGuard()
+        val url = "http://arxiv.org/search/?query=transformer+attention"
+        assertNull(
+            guard.observeTool(
+                "local_browser_open",
+                "{\"url\":\"https://arxiv.org/\"}",
+                "{\"ok\":true,\"url\":\"$url\",\"state\":\"WORKING\"}"
+            )
+        )
+
+        val sameFailure =
+            "{\"ok\":false,\"error\":\"Browser ещё переключает документ: snapshot не соответствует текущему URL\"}"
+        assertNull(guard.observeTool("local_browser_wait", "{\"seconds\":5}", sameFailure))
+
+        val warning = guard.observeTool("local_browser_read", "{\"full\":false}", sameFailure)
+        assertTrue(warning != null)
+        assertFalse(warning!!.shouldStop)
+
+        val stop = guard.observeTool("local_browser_wait", "{\"seconds\":12}", sameFailure)
+        assertTrue(stop != null)
+        assertTrue(stop!!.shouldStop)
+    }
 }

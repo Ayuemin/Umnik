@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik.network
 
+import com.google.gson.JsonParser
 import java.security.MessageDigest
 
 internal data class AgentToolLoopDecision(
@@ -26,12 +27,19 @@ internal class AgentToolLoopGuard(
     private val trace = mutableListOf<String>()
     private var strikes = 0
     private var progressSinceLoop = 0
+    private var browserLastUrl = ""
+    private var browserFailureKey: String? = null
+    private var browserFailureRepeats = 0
 
-    fun observeTool(name: String, arguments: String, result: String): AgentToolLoopDecision? =
-        observe(
+    fun observeTool(name: String, arguments: String, result: String): AgentToolLoopDecision? {
+        if (name.trim().startsWith("local_browser_")) {
+            observeBrowserFailure(result)?.let { return it }
+        }
+        return observe(
             actionKey = name.trim() + ":" + fingerprint(arguments),
             stateKey = fingerprint(result)
         )
+    }
 
     fun observe(actionKey: String, stateKey: String): AgentToolLoopDecision? {
         trace += "$actionKey|$stateKey"
@@ -63,6 +71,48 @@ internal class AgentToolLoopGuard(
         trace.clear()
         strikes = 0
         progressSinceLoop = 0
+        browserLastUrl = ""
+        browserFailureKey = null
+        browserFailureRepeats = 0
+    }
+
+    private fun observeBrowserFailure(result: String): AgentToolLoopDecision? {
+        val root = runCatching { JsonParser.parseString(result).asJsonObject }.getOrNull()
+        val observedUrl = sequenceOf("url", "current_url", "pageId")
+            .mapNotNull { key -> runCatching { root?.get(key)?.asString }.getOrNull() }
+            .firstOrNull { it.isNotBlank() }
+            .orEmpty()
+        if (observedUrl.isNotBlank()) browserLastUrl = observedUrl.substringBefore('#')
+
+        val ok = runCatching { root?.get("ok")?.asBoolean }.getOrNull()
+        val error = runCatching { root?.get("error")?.asString }.getOrNull().orEmpty().trim()
+        val reason = runCatching { root?.get("reason")?.asString }.getOrNull().orEmpty().trim()
+        val failure = when {
+            error.isNotBlank() -> "error:$error"
+            ok == false && reason.isNotBlank() -> "reason:$reason"
+            ok == false -> "result:" + fingerprint(result)
+            else -> ""
+        }
+
+        if (failure.isBlank()) {
+            browserFailureKey = null
+            browserFailureRepeats = 0
+            return null
+        }
+
+        val key = browserLastUrl + "|" + fingerprint(failure)
+        if (key == browserFailureKey) {
+            browserFailureRepeats += 1
+        } else {
+            browserFailureKey = key
+            browserFailureRepeats = 1
+        }
+
+        return when (browserFailureRepeats) {
+            2 -> AgentToolLoopDecision(patternSize = 1, strike = 1, shouldStop = false)
+            3 -> AgentToolLoopDecision(patternSize = 1, strike = 2, shouldStop = true)
+            else -> null
+        }
     }
 
     private fun repeatedPattern(): Int? {
