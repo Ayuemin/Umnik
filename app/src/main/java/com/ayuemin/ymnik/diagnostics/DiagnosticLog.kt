@@ -5,9 +5,11 @@ import android.content.Context
 import android.os.Build
 import android.os.SystemClock
 import com.ayuemin.ymnik.network.OpenRouterRequestEnhancer
+import com.google.gson.JsonParser
 import okhttp3.Interceptor
 import okhttp3.Request
 import okhttp3.Response
+import okio.Buffer
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -231,6 +233,10 @@ class DiagnosticHttpInterceptor(
 
         if (!DiagnosticLog.isEnabled(context)) return chain.proceed(request)
 
+        if (source == "Local Shell Model") {
+            recordLocalShellTask(request)
+        }
+
         val url = request.url
         val safeUrl = "${url.scheme}://${url.host}${url.encodedPath}"
         val bodyBytes = runCatching { request.body?.contentLength() ?: 0L }.getOrDefault(-1L)
@@ -251,5 +257,42 @@ class DiagnosticHttpInterceptor(
             DiagnosticLog.record(context, "HTTP", "$source !! after ${elapsed} ms", t)
             throw t
         }
+    }
+
+    private fun recordLocalShellTask(request: Request) {
+        val body = request.body ?: return
+        val raw = runCatching {
+            val buffer = Buffer()
+            body.writeTo(buffer)
+            buffer.readUtf8()
+        }.getOrNull() ?: return
+        val root = runCatching { JsonParser.parseString(raw).asJsonObject }.getOrNull() ?: return
+        val metadata = root.getAsJsonObject("metadata") ?: return
+        if (metadata.get("umnik_local_shell")?.asString != "true") return
+        if (metadata.get("umnik_turn")?.asString != "1") return
+        if (metadata.get("umnik_context_compaction")?.asString == "true") return
+        val messages = root.getAsJsonArray("messages") ?: return
+        var task = ""
+        for (item in messages) {
+            if (!item.isJsonObject) continue
+            val message = item.asJsonObject
+            if (message.get("role")?.asString != "user") continue
+            task = message.get("content")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
+            if (task.isNotBlank()) break
+        }
+        if (task.isBlank()) return
+        val oneLine = task
+            .replace(Regex("[\\r\\n\\t]+"), " ")
+            .replace(Regex("\\s{2,}"), " ")
+            .trim()
+        DiagnosticLog.record(
+            context,
+            "LOCAL_SHELL_TASK",
+            buildString {
+                append("chars=").append(task.length)
+                append("; task=").append(oneLine.take(4_000))
+                if (oneLine.length > 4_000) append("; truncated=true")
+            }
+        )
     }
 }
