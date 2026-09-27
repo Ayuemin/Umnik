@@ -78,22 +78,24 @@ internal class OpenRouterRequestEnhancer(
             payload.add("tools", merged)
         }
 
+        applyToolExecutionContract(payload)
+
         ContextUsageTracker.capture(requestId, payload)?.let { usage ->
             val snapshot = activeSnapshot()
             val messageId = snapshot?.takeIf { it.chatId == activeChatId }?.messageId
             ContextUsageTracker.linkToMessage(requestId, activeChatId, messageId)
-  com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
-      context,
-      "CONTEXT_USAGE",
-      "request=" + requestId.orEmpty().take(8) +
-          "; system=" + usage.systemPrompt.chars + "ch/" + usage.systemPrompt.bytes + "B" +
-          "; tools=" + usage.tools.bytes + "B" +
-          "; history=" + usage.history.chars + "ch/" + usage.history.bytes + "B" +
-          "; memoryRag=" + usage.memoryRag.chars + "ch/" + usage.memoryRag.bytes + "B" +
-          "; skills=" + usage.skills.chars + "ch/" + usage.skills.bytes + "B" +
-          "; user=" + usage.currentUserPrompt.chars + "ch/" + usage.currentUserPrompt.bytes + "B" +
-          "; attachments=" + usage.attachmentCount + "/" + usage.attachmentBytes + "B"
-  )
+            com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
+                context,
+                "CONTEXT_USAGE",
+                "request=" + requestId.orEmpty().take(8) +
+                    "; system=" + usage.systemPrompt.chars + "ch/" + usage.systemPrompt.bytes + "B" +
+                    "; tools=" + usage.tools.bytes + "B" +
+                    "; history=" + usage.history.chars + "ch/" + usage.history.bytes + "B" +
+                    "; memoryRag=" + usage.memoryRag.chars + "ch/" + usage.memoryRag.bytes + "B" +
+                    "; skills=" + usage.skills.chars + "ch/" + usage.skills.bytes + "B" +
+                    "; user=" + usage.currentUserPrompt.chars + "ch/" + usage.currentUserPrompt.bytes + "B" +
+                    "; attachments=" + usage.attachmentCount + "/" + usage.attachmentBytes + "B"
+            )
         }
 
         // Small one-off attachments are sent directly. Large or reusable documents
@@ -108,6 +110,45 @@ internal class OpenRouterRequestEnhancer(
         }
 
         return Result(request = requestWithJson(request, payload))
+    }
+
+    private fun applyToolExecutionContract(payload: JsonObject) {
+        val names = payload.get("tools")
+            ?.takeIf { it.isJsonArray }
+            ?.asJsonArray
+            ?.mapNotNull { element ->
+                element.takeIf { it.isJsonObject }
+                    ?.asJsonObject
+                    ?.getAsJsonObject("function")
+                    ?.string("name")
+            }
+            .orEmpty()
+            .toSet()
+
+        val fetchAvailable = "local_web_fetch" in names
+        val browserAvailable = names.any { it.startsWith("local_browser_") }
+        val shellAvailable = names.any { it.startsWith("local_shell_") }
+        val contract = ToolExecutionContract.prompt(
+            localWebFetchAvailable = fetchAvailable,
+            localBrowserAvailable = browserAvailable,
+            localShellAvailable = shellAvailable
+        )
+        if (contract.isBlank()) return
+
+        val messages = payload.get("messages")?.takeIf { it.isJsonArray }?.asJsonArray ?: return
+        val systemMessage = messages
+            .mapNotNull { it.takeIf { value -> value.isJsonObject }?.asJsonObject }
+            .firstOrNull { it.string("role") == "system" }
+            ?: return
+        val original = messageText(systemMessage).trim()
+        if (original.isBlank()) return
+
+        systemMessage.addProperty("content", original + "\n\n" + contract)
+        com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
+            context,
+            "TOOL_CONTRACT",
+            "fetch=$fetchAvailable; browser=$browserAvailable; shell=$shellAvailable; chars=${contract.length}"
+        )
     }
 
     private fun createBatchResponse(
