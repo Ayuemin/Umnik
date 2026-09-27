@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.35 — tool handoff + Local Shell progress test build
+// Umnik v1.20.0-beta.35 — signed tool handoff + Local Shell progress test build
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
