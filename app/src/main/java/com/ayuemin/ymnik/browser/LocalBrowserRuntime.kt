@@ -2293,11 +2293,37 @@ object LocalBrowserRuntime {
           el.scrollIntoView({block:'center', inline:'nearest'});
           const rect = el.getBoundingClientRect();
           if (rect.width > 1 && rect.height > 1 && doc.elementFromPoint) {
-            const top = doc.elementFromPoint(
-              Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max((view.innerWidth || 1) - 1, 0)),
-              Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max((view.innerHeight || 1) - 1, 0))
-            );
-            if (top && top !== el && !el.contains(top)) {
+            const hitX = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max((view.innerWidth || 1) - 1, 0));
+            const hitY = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max((view.innerHeight || 1) - 1, 0));
+            const shadowHostOwnsTarget = (candidate, target) => {
+              let root = target?.getRootNode?.();
+              const seen = new Set();
+              while (root && root.host && !seen.has(root)) {
+                seen.add(root);
+                const host = root.host;
+                if (candidate === host) return true;
+                root = host.getRootNode?.();
+              }
+              return false;
+            };
+            const deepestHit = (candidate) => {
+              let current = candidate;
+              const seen = new Set();
+              while (current?.shadowRoot && !seen.has(current.shadowRoot)) {
+                const root = current.shadowRoot;
+                seen.add(root);
+                let inner = null;
+                try {
+                  if (typeof root.elementFromPoint === 'function') inner = root.elementFromPoint(hitX, hitY);
+                  if (!inner && typeof root.elementsFromPoint === 'function') inner = root.elementsFromPoint(hitX, hitY)?.[0] || null;
+                } catch (_) {}
+                if (!inner || inner === current) break;
+                current = inner;
+              }
+              return current;
+            };
+            const top = deepestHit(doc.elementFromPoint(hitX, hitY));
+            if (top && top !== el && !el.contains(top) && !shadowHostOwnsTarget(top, el)) {
               return JSON.stringify({
                 ok:false,
                 reason:'covered_by_overlay',
@@ -2439,11 +2465,37 @@ object LocalBrowserRuntime {
               el.scrollIntoView({block:'center', inline:'nearest'});
               const rect = el.getBoundingClientRect();
               if (rect.width > 1 && rect.height > 1 && doc.elementFromPoint) {
-                const top = doc.elementFromPoint(
-                  Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max((view.innerWidth || 1) - 1, 0)),
-                  Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max((view.innerHeight || 1) - 1, 0))
-                );
-                if (top && top !== el && !el.contains(top)) {
+                const hitX = Math.min(Math.max(rect.left + rect.width / 2, 0), Math.max((view.innerWidth || 1) - 1, 0));
+                const hitY = Math.min(Math.max(rect.top + rect.height / 2, 0), Math.max((view.innerHeight || 1) - 1, 0));
+                const shadowHostOwnsTarget = (candidate, target) => {
+                  let root = target?.getRootNode?.();
+                  const seen = new Set();
+                  while (root && root.host && !seen.has(root)) {
+                    seen.add(root);
+                    const host = root.host;
+                    if (candidate === host) return true;
+                    root = host.getRootNode?.();
+                  }
+                  return false;
+                };
+                const deepestHit = (candidate) => {
+                  let current = candidate;
+                  const seen = new Set();
+                  while (current?.shadowRoot && !seen.has(current.shadowRoot)) {
+                    const root = current.shadowRoot;
+                    seen.add(root);
+                    let inner = null;
+                    try {
+                      if (typeof root.elementFromPoint === 'function') inner = root.elementFromPoint(hitX, hitY);
+                      if (!inner && typeof root.elementsFromPoint === 'function') inner = root.elementsFromPoint(hitX, hitY)?.[0] || null;
+                    } catch (_) {}
+                    if (!inner || inner === current) break;
+                    current = inner;
+                  }
+                  return current;
+                };
+                const top = deepestHit(doc.elementFromPoint(hitX, hitY));
+                if (top && top !== el && !el.contains(top) && !shadowHostOwnsTarget(top, el)) {
                   return JSON.stringify({ok:false, reason:'covered_by_overlay', matched_element:matched});
                 }
               }
