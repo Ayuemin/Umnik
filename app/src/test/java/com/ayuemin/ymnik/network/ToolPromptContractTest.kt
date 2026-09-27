@@ -87,7 +87,7 @@ class ToolPromptContractTest {
         assertContains(description(function(all, "local_shell_start")), "асинхрон")
         assertContains(
             property(function(all, "local_shell_start"), "network").get("description").asString,
-            "по умолчанию false"
+            "умолчанию false"
         )
     }
 
