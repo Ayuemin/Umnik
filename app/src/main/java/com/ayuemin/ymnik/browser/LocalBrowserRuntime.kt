@@ -1361,7 +1361,7 @@ object LocalBrowserRuntime {
         var actualUrl = currentUrl(webView)
         while (
             (snapshotLooksEmpty(page) || !snapshotMatchesWebView(page, actualUrl)) &&
-            settleAttempts < SNAPSHOT_SYNC_ATTEMPTS
+            settleAttempts < (if (snapshotLooksEmpty(page) || page.getAsJsonObject("diagnostics")?.get("dynamic")?.asBoolean == true) SNAPSHOT_SYNC_ATTEMPTS * 2 else SNAPSHOT_SYNC_ATTEMPTS)
         ) {
             settleAttempts++
             delay(200)
@@ -1399,6 +1399,10 @@ object LocalBrowserRuntime {
         val viewportContent = page.get("viewport_content")?.asString.orEmpty()
         val elements = page.getAsJsonArray("elements") ?: JsonArray()
         val linkIndex = page.getAsJsonArray("link_index") ?: JsonArray()
+        val diagnostics = page.getAsJsonObject("diagnostics") ?: JsonObject()
+        if (diagnostics.get("captcha")?.asBoolean == true) {
+            DiagnosticLog.record(webView.context.applicationContext, "LOCAL_BROWSER", "captcha_detected session=" + session.sessionId.take(8))
+        }
         val currentElements = elementObjects(elements)
         val currentFingerprints = currentElements.mapValues { (_, value) -> gson.toJson(value) }
         val nextRef = page.get("next_ref")?.asInt ?: startRef
@@ -1448,6 +1452,8 @@ object LocalBrowserRuntime {
                 }
             )
             add("viewport", page.get("viewport") ?: JsonObject())
+            add("traversal", page.get("traversal") ?: JsonObject())
+            add("diagnostics", page.get("diagnostics") ?: JsonObject())
             add("link_index", linkIndex)
             addProperty("link_index_truncated", page.get("link_index_truncated")?.asBoolean ?: false)
             if (baseline) {
@@ -1603,10 +1609,56 @@ object LocalBrowserRuntime {
             return ref;
           };
           const clean = (v, n = 180) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
-          const all = Array.from(document.querySelectorAll(
-            'a[href],button,input,textarea,select,summary,[role="button"],[role="link"],[role="tab"]'
-          )).filter(el => {
-            const style = getComputedStyle(el);
+          const selector = 'a[href],button,input,textarea,select,summary,[role="button"],[role="link"],[role="tab"]';
+          const textSelector = 'h1,h2,h3,h4,p,li,label,a,button';
+          const roots = [];
+          const seenRoots = new Set();
+          let shadowRoots = 0;
+          let slotExpansions = 0;
+          let sameOriginFrames = 0;
+          let crossOriginFrames = 0;
+          const addRoot = (root, frameLabel = 'main') => {
+            if (!root || seenRoots.has(root)) return;
+            seenRoots.add(root);
+            roots.push({root, frameLabel});
+            const walker = root.querySelectorAll ? Array.from(root.querySelectorAll('*')) : [];
+            for (const node of walker) {
+              if (node.shadowRoot && node.shadowRoot.mode === 'open') {
+                shadowRoots++;
+                addRoot(node.shadowRoot, frameLabel + '/shadow');
+              }
+              if ((node.tagName || '').toLowerCase() === 'slot' && typeof node.assignedElements === 'function') {
+                const assigned = node.assignedElements({flatten:true});
+                if (assigned.length) slotExpansions += assigned.length;
+              }
+              if ((node.tagName || '').toLowerCase() === 'iframe') {
+                try {
+                  const doc = node.contentDocument;
+                  if (doc && doc.documentElement) {
+                    sameOriginFrames++;
+                    addRoot(doc, frameLabel + '/iframe' + sameOriginFrames);
+                  } else {
+                    crossOriginFrames++;
+                  }
+                } catch (_) { crossOriginFrames++; }
+              }
+            }
+          };
+          addRoot(document);
+          const composedQuery = (sel) => {
+            const out = [];
+            const seen = new Set();
+            for (const entry of roots) {
+              const found = entry.root.querySelectorAll ? Array.from(entry.root.querySelectorAll(sel)) : [];
+              for (const el of found) {
+                if (!seen.has(el)) { seen.add(el); out.push(el); }
+              }
+            }
+            return out;
+          };
+          const all = composedQuery(selector).filter(el => {
+            const view = el.ownerDocument?.defaultView || window;
+            const style = view.getComputedStyle(el);
             return style.display !== 'none' && style.visibility !== 'hidden';
           });
           const inViewport = (el) => {
@@ -1680,11 +1732,12 @@ object LocalBrowserRuntime {
             linkIndex.push({ref:refFor(item.el), name:item.name, href:item.href, download:item.download});
             if (linkIndex.length >= $LINK_INDEX_LIMIT) break;
           }
-          const bodyText = String(document.body?.innerText || '')
+          const bodyText = roots.map(entry => String(entry.root.body?.innerText || entry.root.host?.innerText || entry.root.textContent || ''))
+            .filter(Boolean).join('\n')
             .replace(/\r/g, '')
             .replace(/\n{3,}/g, '\n\n')
             .trim();
-          const viewportText = Array.from(document.querySelectorAll('h1,h2,h3,h4,p,li,label,a,button'))
+          const viewportText = composedQuery(textSelector)
             .filter(inViewport)
             .map(el => clean(el.innerText || el.getAttribute('aria-label') || '', 500))
             .filter(Boolean)
@@ -1705,6 +1758,18 @@ object LocalBrowserRuntime {
             elements,
             link_index: linkIndex,
             link_index_truncated: linkCandidates.length > linkIndex.length,
+            traversal: {
+              roots: roots.length,
+              open_shadow_roots: shadowRoots,
+              slot_assignments: slotExpansions,
+              same_origin_iframes: sameOriginFrames,
+              cross_origin_iframes: crossOriginFrames
+            },
+            diagnostics: {
+              empty: !bodyText && all.length === 0,
+              dynamic: document.readyState !== 'complete' || !!document.querySelector('[aria-busy="true"],[data-loading="true"],.loading,.spinner'),
+              captcha: !!document.querySelector('iframe[src*="captcha" i],iframe[src*="recaptcha" i],[class*="captcha" i],[id*="captcha" i]') || /captcha|verify you are human|провер.{0,8}что вы человек/i.test(bodyText.slice(0, 5000))
+            },
             next_ref: reg.next,
             truncated: bodyText.length > $textLimit || all.length > $elementLimit
           });
@@ -1819,12 +1884,15 @@ object LocalBrowserRuntime {
               el.focus();
               if (el.isContentEditable) {
                 el.textContent = value;
+                el.dispatchEvent(new InputEvent('input', {bubbles:true, inputType:'insertText', data:value}));
               } else {
-                el.value = value;
+                const proto = tag === 'textarea' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                if (setter) setter.call(el, value); else el.value = value;
+                el.dispatchEvent(new Event('input', {bubbles:true}));
               }
-              el.dispatchEvent(new Event('input', {bubbles:true}));
               el.dispatchEvent(new Event('change', {bubbles:true}));
-              return JSON.stringify({ok:true});
+              return JSON.stringify({ok:true, form: !!el.form});
             })()
         """.trimIndent()
     }
