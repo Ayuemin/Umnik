@@ -1,0 +1,17 @@
+name: Prompt guard fix
+on:
+  push:
+    branches: [work/local-shell-mvp]
+    paths: [.github/prompt_guard_fix_trigger.txt]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: work/local-shell-mvp
+          fetch-depth: 0
+      - name: Apply prompt guard fix
+        run: python3 .github/prompt_guard_fix.py
