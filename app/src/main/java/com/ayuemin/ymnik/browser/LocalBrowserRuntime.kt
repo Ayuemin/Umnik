@@ -89,6 +89,8 @@ private data class BrowserSession(
     @Volatile var lastNavigationFinishedUrl: String = "",
     @Volatile var mainFrameErrorCount: Long = 0L,
     @Volatile var lastMainFrameError: String = "",
+    @Volatile var pendingDownloadUrl: String = "",
+    @Volatile var pendingDownloadName: String = "",
     @Volatile var userGateKind: String? = null,
     @Volatile var userGateMessage: String? = null,
     @Volatile var pendingUserDecision: CompletableDeferred<String>? = null
@@ -332,9 +334,15 @@ object LocalBrowserRuntime {
         }
         val session = session(chatId)
         session.lifecycle = LocalBrowserLifecycle.WORKING
+        session.pendingDownloadUrl = ""
+        session.pendingDownloadName = ""
         runCommand(session, safeUrl, "открывает страницу", "open", "target=" + safeUrl.take(220)) {
             val webView = webView()
             load(webView, safeUrl)
+            if (session.pendingDownloadUrl.isNotBlank()) {
+                session.lifecycle = LocalBrowserLifecycle.WORKING
+                return@runCommand pendingDownloadJson(session)
+            }
             snapshot(session, webView)
         }
     }
@@ -601,29 +609,39 @@ object LocalBrowserRuntime {
         val session = requireSession(chatId)
         runCommand(session, session.currentUrl, "скачивает файл", "download", "ref=" + ref) {
             val webView = webView()
-            ensureCurrent(session, webView)
-            val target = decodedJson(evaluate(webView, downloadTargetScript(ref)))
-            if (target.get("ok")?.asBoolean != true) {
-                session.lifecycle = LocalBrowserLifecycle.BLOCKED
-                return@runCommand gson.toJson(
-                    mapOf(
-                        "ok" to false,
-                        "source" to "local_browser",
-                        "session_id" to session.sessionId,
-                        "state" to "BLOCKED",
-                        "reason" to (target.get("reason")?.asString ?: "download_target_invalid"),
-                        "recoverable" to true
+            val pendingUrl = session.pendingDownloadUrl.takeIf { ref == 0 && it.isNotBlank() }
+            val href: String
+            val suggestedName: String
+            if (pendingUrl != null) {
+                href = pendingUrl
+                suggestedName = session.pendingDownloadName
+            } else {
+                ensureCurrent(session, webView)
+                val target = decodedJson(evaluate(webView, downloadTargetScript(ref)))
+                if (target.get("ok")?.asBoolean != true) {
+                    session.lifecycle = LocalBrowserLifecycle.BLOCKED
+                    return@runCommand gson.toJson(
+                        mapOf(
+                            "ok" to false,
+                            "source" to "local_browser",
+                            "session_id" to session.sessionId,
+                            "state" to "BLOCKED",
+                            "reason" to (target.get("reason")?.asString ?: "download_target_invalid"),
+                            "recoverable" to true
+                        )
                     )
-                )
+                }
+                href = target.get("href")?.asString.orEmpty()
+                suggestedName = target.get("name")?.asString.orEmpty()
             }
-            val href = target.get("href")?.asString.orEmpty()
-            val suggestedName = target.get("name")?.asString.orEmpty()
             val artifact = downloadPublicArtifact(
                 webView = webView,
                 session = session,
                 rawUrl = href,
                 suggestedName = suggestedName
             )
+            session.pendingDownloadUrl = ""
+            session.pendingDownloadName = ""
             session.lifecycle = LocalBrowserLifecycle.WORKING
             gson.toJson(
                 JsonObject().apply {
@@ -794,7 +812,7 @@ object LocalBrowserRuntime {
         }
 
     private fun requireSession(chatId: String): BrowserSession =
-        sessions[chatId]?.takeIf { it.currentUrl.isNotBlank() }
+        sessions[chatId]?.takeIf { it.currentUrl.isNotBlank() || it.pendingDownloadUrl.isNotBlank() }
             ?: error("Browser-сессия этого чата ещё не открыта")
 
     private suspend fun <T> runCommand(
@@ -883,7 +901,7 @@ object LocalBrowserRuntime {
     }
 
     private fun publish(session: BrowserSession, status: String, url: String) {
-        val resolved = url.ifBlank { session.currentUrl }
+        val resolved = url.ifBlank { session.currentUrl }.ifBlank { session.pendingDownloadUrl }
         val host = runCatching { Uri.parse(resolved).host.orEmpty() }.getOrDefault("")
             .ifBlank { "страница" }
         mutableActivity.value = LocalBrowserActivity(
@@ -939,6 +957,15 @@ object LocalBrowserRuntime {
     private fun markBlocked(reason: String, url: String) {
         val chatId = activeChatId ?: return
         val session = sessions[chatId] ?: return
+        if (reason == "download_requires_artifact_pipeline" &&
+            (url.startsWith("http://") || url.startsWith("https://"))
+        ) {
+            session.pendingDownloadUrl = url
+            session.pendingDownloadName = runCatching {
+                val parsed = URI(url)
+                safeDownloadName(Uri.decode(parsed.path.substringAfterLast('/')))
+            }.getOrDefault("download.bin")
+        }
         session.lifecycle = LocalBrowserLifecycle.BLOCKED
         publish(session, "действие заблокировано", url)
         attachedWebView?.context?.applicationContext?.let { context ->
@@ -951,6 +978,25 @@ object LocalBrowserRuntime {
             )
         }
     }
+
+    private fun pendingDownloadJson(session: BrowserSession): String = gson.toJson(
+        JsonObject().apply {
+            addProperty("ok", true)
+            addProperty("source", "local_browser")
+            addProperty("session_id", session.sessionId)
+            addProperty("state", "WORKING")
+            addProperty("resource_kind", "download")
+            addProperty("url", session.pendingDownloadUrl)
+            addProperty("name", session.pendingDownloadName)
+            addProperty("requires_download", true)
+            addProperty("download_ref", 0)
+            addProperty("suggested_tool", "local_browser_download")
+            addProperty(
+                "message",
+                "URL ведёт на файл, а не на DOM-страницу. Вызови local_browser_download с ref=0, чтобы сохранить его как ресурс чата."
+            )
+        }
+    )
 
     private fun requirePublicHost(hostRaw: String) {
         val host = hostRaw.trim().lowercase()
@@ -1000,6 +1046,10 @@ object LocalBrowserRuntime {
                 errorsBefore = errorsBefore
             )
             if (!navigation.completed) {
+                if (navigation.reason == "navigation_not_started" && session.pendingDownloadUrl.isNotBlank()) {
+                    session.lifecycle = LocalBrowserLifecycle.WORKING
+                    return
+                }
                 session.lifecycle = LocalBrowserLifecycle.BLOCKED
                 error(
                     when (navigation.reason) {
@@ -1601,6 +1651,7 @@ object LocalBrowserRuntime {
                 add("read_full")
                 add("click_safe")
                 add("download_public_link")
+                add("download_pending_url")
                 add("type_non_secret")
                 add("type_submit")
                 add("scroll")
@@ -1695,7 +1746,6 @@ object LocalBrowserRuntime {
         return gson.fromJson(jsonText, JsonObject::class.java)
             ?: error("Browser вернул пустой snapshot")
     }
-
 
     private fun blockedActionJson(
         session: BrowserSession,
@@ -1978,7 +2028,7 @@ object LocalBrowserRuntime {
           };
           reg.refFor = refFor;
           const clean = (v, n = 180) => String(v || '').replace(/\s+/g, ' ').trim().slice(0, n);
-          const selector = 'a[href],button,input,textarea,select,summary,[contenteditable="true"],[role="button"],[role="link"],[role="tab"]';
+          const selector = 'a[href],button,input,textarea,select,summary,[contenteditable="true"],[role="button"],[role="link"],[role="tab"],[role="textbox"],[role="searchbox"],[role="combobox"]';
           const textSelector = 'h1,h2,h3,h4,p,li,label,a,button,[role="heading"]';
           const roots = [];
           const seenRoots = new Set();
@@ -2047,9 +2097,17 @@ object LocalBrowserRuntime {
             return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
           };
           const all = composedQuery(selector).filter(visible);
+          const controlPriority = (el) => {
+            const tag = (el.tagName || '').toLowerCase();
+            const role = (el.getAttribute('role') || '').toLowerCase();
+            if (tag === 'input' || tag === 'textarea' || tag === 'select' || el.isContentEditable ||
+                role === 'textbox' || role === 'searchbox' || role === 'combobox') return 3;
+            if ((tag === 'button' || role === 'button') && el.closest?.('form')) return 2;
+            return inViewport(el) ? 1 : 0;
+          };
           const prioritized = all
-            .map((el, index) => ({el, index, viewport: inViewport(el)}))
-            .sort((a, b) => (a.viewport === b.viewport) ? (a.index - b.index) : (a.viewport ? -1 : 1))
+            .map((el, index) => ({el, index, priority: controlPriority(el)}))
+            .sort((a, b) => (a.priority === b.priority) ? (a.index - b.index) : (b.priority - a.priority))
             .map(item => item.el);
           const fieldMetaFor = (el) => [
             el.getAttribute('name'),
@@ -2109,7 +2167,7 @@ object LocalBrowserRuntime {
                 name,
                 href: clean(el.href, 360),
                 download: el.hasAttribute('download'),
-                priority: (navLike ? 1000 : 0) + (inViewport(el) ? 200 : 0) - index
+                priority: (navLike ? -1000 : 0) + (inViewport(el) ? 200 : 0) - index
               };
             })
             .filter(item => item.name && item.href)
@@ -2604,17 +2662,30 @@ object LocalBrowserRuntime {
                     }
                     require(target.isFile) { "Не удалось сохранить скачанный файл" }
                     val mime = body.contentType()?.toString().orEmpty().ifBlank { "application/octet-stream" }
+                    val detectedMime = detectDownloadedMime(target)
+                    val contentMismatch = downloadContentMismatch(name, mime, detectedMime)
                     DiagnosticLog.record(
                         webView.context.applicationContext,
                         "LOCAL_BROWSER_DOWNLOAD",
                         "session=" + session.sessionId.take(8) +
                             "; bytes=" + target.length() +
                             "; url=" + current.toString().take(220) +
-                            "; name=" + name.take(120)
+                            "; name=" + name.take(120) +
+                            "; mime=" + mime.take(80) +
+                            "; detected=" + detectedMime.take(80) +
+                            "; mismatch=" + contentMismatch
                     )
                     return@withContext JsonObject().apply {
                         addProperty("name", name)
                         addProperty("mime_type", mime)
+                        if (detectedMime.isNotBlank()) addProperty("detected_mime", detectedMime)
+                        addProperty("content_mismatch", contentMismatch)
+                        if (contentMismatch) {
+                            addProperty(
+                                "content_warning",
+                                "Имя или расширение файла не совпадает с фактическим содержимым; сервер мог вернуть HTML-страницу вместо файла."
+                            )
+                        }
                         addProperty("size", target.length())
                         addProperty("source_url", current.toString())
                         addProperty("local_path", target.absolutePath)
@@ -2626,6 +2697,33 @@ object LocalBrowserRuntime {
             }
         }
         error("Скачивание не завершено")
+    }
+
+    private fun detectDownloadedMime(file: File): String = runCatching {
+        val prefix = file.inputStream().use { input ->
+            val bytes = ByteArray(256)
+            val count = input.read(bytes)
+            if (count <= 0) ByteArray(0) else bytes.copyOf(count)
+        }
+        if (prefix.isEmpty()) return@runCatching ""
+        val text = prefix.toString(Charsets.ISO_8859_1).trimStart().lowercase()
+        when {
+            prefix.size >= 5 && prefix.copyOfRange(0, 5).toString(Charsets.US_ASCII) == "%PDF-" -> "application/pdf"
+            prefix.size >= 4 && prefix[0] == 0x50.toByte() && prefix[1] == 0x4b.toByte() &&
+                prefix[2] in setOf(0x03.toByte(), 0x05.toByte(), 0x07.toByte()) -> "application/zip"
+            text.startsWith("<!doctype html") || text.startsWith("<html") -> "text/html"
+            else -> ""
+        }
+    }.getOrDefault("")
+
+    private fun downloadContentMismatch(name: String, declaredMime: String, detectedMime: String): Boolean {
+        val extension = name.substringAfterLast('.', "").lowercase()
+        if (detectedMime == "text/html" && extension !in setOf("html", "htm")) return true
+        if (extension == "pdf" && detectedMime.isNotBlank() && detectedMime != "application/pdf") return true
+        if (extension == "zip" && detectedMime.isNotBlank() && detectedMime != "application/zip") return true
+        if (extension == "pdf" && declaredMime.startsWith("text/html", ignoreCase = true)) return true
+        if (extension == "zip" && declaredMime.startsWith("text/html", ignoreCase = true)) return true
+        return false
     }
 
     private fun safeDownloadName(value: String): String =
