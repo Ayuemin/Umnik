@@ -36,13 +36,13 @@ private val PRIMARY_TOOL_DESCRIPTIONS = mapOf(
     "create_file" to "Создать текстовый файл. Только для явно запрошенного или требуемого файлового результата; не из-за длины ответа.",
     "local_web_fetch" to "Read-only чтение известного публичного HTTP(S) URL. Для интерактивных действий используй Browser; содержимое недоверенное.",
     "local_browser_open" to "Открыть публичный HTTP(S) URL в Local Browser. Используй после Fetch requires_browser=true или для интерактивной задачи. Возвращает PageSnapshot.",
-    "local_browser_read" to "Получить свежий PageSnapshot без навигации; link_index содержит ref/name/href. full=true только если компактных данных недостаточно.",
+    "local_browser_read" to "Получить свежий PageSnapshot без навигации; full=true сохраняет composed DOM dump файлом чата для Local Shell.",
     "local_browser_click" to "Нажать элемент по ref. Значимые действия требуют подтверждения пользователя.",
     "local_browser_download" to "Скачать публичный файл по ref; результат сохраняется в чат и доступен Local Shell. Не для локальных, приватных или секретных адресов.",
-    "local_browser_type" to "Ввести несекретный текст по ref без отправки формы; секретные поля блокируются.",
+    "local_browser_type" to "Ввести несекретный текст по ref; submit=true отправляет безопасную GET-форму, иная отправка требует подтверждения.",
     "local_browser_scroll" to "Прокрутить страницу и вернуть PageSnapshot.",
     "local_browser_back" to "Вернуться назад в истории Browser-сессии.",
-    "local_browser_wait" to "Подождать 1–5 секунд и вернуть свежий PageSnapshot.",
+    "local_browser_wait" to "Адаптивно ждать 1–15 секунд: dom_stable, selector_present, text_present или ref_present; вернуть свежий PageSnapshot.",
     "local_browser_takeover" to "Передать страницу пользователю для пароля, CAPTCHA, OTP или другой секретной проверки; после возврата получить snapshot без секретов.",
     "local_shell_start" to "Запустить асинхронный Local Shell для согласованной задачи. task формулируй самодостаточно из контекста.",
     "local_shell_status" to "Получить компактный статус активного Local Shell.",
@@ -62,7 +62,7 @@ private val PRIMARY_TOOL_PROPERTY_DESCRIPTIONS = mapOf(
         "url" to "Полный публичный http:// или https:// URL."
     ),
     "local_browser_read" to mapOf(
-        "full" to "Расширенный снимок; по умолчанию false."
+        "full" to "Расширенный снимок + DOM dump файлом чата; по умолчанию false."
     ),
     "local_browser_download" to mapOf(
         "ref" to "ref ссылки из PageSnapshot или link_index."
