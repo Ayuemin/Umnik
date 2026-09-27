@@ -25,6 +25,76 @@ import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
+internal data class LocalShellProgressDecision(
+    val strike: Int,
+    val forceFinish: Boolean
+)
+
+/**
+ * Detects repeated exploratory intent even when the exact command or result keeps changing.
+ *
+ * The existing [LocalShellLoopGuard] protects against byte-level action/result loops. This
+ * guard is deliberately coarser: revisiting the same evidence target several times without
+ * a durable change causes a semantic progress checkpoint. A second stall forces the worker
+ * to return DONE/PARTIAL instead of spending indefinitely on more exploratory calls.
+ */
+internal class LocalShellProgressGuard(
+    private val repeatedIntentThreshold: Int = 4,
+    private val maxStrikes: Int = 2,
+    private val resetAfterNovelKeys: Int = 3,
+    private val maxSeenKeys: Int = 32
+) {
+    private val seenKeys = linkedSetOf<String>()
+    private var repeatedIntent = 0
+    private var strikes = 0
+    private var novelKeysAfterStrike = 0
+
+    fun observe(progressKey: String, durableProgress: Boolean): LocalShellProgressDecision? {
+        if (durableProgress) {
+            reset()
+            return null
+        }
+
+        val key = progressKey.trim().ifBlank { "unknown" }
+        val novel = seenKeys.add(key)
+        while (seenKeys.size > maxSeenKeys.coerceAtLeast(8)) {
+            seenKeys.remove(seenKeys.first())
+        }
+
+        if (novel) {
+            repeatedIntent = 0
+            if (strikes > 0) {
+                novelKeysAfterStrike += 1
+                if (novelKeysAfterStrike >= resetAfterNovelKeys.coerceAtLeast(1)) {
+                    strikes = 0
+                    novelKeysAfterStrike = 0
+                    seenKeys.clear()
+                    seenKeys.add(key)
+                }
+            }
+            return null
+        }
+
+        novelKeysAfterStrike = 0
+        repeatedIntent += 1
+        if (repeatedIntent < repeatedIntentThreshold.coerceAtLeast(2)) return null
+
+        repeatedIntent = 0
+        strikes += 1
+        return LocalShellProgressDecision(
+            strike = strikes,
+            forceFinish = strikes >= maxStrikes.coerceAtLeast(1)
+        )
+    }
+
+    fun reset() {
+        seenKeys.clear()
+        repeatedIntent = 0
+        strikes = 0
+        novelKeysAfterStrike = 0
+    }
+}
+
 /**
  * OpenRouter model loop whose tools execute on the Android device via [LocalShellEngine].
  * No user attachment is uploaded as a model attachment: the model sees only prompt text
@@ -83,6 +153,7 @@ class LocalShellAgentClient(private val context: Context) {
     ): Result = withContext(Dispatchers.IO) {
         var messages = JsonArray().apply {
             add(message("system", systemPrompt))
+            add(message("system", LOCAL_SHELL_PROGRESS_POLICY))
             add(message("user", prompt))
         }
 
@@ -97,6 +168,8 @@ class LocalShellAgentClient(private val context: Context) {
         var costObserved = false
         var returnedModel: String? = null
         val loopGuard = LocalShellLoopGuard()
+        val progressGuard = LocalShellProgressGuard()
+        var forceDecisionNextTurn = false
         var lastCompactionTurn = -100
         var taskState = TaskState.WORKING
         var stateReminderPending = false
@@ -108,6 +181,8 @@ class LocalShellAgentClient(private val context: Context) {
                     .filter { it.isNotBlank() }
                 if (guidance.isNotEmpty()) {
                     loopGuard.reset()
+                    progressGuard.reset()
+                    forceDecisionNextTurn = false
                     val note = guidance.joinToString("\n\n") { "- " + it }
                     if (taskState == TaskState.READY_TO_FINISH) {
                         taskState = TaskState.WORKING
@@ -144,7 +219,8 @@ class LocalShellAgentClient(private val context: Context) {
                     stateReminderPending = false
                 }
 
-                val shouldCompact = taskState == TaskState.WORKING &&
+                val shouldCompact = !forceDecisionNextTurn &&
+                    taskState == TaskState.WORKING &&
                     turn > 0 &&
                     turn < safeMaxTurns - 1 &&
                     turn - lastCompactionTurn >= MIN_TURNS_BETWEEN_COMPACTIONS &&
@@ -179,6 +255,7 @@ class LocalShellAgentClient(private val context: Context) {
                     if (checkpoint.isBlank()) error("Не удалось создать рабочий checkpoint Local Shell")
                     messages = JsonArray().apply {
                         add(message("system", systemPrompt))
+                        add(message("system", LOCAL_SHELL_PROGRESS_POLICY))
                         add(message("user", prompt))
                         add(message("system", "===== СЖАТЫЙ РАБОЧИЙ CHECKPOINT =====\n" + checkpoint + "\n===== КОНЕЦ CHECKPOINT ====="))
                     }
@@ -192,18 +269,25 @@ class LocalShellAgentClient(private val context: Context) {
                 }
 
                 turn += 1
-                onProgress(Progress("Модель планирует следующий локальный шаг", turn, toolCalls))
+                onProgress(Progress(
+                    if (forceDecisionNextTurn) "Формирую итог по критерию готовности" else "Модель планирует следующий локальный шаг",
+                    turn,
+                    toolCalls
+                ))
 
                 val payload = JsonObject().apply {
                     addProperty("model", model)
                     add("messages", messages)
-                    add("tools", engine.toolDefinitions())
-                    addProperty("tool_choice", if (turn == 1) "required" else "auto")
+                    if (!forceDecisionNextTurn) {
+                        add("tools", engine.toolDefinitions())
+                        addProperty("tool_choice", if (turn == 1) "required" else "auto")
+                    }
                     addProperty("stream", false)
                     add("metadata", JsonObject().apply {
                         addProperty("umnik_local_shell", "true")
                         addProperty("umnik_request_id", requestRunId)
                         addProperty("umnik_turn", turn.toString())
+                        if (forceDecisionNextTurn) addProperty("umnik_progress_forced_decision", "true")
                     })
                     add("usage", JsonObject().apply { addProperty("include", true) })
 
@@ -254,7 +338,7 @@ class LocalShellAgentClient(private val context: Context) {
                     DiagnosticLog.record(
                         context,
                         "LOCAL_SHELL_AGENT",
-                        "done; turns=$turn; toolCalls=$toolCalls; input=$totalInputTokens; output=$totalOutputTokens"
+                        "done; turns=$turn; toolCalls=$toolCalls; forcedDecision=$forceDecisionNextTurn; input=$totalInputTokens; output=$totalOutputTokens"
                     )
                     val result = Result(
                         text = text,
@@ -281,8 +365,13 @@ class LocalShellAgentClient(private val context: Context) {
                     return@withContext result
                 }
 
+                if (forceDecisionNextTurn) {
+                    error("Local Shell должен был завершить задачу после принудительной проверки прогресса, но модель снова запросила инструмент")
+                }
+
                 messages.add(assistant.deepCopy())
                 var loopDecisionForTurn: LocalShellLoopDecision? = null
+                var progressDecisionForTurn: LocalShellProgressDecision? = null
                 for (element in calls) {
                     if (!element.isJsonObject) continue
                     if (toolCalls >= maxToolCalls) {
@@ -298,8 +387,7 @@ class LocalShellAgentClient(private val context: Context) {
                     val wasReadyBeforeTool = taskState == TaskState.READY_TO_FINISH
                     val resultText = engine.execute(name, args)
 
-                    // The guard is state-aware: repeating the same read/search is allowed when
-                    // its real result changes. Only a repeated action+result pattern counts.
+                    // The exact loop guard catches identical action/result cycles.
                     val actionKey = name + ":" + stableFingerprint(normalizeJson(args))
                     val stateKey = stableFingerprint(normalizeJson(resultText))
                     val loopDecision = loopGuard.observe(actionKey, stateKey)
@@ -318,9 +406,23 @@ class LocalShellAgentClient(private val context: Context) {
                         }
                         loopDecisionForTurn = loopDecision
                     }
+
                     val resultObject = runCatching { gson.fromJson(resultText, JsonObject::class.java) }.getOrNull()
                     val toolOk = resultObject?.get("ok")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
                     val readyForUser = resultObject?.get("ready_for_user")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val durableProgress = localDurableProgress(name, args, toolOk == true, readyForUser)
+                    val progressDecision = progressGuard.observe(
+                        progressKey = localProgressKey(name, args),
+                        durableProgress = durableProgress
+                    )
+                    if (durableProgress) {
+                        progressDecisionForTurn = null
+                        forceDecisionNextTurn = false
+                    } else if (progressDecision != null &&
+                        (progressDecisionForTurn == null || progressDecision.forceFinish)
+                    ) {
+                        progressDecisionForTurn = progressDecision
+                    }
 
                     if (name == "local_export" && toolOk && readyForUser) {
                         if (taskState != TaskState.READY_TO_FINISH) {
@@ -345,6 +447,7 @@ class LocalShellAgentClient(private val context: Context) {
                         addProperty("content", resultText)
                     })
                 }
+
                 loopDecisionForTurn?.let { decision ->
                     messages.add(message(
                         "system",
@@ -356,6 +459,37 @@ class LocalShellAgentClient(private val context: Context) {
                             "===== КОНЕЦ ПРЕДУПРЕЖДЕНИЯ ====="
                     ))
                     onProgress(Progress("Перестраиваю план после повторяющегося цикла", turn, toolCalls))
+                }
+
+                progressDecisionForTurn?.let { decision ->
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_PROGRESS_GUARD",
+                        "strike=${decision.strike}; forceFinish=${decision.forceFinish}; turn=$turn; toolCalls=$toolCalls"
+                    )
+                    if (decision.forceFinish) {
+                        forceDecisionNextTurn = true
+                        messages.add(message(
+                            "system",
+                            "===== ОБЯЗАТЕЛЬНОЕ РЕШЕНИЕ ПО ПРОГРЕССУ =====\n" +
+                                "Повторилась исследовательская последовательность без нового целевого направления или устойчивого результата. " +
+                                "На следующем ходе инструменты будут отключены. Сравни уже собранные доказательства с КРИТЕРИЕМ ГОТОВНОСТИ исходного task. " +
+                                "Если критерий выполнен — заверши STATUS=DONE. Если нет — заверши STATUS=PARTIAL и кратко укажи: что уже установлено, " +
+                                "какое препятствие осталось и какой один следующий шаг нужен. Не продолжай исследование «на всякий случай».\n" +
+                                "===== КОНЕЦ РЕШЕНИЯ ====="
+                        ))
+                        onProgress(Progress("Завершаю после повторной проверки прогресса", turn, toolCalls))
+                    } else {
+                        messages.add(message(
+                            "system",
+                            "===== ПРОВЕРКА ПРОГРЕССА LOCAL SHELL =====\n" +
+                                "Несколько действий повторяют уже исследованное направление. Сверься с ЦЕЛЬЮ и КРИТЕРИЕМ ГОТОВНОСТИ исходного task. " +
+                                "Если доказательств уже достаточно — заверши. Если нет — выбери другое целевое направление и заранее определи, " +
+                                "какое новое доказательство должен дать следующий шаг. Не делай проверки «на всякий случай» и не расширяй scope.\n" +
+                                "===== КОНЕЦ ПРОВЕРКИ ====="
+                        ))
+                        onProgress(Progress("Проверяю реальный прогресс по задаче", turn, toolCalls))
+                    }
                 }
             }
             error("Локальный Shell достиг лимита $safeMaxTurns модельных шагов без завершения")
@@ -493,6 +627,48 @@ class LocalShellAgentClient(private val context: Context) {
         return digest.take(12).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
     }
 
+    private fun localProgressKey(name: String, argsRaw: String): String {
+        val args = runCatching { gson.fromJson(argsRaw.ifBlank { "{}" }, JsonObject::class.java) }.getOrNull()
+            ?: return name + ":" + stableFingerprint(normalizeJson(argsRaw))
+        fun value(key: String): String = args.get(key)?.takeUnless { it.isJsonNull }?.toString().orEmpty()
+        return when (name) {
+            "local_list" -> "list:" + value("path") + ":" + value("recursive")
+            "local_read" -> "read:" + value("path") + ":" + value("start_line") + ":" + value("max_lines")
+            "local_search" -> "search:" + value("path") + ":" + value("query") + ":" + value("regex")
+            "local_command" -> "command:" + value("command") + ":" + stableFingerprint(value("args"))
+            // Multiple tiny Python probes are a common form of mechanical drift. The worker
+            // should combine them into one targeted script or switch to a more direct tool.
+            "local_python" -> "python"
+            "local_archive" -> "archive:" + value("action") + ":" + value("source") + ":" + value("destination")
+            "local_git" -> "git:" + value("action") + ":" + value("path") + ":" + stableFingerprint(value("arg"))
+            "local_fetch" -> "fetch:" + value("url") + ":" + value("save_as")
+            "local_write" -> "write:" + value("path")
+            "local_replace" -> "replace:" + value("path")
+            "local_export" -> "export:" + value("source") + ":" + value("filename")
+            else -> name + ":" + stableFingerprint(normalizeJson(argsRaw))
+        }
+    }
+
+    private fun localDurableProgress(
+        name: String,
+        argsRaw: String,
+        toolOk: Boolean,
+        readyForUser: Boolean
+    ): Boolean {
+        if (!toolOk) return false
+        if (readyForUser) return true
+        val args = runCatching { gson.fromJson(argsRaw.ifBlank { "{}" }, JsonObject::class.java) }.getOrNull()
+        return when (name) {
+            "local_write", "local_replace", "local_archive" -> true
+            "local_git" -> {
+                val action = args?.string("action").orEmpty().lowercase()
+                action in setOf("init", "add", "commit", "checkout", "public_clone")
+            }
+            "local_fetch" -> args?.string("save_as").orEmpty().isNotBlank()
+            else -> false
+        }
+    }
+
     private fun toolLabel(name: String): String = when (name) {
         "local_list", "local_read", "local_search", "local_archive", "local_git", "local_fetch" -> "Изучаю проект"
         "local_write", "local_replace" -> "Исправляю файлы"
@@ -534,5 +710,13 @@ class LocalShellAgentClient(private val context: Context) {
         private const val MIN_TURNS_BETWEEN_COMPACTIONS = 8
         private const val MAX_COMPACTION_SOURCE_CHARS = 260_000
         private const val COMPACTION_HEAD_CHARS = 40_000
+        private const val LOCAL_SHELL_PROGRESS_POLICY =
+            "Считай task рабочим контрактом от основной модели. Перед первым действием выдели для себя ЦЕЛЬ, ДАНО, " +
+                "КРИТЕРИЙ ГОТОВНОСТИ и ОГРАНИЧЕНИЯ; для сложной задачи — короткий ПЛАН. Если task не размечен этими словами, " +
+                "восстанови их один раз из смысла, но не расширяй scope. Каждый вызов инструмента должен либо дать новое доказательство " +
+                "к критерию, либо изменить целевой артефакт, либо исключить правдоподобный путь. Не делай проверки «на всякий случай». " +
+                "Если выбранный путь не сходится с данными, смени подход; если нового целевого шага нет — заверши частичным результатом. " +
+                "Финальный ответ начинай STATUS=DONE, когда критерий выполнен, или STATUS=PARTIAL, когда выполнено не всё. " +
+                "Для PARTIAL обязательно укажи, что уже установлено, препятствие и один следующий нужный шаг."
     }
 }
