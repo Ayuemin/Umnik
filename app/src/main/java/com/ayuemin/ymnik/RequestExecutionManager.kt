@@ -51,7 +51,8 @@ internal object RequestExecutionManager {
         var transport: Transport = Transport.FOREGROUND_SERVICE,
         var started: Boolean = false,
         var systemStopRecovery: OpenRouterRecoveryRecord? = null,
-        var lastPartialUpdateAt: Long = 0L
+        var lastPartialUpdateAt: Long = 0L,
+        val executionTrace: MutableList<String> = mutableListOf()
     )
 
     private data class PersistedRequest(
@@ -67,6 +68,9 @@ internal object RequestExecutionManager {
     private const val PARTIAL_UPDATE_MIN_INTERVAL_MS = 120L
     private const val PARTIAL_UPDATE_MIN_CHARS = 96
     private const val MAX_PARTIAL_PREVIEW_CHARS = 120_000
+    private const val MAX_EXECUTION_TRACE_PARTS = 80
+    private const val MAX_EXECUTION_TRACE_PART_CHARS = 12_000
+    private const val MAX_EXECUTION_TRACE_CHARS = 120_000
     private const val UIDT_JOB_ID_BASE = 0x31000000
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -101,6 +105,19 @@ internal object RequestExecutionManager {
 
     fun snapshotForRequest(requestId: String): Snapshot? = synchronized(lock) {
         runtimes[requestId]?.snapshot
+    }
+
+    fun executionTraceForChat(chatId: String, finalText: String? = null): List<String> = synchronized(lock) {
+        val runtime = runtimes.values.firstOrNull { it.snapshot.chatId == chatId }
+            ?: reservations[chatId]?.let(runtimes::get)
+            ?: return@synchronized emptyList()
+        val result = runtime.executionTrace.toMutableList()
+        val current = runtime.snapshot.partialText.trim().take(MAX_EXECUTION_TRACE_PART_CHARS)
+        val final = finalText?.trim().orEmpty()
+        if (current.isNotBlank() && current != final && result.lastOrNull() != current) {
+            result += current
+        }
+        result.takeLast(MAX_EXECUTION_TRACE_PARTS)
     }
 
     fun reserveChat(requestId: String, chatId: String): Boolean = synchronized(lock) {
@@ -348,11 +365,24 @@ internal object RequestExecutionManager {
         if (foreground) RequestKeepAliveService.update(context.applicationContext)
     }
 
+    private fun archivePartialLocked(runtime: Runtime) {
+        val part = runtime.snapshot.partialText.trim().take(MAX_EXECUTION_TRACE_PART_CHARS)
+        if (part.isBlank() || runtime.executionTrace.lastOrNull() == part) return
+        runtime.executionTrace += part
+        while (
+            runtime.executionTrace.size > MAX_EXECUTION_TRACE_PARTS ||
+            runtime.executionTrace.sumOf(String::length) > MAX_EXECUTION_TRACE_CHARS
+        ) {
+            runtime.executionTrace.removeAt(0)
+        }
+    }
+
     fun updatePartial(requestId: String, text: String) {
         val clean = text.take(MAX_PARTIAL_PREVIEW_CHARS)
         synchronized(lock) {
             val runtime = runtimes[requestId] ?: return
             if (runtime.snapshot.partialText == clean) return
+            if (clean.isBlank()) archivePartialLocked(runtime)
             val now = System.currentTimeMillis()
             val force = clean.isBlank()
             val enoughTime = now - runtime.lastPartialUpdateAt >= PARTIAL_UPDATE_MIN_INTERVAL_MS

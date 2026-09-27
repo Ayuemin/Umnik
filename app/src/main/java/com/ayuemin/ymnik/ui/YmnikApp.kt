@@ -2623,7 +2623,8 @@ private fun MessageCard(
             message.teamContextUsed != null ||
             message.attachmentCount != null ||
             !message.connectionName.isNullOrBlank() ||
-            !message.requestId.isNullOrBlank()
+            !message.requestId.isNullOrBlank() ||
+            message.executionTrace?.isNotEmpty() == true
         )
 
     val searchShape = RoundedCornerShape(20.dp)
@@ -2815,6 +2816,8 @@ private fun AnswerInfoSheet(
     onDismiss: () -> Unit
 ) {
     var technicalOpen by remember(message.id) { mutableStateOf(false) }
+    var executionTraceOpen by remember(message.id) { mutableStateOf(false) }
+    val executionTrace = message.executionTrace.orEmpty()
     val knowledgeCount = message.knowledgeHitCount
     val knowledgeSearchAttempted = message.knowledgeSearchAttempted == true
     val knowledgeBaseOnly = message.knowledgeBaseOnly == true
@@ -2963,6 +2966,49 @@ private fun AnswerInfoSheet(
                 }
             }
 
+
+            if (executionTrace.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    onClick = { executionTraceOpen = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Ход выполнения · ${executionTrace.size} фрагм.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Промежуточные сообщения модели во время выполнения",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            Icons.Outlined.KeyboardArrowRight,
+                            contentDescription = "Открыть ход выполнения",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
             if (!message.requestId.isNullOrBlank() || message.id.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 TextButton(
@@ -2983,6 +3029,72 @@ private fun AnswerInfoSheet(
             }
 
             Spacer(Modifier.height(8.dp))
+        }
+    }
+
+    if (executionTraceOpen) {
+        Dialog(
+            onDismissRequest = { executionTraceOpen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .heightIn(max = 620.dp),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Ход выполнения",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        IconButton(onClick = { executionTraceOpen = false }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
+                        }
+                    }
+                    Text(
+                        "Промежуточные сообщения модели. Они сохранены только для просмотра и не добавляются в контекст чата.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    executionTrace.forEachIndexed { index, part ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "Этап ${index + 1}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            SelectionContainer {
+                                Text(
+                                    part,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        if (index < executionTrace.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                        }
+                    }
+                }
+            }
         }
     }
 }

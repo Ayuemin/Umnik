@@ -395,7 +395,9 @@ data class ChatMessage(
     val connectionName: String? = null,
     val requestId: String? = null,
     val costBreakdown: RequestCostBreakdown? = null,
-    val contextUsage: ContextUsageBreakdown? = null
+    val contextUsage: ContextUsageBreakdown? = null,
+    // UI-only record of visible intermediate streamed text. Never merge into text/context/RAG.
+    val executionTrace: List<String>? = null
 )
 
 data class ChatSession(

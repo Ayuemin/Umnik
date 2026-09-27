@@ -4752,7 +4752,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     role = "assistant",
                     text = text,
                     deliveryState = "interrupted",
-                    responseDurationMs = (System.currentTimeMillis() - snapshot.startedAt).coerceAtLeast(0L)
+                    responseDurationMs = (System.currentTimeMillis() - snapshot.startedAt).coerceAtLeast(0L),
+                    executionTrace = RequestExecutionManager.executionTraceForChat(chatId, text).takeIf { it.isNotEmpty() }
                 )
             }
         )
@@ -5472,7 +5473,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     attachmentCount = answerAttachmentCount,
                     connectionName = profile.name,
                     requestId = requestId.toString(),
-                    costBreakdown = network.costSnapshot()
+                    costBreakdown = network.costSnapshot(),
+                    executionTrace = if (mode == ChatMode.TEXT) {
+                        RequestExecutionManager.executionTraceForChat(chatId, finalText).takeIf { it.isNotEmpty() }
+                    } else null
                 )
                 val chats = chatsRepository.finishRequest(chatId, user.id, assistant)
                 _state.value = _state.value.copy(
