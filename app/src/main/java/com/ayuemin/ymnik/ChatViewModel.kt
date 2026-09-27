@@ -5340,7 +5340,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     { url -> LocalBrowserRuntime.open(chatId, url) }
                                 } else null,
                                 localBrowserRead = if (localBrowserToolsEnabled) {
-                                    { full -> LocalBrowserRuntime.read(chatId, full) }
+                                    { full ->
+                                        persistBrowserDownload(
+                                            chatId,
+                                            LocalBrowserRuntime.read(chatId, full)
+                                        )
+                                    }
                                 } else null,
                                 localBrowserClick = if (localBrowserToolsEnabled) {
                                     { ref -> LocalBrowserRuntime.click(chatId, ref) }
@@ -5354,7 +5359,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     }
                                 } else null,
                                 localBrowserType = if (localBrowserToolsEnabled) {
-                                    { ref, value -> LocalBrowserRuntime.type(chatId, ref, value) }
+                                    { ref, value, submit -> LocalBrowserRuntime.type(chatId, ref, value, submit) }
                                 } else null,
                                 localBrowserScroll = if (localBrowserToolsEnabled) {
                                     { direction -> LocalBrowserRuntime.scroll(chatId, direction) }
@@ -5363,7 +5368,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     { LocalBrowserRuntime.back(chatId) }
                                 } else null,
                                 localBrowserWait = if (localBrowserToolsEnabled) {
-                                    { seconds -> LocalBrowserRuntime.wait(chatId, seconds) }
+                                    { seconds, mode, value, ref ->
+                                        LocalBrowserRuntime.wait(chatId, seconds, mode, value, ref)
+                                    }
                                 } else null,
                                 localBrowserTakeover = if (localBrowserToolsEnabled) {
                                     { reason -> LocalBrowserRuntime.takeover(chatId, reason) }

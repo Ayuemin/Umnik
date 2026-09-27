@@ -185,10 +185,10 @@ class OpenRouterClient(
         localBrowserRead: (suspend (Boolean) -> String)? = null,
         localBrowserClick: (suspend (Int) -> String)? = null,
         localBrowserDownload: (suspend (Int) -> String)? = null,
-        localBrowserType: (suspend (Int, String) -> String)? = null,
+        localBrowserType: (suspend (Int, String, Boolean) -> String)? = null,
         localBrowserScroll: (suspend (String) -> String)? = null,
         localBrowserBack: (suspend () -> String)? = null,
-        localBrowserWait: (suspend (Int) -> String)? = null,
+        localBrowserWait: (suspend (Int, String, String, Int?) -> String)? = null,
         localBrowserTakeover: (suspend (String) -> String)? = null,
         localBrowserDone: (suspend () -> String)? = null,
         localShellStart: (suspend (String, Boolean, List<String>) -> String)? = null,
@@ -494,7 +494,8 @@ class OpenRouterClient(
                         else runCatching {
                             val args = gson.fromJson(argsRaw, JsonObject::class.java)
                             val ref = args.get("ref")?.asInt ?: error("Не передан ref")
-                            callback(ref, args.get("text")?.asString.orEmpty())
+                            val submit = runCatching { args.get("submit")?.asBoolean ?: false }.getOrDefault(false)
+                            callback(ref, args.get("text")?.asString.orEmpty(), submit)
                         }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось ввести текст")))
                         }
@@ -521,7 +522,11 @@ class OpenRouterClient(
                         if (callback == null) gson.toJson(mapOf("ok" to false, "error" to "Local Browser недоступен"))
                         else runCatching {
                             val args = gson.fromJson(argsRaw, JsonObject::class.java)
-                            callback((args.get("seconds")?.asInt ?: 1).coerceIn(1, 5))
+                            val seconds = (args.get("seconds")?.asInt ?: 5).coerceIn(1, 15)
+                            val mode = args.get("mode")?.asString.orEmpty().ifBlank { "dom_stable" }
+                            val value = args.get("value")?.asString.orEmpty()
+                            val ref = runCatching { args.get("ref")?.asInt }.getOrNull()
+                            callback(seconds, mode, value, ref)
                         }.getOrElse {
                             gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось дождаться обновления страницы")))
                         }
@@ -1322,11 +1327,11 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_read",
-            description = "Получить свежий PageSnapshot текущей Browser-страницы без навигации. По умолчанию возвращает компактное состояние/delta и отдельный компактный link_index с ref+name+href. Ставь full=true только когда компактного состояния и link_index недостаточно для уверенного решения.",
+            description = "Получить свежий PageSnapshot без навигации. full=true даёт расширенный снимок и сохраняет composed DOM dump как ресурс чата, доступный Local Shell.",
             properties = mapOf(
                 "full" to JsonObject().apply {
                     addProperty("type", "boolean")
-                    addProperty("description", "Запросить расширенный снимок до 24 000 символов и 120 элементов. По умолчанию false.")
+                    addProperty("description", "Расширенный снимок + DOM dump в файл чата. По умолчанию false.")
                 }
             )
         ))
@@ -1351,10 +1356,14 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_type",
-            description = "Ввести несекретный текст в поле по ref без отправки формы. Пароли, файлы и скрытые поля блокируются.",
+            description = "Ввести несекретный текст по ref. submit=true отправляет безопасную GET-форму; иная отправка требует подтверждения. Возвращает диагностику поля без секретов.",
             properties = mapOf(
                 "ref" to JsonObject().apply { addProperty("type", "integer") },
-                "text" to JsonObject().apply { addProperty("type", "string") }
+                "text" to JsonObject().apply { addProperty("type", "string") },
+                "submit" to JsonObject().apply {
+                    addProperty("type", "boolean")
+                    addProperty("description", "После ввода отправить форму. По умолчанию false.")
+                }
             ),
             required = listOf("ref", "text")
         ))
@@ -1376,13 +1385,24 @@ class OpenRouterClient(
         ))
         add(functionTool(
             name = "local_browser_wait",
-            description = "Подождать 1–5 секунд, чтобы JS-страница обновилась, затем вернуть свежий PageSnapshot.",
+            description = "Адаптивно ждать до 1–15 секунд: стабильный DOM, CSS-селектор, текст или ref; вернуть условие и свежий PageSnapshot.",
             properties = mapOf(
                 "seconds" to JsonObject().apply {
                     addProperty("type", "integer")
                     addProperty("minimum", 1)
-                    addProperty("maximum", 5)
-                }
+                    addProperty("maximum", 15)
+                },
+                "mode" to JsonObject().apply {
+                    addProperty("type", "string")
+                    add("enum", JsonArray().apply {
+                        add("dom_stable")
+                        add("selector_present")
+                        add("text_present")
+                        add("ref_present")
+                    })
+                },
+                "value" to JsonObject().apply { addProperty("type", "string") },
+                "ref" to JsonObject().apply { addProperty("type", "integer") }
             ),
             required = listOf("seconds")
         ))

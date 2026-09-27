@@ -172,7 +172,12 @@ class PromptBaselineProbeTest {
         assertEquals("boolean", property(function(all, "local_browser_read"), "full").get("type").asString)
         assertEquals("integer", property(function(all, "local_browser_wait"), "seconds").get("type").asString)
         assertEquals(1, property(function(all, "local_browser_wait"), "seconds").get("minimum").asInt)
-        assertEquals(5, property(function(all, "local_browser_wait"), "seconds").get("maximum").asInt)
+        assertEquals(15, property(function(all, "local_browser_wait"), "seconds").get("maximum").asInt)
+        assertEquals("boolean", property(function(all, "local_browser_type"), "submit").get("type").asString)
+        assertEquals(
+            listOf("dom_stable", "selector_present", "text_present", "ref_present"),
+            property(function(all, "local_browser_wait"), "mode").getAsJsonArray("enum").map { it.asString }
+        )
         assertEquals(
             listOf("down", "up", "top", "bottom"),
             property(function(all, "local_browser_scroll"), "direction")
@@ -185,6 +190,9 @@ class PromptBaselineProbeTest {
         assertContains(description(function(all, "local_browser_open")), "requires_browser=true")
         assertContains(description(function(all, "local_browser_click")), "подтверждения")
         assertContains(description(function(all, "local_browser_download")), "Local Shell")
+        assertContains(description(function(all, "local_browser_read")), "DOM dump")
+        assertContains(description(function(all, "local_browser_type")), "submit=true")
+        assertContains(description(function(all, "local_browser_wait")), "Адаптивно")
         assertContains(description(function(all, "local_browser_takeover")), "CAPTCHA")
         assertContains(description(function(all, "local_browser_takeover")), "секрет")
         assertContains(description(function(all, "local_shell_start")), "асинхрон")
