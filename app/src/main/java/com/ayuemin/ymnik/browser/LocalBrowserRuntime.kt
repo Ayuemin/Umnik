@@ -1131,6 +1131,28 @@ object LocalBrowserRuntime {
         return null
     }
 
+    private fun pendingDownloadNavigationResult(
+        session: BrowserSession,
+        webView: WebView
+    ): NavigationWaitResult? {
+        val pending = session.pendingDownloadUrl
+        if (pending.isBlank()) return null
+        session.lifecycle = LocalBrowserLifecycle.WORKING
+        DiagnosticLog.record(
+            webView.context.applicationContext,
+            "LOCAL_BROWSER_NAV",
+            "session=" + session.sessionId.take(8) +
+                "; result=download_pending" +
+                "; url=" + pending.take(180)
+        )
+        return NavigationWaitResult(
+            started = true,
+            completed = true,
+            currentUrl = pending,
+            reason = "download_pending"
+        )
+    }
+
     private suspend fun waitForNavigation(
         session: BrowserSession,
         webView: WebView,
@@ -1148,7 +1170,9 @@ object LocalBrowserRuntime {
         var current = currentUrl(webView)
         var networkGraceUsed = false
 
+        pendingDownloadNavigationResult(session, webView)?.let { return it }
         while (SystemClock.elapsedRealtime() < startDeadline) {
+            pendingDownloadNavigationResult(session, webView)?.let { return it }
             if (session.mainFrameErrorCount > errorsBefore) {
                 val retry = recoverNavigationAfterNetworkLoss(
                     session = session,
@@ -1204,6 +1228,7 @@ object LocalBrowserRuntime {
             delay(NAVIGATION_POLL_MS)
         }
 
+        pendingDownloadNavigationResult(session, webView)?.let { return it }
         current = currentUrl(webView)
         val currentDocumentAfterStart = current.substringBefore('#')
         val callbackStartedAfterWait = session.navigationStartedCount > startedBefore
@@ -1249,6 +1274,7 @@ object LocalBrowserRuntime {
         var stableReady = 0
 
         while (SystemClock.elapsedRealtime() < deadline) {
+            pendingDownloadNavigationResult(session, webView)?.let { return it }
             if (session.mainFrameErrorCount > errorsBefore) {
                 val retry = recoverNavigationAfterNetworkLoss(
                     session = session,
@@ -1329,6 +1355,7 @@ object LocalBrowserRuntime {
             delay(250)
         }
 
+        pendingDownloadNavigationResult(session, webView)?.let { return it }
         val networkAvailable = hasUsableNetwork(webView)
         val reason = if (networkAvailable) "navigation_timeout" else "network_unavailable"
         DiagnosticLog.record(
