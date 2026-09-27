@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.36 — Browser hardening + Local Shell diagnostics test build
+// Umnik v1.20.0-beta.37 — Browser Shadow DOM fix + answer execution trace test build
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 193
-        versionName = "1.20.0-beta.36"
+        versionCode = 194
+        versionName = "1.20.0-beta.37"
 
         // Local Shell MVP embeds Python only for 64-bit test targets.
         // The regular Umnik app remains Android-native; this is isolated to
