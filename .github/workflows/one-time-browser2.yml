@@ -1,0 +1,28 @@
+name: One-time Browser 2 patch
+
+on:
+  push:
+    branches: [ "work/local-shell-mvp" ]
+    paths: [ ".github/workflows/one-time-browser2.yml" ]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: work/local-shell-mvp
+          fetch-depth: 0
+      - run: python3 .github/one-time-browser2.py
+      - name: Commit Browser 2 and remove helpers
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/one-time-browser2.yml .github/one-time-browser2.py
+          git add app/src/main/java/com/ayuemin/ymnik/browser/LocalBrowserRuntime.kt app/src/test/java/com/ayuemin/ymnik/browser/LocalBrowserRuntimeBrowser2RegressionTest.kt
+          git commit -m "Add Browser 2 composed DOM traversal"
+          git push origin HEAD:work/local-shell-mvp
