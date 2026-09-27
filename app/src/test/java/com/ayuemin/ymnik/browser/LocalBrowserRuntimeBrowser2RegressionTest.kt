@@ -55,6 +55,35 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full)"))
     }
 
+    @Test fun fullReadBudgetIsNotReducedByLargePageHardening() {
+        val s = runtime()
+        assertTrue(s.contains("FULL_TEXT_LIMIT = 24_000"))
+        assertTrue(s.contains("FULL_ELEMENT_LIMIT = 120"))
+        assertTrue(s.contains("DOM_DUMP_MAX_CHARS = 1_000_000"))
+    }
+
+    @Test fun largePagesPrioritizeFieldsAndContentLinks() {
+        val s = runtime()
+        assertTrue(s.contains("[role=\"searchbox\"]"))
+        assertTrue(s.contains("[role=\"combobox\"]"))
+        assertTrue(s.contains("const controlPriority = (el) =>"))
+        assertTrue(s.contains("role === 'searchbox' || role === 'combobox') return 3"))
+        assertTrue(s.contains("navLike ? -1000 : 0"))
+    }
+
+    @Test fun directFileHandoffAndContentMismatchAreExplicit() {
+        val s = runtime()
+        assertTrue(s.contains("pendingDownloadUrl"))
+        assertTrue(s.contains("download_ref"))
+        assertTrue(s.contains("suggested_tool"))
+        assertTrue(s.contains("ref == 0"))
+        assertTrue(s.contains("download_pending_url"))
+        assertTrue(s.contains("detected_mime"))
+        assertTrue(s.contains("content_mismatch"))
+        assertTrue(s.contains("%PDF-"))
+        assertTrue(s.contains("detectedMime == \"text/html\""))
+    }
+
     @Test fun adaptiveWaitSupportsStableSelectorTextAndRef() {
         val s = runtime()
         assertTrue(s.contains("MutationObserver"))
