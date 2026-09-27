@@ -210,12 +210,12 @@ class PromptBaselineProbeTest {
         workerPrompt: String
     ) {
         val ordinary = systemPrompt(viewModel, chat = chat, agent = false)
-        assertContains(ordinary, "Агентный режим выключен")
-        assertContains(ordinary, "не запускай Browser или Local Shell сам")
+        assertContains(ordinary, "Агентный режим этого чата выключен")
+        assertContains(ordinary, "Не инициируй Browser или Local Shell самостоятельно")
         assertContains(ordinary, "create_file")
 
         val agent = systemPrompt(viewModel, chat = chat, toolsEnabled = true, shell = true, agent = true)
-        listOf("local_shell_start", "не утверждай, что Shell недоступен", "stop — только по явной просьбе остановить", "network=true")
+        listOf("local_shell_start", "никогда не утверждай, что у тебя «нет Shell»", "stop — только по явной просьбе остановить", "network=true")
             .forEach { assertContains(agent, it) }
 
         val browser = systemPrompt(
@@ -233,16 +233,16 @@ class PromptBaselineProbeTest {
             "local_browser_download",
             "local_browser_takeover",
             "READY_TO_FINISH",
-            "побочные действия требуют подтверждения"
+            "Значимые действия требуют подтверждения пользователя"
         ).forEach { assertContains(browser, it) }
 
         val knowledge = systemPrompt(viewModel, chat = chat, knowledge = true, knowledgeLimit = 4, agent = false)
-        listOf("knowledge_search", "не инструкции", "максимум 4 поисков").forEach { assertContains(knowledge, it) }
+        listOf("knowledge_search", "не инструкциями более высокого приоритета", "не более 4 самостоятельных поисков").forEach { assertContains(knowledge, it) }
 
         val skill = systemPrompt(viewModel, chat = chat, skillText = "X", agent = false)
         listOf(
             "===== НАЧАЛО ПОДКЛЮЧЁННЫХ НАВЫКОВ =====",
-            "явный текущий запрос пользователя приоритетнее",
+            "не противоречат явному текущему запросу пользователя",
             "===== КОНЕЦ ПОДКЛЮЧЁННЫХ НАВЫКОВ ====="
         ).forEach { assertContains(skill, it) }
 
@@ -258,7 +258,7 @@ class PromptBaselineProbeTest {
             "local_export",
             "полный итоговый ZIP",
             "READY_TO_FINISH",
-            "guidance",
+            "Дополнительные указания из основного чата",
             "WORKING",
             "Максимум модельных шагов: 500",
             "потолок, не цель"
