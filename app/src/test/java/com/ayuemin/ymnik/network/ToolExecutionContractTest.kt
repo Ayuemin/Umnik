@@ -37,6 +37,20 @@ class ToolExecutionContractTest {
     }
 
     @Test
+    fun localFetchBecomesFallbackWhenServerFetchIsAvailable() {
+        val text = ToolExecutionContract.prompt(
+            localWebFetchAvailable = true,
+            localBrowserAvailable = true,
+            localShellAvailable = false
+        )
+
+        assertTrue(text.contains("openrouter:web_fetch"))
+        assertTrue(text.contains("сначала используй его"))
+        assertTrue(text.contains("local_web_fetch — резерв"))
+        assertTrue(text.contains("Не вызывай оба Fetch без необходимости"))
+    }
+
+    @Test
     fun requestEnhancerInjectsContractOnlyFromActualLocalToolDefinitions() {
         val source = sequenceOf(
             File("src/main/java/com/ayuemin/ymnik/network/OpenRouterRequestEnhancer.kt"),
