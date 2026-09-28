@@ -5,6 +5,7 @@ import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ChatMessage
 import com.ayuemin.ymnik.network.ContextUsageTracker
+import com.ayuemin.ymnik.network.WebToolRequestSnapshotStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
@@ -57,19 +58,23 @@ class ChatRepository(context: Context) {
 
     /** Complete only the originating synchronous request using the latest on-disk state. */
     fun finishRequest(chatId: String, messageId: String, assistant: ChatMessage?): List<ChatSession> = synchronized(fileLock) {
+        val webToolSnapshot = WebToolRequestSnapshotStore.consume(chatId)
         val chats = list()
         val updated = chats.map { chat ->
             if (chat.id != chatId) return@map chat
             val userIndex = chat.messages.indexOfFirst { it.id == messageId && it.deliveryState == "pending" }
             if (userIndex < 0) return@map chat
             val completedAssistant = assistant?.let { raw ->
-                if (raw.contextUsage != null) {
-                    raw
+                val withWebMetadata = webToolSnapshot?.let { settings ->
+                    snapshotWebToolAnswerMetadata(raw, settings)
+                } ?: raw
+                if (withWebMetadata.contextUsage != null) {
+                    withWebMetadata
                 } else {
-                    val usage = raw.requestId
+                    val usage = withWebMetadata.requestId
                         ?.let(ContextUsageTracker::consume)
                         ?: ContextUsageTracker.consumeForMessage(chatId, messageId)
-                    usage?.let { raw.copy(contextUsage = it) } ?: raw
+                    usage?.let { withWebMetadata.copy(contextUsage = it) } ?: withWebMetadata
                 }
             }
             val messages = chat.messages.toMutableList()

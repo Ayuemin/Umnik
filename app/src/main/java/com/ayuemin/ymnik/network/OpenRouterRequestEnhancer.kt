@@ -68,14 +68,30 @@ internal class OpenRouterRequestEnhancer(
         OpenRouterFeaturePayload.applyRouting(payload, routing)
 
         val activeChatId = effectiveChatId()
-        val serverTools = activeChatId?.let { ChatRuntimeRepository(context).profile(it)?.tools } ?: prefs.tools()
-        if (serverTools.webSearch != WebSearchMode.OFF) payload.remove("plugins")
+        val savedTools = prefs.tools()
+        val runtimeTools = activeChatId?.let { ChatRuntimeRepository(context).profile(it)?.tools }
+        val serverTools = requestWebToolSettings(runtimeTools, savedTools)
+        val serverWebEnabled = serverTools.webSearch != WebSearchMode.OFF
+        if (serverWebEnabled) payload.remove("plugins")
+
         val advancedTools = OpenRouterFeaturePayload.chatServerTools(serverTools)
-        if (advancedTools.size() > 0) {
+        val existingTools = payload.get("tools")?.takeIf { it.isJsonArray }?.asJsonArray
+        if (advancedTools.size() > 0 || existingTools != null) {
             val merged = JsonArray()
-            payload.get("tools")?.takeIf { it.isJsonArray }?.asJsonArray?.forEach(merged::add)
+            existingTools?.forEach { element ->
+                val obj = element.takeIf { it.isJsonObject }?.asJsonObject
+                val type = obj?.string("type")
+                val functionName = obj?.getAsJsonObject("function")?.string("name")
+                if (shouldKeepExistingTool(type, functionName, serverWebEnabled)) {
+                    merged.add(element)
+                }
+            }
             advancedTools.forEach(merged::add)
-            payload.add("tools", merged)
+            if (merged.size() > 0) payload.add("tools", merged) else payload.remove("tools")
+        }
+        OpenRouterFeaturePayload.applyServerToolBudget(payload, serverTools)
+        if (serverWebEnabled) {
+            WebToolRequestSnapshotStore.record(activeChatId, serverTools)
         }
 
         applyToolExecutionContract(payload)
