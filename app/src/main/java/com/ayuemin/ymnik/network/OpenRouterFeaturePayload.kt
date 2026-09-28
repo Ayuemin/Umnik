@@ -47,7 +47,12 @@ internal object OpenRouterFeaturePayload {
         if (settings.webSearch != WebSearchMode.OFF) {
             add(webSearchTool(settings))
         }
-        if (settings.webFetch) add(serverTool("openrouter:web_fetch"))
+        // When internet search is enabled, give the model server-side page reading in the same
+        // OpenRouter request. This can avoid a client-side local_web_fetch -> second LLM call loop.
+        // Browser-only mode already disables provider search before this builder is called.
+        if (settings.webFetch || settings.webSearch != WebSearchMode.OFF) {
+            add(serverTool("openrouter:web_fetch"))
+        }
         if (settings.datetime) add(serverTool("openrouter:datetime"))
         if (settings.imageGeneration) add(serverTool("openrouter:image_generation"))
         if (settings.fusion) add(serverTool("openrouter:fusion"))

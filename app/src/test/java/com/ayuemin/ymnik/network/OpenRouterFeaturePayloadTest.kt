@@ -55,8 +55,9 @@ class OpenRouterFeaturePayloadTest {
         assertTrue(responses.any { it.asJsonObject.get("type").asString == "openrouter:shell" })
         assertTrue(OpenRouterFeaturePayload.requiresResponsesApi(settings))
     }
+
     @Test
-    fun normalSearchUsesModernServerToolAndFiveTurnBudget() {
+    fun normalSearchUsesModernServerToolsAndFiveTurnBudget() {
         val settings = ServerToolSettings(
             webSearch = WebSearchMode.AUTO,
             webSearchPreset = WebSearchPreset.NORMAL,
@@ -73,6 +74,25 @@ class OpenRouterFeaturePayloadTest {
         assertEquals(5, parameters.get("max_results").asInt)
         assertEquals(25, parameters.get("max_total_results").asInt)
         assertEquals("medium", parameters.get("search_context_size").asString)
+        assertTrue(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_fetch" })
+    }
+
+    @Test
+    fun explicitWebFetchStillWorksWithoutSearch() {
+        val tools = OpenRouterFeaturePayload.chatServerTools(
+            ServerToolSettings(webFetch = true, webSearch = WebSearchMode.OFF)
+        )
+
+        assertTrue(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_fetch" })
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_search" })
+    }
+
+    @Test
+    fun internetToolsStayOffWhenSearchAndFetchAreOff() {
+        val tools = OpenRouterFeaturePayload.chatServerTools(ServerToolSettings())
+
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_search" })
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_fetch" })
     }
 
     @Test
@@ -122,5 +142,4 @@ class OpenRouterFeaturePayloadTest {
 
         assertEquals(WebSearchEngine.AUTO, stored.webSearchEngine)
     }
-
 }
