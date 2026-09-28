@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.43 — Local Shell routing checkpoint and public pre-release
+// Umnik v1.20.0 — stable release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,12 +27,10 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 200
-        versionName = "1.20.0-beta.43"
+        versionCode = 201
+        versionName = "1.20.0"
 
-        // Local Shell MVP embeds Python only for 64-bit test targets.
-        // The regular Umnik app remains Android-native; this is isolated to
-        // the experimental branch until the runtime comparison is complete.
+        // Local Shell embeds Python for the supported 64-bit release ABIs.
         ndk {
             abiFilters += listOf("arm64-v8a", "x86_64")
         }
@@ -60,15 +58,15 @@ android {
 
     buildTypes {
         debug {
-            // Test builds from the work branch must coexist with the installed
+            // Test builds from work branches must coexist with the installed
             // stable Umnik and must never require removing user data first.
             applicationIdSuffix = ".test"
         }
 
         release {
-            // F-Droid review requested an R8-processed release. Keep shrinking and
-            // optimisation enabled for release builds; app-specific keep rules live
-            // in proguard-rules.pro and are exercised by CI via assembleRelease.
+            // Keep shrinking and optimisation enabled for release builds;
+            // app-specific keep rules live in proguard-rules.pro and are
+            // exercised by CI via assembleRelease.
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
