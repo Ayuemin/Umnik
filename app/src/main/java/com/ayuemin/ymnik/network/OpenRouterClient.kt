@@ -215,6 +215,16 @@ class OpenRouterClient(
         val localBrowserToolsEnabled = localBrowserOpen != null && localBrowserRead != null
         val requiredBrowserTool = requiredLocalBrowserTool
             ?.takeIf { localBrowserToolsEnabled && it.startsWith("local_browser_") }
+            ?.takeUnless {
+                it == "local_browser_download" && AgentToolRuntimePolicy.suppressRequiredBrowserDownload(prompt)
+            }
+        if (requiredLocalBrowserTool == "local_browser_download" && requiredBrowserTool == null && localBrowserToolsEnabled) {
+            DiagnosticLog.record(
+                context,
+                "LOCAL_BROWSER_ROUTER",
+                "required download suppressed by explicit no-download/lookup-only intent"
+            )
+        }
         val browserToolsUsed = linkedSetOf<String>()
         val browserToolCallIds = linkedSetOf<String>()
         var browserCanAutoFinish = true
@@ -258,6 +268,7 @@ class OpenRouterClient(
         }
         val agentToolLoopGuard = AgentToolLoopGuard()
         val requestRunId = UUID.randomUUID().toString()
+        var blockedShellProviderFailure: String? = null
         var loops = 0
         while (loops++ < maxToolLoops) {
             val payload = JsonObject().apply {
@@ -392,6 +403,13 @@ class OpenRouterClient(
                 val name = function?.get("name")?.asString.orEmpty()
                 val argsRaw = function?.get("arguments")?.asString ?: "{}"
                 if (name.startsWith("local_browser_")) browserToolsUsed += name
+                if (AgentToolRuntimePolicy.shouldLogMainTool(name)) {
+                    DiagnosticLog.record(
+                        context,
+                        "MAIN_TOOL_CALL",
+                        "request=$requestRunId; step=$loops; tool=$name; args=${AgentToolRuntimePolicy.mainToolArgs(gson, name, argsRaw)}"
+                    )
+                }
                 val resultText = when (name) {
                     "create_file" -> runCatching {
                         val args = gson.fromJson(argsRaw, JsonObject::class.java)
@@ -554,56 +572,89 @@ class OpenRouterClient(
                         if (callback == null) {
                             gson.toJson(mapOf("ok" to false, "error" to "Local Shell недоступен"))
                         } else {
-                            runCatching {
-                                val args = gson.fromJson(argsRaw, JsonObject::class.java)
-                                val task = args.get("task")?.asString.orEmpty().trim()
-                                require(task.isNotBlank()) { "Не передана задача для Local Shell" }
-                                val network = runCatching { args.get("network")?.asBoolean ?: false }.getOrDefault(false)
-                                val files = args.getAsJsonArray("files")
-                                    ?.mapNotNull { item -> item.takeIf { it.isJsonPrimitive }?.asString?.trim() }
-                                    ?.filter { it.isNotBlank() }
-                                    .orEmpty()
-                                val startResult = callback(task, network, files)
-                                val startObject = runCatching { gson.fromJson(startResult, JsonObject::class.java) }.getOrNull()
-                                val started = runCatching { startObject?.get("started")?.asBoolean }.getOrNull() == true
-                                val startOk = runCatching { startObject?.get("ok")?.asBoolean }.getOrNull()
-                                if (!started || startOk == false) {
-                                    startResult
-                                } else {
-                                    LocalShellRuntime.markParentConsumesTerminal()
-                                    phaseCallback("Local Shell работает…")
-                                    DiagnosticLog.record(context, "LOCAL_SHELL_PARENT_WAIT", "suspend; request=$requestRunId; step=$loops")
-                                    val terminal = LocalShellRuntime.awaitTerminal()
-                                    terminal.costUsd?.let { shellCost ->
-                                        costSink?.invoke(RequestCostKind.PRIMARY, shellCost.toString())
-                                    }
-                                    terminal.files.forEach { file ->
-                                        if (created.none { existing -> existing.id == file.id }) created += file
-                                    }
-                                    DiagnosticLog.record(
-                                        context,
-                                        "LOCAL_SHELL_PARENT_WAIT",
-                                        "resume; state=${terminal.state.name}; turns=${terminal.turns}; tools=${terminal.toolCalls}; files=${terminal.files.size}; request=$requestRunId"
+                            val knownFailure = blockedShellProviderFailure
+                            if (knownFailure != null) {
+                                DiagnosticLog.record(
+                                    context,
+                                    "LOCAL_SHELL_RETRY_GUARD",
+                                    "suppressed repeated startup after deterministic provider failure; request=$requestRunId; step=$loops"
+                                )
+                                gson.toJson(
+                                    mapOf(
+                                        "ok" to false,
+                                        "source" to "local_shell",
+                                        "state" to "FAILED",
+                                        "retry_suppressed" to true,
+                                        "error" to (knownFailure + ". Повторный запуск с тем же provider failure в этом ответе подавлен; нужен новый запрос пользователя или смена модели Shell.")
                                     )
-                                    gson.toJson(
-                                        linkedMapOf<String, Any?>(
-                                            "ok" to terminal.ok,
-                                            "source" to "local_shell",
-                                            "state" to terminal.state.name,
-                                            "result" to terminal.text.takeIf { it.isNotBlank() },
-                                            "error" to terminal.error?.takeIf { it.isNotBlank() },
-                                            "model" to terminal.modelId,
-                                            "turns" to terminal.turns,
-                                            "tool_calls" to terminal.toolCalls,
-                                            "files" to terminal.files.map { file ->
-                                                mapOf("name" to file.name, "mime_type" to file.mimeType, "size" to file.size)
-                                            }
-                                        ).filterValues { it != null }
-                                    )
+                                )
+                            } else {
+                                runCatching {
+                                    val args = gson.fromJson(argsRaw, JsonObject::class.java)
+                                    val task = args.get("task")?.asString.orEmpty().trim()
+                                    require(task.isNotBlank()) { "Не передана задача для Local Shell" }
+                                    val network = runCatching { args.get("network")?.asBoolean ?: false }.getOrDefault(false)
+                                    val files = args.getAsJsonArray("files")
+                                        ?.mapNotNull { item -> item.takeIf { it.isJsonPrimitive }?.asString?.trim() }
+                                        ?.filter { it.isNotBlank() }
+                                        .orEmpty()
+                                    val startResult = callback(task, network, files)
+                                    val startObject = runCatching { gson.fromJson(startResult, JsonObject::class.java) }.getOrNull()
+                                    val started = runCatching { startObject?.get("started")?.asBoolean }.getOrNull() == true
+                                    val startOk = runCatching { startObject?.get("ok")?.asBoolean }.getOrNull()
+                                    if (!started || startOk == false) {
+                                        startResult
+                                    } else {
+                                        LocalShellRuntime.markParentConsumesTerminal()
+                                        phaseCallback("Local Shell работает…")
+                                        DiagnosticLog.record(context, "LOCAL_SHELL_PARENT_WAIT", "suspend; request=$requestRunId; step=$loops")
+                                        val terminal = LocalShellRuntime.awaitTerminal()
+                                        terminal.costUsd?.let { shellCost ->
+                                            costSink?.invoke(RequestCostKind.PRIMARY, shellCost.toString())
+                                        }
+                                        terminal.files.forEach { file ->
+                                            if (created.none { existing -> existing.id == file.id }) created += file
+                                        }
+                                        DiagnosticLog.record(
+                                            context,
+                                            "LOCAL_SHELL_PARENT_WAIT",
+                                            "resume; state=${terminal.state.name}; turns=${terminal.turns}; tools=${terminal.toolCalls}; files=${terminal.files.size}; request=$requestRunId"
+                                        )
+                                        if (
+                                            terminal.state.name == "FAILED" &&
+                                            AgentToolRuntimePolicy.isDeterministicShellStartupFailure(
+                                                terminal.turns,
+                                                terminal.toolCalls,
+                                                terminal.error
+                                            )
+                                        ) {
+                                            blockedShellProviderFailure = terminal.error
+                                            DiagnosticLog.record(
+                                                context,
+                                                "LOCAL_SHELL_RETRY_GUARD",
+                                                "armed after startup failure; turns=${terminal.turns}; tools=${terminal.toolCalls}; request=$requestRunId"
+                                            )
+                                        }
+                                        gson.toJson(
+                                            linkedMapOf<String, Any?>(
+                                                "ok" to terminal.ok,
+                                                "source" to "local_shell",
+                                                "state" to terminal.state.name,
+                                                "result" to terminal.text.takeIf { it.isNotBlank() },
+                                                "error" to terminal.error?.takeIf { it.isNotBlank() },
+                                                "model" to terminal.modelId,
+                                                "turns" to terminal.turns,
+                                                "tool_calls" to terminal.toolCalls,
+                                                "files" to terminal.files.map { file ->
+                                                    mapOf("name" to file.name, "mime_type" to file.mimeType, "size" to file.size)
+                                                }
+                                            ).filterValues { it != null }
+                                        )
+                                    }
+                                }.getOrElse {
+                                    if (it is CancellationException) throw it
+                                    gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
                                 }
-                            }.getOrElse {
-                                if (it is CancellationException) throw it
-                                gson.toJson(mapOf("ok" to false, "error" to (it.message ?: "Не удалось запустить Local Shell")))
                             }
                         }
                     }
@@ -637,6 +688,13 @@ class OpenRouterClient(
                         }
                     }
                     else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
+                }
+                if (AgentToolRuntimePolicy.shouldLogMainTool(name)) {
+                    DiagnosticLog.record(
+                        context,
+                        "MAIN_TOOL_RESULT",
+                        "request=$requestRunId; step=$loops; tool=$name; ${AgentToolRuntimePolicy.mainToolResult(gson, name, resultText)}"
+                    )
                 }
                 val agentLoopDecision = agentToolLoopGuard.observeTool(name, argsRaw, resultText)
                 if (agentLoopDecision != null &&

@@ -173,6 +173,8 @@ class LocalShellAgentClient(private val context: Context) {
         var lastCompactionTurn = -100
         var taskState = TaskState.WORKING
         var stateReminderPending = false
+        var firstTurnAutoFallbackUsed = false
+        var autoFallbackReminderSent = false
 
         try {
             while (turn < safeMaxTurns) {
@@ -301,7 +303,7 @@ class LocalShellAgentClient(private val context: Context) {
                 }
                 OpenRouterFeaturePayload.applyRouting(payload, routing)
 
-                val request = Request.Builder()
+                fun requestForPayload(): Request = Request.Builder()
                     .url(endpoint(baseUrl, "chat/completions"))
                     .header("Authorization", "Bearer $apiKey")
                     .header("Content-Type", "application/json")
@@ -311,7 +313,22 @@ class LocalShellAgentClient(private val context: Context) {
                     .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
                     .build()
 
-                val root = execute(request)
+                val root = try {
+                    execute(requestForPayload())
+                } catch (error: Throwable) {
+                    if (LocalShellProviderPolicy.shouldRetryRequiredAsAuto(turn, forceDecisionNextTurn, error)) {
+                        firstTurnAutoFallbackUsed = true
+                        payload.addProperty("tool_choice", "auto")
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_MODEL_COMPAT",
+                            "required rejected; retry=auto; model=${AgentToolRuntimePolicy.redactText(model, 180)}; request=$requestRunId"
+                        )
+                        execute(requestForPayload())
+                    } else {
+                        throw error
+                    }
+                }
                 returnedModel = root.string("model") ?: returnedModel
                 val usage = root.getAsJsonObject("usage")
                 totalInputTokens += usage?.int("prompt_tokens") ?: usage?.int("input_tokens") ?: 0
@@ -331,6 +348,24 @@ class LocalShellAgentClient(private val context: Context) {
 
                 val calls = assistant.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
                 if (calls == null || calls.size() == 0) {
+                    if (firstTurnAutoFallbackUsed && toolCalls == 0 && !forceDecisionNextTurn) {
+                        if (!autoFallbackReminderSent && turn < safeMaxTurns) {
+                            autoFallbackReminderSent = true
+                            messages.add(assistant.deepCopy())
+                            messages.add(message(
+                                "system",
+                                "Совместимый режим tool_choice=auto включён после отказа провайдера от required. " +
+                                    "Работа Local Shell ещё не началась: прежде чем давать итоговый ответ, обязательно вызови хотя бы один реальный локальный инструмент по задаче."
+                            ))
+                            DiagnosticLog.record(
+                                context,
+                                "LOCAL_SHELL_MODEL_COMPAT",
+                                "auto returned no tools; reminder sent; turn=$turn; request=$requestRunId"
+                            )
+                            continue
+                        }
+                        error("Модель не вызвала ни одного инструмента Local Shell после compatibility fallback tool_choice=auto")
+                    }
                     val text = extractText(assistant.get("content")).trim()
                     if (text.isBlank()) {
                         error("Модель завершила локальный Shell без итогового текста")
@@ -384,8 +419,18 @@ class LocalShellAgentClient(private val context: Context) {
                     val args = function?.string("arguments") ?: "{}"
                     toolCalls += 1
                     onProgress(Progress(toolLabel(name), turn, toolCalls))
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_TOOL_CALL",
+                        "request=$requestRunId; turn=$turn; call=$toolCalls; tool=$name; args=${AgentToolRuntimePolicy.localShellToolArgs(gson, name, args)}"
+                    )
                     val wasReadyBeforeTool = taskState == TaskState.READY_TO_FINISH
                     val resultText = engine.execute(name, args)
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_TOOL_RESULT",
+                        "request=$requestRunId; turn=$turn; call=$toolCalls; tool=$name; ${AgentToolRuntimePolicy.localShellToolResult(gson, resultText)}"
+                    )
 
                     // The exact loop guard catches identical action/result cycles.
                     val actionKey = name + ":" + stableFingerprint(normalizeJson(args))
@@ -591,7 +636,15 @@ class LocalShellAgentClient(private val context: Context) {
         activeCall = call
         call.execute().use { response ->
             val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) error(apiError(response.code, body))
+            if (!response.isSuccessful) {
+                val detail = apiError(response.code, body)
+                DiagnosticLog.record(
+                    context,
+                    "LOCAL_SHELL_PROVIDER_ERROR",
+                    "http=${response.code}; error=${AgentToolRuntimePolicy.redactText(detail, 900)}"
+                )
+                error(detail)
+            }
             return gson.fromJson(body, JsonObject::class.java)
         }
     }
