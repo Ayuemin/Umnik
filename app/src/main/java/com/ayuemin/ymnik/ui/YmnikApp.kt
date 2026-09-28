@@ -2857,12 +2857,23 @@ private fun AnswerInfoSheet(
                 message.costBreakdown != null
             ) {
                 Spacer(Modifier.height(8.dp))
-                AnswerInfoSectionTitle("Расходы")
-                message.inputTokens?.let { AnswerInfoRow("Вход", "$it токенов") }
-                message.outputTokens?.let { AnswerInfoRow("Выход", "$it токенов") }
-                if (message.inputTokens != null && message.outputTokens != null) {
-                    AnswerInfoRow("Всего токенов", "${message.inputTokens + message.outputTokens}")
-                }
+                AnswerInfoSectionTitle("Токены и стоимость")
+                AnswerInfoRow(
+                    "Отправлено в OpenRouter",
+                    message.inputTokens?.let { "$it токенов" } ?: "—"
+                )
+                AnswerInfoRow(
+                    "Получено от OpenRouter",
+                    message.outputTokens?.let { "$it токенов" } ?: "—"
+                )
+                AnswerInfoRow(
+                    "Всего обработано",
+                    if (message.inputTokens != null && message.outputTokens != null) {
+                        "${message.inputTokens + message.outputTokens} токенов"
+                    } else {
+                        "—"
+                    }
+                )
 
                 val costs = message.costBreakdown
                 if (costs != null) {
@@ -2902,7 +2913,10 @@ private fun AnswerInfoSheet(
             ) {
                 Spacer(Modifier.height(8.dp))
                 AnswerInfoSectionTitle("Контекст")
-                message.contextUsage?.let { ContextUsageBreakdownRows(it) }
+                ContextUsageBreakdownRows(
+                    usage = message.contextUsage ?: ContextUsageBreakdown(),
+                    providerInputTokens = message.inputTokens
+                )
                 if (knowledgeCount != null || knowledgeSearchAttempted || knowledgeBaseOnly) {
                     val knowledgeStatus = when {
                         knowledgeSearchAttempted && (knowledgeCount ?: 0) > 0 ->
@@ -2935,16 +2949,16 @@ private fun AnswerInfoSheet(
                         }
                     }
                 }
-                if (message.webSearchEnabled != null || !message.internetMode.isNullOrBlank()) {
-                    val internetLabel = when {
-                        message.webSearchEnabled != true -> "Выключен"
-                        message.internetMode == InternetMode.SEARCH_ONLY.name -> "Только поиск"
-                        message.internetMode == InternetMode.AUTO.name -> "Автоматически"
-                        message.internetMode == InternetMode.BROWSER.name -> "Браузер"
-                        else -> "Поиск"
-                    }
-                    AnswerInfoRow("Интернет", internetLabel)
+                val internetLabel = when {
+                    message.webSearchEnabled == null && message.internetMode.isNullOrBlank() -> "—"
+                    message.webSearchEnabled != true -> "Выключен"
+                    message.internetMode == InternetMode.SEARCH_ONLY.name -> "Только поиск"
+                    message.internetMode == InternetMode.AUTO.name -> "Автоматически"
+                    message.internetMode == InternetMode.BROWSER.name -> "Браузер"
+                    else -> "Поиск"
                 }
+                AnswerInfoRow("Интернет", internetLabel)
+                WebToolAnswerInfoRows(message)
                 message.reasoningEnabled?.let { enabled ->
                     val suffix = message.reasoningEffort?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
                     AnswerInfoRow("Размышление", if (enabled) "Включено$suffix" else "Выключено")
@@ -3100,16 +3114,32 @@ private fun AnswerInfoSheet(
 }
 
 @Composable
-private fun ContextUsageBreakdownRows(usage: ContextUsageBreakdown) {
+private fun ContextUsageBreakdownRows(
+    usage: ContextUsageBreakdown,
+    providerInputTokens: Int?
+) {
     AnswerInfoRow("Системный prompt", formatContextLayer(usage.systemPrompt))
     AnswerInfoRow("Схемы tools", formatContextLayer(usage.tools))
     AnswerInfoRow("История", formatContextLayer(usage.history))
     AnswerInfoRow("Память / RAG", formatContextLayer(usage.memoryRag))
     AnswerInfoRow("Навыки", formatContextLayer(usage.skills))
     AnswerInfoRow("Текущий запрос", formatContextLayer(usage.currentUserPrompt))
-    if (usage.attachmentCount > 0 || usage.attachmentBytes > 0L) {
-        AnswerInfoRow("Вложения", "${usage.attachmentCount} шт. · ${usage.attachmentBytes} Б")
-    }
+    AnswerInfoRow("Вложения", "${usage.attachmentCount} шт. · ${usage.attachmentBytes} Б")
+
+    val locallyEstimatedTokens = listOf(
+        usage.systemPrompt,
+        usage.tools,
+        usage.history,
+        usage.memoryRag,
+        usage.skills,
+        usage.currentUserPrompt
+    ).sumOf { it.estimatedTokens }
+    val openRouterSideTokens = providerInputTokens
+        ?.let { (it - locallyEstimatedTokens).coerceAtLeast(0) }
+    AnswerInfoRow(
+        "Обработано на стороне OpenRouter",
+        openRouterSideTokens?.let { "≈ $it ток." } ?: "—"
+    )
     Text(
         "Символы и байты точные; ≈ токены — локальная оценка.",
         style = MaterialTheme.typography.bodySmall,
@@ -3142,7 +3172,7 @@ private fun AnswerInfoRow(label: String, value: String) {
             label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(112.dp)
+            modifier = Modifier.width(132.dp)
         )
         SelectionContainer(
             modifier = Modifier.weight(1f)
