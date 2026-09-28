@@ -177,11 +177,15 @@ jobs:
             found { print }
           ' CHANGELOG.md > dist/changelog-section.md
 
+          NOTES_FILE="docs/release-notes/v${VERSION}.md"
+
           {
             echo "## Umnik v${VERSION}"
             echo
             if [ -s dist/changelog-section.md ]; then
               cat dist/changelog-section.md
+            elif [ -s "$NOTES_FILE" ]; then
+              cat "$NOTES_FILE"
             else
               echo "Список изменений для этой версии см. в CHANGELOG.md."
             fi
