@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - "work/quiet-knowledge-rag"
+      - "work/local-shell-mvp"
 
 permissions:
   contents: write
@@ -143,7 +144,7 @@ jobs:
             if [ -s dist/changelog-section.md ]; then
               cat dist/changelog-section.md
             else
-              echo "Список изменений для этой тестовой версии см. в CHANGELOG.md."
+              echo "Список изменений для этой тестовой версии см. в CHANGELOG.md и README."
             fi
             echo
             echo "### Установка"

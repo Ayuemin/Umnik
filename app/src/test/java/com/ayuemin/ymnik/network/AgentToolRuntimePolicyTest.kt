@@ -24,6 +24,18 @@ class AgentToolRuntimePolicyTest {
     }
 
     @Test
+    fun `explicit local shell request wins over browser download routing`() {
+        assertTrue(AgentToolRuntimePolicy.explicitlyRequestsLocalShell("Запусти Local Shell и скачай ZIP репозитория."))
+        assertTrue(AgentToolRuntimePolicy.suppressRequiredBrowserDownload("Запусти Local Shell и скачай ZIP репозитория."))
+        assertTrue(AgentToolRuntimePolicy.explicitlyRequestsLocalShell("Use Local Shell to download and unpack this repository."))
+    }
+
+    @Test
+    fun `discussion about local shell does not force execution`() {
+        assertFalse(AgentToolRuntimePolicy.explicitlyRequestsLocalShell("Расскажи, что такое Local Shell и зачем он нужен."))
+    }
+
+    @Test
     fun `deterministic shell startup 400 is recognized only before tools`() {
         assertTrue(AgentToolRuntimePolicy.isDeterministicShellStartupFailure(1, 0, "OpenRouter HTTP 400: Provider returned error"))
         assertFalse(AgentToolRuntimePolicy.isDeterministicShellStartupFailure(2, 1, "OpenRouter HTTP 400: Provider returned error"))

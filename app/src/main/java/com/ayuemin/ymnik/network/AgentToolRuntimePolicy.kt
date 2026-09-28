@@ -10,6 +10,11 @@ internal object AgentToolRuntimePolicy {
     private val credentialPrefix = Regex(
         "(?i)\\b(?:sk-[A-Za-z0-9._-]{8,}|ghp_[A-Za-z0-9_]{8,}|github_pat_[A-Za-z0-9_]{8,})\\b"
     )
+    private val explicitLocalShellPatterns = listOf(
+        Regex("""(?iu)\b(запусти|запустить|используй|использовать|выполни|выполнить)\b.{0,32}\blocal\s*shell\b"""),
+        Regex("""(?iu)\blocal\s*shell\b.{0,32}\b(запусти|запустить|используй|использовать|выполни|выполнить)\b"""),
+        Regex("""(?iu)\b(start|run|use)\b.{0,24}\blocal\s*shell\b""")
+    )
     private val nonRetryableShellFailureMarkers = listOf(
         "protocol_error",
         "stream was reset",
@@ -34,7 +39,17 @@ internal object AgentToolRuntimePolicy {
         "loop_blocked"
     )
 
+    fun explicitlyRequestsLocalShell(prompt: String): Boolean =
+        explicitLocalShellPatterns.any { it.containsMatchIn(prompt) }
+
     fun suppressRequiredBrowserDownload(prompt: String): Boolean {
+        // An explicit user request for Local Shell has priority over Browser auto-routing.
+        // The child Shell owns local_fetch/local_archive/local_git/local_python, so a parent
+        // Browser download must not steal the first action merely because the task also says
+        // "download". This keeps the whole task inside one Shell session where sticky-success
+        // and loop protection can observe the complete route.
+        if (explicitlyRequestsLocalShell(prompt)) return true
+
         val text = prompt.lowercase()
         val explicitlyForbidden =
             Regex("""\bне\s+(?:нужно\s+|надо\s+|следует\s+)?скач(?:ивай|ивайте|ивать|ать)\b""").containsMatchIn(text) ||
