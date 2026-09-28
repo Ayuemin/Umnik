@@ -11,6 +11,13 @@ _RUNTIME_ROOTS = tuple(
     for p in list(sys.path) + [sys.prefix, getattr(sys, "base_prefix", sys.prefix)]
     if isinstance(p, str) and p
 )
+_WRITE_FLAGS = (
+    getattr(os, "O_WRONLY", 0)
+    | getattr(os, "O_RDWR", 0)
+    | getattr(os, "O_CREAT", 0)
+    | getattr(os, "O_TRUNC", 0)
+    | getattr(os, "O_APPEND", 0)
+)
 
 
 def _inside(path, root):
@@ -18,6 +25,31 @@ def _inside(path, root):
         return os.path.commonpath([os.path.realpath(path), os.path.realpath(root)]) == os.path.realpath(root)
     except Exception:
         return False
+
+
+def _absolute(path):
+    if not isinstance(path, (str, bytes, os.PathLike)):
+        return None
+    path = os.fspath(path)
+    if isinstance(path, bytes):
+        path = os.fsdecode(path)
+    return os.path.realpath(path if os.path.isabs(path) else os.path.join(os.getcwd(), path))
+
+
+def _is_git_metadata(path, root):
+    absolute = _absolute(path)
+    if not absolute or not _inside(absolute, root):
+        return False
+    try:
+        relative = os.path.relpath(absolute, root).replace("\\", "/")
+    except Exception:
+        return False
+    return any(part.lower() == ".git" for part in relative.split("/") if part not in ("", "."))
+
+
+def _reject_git_write(path, root):
+    if _is_git_metadata(path, root):
+        raise PermissionError("GIT_METADATA_PROTECTED: .git can be changed only through local_git")
 
 
 def _audit(event, args):
@@ -29,23 +61,31 @@ def _audit(event, args):
         path = args[0]
         if isinstance(path, int):
             return
-        if not isinstance(path, (str, bytes, os.PathLike)):
+        absolute = _absolute(path)
+        if not absolute:
             return
-        path = os.fspath(path)
-        if isinstance(path, bytes):
-            path = os.fsdecode(path)
-        absolute = path if os.path.isabs(path) else os.path.join(os.getcwd(), path)
-        mode = ""
-        if len(args) > 1 and isinstance(args[1], str):
-            mode = args[1]
+        mode = args[1] if len(args) > 1 and isinstance(args[1], str) else ""
+        flags = args[2] if len(args) > 2 and isinstance(args[2], int) else 0
+        writing = any(flag in mode for flag in ("w", "a", "x", "+")) or bool(flags & _WRITE_FLAGS)
+        if writing:
+            _reject_git_write(absolute, root)
         if _inside(absolute, root):
             return
-        # Python itself must still be able to import its bundled standard library.
-        if not any(flag in mode for flag in ("w", "a", "x", "+")):
+        if not writing:
             for allowed in _RUNTIME_ROOTS:
                 if _inside(absolute, allowed):
                     return
         raise PermissionError("Local Shell Python can access only the task workspace")
+
+    if event in ("os.mkdir", "os.remove", "os.rmdir", "os.unlink", "os.chmod", "os.chown", "os.truncate", "os.utime", "os.mknod") and args:
+        _reject_git_write(args[0], root)
+
+    if event in ("os.rename", "os.replace", "os.link") and len(args) >= 2:
+        _reject_git_write(args[0], root)
+        _reject_git_write(args[1], root)
+
+    if event == "os.symlink" and len(args) >= 2:
+        _reject_git_write(args[1], root)
 
     if event in ("os.system", "subprocess.Popen"):
         raise PermissionError("Start external commands through Local Shell tools, not from Python")

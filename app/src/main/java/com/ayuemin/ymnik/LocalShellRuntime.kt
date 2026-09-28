@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik
 
+import com.ayuemin.ymnik.diagnostics.LocalShellBudgetTelemetry
 import com.ayuemin.ymnik.model.GeneratedFile
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -29,26 +30,13 @@ internal data class LocalShellTerminalResult(
         get() = state == LocalShellTerminalState.DONE
 }
 
-/**
- * Process-wide runtime bridge for the single active Local Shell task.
- *
- * UI and the main chat model share the same cancel hook and guidance queue,
- * so a task started from either surface is still one Local Shell process.
- * The terminal deferred lets the parent agent suspend without spending model
- * calls on local_shell_status polling while the child keeps running normally.
- */
 internal object LocalShellRuntime {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
-    @Volatile
-    private var cancelCurrent: (() -> Unit)? = null
-
-    @Volatile
-    private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
-
-    @Volatile
-    private var parentConsumesTerminal = false
-
+    @Volatile private var cancelCurrent: (() -> Unit)? = null
+    @Volatile private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
+    @Volatile private var parentConsumesTerminal = false
+    @Volatile private var checkpointProvider: (() -> String)? = null
     private val guidanceQueue = ConcurrentLinkedQueue<String>()
 
     fun prepareForStart() {
@@ -56,6 +44,11 @@ internal object LocalShellRuntime {
         cancelCurrent = null
         parentConsumesTerminal = false
         terminalResult = CompletableDeferred()
+        LocalShellBudgetTelemetry.reset()
+    }
+
+    fun installCheckpointProvider(provider: () -> String) {
+        checkpointProvider = provider
     }
 
     fun installCancel(cancel: () -> Unit) {
@@ -91,8 +84,29 @@ internal object LocalShellRuntime {
 
     fun parentConsumesTerminal(): Boolean = parentConsumesTerminal
 
-    fun completeTerminal(result: LocalShellTerminalResult): Boolean =
-        terminalResult.complete(result)
+    fun completeTerminal(result: LocalShellTerminalResult): Boolean {
+        val enriched = if (
+            result.text.isBlank() &&
+            (result.state == LocalShellTerminalState.FAILED || result.state == LocalShellTerminalState.STOPPED)
+        ) {
+            val checkpoint = runCatching { checkpointProvider?.invoke().orEmpty() }.getOrDefault("")
+            val inventory = result.files.joinToString(", ") { "${it.name} (${it.size} B)" }
+            result.copy(
+                text = buildString {
+                    append("STATUS=PARTIAL\n")
+                    if (checkpoint.isNotBlank()) append(checkpoint) else append("Рабочий checkpoint недоступен.")
+                    if (inventory.isNotBlank()) append("\nАртефакты: ").append(inventory)
+                    append("\nUsage: turns=").append(result.turns)
+                        .append("; tools=").append(result.toolCalls)
+                        .append("; input=").append(result.inputTokens ?: 0)
+                        .append("; output=").append(result.outputTokens ?: 0)
+                        .append("; cost=").append(result.costUsd?.toString() ?: "unknown")
+                    result.error?.takeIf { it.isNotBlank() }?.let { append("\nОшибка: ").append(it) }
+                }
+            )
+        } else result
+        return terminalResult.complete(enriched)
+    }
 
     suspend fun awaitTerminal(): LocalShellTerminalResult = terminalResult.await()
 
@@ -100,14 +114,13 @@ internal object LocalShellRuntime {
         cancelCurrent = null
         guidanceQueue.clear()
         if (!terminalResult.isCompleted) {
-            terminalResult.complete(
+            completeTerminal(
                 LocalShellTerminalResult(
                     state = LocalShellTerminalState.FAILED,
                     error = "Local Shell завершился без итогового результата"
                 )
             )
         }
-        // Keep the completed deferred and parent-consumption flag until the next
-        // prepareForStart(). This avoids races between child cleanup and parent resume.
+        checkpointProvider = null
     }
 }

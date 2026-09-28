@@ -1,4 +1,4 @@
-// Umnik v1.20.0-beta.41 — clearer answer info and web usage details
+// Umnik v1.20.0-beta.42 — Local Shell anti-loop, Git/R8 and budget diagnostics
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 198
-        versionName = "1.20.0-beta.41"
+        versionCode = 199
+        versionName = "1.20.0-beta.42"
 
         // Local Shell MVP embeds Python only for 64-bit test targets.
         // The regular Umnik app remains Android-native; this is isolated to

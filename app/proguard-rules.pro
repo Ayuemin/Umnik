@@ -33,8 +33,15 @@
 # WorkManager recreates the durable knowledge indexing worker by class name.
 -keep class com.ayuemin.ymnik.KnowledgeIndexWorker { *; }
 
-# Local Shell uses JGit only for a narrow Android-safe subset:
-# init/status/log/diff/add/commit/checkout and public HTTPS clone.
+# Local Shell uses JGit on Android. Some JGit runtime paths instantiate internal
+# implementations reflectively. Obfuscating/removing those constructors produced
+# release-only NoSuchMethodException failures (the diagnostic log showed cc1/ss0).
+# Keep the JGit runtime intact in the experimental Local Shell branch; stability is
+# more important here than the small APK saving. A runtime init+status probe still
+# hides local_git automatically if JGit is unusable on a particular release build.
+-keep class org.eclipse.jgit.** { *; }
+-keep interface org.eclipse.jgit.** { *; }
+
 # JGit also contains optional desktop/JVM integrations for JMX, Kerberos/SPNEGO
 # and process-based GC locking. Those classes do not exist on Android and none of
 # those code paths are used by Local Shell, so R8 may safely ignore them.
