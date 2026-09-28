@@ -58,7 +58,7 @@ internal object AgentToolRuntimePolicy {
             "local_shell_start" -> {
                 val task = redactText(args.string("task").orEmpty(), 1_800)
                 val network = args.bool("network") ?: false
-                val files = args.getAsJsonArray("files")
+                val files = args.array("files")
                     ?.mapNotNull { it.takeIf { item -> item.isJsonPrimitive }?.asString }
                     .orEmpty()
                 "task=$task; network=$network; files=${files.joinToString(prefix = "[", postfix = "]") { redactText(it, 160) }}"
@@ -89,13 +89,13 @@ internal object AgentToolRuntimePolicy {
         (root.string("url") ?: root.string("current_url"))?.let { fields += "url=${safeUrl(it)}" }
         root.string("reason")?.let { fields += "reason=${redactText(it, 260)}" }
         root.string("error")?.let { fields += "error=${redactText(it, 500)}" }
-        root.getAsJsonObject("artifact")?.let { artifact ->
+        root.obj("artifact")?.let { artifact ->
             val nameValue = artifact.string("name").orEmpty()
             val size = artifact.get("size")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
             val shell = artifact.get("available_to_shell")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty()
             fields += "artifact=${redactText(nameValue, 180)}; size=$size; shell=$shell"
         }
-        root.getAsJsonArray("files")?.let { fields += "files=${it.size()}" }
+        root.array("files")?.let { fields += "files=${it.size()}" }
         return fields.joinToString("; ").ifBlank { "chars=${resultRaw.length}" }.take(1_400)
     }
 
@@ -129,9 +129,12 @@ internal object AgentToolRuntimePolicy {
         root.string("error")?.let { fields += "error=${redactText(it, 500)}" }
         root.string("stdout")?.let { fields += "stdout_chars=${it.length}" }
         root.string("stderr")?.let { fields += "stderr_chars=${it.length}" }
-        root.getAsJsonArray("files")?.let { fields += "files=${it.size()}" }
-        root.getAsJsonArray("entries")?.let { fields += "entries=${it.size()}" }
-        root.getAsJsonArray("matches")?.let { fields += "matches=${it.size()}" }
+        root.array("files")?.let { fields += "files=${it.size()}" }
+            ?: root.string("files")?.let { fields += "files_chars=${it.length}" }
+        root.array("entries")?.let { fields += "entries=${it.size()}" }
+            ?: root.string("entries")?.let { fields += "entries_chars=${it.length}" }
+        root.array("matches")?.let { fields += "matches=${it.size()}" }
+            ?: root.string("matches")?.let { fields += "matches_chars=${it.length}" }
         return fields.joinToString("; ").ifBlank { "chars=${resultRaw.length}" }.take(1_000)
     }
 
@@ -163,6 +166,12 @@ internal object AgentToolRuntimePolicy {
     private fun JsonObject.int(name: String): Int? = runCatching {
         get(name)?.takeUnless { it.isJsonNull }?.asInt
     }.getOrNull()
+
+    private fun JsonObject.array(name: String) =
+        get(name)?.takeIf { !it.isJsonNull && it.isJsonArray }?.asJsonArray
+
+    private fun JsonObject.obj(name: String) =
+        get(name)?.takeIf { !it.isJsonNull && it.isJsonObject }?.asJsonObject
 }
 
 internal object LocalShellProviderPolicy {

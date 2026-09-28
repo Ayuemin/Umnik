@@ -100,4 +100,34 @@ class AgentToolRuntimePolicyTest {
             )
         )
     }
+
+    @Test
+    fun `local list string entries diagnostics never crash`() {
+        val summary = AgentToolRuntimePolicy.localShellToolResult(
+            gson,
+            """{"ok":true,"path":".","entries":"input/Hello-World-master.zip (351 B)","truncated":false}"""
+        )
+        assertTrue(summary.contains("ok=true"))
+        assertTrue(summary.contains("entries_chars="))
+    }
+
+    @Test
+    fun `string matches diagnostics never crash`() {
+        val summary = AgentToolRuntimePolicy.localShellToolResult(
+            gson,
+            """{"ok":true,"matches":"README:1: Hello World","count":1}"""
+        )
+        assertTrue(summary.contains("ok=true"))
+        assertTrue(summary.contains("matches_chars="))
+    }
+
+    @Test
+    fun `malformed structured main result fields are ignored safely`() {
+        val summary = AgentToolRuntimePolicy.mainToolResult(
+            gson,
+            "local_shell_start",
+            """{"ok":false,"artifact":"not-an-object","files":"not-an-array"}"""
+        )
+        assertTrue(summary.contains("ok=false"))
+    }
 }
