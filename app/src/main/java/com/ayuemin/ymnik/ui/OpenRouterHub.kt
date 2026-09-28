@@ -845,7 +845,7 @@ private fun OpenRouterHubDialog(
                     when (page) {
                         HubPage.MODELS -> ModelsPage(state, controller, appState)
                         HubPage.ROUTING -> RoutingPage(state.routing, controller::updateRouting)
-                        HubPage.TOOLS -> ToolsPage(state.tools, controller, viewModel)
+                        HubPage.TOOLS -> OpenRouterToolsPageV2(state.tools, controller, viewModel)
                         HubPage.JOBS -> JobsPage(
                             state = state,
                             controller = controller,
@@ -1813,10 +1813,6 @@ private fun tokenPriceQuote(model: ModelInfo): CatalogPriceQuote {
 }
 
 private fun imagePriceQuote(model: ModelInfo): CatalogPriceQuote {
-    // OpenRouter's generic `pricing.image` is the INPUT-image charge for models
-    // that accept references. It is not the generation price. For output pricing
-    // the general catalog exposes image_output/image_token; 4096 image tokens is
-    // the 1K baseline used by OpenRouter's image catalog.
     val estimated1K = model.estimatedImageOutputUsd1K?.takeIf { it > 0.0 }
     if (estimated1K != null) {
         return CatalogPriceQuote(
@@ -1936,7 +1932,6 @@ private fun transcriptionPriceQuote(model: ModelInfo): CatalogPriceQuote {
     )
 }
 
-
 private fun compactTokenCount(value: Int): String = when {
     value >= 1_000_000 -> {
         val millions = value / 1_000_000.0
@@ -2028,7 +2023,6 @@ private fun formatSpecializedPricing(key: String, value: Double): String {
 
 private fun catalogPriceText(model: ModelInfo, kind: SimpleModelKind): String? =
     catalogPriceQuote(model, kind).text
-
 
 private fun formatCatalogPrice(value: Double?): String = when {
     value == null -> "—"
@@ -2708,7 +2702,6 @@ private fun MediaPage(
     }
 }
 
-
 @Composable
 private fun ReplySpeechPage(
     state: OpenRouterHubState,
@@ -2813,7 +2806,6 @@ private fun ReplySpeechPage(
                         )
                     }
                 }
-
             }
         }
     }
@@ -3440,7 +3432,6 @@ private fun copyToClipboard(context: Context, text: String) {
     clipboard.setPrimaryClip(ClipData.newPlainText("Umnik", text))
     Toast.makeText(context, "Скопировано", Toast.LENGTH_SHORT).show()
 }
-
 
 private data class ShellAttachmentInfo(val name: String, val sizeBytes: Long?)
 
