@@ -38,6 +38,14 @@ enum class WebSearchEngine(val apiValue: String) {
     PERPLEXITY("perplexity")
 }
 
+enum class WebFetchEngine(val apiValue: String) {
+    AUTO("auto"),
+    NATIVE("native"),
+    OPENROUTER("openrouter"),
+    EXA("exa"),
+    PARALLEL("parallel")
+}
+
 data class ProviderRoutingSettings(
     val strategy: ProviderRouteStrategy = ProviderRouteStrategy.AUTO,
     val allowProviderFallbacks: Boolean = true,
@@ -60,6 +68,7 @@ data class ServerToolSettings(
     val webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
     val internetMode: InternetMode = InternetMode.AUTO,
     val webSearchEngine: WebSearchEngine = WebSearchEngine.AUTO,
+    val webFetchEngine: WebFetchEngine = WebFetchEngine.AUTO,
     val webFetch: Boolean = false,
     val datetime: Boolean = false,
     val imageGeneration: Boolean = false,
@@ -78,5 +87,6 @@ fun ServerToolSettings.normalized(): ServerToolSettings = copy(
     webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
     webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
     internetMode = runCatching { internetMode }.getOrNull() ?: InternetMode.AUTO,
-    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO,
+    webFetchEngine = runCatching { webFetchEngine }.getOrNull() ?: WebFetchEngine.AUTO
 )

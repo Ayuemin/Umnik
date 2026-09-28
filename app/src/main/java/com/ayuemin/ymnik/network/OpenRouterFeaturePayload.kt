@@ -51,7 +51,7 @@ internal object OpenRouterFeaturePayload {
         // OpenRouter request. This can avoid a client-side local_web_fetch -> second LLM call loop.
         // Browser-only mode already disables provider search before this builder is called.
         if (settings.webFetch || settings.webSearch != WebSearchMode.OFF) {
-            add(serverTool("openrouter:web_fetch"))
+            add(webFetchTool(settings))
         }
         if (settings.datetime) add(serverTool("openrouter:datetime"))
         if (settings.imageGeneration) add(serverTool("openrouter:image_generation"))
@@ -112,6 +112,13 @@ internal object OpenRouterFeaturePayload {
                     addProperty("search_context_size", "high")
                 }
             }
+        })
+    }
+
+    private fun webFetchTool(settings: ServerToolSettings) = JsonObject().apply {
+        addProperty("type", "openrouter:web_fetch")
+        add("parameters", JsonObject().apply {
+            addProperty("engine", settings.webFetchEngine.apiValue)
         })
     }
 
