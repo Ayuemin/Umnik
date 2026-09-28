@@ -3,6 +3,7 @@ package com.ayuemin.ymnik.network
 import com.ayuemin.ymnik.model.ProviderRouteStrategy
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
+import com.ayuemin.ymnik.model.WebFetchEngine
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
 import com.ayuemin.ymnik.model.WebSearchPreset
@@ -55,8 +56,9 @@ class OpenRouterFeaturePayloadTest {
         assertTrue(responses.any { it.asJsonObject.get("type").asString == "openrouter:shell" })
         assertTrue(OpenRouterFeaturePayload.requiresResponsesApi(settings))
     }
+
     @Test
-    fun normalSearchUsesModernServerToolAndFiveTurnBudget() {
+    fun normalSearchUsesModernServerToolsAndFiveTurnBudget() {
         val settings = ServerToolSettings(
             webSearch = WebSearchMode.AUTO,
             webSearchPreset = WebSearchPreset.NORMAL,
@@ -67,12 +69,37 @@ class OpenRouterFeaturePayloadTest {
         val tools = OpenRouterFeaturePayload.chatServerTools(settings)
         val search = tools.first { it.asJsonObject.get("type").asString == "openrouter:web_search" }.asJsonObject
         val parameters = search.getAsJsonObject("parameters")
+        val fetch = tools.first { it.asJsonObject.get("type").asString == "openrouter:web_fetch" }.asJsonObject
 
         assertEquals(5, payload.get("max_tool_calls").asInt)
         assertEquals("exa", parameters.get("engine").asString)
         assertEquals(5, parameters.get("max_results").asInt)
         assertEquals(25, parameters.get("max_total_results").asInt)
         assertEquals("medium", parameters.get("search_context_size").asString)
+        assertEquals("auto", fetch.getAsJsonObject("parameters").get("engine").asString)
+    }
+
+    @Test
+    fun webFetchUsesSelectedEngine() {
+        val tools = OpenRouterFeaturePayload.chatServerTools(
+            ServerToolSettings(
+                webFetch = true,
+                webSearch = WebSearchMode.OFF,
+                webFetchEngine = WebFetchEngine.OPENROUTER
+            )
+        )
+        val fetch = tools.first { it.asJsonObject.get("type").asString == "openrouter:web_fetch" }.asJsonObject
+
+        assertEquals("openrouter", fetch.getAsJsonObject("parameters").get("engine").asString)
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_search" })
+    }
+
+    @Test
+    fun internetToolsStayOffWhenSearchAndFetchAreOff() {
+        val tools = OpenRouterFeaturePayload.chatServerTools(ServerToolSettings())
+
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_search" })
+        assertFalse(tools.any { it.asJsonObject.get("type").asString == "openrouter:web_fetch" })
     }
 
     @Test
@@ -121,6 +148,16 @@ class OpenRouterFeaturePayloadTest {
         ).normalized()
 
         assertEquals(WebSearchEngine.AUTO, stored.webSearchEngine)
+        assertEquals(WebFetchEngine.AUTO, stored.webFetchEngine)
     }
 
+    @Test
+    fun unknownStoredFetchEngineFallsBackToAuto() {
+        val stored = Gson().fromJson(
+            """{"webSearch":"AUTO","webFetchEngine":"UNKNOWN"}""",
+            ServerToolSettings::class.java
+        ).normalized()
+
+        assertEquals(WebFetchEngine.AUTO, stored.webFetchEngine)
+    }
 }

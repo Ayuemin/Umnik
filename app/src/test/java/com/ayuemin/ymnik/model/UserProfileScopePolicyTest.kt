@@ -6,13 +6,13 @@ import org.junit.Test
 
 class UserProfileScopePolicyTest {
     @Test fun chatsScopeAppliesOnlyToOrdinaryChats() {
-        assertTrue(userProfileApplies(UserProfileScope.CHATS, inProject = false, isAgent = false))
-        assertFalse(userProfileApplies(UserProfileScope.CHATS, inProject = true, isAgent = false))
-        assertFalse(userProfileApplies(UserProfileScope.CHATS, inProject = true, isAgent = true))
+        assertTrue(userProfileApplies(UserProfileScope.CHATS, inTeam = false, isSpecialist = false))
+        assertFalse(userProfileApplies(UserProfileScope.CHATS, inTeam = true, isSpecialist = false))
+        assertFalse(userProfileApplies(UserProfileScope.CHATS, inTeam = true, isSpecialist = true))
     }
 
     @Test fun offNeverApplies() {
-        assertFalse(userProfileApplies(UserProfileScope.OFF, inProject = false, isAgent = false))
-        assertFalse(userProfileApplies(UserProfileScope.OFF, inProject = true, isAgent = true))
+        assertFalse(userProfileApplies(UserProfileScope.OFF, inTeam = false, isSpecialist = false))
+        assertFalse(userProfileApplies(UserProfileScope.OFF, inTeam = true, isSpecialist = true))
     }
 }

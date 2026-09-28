@@ -10,6 +10,7 @@ import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
@@ -24,6 +25,10 @@ class OpenRouterFilesClient(private val context: Context) {
         .readTimeout(180, TimeUnit.SECONDS)
         .writeTimeout(180, TimeUnit.SECONDS)
         .callTimeout(240, TimeUnit.SECONDS)
+        .build()
+
+    private val http1 = http.newBuilder()
+        .protocols(listOf(Protocol.HTTP_1_1))
         .build()
 
     data class RemoteFile(
@@ -55,7 +60,7 @@ class OpenRouterFilesClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .post(multipart)
             .build()
-        http.newCall(request).execute().use { response ->
+        executeWithHttp1Fallback(request, "upload:$name").use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiError(response.code, body))
             parseRemoteFile(body, name)
@@ -90,7 +95,7 @@ class OpenRouterFilesClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .post(ByteArray(0).toRequestBody(null))
             .build()
-        http.newCall(request).execute().use { response ->
+        executeWithHttp1Fallback(request, "promote:$fileId").use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiError(response.code, body))
             parseRemoteFile(body, null)
@@ -108,7 +113,7 @@ class OpenRouterFilesClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .delete()
             .build()
-        http.newCall(request).execute().use { response ->
+        executeWithHttp1Fallback(request, "delete:$fileId").use { response ->
             val body = response.body?.string().orEmpty()
             if (!response.isSuccessful) error(apiError(response.code, body))
         }
@@ -121,13 +126,27 @@ class OpenRouterFilesClient(private val context: Context) {
             .header("X-Title", "Umnik Android")
             .get()
             .build()
-        http.newCall(request).execute().use { response ->
+        executeWithHttp1Fallback(request, "download").use { response ->
             if (!response.isSuccessful) {
                 val body = response.body?.string().orEmpty()
                 error(apiError(response.code, body))
             }
             response.body?.bytes()?.takeIf { it.isNotEmpty() }
                 ?: error("OpenRouter вернул пустой файл")
+        }
+    }
+
+    private fun executeWithHttp1Fallback(request: Request, operation: String): okhttp3.Response {
+        return try {
+            http.newCall(request).execute()
+        } catch (error: Throwable) {
+            if (!isHttp2ProtocolFailure(error)) throw error
+            com.ayuemin.ymnik.diagnostics.DiagnosticLog.record(
+                context,
+                "FILES_RETRY",
+                "$operation; reason=${error.message.orEmpty().take(160)}; retry=http1"
+            )
+            http1.newCall(request).execute()
         }
     }
 
@@ -164,5 +183,15 @@ class OpenRouterFilesClient(private val context: Context) {
 
     companion object {
         const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+
+        internal fun isHttp2ProtocolFailure(error: Throwable): Boolean {
+            val messages = generateSequence(error) { it.cause }
+                .mapNotNull { it.message }
+                .joinToString(" | ")
+            return messages.contains("PROTOCOL_ERROR", ignoreCase = true) ||
+                messages.contains("stream was reset", ignoreCase = true) ||
+                (messages.contains("HTTP/2", ignoreCase = true) &&
+                    messages.contains("reset", ignoreCase = true))
+        }
     }
 }

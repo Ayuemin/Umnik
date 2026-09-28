@@ -46,4 +46,19 @@ class ConversationContextTest {
         val selected = ConversationContext.select(history, "инструкция", "вопрос", 0, null, 0)
         assertEquals(180, selected.size)
     }
+
+    @Test fun executionTraceDoesNotAffectConversationContextBudget() {
+        val plainAnswer = answer(1, "короткий ответ")
+        val tracedAnswer = plainAnswer.copy(
+            executionTrace = listOf("TRACE_UI_ONLY_".repeat(10_000))
+        )
+        val plain = ConversationContext.select(
+            listOf(user(1), plainAnswer), "инструкция", "новый вопрос", 0, 4_096, 1_024
+        )
+        val traced = ConversationContext.select(
+            listOf(user(1), tracedAnswer), "инструкция", "новый вопрос", 0, 4_096, 1_024
+        )
+        assertEquals(plain.map { it.id }, traced.map { it.id })
+        assertEquals(plainAnswer.text, traced.single { it.role == "assistant" }.text)
+    }
 }

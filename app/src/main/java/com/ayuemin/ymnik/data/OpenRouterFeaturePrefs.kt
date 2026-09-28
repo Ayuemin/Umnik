@@ -1,9 +1,9 @@
 package com.ayuemin.ymnik.data
 
 import android.content.Context
+import com.ayuemin.ymnik.model.InternetMode
 import com.ayuemin.ymnik.model.OpenRouterMediaSettings
 import com.ayuemin.ymnik.model.ProviderRoutingSettings
-import com.ayuemin.ymnik.model.RagSettings
 import com.ayuemin.ymnik.model.ServerToolSettings
 import com.ayuemin.ymnik.model.WebSearchEngine
 import com.ayuemin.ymnik.model.WebSearchMode
@@ -21,16 +21,38 @@ class OpenRouterFeaturePrefs(context: Context) {
         value.copy(
             webSearch = runCatching { value.webSearch }.getOrNull() ?: WebSearchMode.OFF,
             webSearchPreset = runCatching { value.webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-            webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+            internetMode = runCatching { value.internetMode }.getOrNull() ?: InternetMode.AUTO,
+            webSearchEngine = runCatching { value.webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO,
+            webFetch = false,
+            shell = false
         )
     }
-    fun saveTools(value: ServerToolSettings) { prefs.edit().putString("tools", gson.toJson(value)).apply() }
-
-    fun rag(): RagSettings = read("rag", RagSettings::class.java, RagSettings())
-    fun saveRag(value: RagSettings) { prefs.edit().putString("rag", gson.toJson(value.copy(topK = value.topK.coerceIn(1, 30)))).apply() }
+    fun saveTools(value: ServerToolSettings) {
+        val safe = value.copy(
+            internetMode = runCatching { value.internetMode }.getOrNull() ?: InternetMode.AUTO,
+            webFetch = false,
+            shell = false
+        )
+        prefs.edit().putString("tools", gson.toJson(safe)).apply()
+    }
 
     fun media(): OpenRouterMediaSettings = read("media", OpenRouterMediaSettings::class.java, OpenRouterMediaSettings())
     fun saveMedia(value: OpenRouterMediaSettings) { prefs.edit().putString("media", gson.toJson(value)).apply() }
+
+    fun localShellMaxTurns(): Int {
+        val stored = prefs.getInt("local_shell_max_turns", 500)
+        val value = if (stored == 24) 500 else stored.coerceIn(1, 500)
+        if (value != stored) prefs.edit().putInt("local_shell_max_turns", value).apply()
+        return value
+    }
+    fun saveLocalShellMaxTurns(value: Int) {
+        prefs.edit().putInt("local_shell_max_turns", value.coerceIn(1, 500)).apply()
+    }
+
+    fun localShellModelOverride(): String = prefs.getString("local_shell_model_override", "").orEmpty().trim()
+    fun saveLocalShellModelOverride(value: String) {
+        prefs.edit().putString("local_shell_model_override", value.trim()).apply()
+    }
 
     private fun <T> read(key: String, type: Class<T>, fallback: T): T = runCatching {
         prefs.getString(key, null)?.let { gson.fromJson(it, type) } ?: fallback

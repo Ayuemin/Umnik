@@ -8,8 +8,6 @@ enum class ChatContextMode {
 
 data class ChatMemoryGlobalSettings(
     val schemaVersion: Int = CURRENT_SCHEMA_VERSION,
-    val embeddingModelId: String = DEFAULT_EMBEDDING_MODEL,
-    val summaryModelId: String = DEFAULT_SUMMARY_MODEL,
     val defaultContextMode: ChatContextMode = ChatContextMode.AUTO,
     val autoThresholdTokens: Int = 30_000,
     val economyThresholdTokens: Int = 5_000,
@@ -30,9 +28,7 @@ data class ChatMemoryGlobalSettings(
     val stateCardMaxChars: Int = 3_000
 ) {
     companion object {
-        const val CURRENT_SCHEMA_VERSION = 3
-        const val DEFAULT_EMBEDDING_MODEL = "qwen/qwen3-embedding-8b"
-        const val DEFAULT_SUMMARY_MODEL = "openrouter/auto"
+        const val CURRENT_SCHEMA_VERSION = 4
     }
 }
 

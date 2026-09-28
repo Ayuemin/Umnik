@@ -1,7 +1,8 @@
-// Umnik v1.19.11 — stable release
+// Umnik v1.20.0 — stable release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("com.chaquo.python")
 }
 
 val releaseKeystorePath = System.getenv("UMNIK_KEYSTORE_PATH")
@@ -26,8 +27,13 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 157
-        versionName = "1.19.11"
+        versionCode = 201
+        versionName = "1.20.0"
+
+        // Local Shell embeds Python for the supported 64-bit release ABIs.
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
     }
 
     buildFeatures {
@@ -52,15 +58,15 @@ android {
 
     buildTypes {
         debug {
-            // Test builds from the work branch must coexist with the installed
+            // Test builds from work branches must coexist with the installed
             // stable Umnik and must never require removing user data first.
             applicationIdSuffix = ".test"
         }
 
         release {
-            // F-Droid review requested an R8-processed release. Keep shrinking and
-            // optimisation enabled for release builds; app-specific keep rules live
-            // in proguard-rules.pro and are exercised by CI via assembleRelease.
+            // Keep shrinking and optimisation enabled for release builds;
+            // app-specific keep rules live in proguard-rules.pro and are
+            // exercised by CI via assembleRelease.
             isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -88,6 +94,12 @@ android {
     }
 }
 
+chaquopy {
+    defaultConfig {
+        version = "3.13"
+    }
+}
+
 dependencies {
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
@@ -101,8 +113,11 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("androidx.documentfile:documentfile:1.1.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("org.jsoup:jsoup:1.18.3")
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
+    implementation("org.apache.commons:commons-compress:1.27.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }

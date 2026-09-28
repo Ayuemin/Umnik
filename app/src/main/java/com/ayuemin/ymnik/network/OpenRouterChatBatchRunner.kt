@@ -113,7 +113,7 @@ internal class OpenRouterChatBatchRunner(
             remoteId = created.remoteId,
             connectionProfileId = originChat?.connectionProfileId ?: "openrouter",
             chatId = originChatId,
-            projectId = originChat?.projectId,
+            teamId = originChat?.teamId,
             userMessageId = originMessageId,
             modelId = batchModelId,
             baseModelId = OpenRouterBatchCodec.baseModelId(batchModelId),
@@ -192,7 +192,8 @@ internal class OpenRouterChatBatchRunner(
             completionTokens = null,
             totalTokens = null,
             reasoningTokens = null,
-            costUsd = null
+            costUsd = null,
+            costUsdExact = null
         )
     }
 

@@ -24,7 +24,14 @@ import java.io.RandomAccessFile
 import java.util.UUID
 import kotlin.math.sqrt
 
+internal data class KnowledgeRetrievalResult(
+    val hits: List<KnowledgeHit>,
+    val candidateCount: Int,
+    val thresholdDropped: Int
+)
+
 class KnowledgeBaseRepository(private val context: Context) {
+    private val specialistsRoot = LegacyDomainStorageMigration.migrateDirectory(context, "agents", "specialists")
     private val root = File(context.filesDir, "knowledge_base").apply { mkdirs() }
     private val manifest = AtomicJsonFile(File(root, "manifest.json"))
     private val taskManifest = AtomicJsonFile(File(root, "index_tasks.json"))
@@ -132,13 +139,16 @@ class KnowledgeBaseRepository(private val context: Context) {
         documentId: String,
         embeddingModelId: String,
         connectionProfileId: String,
-        baseUrl: String
+        baseUrl: String,
+        allowQueuedForOwner: Boolean = false
     ): KnowledgeIndexTask = withContext(Dispatchers.IO) {
         val previous = (loadDocuments().firstOrNull { it.id == documentId }
             ?: documents.firstOrNull { it.id == documentId })
             ?: error("Документ базы знаний не найден")
-        require(activeIndexTask(previous.ownerKind, previous.ownerId) == null) {
-            "Для этой базы знаний уже выполняется индексация"
+        if (!allowQueuedForOwner) {
+            require(activeIndexTask(previous.ownerKind, previous.ownerId) == null) {
+                "Для этой базы знаний уже выполняется индексация"
+            }
         }
         val oldSource = File(previous.localPath)
         require(oldSource.isFile) { "Исходный файл «${previous.name}» не найден" }
@@ -301,12 +311,19 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     fun settings(kind: KnowledgeOwnerKind, ownerId: String): KnowledgeBaseSettings = runCatching {
-        prefs.getString(settingsKey(kind, ownerId), null)
-            ?.let { gson.fromJson(it, KnowledgeBaseSettings::class.java) }
+        val currentKey = settingsKey(kind, ownerId)
+        val raw = prefs.getString(currentKey, null) ?: legacySettingsKey(kind, ownerId)?.let { legacyKey ->
+            prefs.getString(legacyKey, null)?.also { legacyValue ->
+                prefs.edit().putString(currentKey, legacyValue).remove(legacyKey).apply()
+            }
+        }
+        raw?.let { gson.fromJson(it, KnowledgeBaseSettings::class.java) }
     }.getOrNull()?.let(::sanitizeSettings) ?: KnowledgeBaseSettings()
 
     fun saveSettings(kind: KnowledgeOwnerKind, ownerId: String, value: KnowledgeBaseSettings) {
-        prefs.edit().putString(settingsKey(kind, ownerId), gson.toJson(sanitizeSettings(value))).apply()
+        val editor = prefs.edit().putString(settingsKey(kind, ownerId), gson.toJson(sanitizeSettings(value)))
+        legacySettingsKey(kind, ownerId)?.let(editor::remove)
+        editor.apply()
     }
 
     fun hasEnabledKnowledge(owners: List<Pair<KnowledgeOwnerKind, String>>): Boolean = owners.any { (kind, id) ->
@@ -452,17 +469,42 @@ class KnowledgeBaseRepository(private val context: Context) {
         query: String,
         apiKey: String,
         baseUrl: String,
-        embeddings: OpenRouterEmbeddingClient
-    ): List<KnowledgeHit> = withContext(Dispatchers.IO) {
+        embeddings: OpenRouterEmbeddingClient,
+        embeddingModelId: String? = null
+    ): List<KnowledgeHit> = retrieveDetailed(
+        owners = owners,
+        query = query,
+        apiKey = apiKey,
+        baseUrl = baseUrl,
+        embeddings = embeddings,
+        embeddingModelId = embeddingModelId
+    ).hits
+
+    internal suspend fun retrieveDetailed(
+        owners: List<Pair<KnowledgeOwnerKind, String>>,
+        query: String,
+        apiKey: String,
+        baseUrl: String,
+        embeddings: OpenRouterEmbeddingClient,
+        embeddingModelId: String? = null
+    ): KnowledgeRetrievalResult = withContext(Dispatchers.IO) {
         val cleanQuery = query.trim()
-        if (cleanQuery.isBlank()) return@withContext emptyList()
+        if (cleanQuery.isBlank()) {
+            return@withContext KnowledgeRetrievalResult(emptyList(), 0, 0)
+        }
 
         val queryVectors = mutableMapOf<String, FloatArray>()
         val result = mutableListOf<KnowledgeHit>()
+        var candidateCount = 0
+        var thresholdDropped = 0
+
         owners.distinct().forEach { (kind, ownerId) ->
             val settings = settings(kind, ownerId)
             if (!settings.enabled) return@forEach
-            val ownerDocuments = documents(kind, ownerId).filter { documentFilesValid(it) }
+            val expectedModel = embeddingModelId?.trim().orEmpty()
+            val ownerDocuments = documents(kind, ownerId)
+                .filter { documentFilesValid(it) }
+                .filter { expectedModel.isBlank() || it.embeddingModelId == expectedModel }
             if (ownerDocuments.isEmpty()) return@forEach
 
             val ownerHits = mutableListOf<KnowledgeHit>()
@@ -480,14 +522,40 @@ class KnowledgeBaseRepository(private val context: Context) {
                     ownerHits += scoreDocument(document, queryVector, cleanQuery)
                 }
             }
+
+            candidateCount += ownerHits.size
+            val relevantHits = ownerHits.filter { hit ->
+                KnowledgeHybridRanker.passesRelevanceGate(
+                    semanticScore = hit.semanticScore ?: 0.0,
+                    lexicalScore = hit.lexicalScore ?: 0.0
+                )
+            }
+            thresholdDropped += ownerHits.size - relevantHits.size
+
             result += selectDiverseHits(
-                ownerHits.sortedByDescending { it.score },
+                relevantHits.sortedByDescending { it.score },
                 settings.topK
             )
         }
-        result.sortedByDescending { it.score }
+
+        val dedupedHits = result.sortedByDescending { it.score }
             .distinctBy { "${it.documentId}:${it.text.hashCode()}" }
-            .take(MAX_TOTAL_HITS)
+        // Final invariant before anything can reach the main model. This intentionally
+        // repeats the minimum semantic floor so a purely lexical coincidence can never
+        // survive selection/diversification even if ranking rules change later.
+        val finalRelevantHits = dedupedHits.filter { hit ->
+            val semantic = hit.semanticScore ?: 0.0
+            val lexical = hit.lexicalScore ?: 0.0
+            semantic >= 0.45 || (semantic >= 0.34 && lexical >= 2.0)
+        }
+        thresholdDropped += dedupedHits.size - finalRelevantHits.size
+        val finalHits = finalRelevantHits.take(MAX_TOTAL_HITS)
+
+        KnowledgeRetrievalResult(
+            hits = finalHits,
+            candidateCount = candidateCount,
+            thresholdDropped = thresholdDropped
+        )
     }
 
     private fun scoreDocument(document: KnowledgeDocument, query: FloatArray, rawQuery: String): List<KnowledgeHit> {
@@ -615,6 +683,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         taskManifest.read { raw -> runCatching { gson.fromJson<List<KnowledgeIndexTask>>(raw, tasksType) }.isSuccess }
             ?.let { gson.fromJson<List<KnowledgeIndexTask>>(it, tasksType) }
             .orEmpty()
+            .map(::migrateLegacyTaskPath)
     }.getOrDefault(emptyList()).also { indexTasks = it }
 
     private fun saveTasks(value: List<KnowledgeIndexTask>) {
@@ -746,6 +815,7 @@ class KnowledgeBaseRepository(private val context: Context) {
         manifest.read { raw -> runCatching { gson.fromJson<List<KnowledgeDocument>>(raw, documentsType) }.isSuccess }
             ?.let { gson.fromJson<List<KnowledgeDocument>>(it, documentsType) }
             .orEmpty()
+            .map(::migrateLegacyDocumentPath)
     }.getOrDefault(emptyList())
 
     private fun saveDocuments(value: List<KnowledgeDocument>) {
@@ -755,16 +825,39 @@ class KnowledgeBaseRepository(private val context: Context) {
     }
 
     private fun sanitizeSettings(value: KnowledgeBaseSettings): KnowledgeBaseSettings = value.copy(
-        embeddingModelId = value.embeddingModelId.trim().ifBlank { KnowledgeBaseSettings.DEFAULT_EMBEDDING_MODEL },
-        topK = value.topK.coerceIn(1, 10)
+        topK = value.topK.coerceIn(2, 4),
+        modelInstruction = value.modelInstruction.orEmpty().trim().take(4000),
+        modelSearchLimit = value.effectiveModelSearchLimit
     )
 
     private fun settingsKey(kind: KnowledgeOwnerKind, ownerId: String): String =
         "settings::${kind.name.lowercase()}::$ownerId"
 
+    private fun legacySettingsKey(kind: KnowledgeOwnerKind, ownerId: String): String? = when (kind) {
+        KnowledgeOwnerKind.TEAM -> "settings::project::$ownerId"
+        KnowledgeOwnerKind.SPECIALIST -> "settings::agent::$ownerId"
+        else -> null
+    }
+
+    private fun migrateLegacyDocumentPath(document: KnowledgeDocument): KnowledgeDocument {
+        if (document.ownerKind != KnowledgeOwnerKind.SPECIALIST) return document
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!document.localPath.startsWith(legacyPrefix)) return document
+        val relative = document.localPath.removePrefix(legacyPrefix)
+        return document.copy(localPath = File(specialistsRoot, relative).absolutePath)
+    }
+
+    private fun migrateLegacyTaskPath(task: KnowledgeIndexTask): KnowledgeIndexTask {
+        if (task.ownerKind != KnowledgeOwnerKind.SPECIALIST) return task
+        val legacyPrefix = File(context.filesDir, "agents").absolutePath + File.separator
+        if (!task.localPath.startsWith(legacyPrefix)) return task
+        val relative = task.localPath.removePrefix(legacyPrefix)
+        return task.copy(localPath = File(specialistsRoot, relative).absolutePath)
+    }
+
     private fun documentDir(kind: KnowledgeOwnerKind, ownerId: String, documentId: String): File =
-        if (kind == KnowledgeOwnerKind.AGENT) {
-            File(context.filesDir, "agents/${safe(ownerId)}/knowledge/${safe(documentId)}")
+        if (kind == KnowledgeOwnerKind.SPECIALIST) {
+            File(specialistsRoot, "${safe(ownerId)}/knowledge/${safe(documentId)}")
         } else {
             File(root, safe(documentId))
         }

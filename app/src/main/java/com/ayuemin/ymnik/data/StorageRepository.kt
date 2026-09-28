@@ -10,7 +10,7 @@ class StorageRepository(private val context: Context) {
     private val generatedRoot = File(context.filesDir, "generated").apply { mkdirs() }
     private val exportsRoot = File(context.filesDir, "exports").apply { mkdirs() }
     private val skillsRoot = File(context.filesDir, "skills").apply { mkdirs() }
-    private val projectsRoot = File(context.filesDir, "projects").apply { mkdirs() }
+    private val teamsRoot = LegacyDomainStorageMigration.migrateDirectory(context, "projects", "teams")
     private val chatFilesRoot = File(context.filesDir, "chat_files").apply { mkdirs() }
     private val soundsRoot = File(context.filesDir, "sounds").apply { mkdirs() }
     private val chatsFile = File(File(context.filesDir, "chats"), "chats.json")
@@ -21,7 +21,7 @@ class StorageRepository(private val context: Context) {
         collect(exportsRoot, "Экспорт", true, items)
         collect(soundsRoot, "Звуки", true, items)
         collect(skillsRoot, "Навыки", false, items, skipName = "skills.json")
-        collect(projectsRoot, "Проекты", false, items, skipName = "projects.json")
+        collect(teamsRoot, "Команды", false, items, skipName = "teams.json")
         collect(chatFilesRoot, "Файлы чатов", false, items)
         return items.sortedByDescending { it.modifiedAt }
     }
@@ -30,7 +30,7 @@ class StorageRepository(private val context: Context) {
         generatedBytes = sizeOf(generatedRoot),
         exportBytes = sizeOf(exportsRoot),
         skillBytes = sizeOf(skillsRoot),
-        projectBytes = sizeOf(projectsRoot),
+        teamBytes = sizeOf(teamsRoot),
         chatBytes = (if (chatsFile.exists()) chatsFile.length() else 0L) + sizeOf(chatFilesRoot),
         soundBytes = sizeOf(soundsRoot)
     )

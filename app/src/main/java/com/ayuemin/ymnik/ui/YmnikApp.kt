@@ -93,6 +93,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material.icons.outlined.Stop
 import androidx.compose.material.icons.outlined.Storage
+import androidx.compose.material.icons.outlined.SmartToy
 import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.VolumeUp
@@ -149,8 +150,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -164,14 +168,25 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.LocalShellActivity
 import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
+import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.WavRecorder
+import com.ayuemin.ymnik.browser.LocalBrowserActivity
+import com.ayuemin.ymnik.browser.LocalBrowserLifecycle
+import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.R
+import com.ayuemin.ymnik.data.BatchJobRepository
+import com.ayuemin.ymnik.data.VideoJobRepository
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.ContextLayerUsage
+import com.ayuemin.ymnik.model.ContextUsageBreakdown
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
+import com.ayuemin.ymnik.model.InternetMode
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.ProviderType
 import com.ayuemin.ymnik.model.ReasoningEffort
@@ -183,6 +198,7 @@ import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
+import java.math.BigDecimal
 import java.util.Locale
 
 private const val QUICK_MODEL_SEPARATOR = "\u001F"
@@ -198,13 +214,15 @@ private fun imageParameterSummary(state: UiState): String =
         .joinToString(" · ")
 
 private fun formatUsd(value: Double): String =
-    "$" + "%.2f".format(Locale.US, value.coerceAtLeast(0.0))
+    "$" + "%.5f".format(Locale.US, value.coerceAtLeast(0.0))
 
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
+    UserFontStore.initialize(context.applicationContext)
+    val userFontState by UserFontStore.state.collectAsState()
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) RequestKeepAliveService.update(context.applicationContext)
     }
@@ -246,7 +264,11 @@ fun YmnikApp(viewModel: ChatViewModel) {
         }
     }
 
-    UmnikTheme(state.themeChoice, state.customThemeColor) {
+    UmnikTheme(
+        choice = state.themeChoice,
+        customColor = state.customThemeColor,
+        customFontPath = userFontState.selected?.localPath
+    ) {
         Scaffold(
             containerColor = MaterialTheme.colorScheme.surface,
             snackbarHost = {
@@ -277,6 +299,7 @@ fun YmnikApp(viewModel: ChatViewModel) {
                     1 -> SkillsScreen(state, viewModel, onBack = { screen = 0 })
                     else -> SettingsScreen(state, viewModel, onBack = { screen = 0 })
                 }
+                LocalBrowserHost()
             }
         }
     }
@@ -296,23 +319,26 @@ private fun ChatScreen(
     var text by remember(state.currentChatId) { mutableStateOf("") }
     var fileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     var sidebarOpen by remember { mutableStateOf(false) }
-    var projectsOpen by remember { mutableStateOf(false) }
-    var selectedProjectId by remember { mutableStateOf<String?>(null) }
-    var createProjectDirect by remember { mutableStateOf(false) }
-    var projectNavigationOriginChatId by remember { mutableStateOf<String?>(null) }
-    var projectsOpenedFromSidebar by remember { mutableStateOf(false) }
-    var agentChatReturnProjectId by remember { mutableStateOf<String?>(null) }
+    var teamsOpen by remember { mutableStateOf(false) }
+    var selectedTeamId by remember { mutableStateOf<String?>(null) }
+    var createTeamDirect by remember { mutableStateOf(false) }
+    var teamNavigationOriginChatId by remember { mutableStateOf<String?>(null) }
+    var teamsOpenedFromSidebar by remember { mutableStateOf(false) }
+    var specialistChatReturnTeamId by remember { mutableStateOf<String?>(null) }
     var actionsOpen by remember { mutableStateOf(false) }
     var reasoningModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var reasoningModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var webSearchModeOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var webSearchModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var agentModeInfoOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var attachmentsExpanded by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchOpen by remember(state.currentChatId) { mutableStateOf(false) }
     var chatSearchQuery by remember(state.currentChatId) { mutableStateOf("") }
     var chatSearchResultPosition by remember(state.currentChatId) { mutableIntStateOf(-1) }
     var openRouterToolsExpanded by remember { mutableStateOf(false) }
-    var skillsExpanded by remember { mutableStateOf(false) }
-    var projectToolsExpanded by remember { mutableStateOf(false) }
-    var projectSkillsExpanded by remember { mutableStateOf(false) }
+    var skillsDialogOpen by remember(state.currentChatId) { mutableStateOf(false) }
+    var teamToolsExpanded by remember { mutableStateOf(false) }
+    var teamSkillsExpanded by remember { mutableStateOf(false) }
     var imagePromptMode by remember(state.currentChatId) { mutableStateOf(false) }
     var cameraForImageGeneration by remember { mutableStateOf(false) }
     var cameraTarget by remember { mutableStateOf<CameraTarget?>(null) }
@@ -345,9 +371,17 @@ private fun ChatScreen(
         !activeTextModel.endsWith(":batch", ignoreCase = true) && textModelInfo?.accepts("image") == true
     }
     val reasoningAvailable = !imagePromptMode && textModelInfo?.supportsReasoning == true
+    val supportedReasoningEfforts = if (
+        reasoningAvailable && textModelInfo?.supportsReasoningEffort == true
+    ) {
+        ReasoningEffort.entries.filter { effort -> effort.apiValue in textModelInfo.reasoningEfforts }
+    } else {
+        emptyList()
+    }
+    val reasoningLevelSelectable = supportedReasoningEfforts.isNotEmpty()
     val webSearchAvailable = !imagePromptMode && openRouterProfile && textModelInfo?.supportsTools == true
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
-    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
+    val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
     val chatSearchMatches = remember(state.messages, chatSearchQuery) {
         chatSearchMatchIndices(state.messages, chatSearchQuery)
     }
@@ -367,18 +401,38 @@ private fun ChatScreen(
         chatSearchQuery = ""
     }
     BackHandler(
-        enabled = currentAgentId != null &&
-            agentChatReturnProjectId != null &&
+        enabled = currentSpecialistId != null &&
+            specialistChatReturnTeamId != null &&
             !sidebarOpen &&
-            !projectsOpen &&
+            !teamsOpen &&
             !chatSearchOpen
     ) {
-        selectedProjectId = agentChatReturnProjectId
-        agentChatReturnProjectId = null
-        createProjectDirect = false
-        projectsOpen = true
+        selectedTeamId = specialistChatReturnTeamId
+        specialistChatReturnTeamId = null
+        createTeamDirect = false
+        teamsOpen = true
     }
     val requestActiveHere = vm.isChatRequestActive(state.currentChatId)
+    val asyncJobSequence by AsyncJobEvents.sequence.collectAsState()
+    val shellActivity by AsyncJobEvents.shellActivity.collectAsState()
+    val localShellActivity by AsyncJobEvents.localShellActivity.collectAsState()
+    val localShellGuidanceHere = requestActiveHere && localShellActivity?.chatId == state.currentChatId
+    val browserActivity by LocalBrowserRuntime.activity.collectAsState()
+    val hubToolActivity by AsyncJobEvents.hubToolActivity.collectAsState()
+    val batchRepository = remember(context) { BatchJobRepository(context.applicationContext) }
+    val videoRepository = remember(context) { VideoJobRepository(context.applicationContext) }
+    val activeBatchForChat = remember(state.currentChatId, asyncJobSequence) {
+        batchRepository.list()
+            .filter { it.chatId == state.currentChatId && !it.status.terminal }
+            .maxByOrNull { it.updatedAt }
+    }
+    val activeVideoForChat = remember(state.currentChatId, asyncJobSequence) {
+        videoRepository.list()
+            .filter { it.chatId == state.currentChatId && !it.status.terminal }
+            .maxByOrNull { it.updatedAt }
+    }
+    val activeHubToolHere = hubToolActivity?.takeIf { it.chatId == state.currentChatId }
+    val shellActiveHere = shellActivity?.chatId == state.currentChatId
     val requestSnapshots by RequestExecutionManager.snapshots.collectAsState()
     val streamingText = requestSnapshots.firstOrNull { it.chatId == state.currentChatId }?.partialText.orEmpty()
     val nonRequestBusy = state.isLoading && !state.requestActive
@@ -406,11 +460,11 @@ private fun ChatScreen(
             }
         }
     }
-    val currentProject = currentChat?.projectId
-        ?.let { projectId -> state.projects.firstOrNull { it.id == projectId } }
+    val currentTeam = currentChat?.teamId
+        ?.let { teamId -> state.teams.firstOrNull { it.id == teamId } }
     val activeSkillCount = state.activeSkillIds.size
-    val projectAvailableSkills = emptyList<com.ayuemin.ymnik.model.Skill>()
-    val activeProjectSkillCount = 0
+    val teamAvailableSkills = emptyList<com.ayuemin.ymnik.model.Skill>()
+    val activeTeamSkillCount = 0
 
     fun startVoiceRecording() {
         if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode) return
@@ -675,8 +729,8 @@ onBranch = if (message.role == "assistant") {
             }
         }
 
-        val visibleChatFiles = if (imagePromptMode) emptyList() else currentChatFiles
-        val attachmentCount = visibleChatFiles.size + state.pendingAttachments.size
+        val visibleChatFiles = emptyList<com.ayuemin.ymnik.model.ChatFile>()
+        val attachmentCount = state.pendingAttachments.size
         if (attachmentCount > 0) {
             Surface(color = MaterialTheme.colorScheme.surfaceContainerLow) {
                 Column(Modifier.fillMaxWidth()) {
@@ -790,6 +844,58 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
+                browserActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
+                    LocalBrowserInlineBanner(
+                        activity = activity,
+                        onShowPage = { LocalBrowserRuntime.showUserControl(activity.chatId) },
+                        onConfirm = { LocalBrowserRuntime.confirmPendingUserAction(activity.chatId) },
+                        onCancel = { LocalBrowserRuntime.cancelPendingUserAction(activity.chatId) }
+                    )
+                }
+
+                shellActivity?.takeIf { it.chatId == state.currentChatId }?.let { activity ->
+                    ShellBackgroundOperationBanner(
+                        activity = activity,
+                        onClick = { AsyncJobEvents.requestHub("shell", "Вернуться в чат") }
+                    )
+                }
+
+                localShellActivity?.let { activity ->
+                    LocalShellInlineBanner(
+                        activity = activity,
+                        currentChatId = state.currentChatId,
+                        onClick = { AsyncJobEvents.requestHub("local-shell", "Вернуться в чат") }
+                    )
+                }
+
+                activeHubToolHere?.let { activity ->
+                    BackgroundOperationBanner(
+                        title = activity.title,
+                        subtitle = "Чат доступен · операция продолжается",
+                        onClick = { AsyncJobEvents.requestHub(activity.page, "Вернуться в чат") }
+                    )
+                }
+
+                activeBatchForChat?.let { batch ->
+                    BackgroundOperationBanner(
+                        title = if (batch.completedItems > 0) {
+                            "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.completedItems}/${batch.totalItems}"
+                        } else {
+                            "Batch · ${batchStatusUiLabel(batch.status)} · ${batch.totalItems} заданий"
+                        },
+                        subtitle = "Чат доступен · результат появится здесь",
+                        onClick = { AsyncJobEvents.requestHub("batch", "Вернуться в чат") }
+                    )
+                }
+
+                activeVideoForChat?.let {
+                    BackgroundOperationBanner(
+                        title = "Видео создаётся",
+                        subtitle = "Чат доступен · результат появится здесь",
+                        onClick = { AsyncJobEvents.requestHub("video", "Вернуться в чат") }
+                    )
+                }
+
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -831,11 +937,17 @@ onBranch = if (message.role == "assistant") {
                                     description = "Поиск в сети включён"
                                 )
                             }
+                            if (!imagePromptMode && state.agentEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.SmartToy,
+                                    description = "Агентный режим включён"
+                                )
+                            }
                         }
                     },
                     trailingIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!imagePromptMode) {
+                            if (!imagePromptMode && !requestActiveHere) {
                                 IconButton(
                                     onClick = {
                                         if (isRecording) {
@@ -867,6 +979,22 @@ onBranch = if (message.role == "assistant") {
                                             microphoneAvailable -> MaterialTheme.colorScheme.onSurfaceVariant
                                             else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
                                         }
+                                    )
+                                }
+                            }
+                            if (localShellGuidanceHere && text.isNotBlank()) {
+                                IconButton(
+                                    onClick = {
+                                        vm.send(text)
+                                        text = ""
+                                    },
+                                    enabled = !nonRequestBusy,
+                                    modifier = Modifier.size(44.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.Send,
+                                        contentDescription = "Передать уточнение Local Shell",
+                                        tint = MaterialTheme.colorScheme.primary
                                     )
                                 }
                             }
@@ -915,6 +1043,13 @@ onBranch = if (message.role == "assistant") {
                     },
                     placeholder = {
                         when {
+                            localShellGuidanceHere -> Text(
+                                text = "Local Shell · ${formatRequestDuration(requestElapsedSeconds)} · можно уточнить задачу",
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                            )
                             requestActiveHere -> Text(
                                 text = formatRequestDuration(requestElapsedSeconds),
                                 modifier = Modifier.fillMaxWidth(),
@@ -923,7 +1058,7 @@ onBranch = if (message.role == "assistant") {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
                             )
                             imagePromptMode -> Text("Опишите изображение")
-                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу проекту обычным языком")
+                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу команде обычным языком")
                         }
                     },
                     shape = UmnikFieldShape,
@@ -942,28 +1077,28 @@ onBranch = if (message.role == "assistant") {
           vm.createChat()
           sidebarOpen = false
       },
-      onOpenProjects = {
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          selectedProjectId = null
-          createProjectDirect = false
-          projectsOpen = true
+      onOpenTeams = {
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          selectedTeamId = null
+          createTeamDirect = false
+          teamsOpen = true
           sidebarOpen = false
       },
-      onCreateProject = {
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          selectedProjectId = null
-          createProjectDirect = true
-          projectsOpen = true
+      onCreateTeam = {
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          selectedTeamId = null
+          createTeamDirect = true
+          teamsOpen = true
           sidebarOpen = false
       },
-      onOpenProject = { projectId ->
-          projectNavigationOriginChatId = state.currentChatId
-          projectsOpenedFromSidebar = true
-          createProjectDirect = false
-          selectedProjectId = projectId
-          projectsOpen = true
+      onOpenTeam = { teamId ->
+          teamNavigationOriginChatId = state.currentChatId
+          teamsOpenedFromSidebar = true
+          createTeamDirect = false
+          selectedTeamId = teamId
+          teamsOpen = true
           sidebarOpen = false
       },
       onOpenSkills = {
@@ -1032,14 +1167,18 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                if (!imagePromptMode && currentAgentId == null) {
+                if (!imagePromptMode && currentSpecialistId == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
                     ) {
                         ComposerToggleTile(
                             icon = Icons.Outlined.Psychology,
-                            label = reasoningEffortCompactLabel(state.reasoningEffort),
+                            level = supportedReasoningEfforts.indexOf(state.reasoningEffort).let { index ->
+                                if (index >= 0) index + 1 else 0
+                            },
+                            levelCount = supportedReasoningEfforts.size.coerceAtLeast(1),
+                            levelDescription = if (state.reasoningEnabled) "Размышление: " + reasoningEffortUiLabel(state.reasoningEffort) else "Размышление выключено",
                             checked = state.reasoningEnabled,
                             enabled = reasoningAvailable,
                             modifier = Modifier.weight(1f),
@@ -1048,20 +1187,47 @@ onBranch = if (message.role == "assistant") {
                         )
                         ComposerToggleTile(
                             icon = Icons.Outlined.Language,
-                            label = webSearchPresetCompactLabel(state.webSearchPreset),
+                            level = when (state.internetMode) {
+                                InternetMode.BROWSER -> 4
+                                else -> webSearchPresetIndicatorLevel(state.webSearchPreset)
+                            },
+                            levelCount = 4,
+                            indicatorText = when (state.internetMode) {
+                                InternetMode.SEARCH_ONLY -> null
+                                InternetMode.AUTO -> "AUTO"
+                                InternetMode.BROWSER -> "BROW"
+                            },
+                            levelDescription = when {
+                                !state.webSearchEnabled -> "Интернет выключен"
+                                state.internetMode == InternetMode.SEARCH_ONLY -> "Только поиск: " + webSearchPresetUiLabel(state.webSearchPreset)
+                                state.internetMode == InternetMode.AUTO -> "Автоматически: " + webSearchPresetUiLabel(state.webSearchPreset)
+                                else -> "Браузер"
+                            },
                             checked = state.webSearchEnabled,
                             enabled = webSearchAvailable,
                             modifier = Modifier.weight(1f),
                             onOpenSettings = { webSearchModeOpen = true },
                             onCheckedChange = vm::setWebSearchEnabled
                         )
+                        ComposerToggleTile(
+                            icon = Icons.Outlined.SmartToy,
+                            level = 5,
+                            levelCount = 5,
+                            indicatorText = "АГЕНТ",
+                            levelDescription = if (state.agentEnabled) "Агентный режим включён" else "Агентный режим выключен",
+                            checked = state.agentEnabled,
+                            enabled = openRouterProfile,
+                            modifier = Modifier.weight(1f),
+                            onOpenSettings = { agentModeInfoOpen = true },
+                            onCheckedChange = vm::setAgentEnabled
+                        )
                     }
                 }
 
-                if (currentAgentId == null) {
+                if (currentSpecialistId == null) {
                     ComposerSectionHeader(
                         icon = Icons.Outlined.Storage,
-                        label = "Инструменты OpenRouter",
+                        label = "Инструменты",
                         expanded = openRouterToolsExpanded,
                         onClick = { openRouterToolsExpanded = !openRouterToolsExpanded }
                     )
@@ -1070,91 +1236,126 @@ onBranch = if (message.role == "assistant") {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
+                            }
+                            CompactComposerTool(Icons.Outlined.Extension, "Навыки", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                skillsDialogOpen = true
+                            }
                             CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt")
-                            }
-                            CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
-                                actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech")
-                            }
-                            CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
-                                actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt", "Вернуться в чат")
                             }
                         }
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Вернуться в чат")
+                            }
+                            CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
+                                actionsOpen = false
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video", "Вернуться в чат")
+                            }
                             CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs")
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs", "Вернуться в чат")
                             }
-                            CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
-                                actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("shell")
-                            }
-                            Spacer(Modifier.weight(1f))
                         }
                     }
                 }
 
-                if (currentAgentId == null) {
-                    ComposerSectionHeader(
-                        icon = Icons.Outlined.Extension,
-                        label = if (activeSkillCount > 0) "Навыки · $activeSkillCount" else "Навыки",
-                        expanded = skillsExpanded,
-                        onClick = { skillsExpanded = !skillsExpanded }
-                    )
-                    if (skillsExpanded) {
-                        Text(
-                            "Выберите навыки для текущего чата.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        if (state.skills.isEmpty()) {
-                            Text(
-                                "Навыков пока нет. Добавьте их в общих настройках.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        } else {
-                            ComposerSkillList(
-                                skills = state.skills,
-                                selectedIds = state.activeSkillIds,
-                                onToggle = vm::toggleSkill
-                            )
-                        }
-                    }
-                }
-
-                // Project stages and shared project skills were removed in the agent-first architecture.
-                // Agent-owned tools/skills are configured inside the agent itself.
+                // Team stages and shared team skills were removed in the specialist-first architecture.
+                // Specialist-owned tools/skills are configured inside the specialist itself.
             }
         }
     }
 
-    if (reasoningModeOpen) {
-        val controllableEfforts = if (textModelInfo?.supportsReasoningEffort == true) {
-            ReasoningEffort.entries.filter { effort ->
-                textModelInfo.reasoningEfforts.isNotEmpty() && effort.apiValue in textModelInfo.reasoningEfforts
-            }
-        } else {
-            emptyList()
-        }
+    if (skillsDialogOpen) {
         AlertDialog(
-            onDismissRequest = { reasoningModeOpen = false },
-            title = { Text("Уровень размышления") },
+            onDismissRequest = { skillsDialogOpen = false },
+            title = { Text("Навыки") },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
-                        activeTextModel.substringAfter('/').ifBlank { activeTextModel },
+                        "Включённые навыки применяются к следующим запросам только в этом чате.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (state.skills.isEmpty()) {
+                        Text(
+                            "Навыков пока нет. Добавьте их в общих настройках.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            state.skills.forEachIndexed { index, skill ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        skill.name,
+                                        modifier = Modifier.weight(1f),
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Spacer(Modifier.width(10.dp))
+                                    Switch(
+                                        checked = skill.id in state.activeSkillIds,
+                                        onCheckedChange = { vm.toggleSkill(skill.id) }
+                                    )
+                                }
+                                if (index < state.skills.lastIndex) {
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { skillsDialogOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+    if (reasoningModeOpen) {
+        val controllableEfforts = supportedReasoningEfforts
+        AlertDialog(
+            onDismissRequest = { reasoningModeOpen = false },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Уровень размышления", modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            reasoningModeOpen = false
+                            reasoningModeInfoOpen = true
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Info, contentDescription = "Об уровне размышления")
+                    }
+                }
+            },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (controllableEfforts.isEmpty()) {
-                        Text("Модель поддерживает размышление, но доступный уровень выбирает сама.")
+                        Text("Модель умеет размышлять, но не даёт выбирать уровень.")
                     } else {
                         controllableEfforts.forEach { effort ->
                             FilterChip(
@@ -1175,35 +1376,80 @@ onBranch = if (message.role == "assistant") {
         )
     }
 
+    if (reasoningModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { reasoningModeInfoOpen = false },
+            title = { Text("О размышлении") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Уровень размышления относится только к текущему чату.")
+                    Text("Доступные уровни зависят от выбранной модели.")
+                    Text("Более высокий уровень может работать дольше и стоить дороже.")
+                    Text("Если модель не позволяет выбирать уровень, Umnik не показывает выбор, которого у неё нет.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { reasoningModeInfoOpen = false }) { Text("Понятно") }
+            }
+        )
+    }
+
     if (webSearchModeOpen) {
         AlertDialog(
             onDismissRequest = { webSearchModeOpen = false },
-            title = { Text("Режим поиска") },
+            title = {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Интернет", modifier = Modifier.weight(1f))
+                    IconButton(
+                        onClick = {
+                            webSearchModeOpen = false
+                            webSearchModeInfoOpen = true
+                        }
+                    ) {
+                        Icon(Icons.Outlined.Info, contentDescription = "О режимах интернета")
+                    }
+                }
+            },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    WebSearchPreset.entries.forEach { preset ->
-                        Column {
+                    Text(
+                        "Режим",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    InternetMode.entries.forEach { mode ->
+                        FilterChip(
+                            selected = state.internetMode == mode,
+                            onClick = { vm.setInternetMode(mode) },
+                            label = {
+                                Text(
+                                    when (mode) {
+                                        InternetMode.SEARCH_ONLY -> "Только поиск"
+                                        InternetMode.AUTO -> "Автоматически"
+                                        InternetMode.BROWSER -> "Браузер"
+                                    }
+                                )
+                            }
+                        )
+                    }
+                    if (state.internetMode != InternetMode.BROWSER) {
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Уровень поиска",
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        WebSearchPreset.entries.forEach { preset ->
                             FilterChip(
                                 selected = state.webSearchPreset == preset,
-                                onClick = {
-                                    vm.setWebSearchPreset(preset)
-                                    webSearchModeOpen = false
-                                },
+                                onClick = { vm.setWebSearchPreset(preset) },
                                 label = { Text(webSearchPresetUiLabel(preset)) }
-                            )
-                            Text(
-                                webSearchPresetDescription(preset),
-                                modifier = Modifier.padding(start = 6.dp),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
-                    Text(
-                        "Сервис поиска и другие технические параметры настраиваются в общих настройках OpenRouter.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
                 }
             },
             confirmButton = {
@@ -1212,31 +1458,87 @@ onBranch = if (message.role == "assistant") {
         )
     }
 
-    if (projectsOpen) {
-        ProjectsDialog(
+    if (webSearchModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { webSearchModeInfoOpen = false },
+            title = { Text("Об интернете") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Режим и уровень относятся только к текущему чату.")
+                    Text(
+                        "• Только поиск — поиск и чтение найденных страниц без интерактивного WebView.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "• Автоматически — модель сама выбирает поиск, чтение страницы или Browser.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "• Браузер — интерактивная работа со страницей. Уровень поиска здесь не применяется.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    WebSearchPreset.entries.forEach { preset ->
+                        Text(
+                            "• ${webSearchPresetUiLabel(preset)} — ${webSearchPresetDescription(preset)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { webSearchModeInfoOpen = false }) { Text("Закрыть") }
+            }
+        )
+    }
+
+
+    if (agentModeInfoOpen) {
+        AlertDialog(
+            onDismissRequest = { agentModeInfoOpen = false },
+            title = { Text("Агентный режим") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Настройка относится только к текущему чату.")
+                    Text("Когда Агент выключен, Umnik не запускает Browser или Local Shell по собственной инициативе. Если инструмент заметно помог бы, модель может предложить его.")
+                    Text("Прямая команда пользователя имеет приоритет: если вы сами попросили Browser или Local Shell, конкретный инструмент можно запустить и при выключенном Агенте.")
+                    Text("Когда Агент включён, модель может сама выбирать и сочетать доступные инструменты. Длинная работа может увеличить расход OpenRouter.")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { agentModeInfoOpen = false }) { Text("Понятно") }
+            }
+        )
+    }
+
+    if (teamsOpen) {
+        TeamsDialog(
             state = state,
             vm = vm,
             onDismiss = {
-                projectsOpen = false
-                selectedProjectId = null
-                createProjectDirect = false
-                if (projectsOpenedFromSidebar) {
-                    val origin = projectNavigationOriginChatId
+                teamsOpen = false
+                selectedTeamId = null
+                createTeamDirect = false
+                if (teamsOpenedFromSidebar) {
+                    val origin = teamNavigationOriginChatId
                     if (origin != null && state.chats.any { it.id == origin }) {
                         vm.switchChat(origin)
                     }
-                    projectsOpenedFromSidebar = false
-                    projectNavigationOriginChatId = null
+                    teamsOpenedFromSidebar = false
+                    teamNavigationOriginChatId = null
                     sidebarOpen = true
                 }
             },
-            initialProjectId = selectedProjectId,
-            startCreate = createProjectDirect,
-            onAgentConversationOpened = { projectId, _ ->
-                agentChatReturnProjectId = projectId
-                projectsOpen = false
-                selectedProjectId = null
-                createProjectDirect = false
+            initialTeamId = selectedTeamId,
+            startCreate = createTeamDirect,
+            onSpecialistConversationOpened = { teamId, _ ->
+                specialistChatReturnTeamId = teamId
+                teamsOpen = false
+                selectedTeamId = null
+                createTeamDirect = false
             }
         )
     }
@@ -1244,10 +1546,186 @@ onBranch = if (message.role == "assistant") {
 
 
 @Composable
+private fun LocalShellInlineBanner(
+    activity: LocalShellActivity,
+    currentChatId: String,
+    onClick: () -> Unit
+) {
+    BackgroundOperationBanner(
+        title = "Local Shell · работает · " + activity.turn + "/" + activity.maxTurns,
+        subtitle = if (activity.chatId == currentChatId) {
+            activity.status
+        } else {
+            "Задача выполняется в другом чате"
+        },
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun ShellBackgroundOperationBanner(
+    activity: ShellActivity,
+    onClick: () -> Unit
+) {
+    var now by remember(activity.startedAt) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(activity.startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(1_000)
+        }
+    }
+    val elapsedSeconds = ((now - activity.startedAt).coerceAtLeast(0L) / 1_000L)
+    val elapsed = if (elapsedSeconds >= 60L) {
+        (elapsedSeconds / 60L).toString() + ":" + (elapsedSeconds % 60L).toString().padStart(2, '0')
+    } else {
+        elapsedSeconds.toString() + " с"
+    }
+    val signal = activity.lastRemoteEventAt?.let { eventAt ->
+        val ago = ((now - eventAt).coerceAtLeast(0L) / 1_000L)
+        when {
+            ago < 5L -> "сигнал только что"
+            ago < 60L -> "сигнал " + ago + " с назад"
+            else -> "сигнал " + (ago / 60L) + " мин назад"
+        }
+    }
+
+    BackgroundOperationBanner(
+        title = "Shell · " + elapsed,
+        subtitle = buildString {
+            append(activity.status)
+            if (signal != null) append(" · ").append(signal)
+        },
+        onClick = onClick
+    )
+}
+
+@Composable
+private fun LocalBrowserInlineBanner(
+    activity: LocalBrowserActivity,
+    onShowPage: () -> Unit,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit
+) {
+    val waiting = activity.lifecycle == LocalBrowserLifecycle.WAITING_USER
+    Surface(
+        onClick = onShowPage,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(
+            1.dp,
+            if (waiting) MaterialTheme.colorScheme.primary.copy(alpha = 0.48f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f)
+        )
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (waiting) {
+                    Icon(
+                        Icons.Outlined.Info,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                } else {
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        if (waiting) "Требуется действие · " + activity.host else "Браузер · " + activity.host,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        activity.attentionMessage ?: activity.status,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = if (waiting) 2 else 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            if (waiting) {
+                Spacer(Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onShowPage) { Text("Посмотреть страницу") }
+                    TextButton(onClick = onCancel) { Text("Отмена") }
+                    if (activity.attentionKind == "CONFIRM_ACTION") {
+                        Button(onClick = onConfirm) { Text("Подтвердить") }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackgroundOperationBanner(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit
+) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(18.dp),
+                strokeWidth = 2.dp
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                Icons.Outlined.KeyboardArrowRight,
+                contentDescription = "Открыть",
+                tint = MaterialTheme.colorScheme.primary
+            )
+        }
+    }
+}
+
+private fun batchStatusUiLabel(status: com.ayuemin.ymnik.model.BatchJobStatus): String = when (status) {
+    com.ayuemin.ymnik.model.BatchJobStatus.VALIDATING -> "проверка"
+    com.ayuemin.ymnik.model.BatchJobStatus.QUEUED -> "в очереди"
+    com.ayuemin.ymnik.model.BatchJobStatus.IN_PROGRESS -> "выполняется"
+    com.ayuemin.ymnik.model.BatchJobStatus.FINALIZING -> "завершается"
+    else -> "выполняется"
+}
+
+@Composable
 private fun ComposerToggleTile(
     icon: ImageVector,
-    label: String,
-    subtitle: String? = null,
+    level: Int,
+    levelCount: Int,
+    indicatorText: String? = null,
+    levelDescription: String,
     checked: Boolean,
     enabled: Boolean,
     modifier: Modifier = Modifier,
@@ -1260,7 +1738,7 @@ private fun ComposerToggleTile(
         color = MaterialTheme.colorScheme.surfaceContainerHigh
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(
@@ -1277,31 +1755,73 @@ private fun ComposerToggleTile(
             ) {
                 Icon(
                     icon,
-                    contentDescription = null,
-                    modifier = Modifier.size(20.dp),
+                    contentDescription = levelDescription,
+                    modifier = Modifier.size(18.dp),
                     tint = if (enabled) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
                 )
-                Spacer(Modifier.width(7.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        label,
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    if (!subtitle.isNullOrBlank()) {
-                        Text(
-                            subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                Spacer(Modifier.width(5.dp))
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.spacedBy(
+                        when {
+                            levelCount >= 5 -> 1.dp
+                            levelCount >= 4 -> 2.dp
+                            else -> 3.dp
+                        }
+                    ),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val count = levelCount.coerceAtLeast(1)
+                    repeat(count) { index ->
+                        val active = enabled && checked && index < level
+                        if (!indicatorText.isNullOrBlank() && indicatorText.length >= count) {
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    indicatorText[index].toString(),
+                                    style = if (indicatorText.length >= 5) MaterialTheme.typography.labelSmall else MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (active) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (enabled) 0.18f else 0.08f
+                                        )
+                                    },
+                                    maxLines = 1
+                                )
+                            }
+                        } else {
+                            Box(
+                                modifier = Modifier.weight(1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Surface(
+                                    modifier = Modifier.fillMaxWidth().height(6.dp),
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = if (active) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(
+                                            alpha = if (enabled) 0.16f else 0.08f
+                                        )
+                                    }
+                                ) {}
+                            }
+                        }
                     }
                 }
             }
-            Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
+            Spacer(Modifier.width(4.dp))
+            Switch(
+                checked = checked,
+                onCheckedChange = onCheckedChange,
+                enabled = enabled,
+                modifier = Modifier.width(42.dp).scale(0.86f)
+            )
         }
     }
 }
@@ -1315,20 +1835,17 @@ private fun reasoningEffortUiLabel(effort: ReasoningEffort): String = when (effo
     ReasoningEffort.MAX -> "Максимальный"
 }
 
-private fun reasoningEffortCompactLabel(effort: ReasoningEffort): String = when (effort) {
-    ReasoningEffort.MINIMAL -> "Минимум"
-    ReasoningEffort.LOW -> "Низкий"
-    ReasoningEffort.MEDIUM -> "Средний"
-    ReasoningEffort.HIGH -> "Высокий"
-    ReasoningEffort.XHIGH -> "Очень высокий"
-    ReasoningEffort.MAX -> "Максимум"
+private fun reasoningEffortIndicatorLevel(effort: ReasoningEffort): Int = when (effort) {
+    ReasoningEffort.MINIMAL, ReasoningEffort.LOW -> 1
+    ReasoningEffort.MEDIUM, ReasoningEffort.HIGH -> 2
+    ReasoningEffort.XHIGH, ReasoningEffort.MAX -> 3
 }
 
-private fun webSearchPresetCompactLabel(preset: WebSearchPreset): String = when (preset) {
-    WebSearchPreset.ON_DEMAND -> "Необходимый"
-    WebSearchPreset.FAST -> "Быстрый"
-    WebSearchPreset.NORMAL -> "Обычный"
-    WebSearchPreset.DEEP -> "Глубокий"
+private fun webSearchPresetIndicatorLevel(preset: WebSearchPreset): Int = when (preset) {
+    WebSearchPreset.ON_DEMAND -> 1
+    WebSearchPreset.FAST -> 2
+    WebSearchPreset.NORMAL -> 3
+    WebSearchPreset.DEEP -> 4
 }
 
 private fun webSearchPresetUiLabel(preset: WebSearchPreset): String = when (preset) {
@@ -1638,24 +2155,24 @@ private fun ChatHeader(
     var overflowOpen by remember { mutableStateOf(false) }
     var modelMenuOpen by remember { mutableStateOf(false) }
     var usageOpen by remember { mutableStateOf(false) }
-    var clearAgentChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
+    var clearSpecialistChatConfirm by remember(state.currentChatId) { mutableStateOf(false) }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
     val activeUsage = state.providerUsage?.takeIf { activeProfile?.type == ProviderType.OPENROUTER }
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val shortModelName = activeTextModel.substringAfter('/').ifBlank { activeTextModel }
     val currentChat = state.chats.firstOrNull { it.id == state.currentChatId }
-    val currentAgentId = currentChat?.let { vm.agentIdForChat(it.id) }
-    val currentAgent = state.agents.firstOrNull { it.id == currentAgentId }
+    val currentSpecialistId = currentChat?.let { vm.specialistIdForChat(it.id) }
+    val currentSpecialist = state.specialists.firstOrNull { it.id == currentSpecialistId }
     val currentRef = quickModelRef(state.activeConnectionProfileId, activeTextModel)
     val defaultRef = quickModelRef(state.activeConnectionProfileId, state.textModel)
-    val agentRefs = currentAgent?.let { agent ->
+    val specialistRefs = currentSpecialist?.let { specialist ->
         buildList {
-            agent.primaryModel?.let { add(quickModelRef(it.connectionProfileId, it.modelId)) }
-            agent.quickModels.forEach { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+            specialist.primaryModel?.let { add(quickModelRef(it.connectionProfileId, it.modelId)) }
+            specialist.quickModels.forEach { add(quickModelRef(it.connectionProfileId, it.modelId)) }
         }
     }.orEmpty()
-    val quickCandidates = if (currentAgent != null) {
-        (listOf(currentRef) + agentRefs)
+    val quickCandidates = if (currentSpecialist != null) {
+        (listOf(currentRef) + specialistRefs)
             .filter { quickModelId(it).isNotBlank() }
             .distinct()
     } else {
@@ -1666,7 +2183,7 @@ private fun ChatHeader(
     val chatTitle = currentChat?.title
         ?.trim()
         ?.takeIf { it.isNotBlank() }
-        ?: currentAgent?.name
+        ?: currentSpecialist?.name
         ?: "Новый чат"
 
     Surface(color = MaterialTheme.colorScheme.surface, tonalElevation = 0.dp) {
@@ -1676,7 +2193,7 @@ private fun ChatHeader(
         ) {
             UmnikCircleAction(
                 icon = Icons.Outlined.Menu,
-                contentDescription = "Открыть проекты и историю",
+                contentDescription = "Открыть команды и историю",
                 onClick = onOpenSidebar
             )
 
@@ -1763,7 +2280,7 @@ private fun ChatHeader(
                         enabled = currentChat != null && !state.isLoading && !vm.isChatRequestActive(state.currentChatId),
                         onClick = {
                             overflowOpen = false
-                            clearAgentChatConfirm = true
+                            clearSpecialistChatConfirm = true
                         }
                     )
                 }
@@ -1795,8 +2312,8 @@ private fun ChatHeader(
                                     Text(
                                         when {
                                             current -> "Текущая модель"
-                                            currentAgent != null && currentAgent.primaryModel?.modelId == id -> "Основная модель агента"
-                                            currentAgent != null -> "Дополнительная модель агента"
+                                            currentSpecialist != null && currentSpecialist.primaryModel?.modelId == id -> "Основная модель специалиста"
+                                            currentSpecialist != null -> "Дополнительная модель специалиста"
                                             ref == defaultRef -> "Модель по умолчанию"
                                             else -> connection?.name ?: "OpenRouter"
                                         },
@@ -1812,8 +2329,8 @@ private fun ChatHeader(
                                 else Spacer(Modifier.size(24.dp))
                             },
                             onClick = {
-                                if (currentAgent != null) {
-                                    vm.selectAgentQuickModel(currentAgent.id, ref)
+                                if (currentSpecialist != null) {
+                                    vm.selectSpecialistQuickModel(currentSpecialist.id, ref)
                                 } else if (ref == defaultRef) {
                                     vm.useDefaultTextModelForChat()
                                 } else {
@@ -1828,15 +2345,15 @@ private fun ChatHeader(
         }
     }
 
-    if (clearAgentChatConfirm && currentChat != null) {
+    if (clearSpecialistChatConfirm && currentChat != null) {
         AlertDialog(
-            onDismissRequest = { clearAgentChatConfirm = false },
+            onDismissRequest = { clearSpecialistChatConfirm = false },
             title = { Text("Очистить переписку?") },
             text = {
                 Text(
-                    if (currentAgent != null) {
+                    if (currentSpecialist != null) {
                         "История разговора и временный контекст будут удалены. " +
-                            "Инструкция, модель, навыки, постоянные файлы и база знаний агента останутся."
+                            "Инструкция, модель, навыки, постоянные файлы и база знаний специалиста останутся."
                     } else {
                         "История разговора и временные файлы контекста текущего чата будут удалены."
                     }
@@ -1844,12 +2361,12 @@ private fun ChatHeader(
             },
             confirmButton = {
                 TextButton(onClick = {
-                    clearAgentChatConfirm = false
+                    clearSpecialistChatConfirm = false
                     vm.clearChat()
                 }) { Text("Очистить") }
             },
             dismissButton = {
-                TextButton(onClick = { clearAgentChatConfirm = false }) { Text("Отмена") }
+                TextButton(onClick = { clearSpecialistChatConfirm = false }) { Text("Отмена") }
             }
         )
     }
@@ -2093,16 +2610,21 @@ private fun MessageCard(
             message.inputTokens != null ||
             message.outputTokens != null ||
             message.costUsd != null ||
+            message.costBreakdown != null ||
+            message.contextUsage != null ||
             message.responseDurationMs != null ||
             message.knowledgeHitCount != null ||
+            message.knowledgeSearchAttempted != null ||
+            message.knowledgeBaseOnly != null ||
             message.webSearchEnabled != null ||
             message.reasoningEnabled != null ||
             message.memoryContextUsed != null ||
             message.activeSkillCount != null ||
-            message.projectContextUsed != null ||
+            message.teamContextUsed != null ||
             message.attachmentCount != null ||
             !message.connectionName.isNullOrBlank() ||
-            !message.requestId.isNullOrBlank()
+            !message.requestId.isNullOrBlank() ||
+            message.executionTrace?.isNotEmpty() == true
         )
 
     val searchShape = RoundedCornerShape(20.dp)
@@ -2183,6 +2705,14 @@ private fun MessageCard(
             ) {
                 if (message.text.isNotBlank()) {
                     MessageBody(message.text, content, onGuideLink)
+                }
+                if (message.deliveryState == "interrupted") {
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "Ответ прерван пользователем. Показанная часть сохранена.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
                 message.generatedFiles.forEach { file ->
                     Spacer(Modifier.height(10.dp))
@@ -2286,7 +2816,11 @@ private fun AnswerInfoSheet(
     onDismiss: () -> Unit
 ) {
     var technicalOpen by remember(message.id) { mutableStateOf(false) }
+    var executionTraceOpen by remember(message.id) { mutableStateOf(false) }
+    val executionTrace = message.executionTrace.orEmpty()
     val knowledgeCount = message.knowledgeHitCount
+    val knowledgeSearchAttempted = message.knowledgeSearchAttempted == true
+    val knowledgeBaseOnly = message.knowledgeBaseOnly == true
     val sources = message.knowledgeSources.orEmpty()
 
     ModalBottomSheet(onDismissRequest = onDismiss) {
@@ -2316,33 +2850,90 @@ private fun AnswerInfoSheet(
             message.connectionName?.takeIf { it.isNotBlank() }?.let { AnswerInfoRow("Подключение", it) }
             message.responseDurationMs?.let { AnswerInfoRow("Время", formatAnswerDuration(it)) }
 
-            if (message.inputTokens != null || message.outputTokens != null || message.costUsd != null) {
+            if (
+                message.inputTokens != null ||
+                message.outputTokens != null ||
+                message.costUsd != null ||
+                message.costBreakdown != null
+            ) {
                 Spacer(Modifier.height(8.dp))
-                AnswerInfoSectionTitle("Расход")
-                message.inputTokens?.let { AnswerInfoRow("Вход", "$it токенов") }
-                message.outputTokens?.let { AnswerInfoRow("Выход", "$it токенов") }
-                if (message.inputTokens != null && message.outputTokens != null) {
-                    AnswerInfoRow("Всего", "${message.inputTokens + message.outputTokens} токенов")
+                AnswerInfoSectionTitle("Токены и стоимость")
+                AnswerInfoRow(
+                    "Отправлено в OpenRouter",
+                    message.inputTokens?.let { "$it токенов" } ?: "—"
+                )
+                AnswerInfoRow(
+                    "Получено от OpenRouter",
+                    message.outputTokens?.let { "$it токенов" } ?: "—"
+                )
+                AnswerInfoRow(
+                    "Всего обработано",
+                    if (message.inputTokens != null && message.outputTokens != null) {
+                        "${message.inputTokens + message.outputTokens} токенов"
+                    } else {
+                        "—"
+                    }
+                )
+
+                val costs = message.costBreakdown
+                if (costs != null) {
+                    costs.knownTotalUsd?.let {
+                        AnswerInfoRow(
+                            if (costs.incomplete) "Учтено за запрос" else "Стоимость запроса",
+                            formatExactUsd(it)
+                        )
+                    }
+                    if (costs.incomplete) {
+                        Text(
+                            "OpenRouter не сообщил стоимость части операций, поэтому показана только точно известная сумма.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 3.dp)
+                        )
+                    }
+                } else {
+                    message.costUsd?.takeIf { it >= 0.0 }?.let {
+                        AnswerInfoRow("Стоимость запроса", formatAnswerCost(it))
+                    }
                 }
-                message.costUsd?.takeIf { it >= 0.0 }?.let { AnswerInfoRow("Стоимость", formatAnswerCost(it)) }
             }
 
             if (
                 knowledgeCount != null ||
+                message.knowledgeSearchAttempted != null ||
+                message.knowledgeBaseOnly != null ||
                 message.webSearchEnabled != null ||
+                message.internetMode != null ||
                 message.reasoningEnabled != null ||
                 message.memoryContextUsed != null ||
                 message.activeSkillCount != null ||
-                message.projectContextUsed != null ||
+                message.contextUsage != null ||
+                message.teamContextUsed != null ||
                 message.attachmentCount != null
             ) {
                 Spacer(Modifier.height(8.dp))
                 AnswerInfoSectionTitle("Контекст")
-                knowledgeCount?.let { count ->
-                    AnswerInfoRow(
-                        "База знаний",
-                        if (count > 0) "Использована · $count фрагм." else "Фрагменты не добавлялись"
-                    )
+                ContextUsageBreakdownRows(
+                    usage = message.contextUsage ?: ContextUsageBreakdown(),
+                    providerInputTokens = message.inputTokens
+                )
+                if (knowledgeCount != null || knowledgeSearchAttempted || knowledgeBaseOnly) {
+                    val knowledgeStatus = when {
+                        knowledgeSearchAttempted && (knowledgeCount ?: 0) > 0 ->
+                            "База участвовала · подобрано ${knowledgeCount ?: 0} фрагм."
+                        knowledgeSearchAttempted ->
+                            "Поиск выполнен · подходящего не найдено"
+                        knowledgeBaseOnly ->
+                            "Запрошена, но база недоступна или выключена"
+                        (knowledgeCount ?: 0) > 0 ->
+                            "База участвовала · подобрано ${knowledgeCount ?: 0} фрагм."
+                        else ->
+                            "Фрагменты не добавлялись"
+                    }
+                    AnswerInfoRow("База знаний", knowledgeStatus)
+                    if (knowledgeBaseOnly) {
+                        AnswerInfoRow("Режим базы", "Только по загруженным документам")
+                    }
                     if (sources.isNotEmpty()) {
                         Column(
                             modifier = Modifier.padding(start = 12.dp, bottom = 4.dp),
@@ -2358,9 +2949,16 @@ private fun AnswerInfoSheet(
                         }
                     }
                 }
-                message.webSearchEnabled?.let {
-                    AnswerInfoRow("Веб-поиск", if (it) "Включён для запроса" else "Выключен")
+                val internetLabel = when {
+                    message.webSearchEnabled == null && message.internetMode.isNullOrBlank() -> "—"
+                    message.webSearchEnabled != true -> "Выключен"
+                    message.internetMode == InternetMode.SEARCH_ONLY.name -> "Только поиск"
+                    message.internetMode == InternetMode.AUTO.name -> "Автоматически"
+                    message.internetMode == InternetMode.BROWSER.name -> "Браузер"
+                    else -> "Поиск"
                 }
+                AnswerInfoRow("Интернет", internetLabel)
+                WebToolAnswerInfoRows(message)
                 message.reasoningEnabled?.let { enabled ->
                     val suffix = message.reasoningEffort?.takeIf { it.isNotBlank() }?.let { " · $it" }.orEmpty()
                     AnswerInfoRow("Размышление", if (enabled) "Включено$suffix" else "Выключено")
@@ -2371,14 +2969,57 @@ private fun AnswerInfoSheet(
                 message.activeSkillCount?.let {
                     AnswerInfoRow("Навыки", if (it > 0) "$it активн." else "Не использовались")
                 }
-                message.projectContextUsed?.let {
-                    AnswerInfoRow("Проект", if (it) "Контекст проекта добавлен" else "Без проекта")
+                message.teamContextUsed?.let {
+                    AnswerInfoRow("Команда", if (it) "Контекст команды добавлен" else "Без команды")
                 }
                 message.attachmentCount?.let {
                     AnswerInfoRow("Вложения", if (it > 0) "$it" else "Нет")
                 }
                 if (message.generatedFiles.isNotEmpty()) {
                     AnswerInfoRow("Создано файлов", message.generatedFiles.size.toString())
+                }
+            }
+
+
+            if (executionTrace.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Surface(
+                    onClick = { executionTraceOpen = true },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLow,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.72f))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Outlined.History,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "Ход выполнения · ${executionTrace.size} фрагм.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Text(
+                                "Промежуточные сообщения модели во время выполнения",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            Icons.Outlined.KeyboardArrowRight,
+                            contentDescription = "Открыть ход выполнения",
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -2404,7 +3045,110 @@ private fun AnswerInfoSheet(
             Spacer(Modifier.height(8.dp))
         }
     }
+
+    if (executionTraceOpen) {
+        Dialog(
+            onDismissRequest = { executionTraceOpen = false },
+            properties = DialogProperties(usePlatformDefaultWidth = false)
+        ) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 18.dp)
+                    .heightIn(max = 620.dp),
+                shape = RoundedCornerShape(22.dp),
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 6.dp,
+                shadowElevation = 8.dp
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "Ход выполнения",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        IconButton(onClick = { executionTraceOpen = false }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Закрыть")
+                        }
+                    }
+                    Text(
+                        "Промежуточные сообщения модели. Они сохранены только для просмотра и не добавляются в контекст чата.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    executionTrace.forEachIndexed { index, part ->
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                "Этап ${index + 1}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            SelectionContainer {
+                                Text(
+                                    part,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                        if (index < executionTrace.lastIndex) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.55f))
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
+
+@Composable
+private fun ContextUsageBreakdownRows(
+    usage: ContextUsageBreakdown,
+    providerInputTokens: Int?
+) {
+    AnswerInfoRow("Системный prompt", formatContextLayer(usage.systemPrompt))
+    AnswerInfoRow("Схемы tools", formatContextLayer(usage.tools))
+    AnswerInfoRow("История", formatContextLayer(usage.history))
+    AnswerInfoRow("Память / RAG", formatContextLayer(usage.memoryRag))
+    AnswerInfoRow("Навыки", formatContextLayer(usage.skills))
+    AnswerInfoRow("Текущий запрос", formatContextLayer(usage.currentUserPrompt))
+    AnswerInfoRow("Вложения", "${usage.attachmentCount} шт. · ${usage.attachmentBytes} Б")
+
+    val locallyEstimatedTokens = listOf(
+        usage.systemPrompt,
+        usage.tools,
+        usage.history,
+        usage.memoryRag,
+        usage.skills,
+        usage.currentUserPrompt
+    ).sumOf { it.estimatedTokens }
+    val openRouterSideTokens = providerInputTokens
+        ?.let { (it - locallyEstimatedTokens).coerceAtLeast(0) }
+    AnswerInfoRow(
+        "Обработано на стороне OpenRouter",
+        openRouterSideTokens?.let { "≈ $it ток." } ?: "—"
+    )
+    Text(
+        "Символы и байты точные; ≈ токены — локальная оценка.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+private fun formatContextLayer(layer: ContextLayerUsage): String =
+    "${layer.chars} зн. · ${layer.bytes} Б · ≈ ${layer.estimatedTokens} ток."
 
 @Composable
 private fun AnswerInfoSectionTitle(title: String) {
@@ -2428,7 +3172,7 @@ private fun AnswerInfoRow(label: String, value: String) {
             label,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.width(112.dp)
+            modifier = Modifier.width(132.dp)
         )
         SelectionContainer(
             modifier = Modifier.weight(1f)
@@ -2449,10 +3193,15 @@ private fun formatAnswerDuration(milliseconds: Long): String =
         "%.1f с".format(Locale.US, milliseconds / 1000.0)
     }
 
-private fun formatAnswerCost(value: Double): String = when {
-    value <= 0.0 -> "$0.00"
-    value < 0.01 -> "$" + "%.6f".format(Locale.US, value)
-    else -> "$" + "%.4f".format(Locale.US, value)
+private fun formatAnswerCost(value: Double): String =
+    formatExactUsd(BigDecimal.valueOf(value).toPlainString())
+
+private fun formatExactUsd(raw: String): String = runCatching {
+    val decimal = BigDecimal(raw.trim()).stripTrailingZeros()
+    val plain = if (decimal.compareTo(BigDecimal.ZERO) == 0) "0" else decimal.toPlainString()
+    "$" + plain
+}.getOrElse {
+    "$" + raw.trim()
 }
 
 private enum class MessagePartKind { PLAIN, CODE, COPY }
@@ -2695,31 +3444,54 @@ private fun MarkdownTable(rows: List<List<String>>, color: androidx.compose.ui.g
 @Composable
 private fun markdownInline(source: String): androidx.compose.ui.text.AnnotatedString {
     val codeBackground = MaterialTheme.colorScheme.surfaceContainerHighest
+    val linkColor = MaterialTheme.colorScheme.primary
+    val linkStyles = TextLinkStyles(
+        style = SpanStyle(
+            color = linkColor,
+            textDecoration = TextDecoration.Underline,
+            fontWeight = FontWeight.Medium
+        )
+    )
     return buildAnnotatedString {
-    val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)")
-    var cursor = 0
-    regex.findAll(source).forEach { match ->
-        if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
-        when {
-            match.groupValues[1].isNotEmpty() -> withStyle(
-                SpanStyle(
-                    fontFamily = FontFamily.Monospace,
-                    background = codeBackground
-                )
-            ) { append(match.groupValues[1]) }
-            match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
-            match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
-            match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
-            match.groupValues[5].isNotEmpty() -> withStyle(
-                SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)
-            ) { append(match.groupValues[5]) }
-            match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
-            match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
-            else -> append(match.value)
+        val regex = Regex("`([^`\\n]+)`|\\*\\*([^*\\n]+)\\*\\*|__([^_\\n]+)__|~~([^~\\n]+)~~|\\[([^]\\n]+)]\\(([^)\\n]+)\\)|(?<!\\*)\\*([^*\\n]+)\\*(?!\\*)|(?<!_)_([^_\\n]+)_(?!_)|(https?://[^\\s<>()]+)")
+        var cursor = 0
+        regex.findAll(source).forEach { match ->
+            if (match.range.first > cursor) append(source.substring(cursor, match.range.first))
+            when {
+                match.groupValues[1].isNotEmpty() -> withStyle(
+                    SpanStyle(
+                        fontFamily = FontFamily.Monospace,
+                        background = codeBackground
+                    )
+                ) { append(match.groupValues[1]) }
+                match.groupValues[2].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[2]) }
+                match.groupValues[3].isNotEmpty() -> withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { append(match.groupValues[3]) }
+                match.groupValues[4].isNotEmpty() -> withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) { append(match.groupValues[4]) }
+                match.groupValues[5].isNotEmpty() -> {
+                    val label = match.groupValues[5]
+                    val target = match.groupValues[6].trim()
+                    if (target.startsWith("https://", true) || target.startsWith("http://", true)) {
+                        withLink(LinkAnnotation.Url(target, linkStyles)) { append(label) }
+                    } else {
+                        withStyle(SpanStyle(textDecoration = TextDecoration.Underline, fontWeight = FontWeight.Medium)) {
+                            append(label)
+                        }
+                    }
+                }
+                match.groupValues[7].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[7]) }
+                match.groupValues[8].isNotEmpty() -> withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { append(match.groupValues[8]) }
+                match.groupValues[9].isNotEmpty() -> {
+                    val rawUrl = match.groupValues[9]
+                    val url = rawUrl.trimEnd('.', ',', ';', ':', '!', '?', '"', '\'')
+                    val suffix = rawUrl.substring(url.length)
+                    withLink(LinkAnnotation.Url(url, linkStyles)) { append(url) }
+                    append(suffix)
+                }
+                else -> append(match.value)
+            }
+            cursor = match.range.last + 1
         }
-        cursor = match.range.last + 1
-    }
-    if (cursor < source.length) append(source.substring(cursor))
+        if (cursor < source.length) append(source.substring(cursor))
     }
 }
 
@@ -2970,7 +3742,7 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
         ) {
             item {
                 Text(
-                    "Навык — это постоянная инструкция и текстовые материалы для модели. После подключения Umnik добавляет их к каждому текстовому запросу. Навык сам ничего не запускает и не изменяет файлы.",
+                    "Навыки хранятся в общей библиотеке. Здесь их можно добавлять и удалять, а включение для конкретного чата доступно через «+ → Инструменты → Навыки». Навык сам ничего не запускает и не изменяет файлы.",
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(12.dp))
@@ -3013,9 +3785,9 @@ private fun SkillsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) 
                                 label = {
                                     Text(
                                         if (skill.id in state.activeSkillIds)
-                                            "Подключён к каждому чату"
+                                            "Активен в текущем чате"
                                         else
-                                            "Подключить к каждому чату"
+                                            "Включить в текущем чате"
                                     )
                                 },
                                 leadingIcon = {

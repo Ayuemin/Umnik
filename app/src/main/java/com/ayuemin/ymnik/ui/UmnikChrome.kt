@@ -429,7 +429,7 @@ internal fun UmnikModelPickerCard(
     }
 }
 
-internal fun projectDate(timestamp: Long): String =
+internal fun teamDate(timestamp: Long): String =
     SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()).format(Date(timestamp))
 
 @Composable

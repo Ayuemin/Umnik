@@ -9,6 +9,8 @@ import java.util.Collections
  *
  * A session may create several clients for an Orchestrator fan-out. That allows independent
  * specialists to work in parallel while cancellation stays scoped to this one top-level job.
+ * Asynchronous children such as Local Shell may outlive normal parent completion, but an
+ * explicit/system cancellation of the parent must stop the whole request tree immediately.
  */
 internal class RequestNetworkSession(
     context: Context,
@@ -16,6 +18,11 @@ internal class RequestNetworkSession(
 ) {
     private val app = context.applicationContext
     private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
+    private val childCancellations = RequestChildCancellationRegistry()
+    private val costLedger = RequestCostLedger()
+    private val embeddingClient = com.ayuemin.ymnik.network.OpenRouterEmbeddingClient(app) { exact ->
+        costLedger.record(RequestCostKind.EMBEDDINGS, exact)
+    }
 
     private fun openRouter(
         chatId: String? = null,
@@ -29,7 +36,8 @@ internal class RequestNetworkSession(
             requestProfileId = profileId,
             recoveryEnabled = recoverable,
             streamCallback = { text -> updatePartial(text) },
-            phaseCallback = { label -> updatePhase(label) }
+            phaseCallback = { label -> updatePhase(label) },
+            costSink = costLedger::record
         )
             .also { clients += it }
 
@@ -42,9 +50,24 @@ internal class RequestNetworkSession(
         block(openRouter(chatId, profileId, recoverable))
     }
 
+    fun embeddings(): com.ayuemin.ymnik.network.OpenRouterEmbeddingClient = embeddingClient
+
+    fun costSnapshot(): com.ayuemin.ymnik.model.RequestCostBreakdown? = costLedger.snapshot()
+
     fun reserveChat(chatId: String): Boolean = RequestExecutionManager.reserveChat(requestId, chatId)
 
     fun releaseChat(chatId: String) = RequestExecutionManager.releaseChat(requestId, chatId)
+
+    /**
+     * Register asynchronous work which belongs to this request for cancellation purposes.
+     * Returning false means the parent was already cancelled and [cancel] was invoked now.
+     */
+    fun registerChildCancellation(id: String, cancel: () -> Unit): Boolean =
+        childCancellations.register(id, cancel)
+
+    fun unregisterChildCancellation(id: String) {
+        childCancellations.unregister(id)
+    }
 
     fun updatePhase(label: String) {
         RequestExecutionManager.updatePhase(app, requestId, label)
@@ -55,6 +78,7 @@ internal class RequestNetworkSession(
     }
 
     fun cancel() {
+        childCancellations.cancelAll()
         val snapshot = synchronized(clients) { clients.toList() }
         snapshot.forEach { runCatching { it.cancelActiveRequest() } }
     }

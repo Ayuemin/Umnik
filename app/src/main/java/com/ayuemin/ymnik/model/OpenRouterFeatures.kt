@@ -24,12 +24,26 @@ enum class WebSearchPreset {
     DEEP
 }
 
+enum class InternetMode {
+    SEARCH_ONLY,
+    AUTO,
+    BROWSER
+}
+
 enum class WebSearchEngine(val apiValue: String) {
     AUTO("auto"),
     NATIVE("native"),
     EXA("exa"),
     PARALLEL("parallel"),
     PERPLEXITY("perplexity")
+}
+
+enum class WebFetchEngine(val apiValue: String) {
+    AUTO("auto"),
+    NATIVE("native"),
+    OPENROUTER("openrouter"),
+    EXA("exa"),
+    PARALLEL("parallel")
 }
 
 data class ProviderRoutingSettings(
@@ -52,7 +66,9 @@ data class ProviderRoutingSettings(
 data class ServerToolSettings(
     val webSearch: WebSearchMode = WebSearchMode.OFF,
     val webSearchPreset: WebSearchPreset = WebSearchPreset.ON_DEMAND,
+    val internetMode: InternetMode = InternetMode.AUTO,
     val webSearchEngine: WebSearchEngine = WebSearchEngine.AUTO,
+    val webFetchEngine: WebFetchEngine = WebFetchEngine.AUTO,
     val webFetch: Boolean = false,
     val datetime: Boolean = false,
     val imageGeneration: Boolean = false,
@@ -70,5 +86,7 @@ data class ServerToolSettings(
 fun ServerToolSettings.normalized(): ServerToolSettings = copy(
     webSearch = runCatching { webSearch }.getOrNull() ?: WebSearchMode.OFF,
     webSearchPreset = runCatching { webSearchPreset }.getOrNull() ?: WebSearchPreset.ON_DEMAND,
-    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO
+    internetMode = runCatching { internetMode }.getOrNull() ?: InternetMode.AUTO,
+    webSearchEngine = runCatching { webSearchEngine }.getOrNull() ?: WebSearchEngine.AUTO,
+    webFetchEngine = runCatching { webFetchEngine }.getOrNull() ?: WebFetchEngine.AUTO
 )

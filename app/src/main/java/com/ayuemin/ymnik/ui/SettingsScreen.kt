@@ -54,6 +54,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -153,7 +154,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
 
 private enum class SettingsCategory(val title: String, val subtitle: String) {
     CONNECTION("Подключение", "API-ключ OpenRouter"),
-    MODELS("Модели", "Чаты, изображения, размышление и речь"),
+    MODELS("Модели", "Чаты, системная, Embeddings, изображения и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
     DATA("Данные", "Локальное хранилище и файлы"),
@@ -252,6 +253,8 @@ private fun SettingsActionCard(
 @Composable
 internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
+    UserFontStore.initialize(context.applicationContext)
+    val userFontState by UserFontStore.state.collectAsState()
     val appVersion = remember(context) {
         runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
@@ -260,6 +263,10 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var settingsCategory by remember { mutableStateOf<SettingsCategory?>(null) }
     var storageOpen by remember { mutableStateOf(false) }
     var modelsExpanded by remember { mutableStateOf(false) }
+    var systemModelExpanded by remember { mutableStateOf(false) }
+    var embeddingModelExpanded by remember { mutableStateOf(false) }
+    var systemModelId by remember(state.systemModel) { mutableStateOf(state.systemModel) }
+    var embeddingModelId by remember(state.embeddingModel) { mutableStateOf(state.embeddingModel) }
     var defaultChatModelExpanded by remember { mutableStateOf(false) }
     var quickModelsExpanded by remember { mutableStateOf(false) }
     var imageModelsExpanded by remember { mutableStateOf(false) }
@@ -270,6 +277,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var soundExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
     var themeExpanded by remember { mutableStateOf(false) }
+    var fontExpanded by remember { mutableStateOf(false) }
     var connectionsExpanded by remember { mutableStateOf(false) }
     var diagnosticsExpanded by remember { mutableStateOf(false) }
     var diagnosticLoggingEnabled by remember { mutableStateOf(vm.isDiagnosticLoggingEnabled()) }
@@ -293,6 +301,12 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     val importedSounds = state.storedFiles.filter { it.category == "Звуки" }
     val soundPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let(vm::importAnswerSound)
+    }
+    val fontPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        UserFontStore.importFont(context, uri)
+            .onSuccess { font -> Toast.makeText(context, "Шрифт «${font.name}» применён", Toast.LENGTH_SHORT).show() }
+            .onFailure { error -> Toast.makeText(context, error.message ?: "Не удалось добавить шрифт", Toast.LENGTH_LONG).show() }
     }
     val diagnosticSave = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { uri: Uri? ->
         val file = diagnosticFileToSave
@@ -532,6 +546,56 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                 }
 
                 item {
+                    ExpandableSettingsCard(
+                        title = "Системная модель",
+                        subtitle = state.systemModel.substringAfterLast('/').ifBlank { "Не выбрана" },
+                        icon = Icons.Outlined.Psychology,
+                        expanded = systemModelExpanded,
+                        onToggle = { systemModelExpanded = !systemModelExpanded },
+                        info = "Общая служебная текстовая модель Umnik. Она не отвечает пользователю напрямую: понимает естественные запросы к базе знаний, связывает короткие продолжения с предыдущим вопросом, определяет режим «только по документам» и делает служебные конспекты длинных чатов. Обычно для этих задач достаточно дешёвой небольшой модели; можно выбрать и бесплатную, если она стабильно следует инструкциям. Если системная модель не выбрана, обычные чаты, специалисты без базы знаний, изображения, речь, веб-поиск, вложения и навыки продолжают работать. Не запускается база знаний, а долговременная память работает без служебного конспекта."
+                    ) {
+                        UmnikModelIdField(
+                            label = "ID системной модели",
+                            value = systemModelId,
+                            onValueChange = { systemModelId = it },
+                            onPick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Модели"
+                                )
+                            },
+                            onApply = { vm.setSystemModel(systemModelId) },
+                            info = "Используется только для внутренних коротких текстовых операций Umnik. Основную модель чата эта настройка не меняет."
+                        )
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Embeddings-модель",
+                        subtitle = state.embeddingModel.substringAfterLast('/').ifBlank { "Не выбрана" },
+                        icon = Icons.Outlined.Search,
+                        expanded = embeddingModelExpanded,
+                        onToggle = { embeddingModelExpanded = !embeddingModelExpanded },
+                        info = "Одна общая Embeddings-модель используется базой знаний и смысловой памятью чатов и специалистов. Обычно её выбирают один раз и не меняют. Если позже модель исчезнет из каталога или заметно подорожает, можно выбрать другую. Важно: при сохранении другой Embeddings-модели все существующие векторные индексы становятся несовместимыми, поэтому Umnik автоматически запускает переиндексацию всех документов и перестраивает служебную память. Это может занять время и потребовать дополнительных запросов к OpenRouter."
+                    ) {
+                        UmnikModelIdField(
+                            label = "ID Embeddings-модели",
+                            value = embeddingModelId,
+                            onValueChange = { embeddingModelId = it },
+                            onPick = {
+                                com.ayuemin.ymnik.AsyncJobEvents.requestHub(
+                                    "models-settings",
+                                    "Модели"
+                                )
+                            },
+                            onApply = { vm.setEmbeddingModel(embeddingModelId) },
+                            info = "Меняйте эту модель только осознанно: сразу после сохранения новой модели Umnik автоматически переиндексирует всё, что зависит от embeddings."
+                        )
+                    }
+                }
+
+                item {
                     val imageConnectionName = state.connectionProfiles.firstOrNull { it.id == state.imageConnectionProfileId }?.name ?: "Подключение"
                     ExpandableSettingsCard(
                         title = "Генерация изображений",
@@ -629,7 +693,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         icon = Icons.Outlined.Extension,
                         expanded = skillsLibraryExpanded,
                         onToggle = { skillsLibraryExpanded = !skillsLibraryExpanded },
-                        info = "Общая библиотека навыков. Импортированный навык сам по себе не влияет на ответы: его нужно отдельно включить в нужном обычном чате. У агентов есть собственные навыки."
+                        info = "Общая библиотека навыков. Импортированный навык сам по себе не влияет на ответы: его нужно отдельно включить в нужном обычном чате. У специалистов есть собственные навыки."
                     ) {
                         SkillLibrarySettings(state, vm)
                     }
@@ -642,7 +706,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                         icon = Icons.Outlined.Description,
                         expanded = profileExpanded,
                         onToggle = { profileExpanded = !profileExpanded },
-                        info = "Необязательный краткий профиль пользователя. Он передаётся модели только в выбранной области. Проекты и агенты могут быть исключены, чтобы личный контекст не попадал туда автоматически."
+                        info = "Необязательный краткий профиль пользователя. Он передаётся модели только в обычных чатах, когда переключатель включён. В команды и специалистам профиль автоматически не передаётся."
                     ) {
                         OutlinedTextField(profileName, { profileName = it }, Modifier.fillMaxWidth(), label = { Text("Имя") }, singleLine = true)
                         Spacer(Modifier.height(7.dp))
@@ -669,7 +733,7 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                             Column(Modifier.weight(1f)) {
                                 Text("Использовать в обычных чатах", fontWeight = FontWeight.Medium)
                                 Text(
-                                    "В проекты и агентам этот профиль не передаётся.",
+                                    "В команды и специалистам этот профиль не передаётся.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -767,6 +831,58 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                                 Spacer(Modifier.width(7.dp))
                                 Text("Проверить звук")
                             }
+                        }
+                    }
+                }
+
+                item {
+                    ExpandableSettingsCard(
+                        title = "Шрифт интерфейса",
+                        subtitle = userFontState.selected?.name ?: "Системный",
+                        icon = Icons.Outlined.TextFields,
+                        expanded = fontExpanded,
+                        onToggle = { fontExpanded = !fontExpanded },
+                        info = "Поддерживаются файлы TTF и OTF. Файл копируется во внутреннюю память Umnik, не показывается в «Хранилище Umnik» и удаляется только здесь."
+                    ) {
+                        FilterChip(
+                            selected = userFontState.selectedId == null,
+                            onClick = { UserFontStore.select(context, null) },
+                            label = { Text("Системный") },
+                            leadingIcon = if (userFontState.selectedId == null) {
+                                { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null
+                        )
+                        if (userFontState.fonts.isNotEmpty()) {
+                            Spacer(Modifier.height(6.dp))
+                            userFontState.fonts.forEach { font ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    FilterChip(
+                                        selected = userFontState.selectedId == font.id,
+                                        onClick = { UserFontStore.select(context, font.id) },
+                                        label = { Text(font.name, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                        leadingIcon = if (userFontState.selectedId == font.id) {
+                                            { Icon(Icons.Outlined.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                                        } else null,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                    IconButton(onClick = { UserFontStore.delete(context, font.id) }) {
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = "Удалить шрифт")
+                                    }
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
+                        FilledTonalButton(
+                            onClick = { fontPicker.launch(arrayOf("*/*")) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = null)
+                            Spacer(Modifier.width(7.dp))
+                            Text("Добавить шрифт")
                         }
                     }
                 }
@@ -1418,7 +1534,7 @@ private fun StorageDialog(state: UiState, vm: ChatViewModel, onDismiss: () -> Un
         AlertDialog(
             onDismissRequest = { clearConfirm = false },
             title = { Text("Очистить рабочие файлы?") },
-            text = { Text("Будут удалены сохранённые внутри Umnik изображения, сгенерированные файлы и экспорт. Чаты, проекты, навыки и API-ключ останутся.") },
+            text = { Text("Будут удалены сохранённые внутри Umnik изображения, сгенерированные файлы и экспорт. Чаты, команды, специалисты, навыки и API-ключ останутся.") },
             confirmButton = {
                 TextButton(onClick = {
                     vm.clearWorkingFiles()

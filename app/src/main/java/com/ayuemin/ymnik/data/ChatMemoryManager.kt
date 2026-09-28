@@ -36,7 +36,10 @@ class ChatMemoryManager(
         query: String,
         apiKey: String?,
         baseUrl: String?,
-        apiOverride: OpenRouterClient? = null
+        embeddingModelId: String,
+        systemModelId: String,
+        apiOverride: OpenRouterClient? = null,
+        embeddingOverride: OpenRouterEmbeddingClient? = null
     ): PreparedContext {
         if (chat == null || query.isBlank()) return PreparedContext(fullHistory)
         val mode = repository.mode(chat.id)
@@ -45,7 +48,13 @@ class ChatMemoryManager(
             return PreparedContext(fullHistory, description = "full")
         }
 
-        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
+        val cleanEmbeddingModelId = embeddingModelId.trim()
+        val cleanSystemModelId = systemModelId.trim()
+        val requestEmbeddings = embeddingOverride ?: embeddings
+        val settings = withKnownEmbeddingLimit(
+            repository.settingsForChat(chat.id),
+            cleanEmbeddingModelId
+        )
         val chunkPlan = ChatMemoryChunking.plan(settings)
         val completed = ConversationContext.completedTextTurns(fullHistory)
         val totalTokens = estimateHistoryTokens(completed)
@@ -67,7 +76,18 @@ class ChatMemoryManager(
         }
 
         return runCatching {
-            sync(chat, fullHistory, settings, recentCount, apiKey, baseUrl, apiOverride)
+            sync(
+                chat = chat,
+                history = fullHistory,
+                settings = settings,
+                embeddingModelId = cleanEmbeddingModelId,
+                systemModelId = cleanSystemModelId,
+                recentCount = recentCount,
+                apiKey = apiKey,
+                baseUrl = baseUrl,
+                apiOverride = apiOverride,
+                embeddingClient = requestEmbeddings
+            )
             val snapshot = repository.snapshot(chat.id)
             val recent = completed.takeLast(recentCount.coerceAtMost(completed.size))
             val recentIds = recent.map { it.id }.toSet()
@@ -83,9 +103,9 @@ class ChatMemoryManager(
                     "embedding query clipped chat=${chat.id.take(8)}; chars=${query.length}->${embeddingQuery.length}; targetTokens=${chunkPlan.targetTokens}"
                 )
             }
-            val queryVector = embeddings.embed(
+            val queryVector = requestEmbeddings.embed(
                 apiKey = apiKey,
-                modelId = settings.embeddingModelId,
+                modelId = cleanEmbeddingModelId,
                 inputs = listOf(embeddingQuery),
                 inputType = "search_query",
                 baseUrl = baseUrl
@@ -151,24 +171,45 @@ class ChatMemoryManager(
         chat: ChatSession,
         apiKey: String,
         baseUrl: String,
+        embeddingModelId: String,
+        systemModelId: String,
         mode: ChatContextMode = repository.mode(chat.id)
     ) {
         repository.clearMemory(chat.id)
-        val settings = withKnownEmbeddingLimit(repository.settingsForChat(chat.id))
+        val cleanEmbeddingModelId = embeddingModelId.trim()
+        val cleanSystemModelId = systemModelId.trim()
+        val settings = withKnownEmbeddingLimit(
+            repository.settingsForChat(chat.id),
+            cleanEmbeddingModelId
+        )
         val recent = evenRecentCount(
             if (mode == ChatContextMode.ECONOMY) settings.economyRecentMessages else settings.autoRecentMessages
         )
-        sync(chat, chat.messages, settings, recent, apiKey, baseUrl, null)
+        sync(
+            chat = chat,
+            history = chat.messages,
+            settings = settings,
+            embeddingModelId = cleanEmbeddingModelId,
+            systemModelId = cleanSystemModelId,
+            recentCount = recent,
+            apiKey = apiKey,
+            baseUrl = baseUrl,
+            apiOverride = null,
+            embeddingClient = embeddings
+        )
     }
 
     private suspend fun sync(
         chat: ChatSession,
         history: List<ChatMessage>,
         settings: ChatMemoryGlobalSettings,
+        embeddingModelId: String,
+        systemModelId: String,
         recentCount: Int,
         apiKey: String,
         baseUrl: String,
-        apiOverride: OpenRouterClient?
+        apiOverride: OpenRouterClient?,
+        embeddingClient: OpenRouterEmbeddingClient
     ) {
         val completed = ConversationContext.completedTextTurns(history)
         val keep = evenRecentCount(recentCount).coerceAtMost(completed.size)
@@ -178,8 +219,7 @@ class ChatMemoryManager(
         var snapshot = repository.snapshot(chat.id)
         if (
             snapshot != null && (
-                snapshot.embeddingModelId != settings.embeddingModelId ||
-                    snapshot.summaryModelId != settings.summaryModelId ||
+                snapshot.embeddingModelId != embeddingModelId ||
                     snapshot.chunkTokens != settings.chunkTokens ||
                     snapshot.chunkOverlapTokens != settings.chunkOverlapTokens ||
                     snapshot.embeddingContextTokens != settings.embeddingContextTokens
@@ -211,9 +251,9 @@ class ChatMemoryManager(
             val chunks = chunksForCheckpoint(indexGroupId, messages, chunkPlan)
             val vectors = mutableListOf<FloatArray>()
             chunks.chunked(24).forEach { batch ->
-                vectors += embeddings.embed(
+                vectors += embeddingClient.embed(
                     apiKey = apiKey,
-                    modelId = settings.embeddingModelId,
+                    modelId = embeddingModelId,
                     inputs = batch.map { it.text },
                     inputType = "search_document",
                     baseUrl = baseUrl
@@ -222,6 +262,8 @@ class ChatMemoryManager(
             repository.appendIndexedChunks(
                 chatId = chat.id,
                 settings = settings,
+                embeddingModelId = embeddingModelId,
+                summaryModelId = systemModelId,
                 chunks = chunks,
                 vectors = vectors,
                 fingerprints = messages.associate { it.id to fingerprint(it) }
@@ -240,6 +282,14 @@ class ChatMemoryManager(
             turn.size == 2 && turn.any { it.id !in checkpointedIds }
         }
         if (pendingTurns.isEmpty()) return
+        if (systemModelId.isBlank()) {
+            DiagnosticLog.record(
+                context,
+                "CHAT_MEMORY",
+                "checkpoint skipped chat=${chat.id.take(8)}; system model not configured; embeddings remain searchable"
+            )
+            return
+        }
 
         val pendingTokens = pendingTurns.sumOf { turn ->
             turn.sumOf { ConversationContext.estimateTokens(it.text) + 24 } + 64
@@ -275,7 +325,7 @@ class ChatMemoryManager(
             val source = formatMessages(messages)
             val previousState = repository.snapshot(chat.id)?.stateCard.orEmpty()
             val (summary, stateCard) = runCatching {
-                summarize(settings, apiKey, baseUrl, source, previousState, apiOverride)
+                summarize(settings, systemModelId, apiKey, baseUrl, source, previousState, apiOverride)
             }.onFailure { error ->
                 DiagnosticLog.record(context, "CHAT_MEMORY", "summary failed chat=${chat.id.take(8)} group=${groupIndex + 1}", error)
             }.getOrElse {
@@ -285,6 +335,8 @@ class ChatMemoryManager(
             repository.appendCheckpoint(
                 chatId = chat.id,
                 settings = settings,
+                embeddingModelId = embeddingModelId,
+                summaryModelId = systemModelId,
                 checkpoint = ChatMemoryCheckpoint(checkpointId, messages.map { it.id }, summary),
                 chunks = emptyList(),
                 vectors = emptyList(),
@@ -294,13 +346,14 @@ class ChatMemoryManager(
             DiagnosticLog.record(
                 context,
                 "CHAT_MEMORY",
-                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunkTarget=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; embedding=${settings.embeddingModelId}; summary=${settings.summaryModelId}"
+                "checkpoint chat=${chat.id.take(8)}; messages=${messages.size}; chunkTarget=${chunkPlan.targetTokens}; overlap=${chunkPlan.overlapTokens}; embedContext=${chunkPlan.modelContextTokens ?: 0}; embedding=$embeddingModelId; summary=$systemModelId"
             )
         }
     }
 
     private suspend fun summarize(
         settings: ChatMemoryGlobalSettings,
+        systemModelId: String,
         apiKey: String,
         baseUrl: String,
         sourceText: String,
@@ -319,19 +372,13 @@ class ChatMemoryManager(
             appendLine("===== НОВЫЙ ФРАГМЕНТ =====")
             appendLine(sourceText)
         }
-        val result = (apiOverride ?: api).chat(
+        val result = (apiOverride ?: api).internalText(
             apiKey = apiKey,
-            model = settings.summaryModelId,
-            history = emptyList(),
+            model = systemModelId,
             prompt = prompt,
-            attachments = emptyList(),
             systemPrompt = "Ты служебный модуль памяти Umnik. Сохраняй только то, что подтверждено исходной перепиской. Не обращайся к пользователю и не добавляй советы.",
-            webSearchEnabled = false,
-            reasoningEnabled = false,
-            reasoningEffort = null,
-            toolsEnabled = false,
             baseUrl = baseUrl,
-            modelInfo = ModelInfo(settings.summaryModelId)
+            modelInfo = ModelInfo(systemModelId)
         )
         val raw = result.text.trim()
         val checkpoint = raw.substringAfter("===CHECKPOINT===", raw)
@@ -406,9 +453,12 @@ class ChatMemoryManager(
      * v1.16.0 could already have this model selected before the catalog-derived
      * context limit was persisted. Keep the upgrade safe even before Settings is reopened.
      */
-    private fun withKnownEmbeddingLimit(settings: ChatMemoryGlobalSettings): ChatMemoryGlobalSettings {
+    private fun withKnownEmbeddingLimit(
+        settings: ChatMemoryGlobalSettings,
+        embeddingModelId: String
+    ): ChatMemoryGlobalSettings {
         if (settings.embeddingContextTokens != null) return settings
-        val known = when (settings.embeddingModelId.lowercase(Locale.US)) {
+        val known = when (embeddingModelId.lowercase(Locale.US)) {
             "liquid/lfm-2.5-embedding-350m",
             "liquid/lfm-2.5-embedding-350m:free" -> 512
             else -> null

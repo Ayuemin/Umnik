@@ -21,7 +21,7 @@ class ChatToolPolicyTest {
     }
 
     @Test
-    fun agentOrSkillInstructionCanRequireFileOutput() {
+    fun specialistOrSkillInstructionCanRequireFileOutput() {
         assertTrue(
             ChatToolPolicy.needsCreateFile(
                 prompt = "Продолжай",

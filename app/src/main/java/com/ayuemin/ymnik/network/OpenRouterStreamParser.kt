@@ -37,6 +37,7 @@ internal object OpenRouterStreamParser {
         var totalTokens: Int? = null
         var reasoningTokens: Int? = null
         var costUsd: Double? = null
+        var costUsdExact: String? = null
 
         fun appendPiece(target: StringBuilder, piece: String) {
             if (piece.isEmpty()) return
@@ -100,9 +101,15 @@ internal object OpenRouterStreamParser {
                 reasoningTokens = runCatching {
                     usage.getAsJsonObject("completion_tokens_details")?.get("reasoning_tokens")?.asInt
                 }.getOrNull() ?: reasoningTokens
-                costUsd = runCatching { usage.get("cost")?.asDouble }.getOrNull() ?: costUsd
+                usage.get("cost")?.takeUnless { it.isJsonNull }?.takeIf { it.isJsonPrimitive }?.let { cost ->
+                    costUsdExact = runCatching { cost.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() } ?: costUsdExact
+                    costUsd = runCatching { cost.asDouble }.getOrNull() ?: costUsd
+                }
             }
-            costUsd = runCatching { root.get("cost")?.takeUnless { it.isJsonNull }?.asDouble }.getOrNull() ?: costUsd
+            root.get("cost")?.takeUnless { it.isJsonNull }?.takeIf { it.isJsonPrimitive }?.let { cost ->
+                costUsdExact = runCatching { cost.asString.trim() }.getOrNull()?.takeIf { it.isNotBlank() } ?: costUsdExact
+                costUsd = runCatching { cost.asDouble }.getOrNull() ?: costUsd
+            }
 
             val choice = root.getAsJsonArray("choices")?.firstOrNull()?.takeIf { it.isJsonObject }?.asJsonObject
                 ?: return false
@@ -186,7 +193,8 @@ internal object OpenRouterStreamParser {
             completionTokens = completionTokens,
             totalTokens = totalTokens,
             reasoningTokens = reasoningTokens,
-            costUsd = costUsd
+            costUsd = costUsd,
+            costUsdExact = costUsdExact
         )
     }
 }

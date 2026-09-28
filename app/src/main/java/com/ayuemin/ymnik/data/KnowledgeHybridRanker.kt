@@ -45,6 +45,18 @@ internal object KnowledgeHybridRanker {
         }.sortedByDescending { it.score }
     }
 
+    internal fun passesRelevanceGate(
+        semanticScore: Double,
+        lexicalScore: Double
+    ): Boolean {
+        // A semantic match must carry some minimum meaning on its own. Strong semantic
+        // evidence is enough; borderline semantic matches also need lexical support.
+        // Pure lexical overlap is deliberately not sufficient because common book terms
+        // can otherwise pull unrelated fragments into the answer context.
+        return semanticScore >= STRONG_SEMANTIC_SCORE ||
+            (semanticScore >= SUPPORTED_SEMANTIC_SCORE && lexicalScore >= SUPPORTING_LEXICAL_SCORE)
+    }
+
     private fun bm25Scores(query: String, chunks: List<KnowledgeChunk>): DoubleArray {
         val queryTokens = tokenize(query).distinct()
         if (queryTokens.isEmpty()) return DoubleArray(chunks.size)
@@ -102,4 +114,7 @@ internal object KnowledgeHybridRanker {
     private const val RRF_K = 60.0
     private const val BM25_K1 = 1.2
     private const val BM25_B = 0.75
+    private const val STRONG_SEMANTIC_SCORE = 0.45
+    private const val SUPPORTED_SEMANTIC_SCORE = 0.34
+    private const val SUPPORTING_LEXICAL_SCORE = 2.0
 }

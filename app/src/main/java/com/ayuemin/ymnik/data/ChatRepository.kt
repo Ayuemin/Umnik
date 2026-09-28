@@ -4,6 +4,8 @@ import android.content.Context
 import com.ayuemin.ymnik.AsyncJobEvents
 import com.ayuemin.ymnik.model.ChatSession
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.network.ContextUsageTracker
+import com.ayuemin.ymnik.network.WebToolRequestSnapshotStore
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
@@ -56,14 +58,34 @@ class ChatRepository(context: Context) {
 
     /** Complete only the originating synchronous request using the latest on-disk state. */
     fun finishRequest(chatId: String, messageId: String, assistant: ChatMessage?): List<ChatSession> = synchronized(fileLock) {
+        val webToolSnapshot = WebToolRequestSnapshotStore.consume(chatId)
         val chats = list()
         val updated = chats.map { chat ->
             if (chat.id != chatId) return@map chat
             val userIndex = chat.messages.indexOfFirst { it.id == messageId && it.deliveryState == "pending" }
             if (userIndex < 0) return@map chat
+            val completedAssistant = assistant?.let { raw ->
+                val withWebMetadata = webToolSnapshot?.let { settings ->
+                    snapshotWebToolAnswerMetadata(raw, settings)
+                } ?: raw
+                if (withWebMetadata.contextUsage != null) {
+                    withWebMetadata
+                } else {
+                    val usage = withWebMetadata.requestId
+                        ?.let(ContextUsageTracker::consume)
+                        ?: ContextUsageTracker.consumeForMessage(chatId, messageId)
+                    usage?.let { withWebMetadata.copy(contextUsage = it) } ?: withWebMetadata
+                }
+            }
             val messages = chat.messages.toMutableList()
-            messages[userIndex] = messages[userIndex].copy(deliveryState = if (assistant == null) "failed" else null)
-            if (assistant != null) messages.add(userIndex + 1, assistant)
+            messages[userIndex] = messages[userIndex].copy(deliveryState = if (completedAssistant == null) "failed" else null)
+            if (completedAssistant != null) {
+                val lastGuidanceIndex = (userIndex + 1 until messages.size).lastOrNull { index ->
+                    messages[index].role == "user" && messages[index].deliveryState == "guidance"
+                }
+                val assistantIndex = lastGuidanceIndex?.plus(1) ?: (userIndex + 1)
+                messages.add(assistantIndex.coerceAtMost(messages.size), completedAssistant)
+            }
             chat.copy(messages = messages, updatedAt = System.currentTimeMillis())
         }
         save(updated)

@@ -1,0 +1,775 @@
+package com.ayuemin.ymnik.network
+
+import android.content.Context
+import com.ayuemin.ymnik.LocalShellRuntime
+import com.ayuemin.ymnik.LocalShellTerminalResult
+import com.ayuemin.ymnik.LocalShellTerminalState
+import com.ayuemin.ymnik.diagnostics.DiagnosticHttpInterceptor
+import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
+import com.ayuemin.ymnik.local.LocalShellEngine
+import com.ayuemin.ymnik.model.ProviderRoutingSettings
+import com.google.gson.Gson
+import com.google.gson.JsonArray
+import com.google.gson.JsonElement
+import com.google.gson.JsonObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.Call
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.security.MessageDigest
+import java.util.UUID
+import java.util.concurrent.TimeUnit
+
+internal data class LocalShellProgressDecision(
+    val strike: Int,
+    val forceFinish: Boolean
+)
+
+/**
+ * Detects repeated exploratory intent even when the exact command or result keeps changing.
+ *
+ * The existing [LocalShellLoopGuard] protects against byte-level action/result loops. This
+ * guard is deliberately coarser: revisiting the same evidence target several times without
+ * a durable change causes a semantic progress checkpoint. A second stall forces the worker
+ * to return DONE/PARTIAL instead of spending indefinitely on more exploratory calls.
+ */
+internal class LocalShellProgressGuard(
+    private val repeatedIntentThreshold: Int = 4,
+    private val maxStrikes: Int = 2,
+    private val resetAfterNovelKeys: Int = 3,
+    private val maxSeenKeys: Int = 32
+) {
+    private val seenKeys = linkedSetOf<String>()
+    private var repeatedIntent = 0
+    private var strikes = 0
+    private var novelKeysAfterStrike = 0
+
+    fun observe(progressKey: String, durableProgress: Boolean): LocalShellProgressDecision? {
+        if (durableProgress) {
+            reset()
+            return null
+        }
+
+        val key = progressKey.trim().ifBlank { "unknown" }
+        val novel = seenKeys.add(key)
+        while (seenKeys.size > maxSeenKeys.coerceAtLeast(8)) {
+            seenKeys.remove(seenKeys.first())
+        }
+
+        if (novel) {
+            repeatedIntent = 0
+            if (strikes > 0) {
+                novelKeysAfterStrike += 1
+                if (novelKeysAfterStrike >= resetAfterNovelKeys.coerceAtLeast(1)) {
+                    strikes = 0
+                    novelKeysAfterStrike = 0
+                    seenKeys.clear()
+                    seenKeys.add(key)
+                }
+            }
+            return null
+        }
+
+        novelKeysAfterStrike = 0
+        repeatedIntent += 1
+        if (repeatedIntent < repeatedIntentThreshold.coerceAtLeast(2)) return null
+
+        repeatedIntent = 0
+        strikes += 1
+        return LocalShellProgressDecision(
+            strike = strikes,
+            forceFinish = strikes >= maxStrikes.coerceAtLeast(1)
+        )
+    }
+
+    fun reset() {
+        seenKeys.clear()
+        repeatedIntent = 0
+        strikes = 0
+        novelKeysAfterStrike = 0
+    }
+}
+
+/**
+ * OpenRouter model loop whose tools execute on the Android device via [LocalShellEngine].
+ * No user attachment is uploaded as a model attachment: the model sees only prompt text
+ * and the results of local tool calls it requested.
+ */
+class LocalShellAgentClient(private val context: Context) {
+    data class Result(
+        val text: String,
+        val model: String?,
+        val turns: Int,
+        val toolCalls: Int,
+        val costUsd: Double?,
+        val inputTokens: Int?,
+        val outputTokens: Int?
+    )
+
+    data class Progress(
+        val label: String,
+        val turn: Int,
+        val toolCalls: Int
+    )
+
+    private enum class TaskState { WORKING, READY_TO_FINISH }
+
+    private val gson = Gson()
+    private val http = OkHttpClient.Builder()
+        .addInterceptor(DiagnosticHttpInterceptor(context, "Local Shell Model"))
+        .eventListenerFactory { DiagnosticNetworkEventListener(context, "Local Shell Model") }
+        .retryOnConnectionFailure(false)
+        .connectTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(240, TimeUnit.SECONDS)
+        .writeTimeout(120, TimeUnit.SECONDS)
+        .callTimeout(300, TimeUnit.SECONDS)
+        .build()
+
+    @Volatile
+    private var activeCall: Call? = null
+
+    fun cancelActive() {
+        activeCall?.cancel()
+    }
+
+    suspend fun run(
+        apiKey: String,
+        model: String,
+        prompt: String,
+        systemPrompt: String,
+        engine: LocalShellEngine,
+        routing: ProviderRoutingSettings = ProviderRoutingSettings(),
+        reasoningEnabled: Boolean = false,
+        reasoningEffort: String? = null,
+        maxTurns: Int = DEFAULT_MAX_TURNS,
+        onProgress: (Progress) -> Unit = {},
+        externalGuidance: () -> List<String> = { emptyList() },
+        baseUrl: String = DEFAULT_BASE_URL
+    ): Result = withContext(Dispatchers.IO) {
+        var messages = JsonArray().apply {
+            add(message("system", systemPrompt))
+            add(message("system", LOCAL_SHELL_PROGRESS_POLICY))
+            add(message("user", prompt))
+        }
+
+        val requestRunId = UUID.randomUUID().toString()
+        val safeMaxTurns = maxTurns.coerceIn(1, HARD_MAX_TURNS)
+        val maxToolCalls = (safeMaxTurns.toLong() * 4L).coerceIn(MIN_TOOL_CALLS.toLong(), MAX_TOOL_CALLS.toLong()).toInt()
+        var turn = 0
+        var toolCalls = 0
+        var totalInputTokens = 0
+        var totalOutputTokens = 0
+        var totalCost = 0.0
+        var costObserved = false
+        var returnedModel: String? = null
+        val loopGuard = LocalShellLoopGuard()
+        val progressGuard = LocalShellProgressGuard()
+        var forceDecisionNextTurn = false
+        var lastCompactionTurn = -100
+        var taskState = TaskState.WORKING
+        var stateReminderPending = false
+        var firstTurnAutoFallbackUsed = false
+        var autoFallbackReminderSent = false
+
+        try {
+            while (turn < safeMaxTurns) {
+                val guidance = externalGuidance()
+                    .map { it.trim() }
+                    .filter { it.isNotBlank() }
+                if (guidance.isNotEmpty()) {
+                    loopGuard.reset()
+                    progressGuard.reset()
+                    forceDecisionNextTurn = false
+                    val note = guidance.joinToString("\n\n") { "- " + it }
+                    if (taskState == TaskState.READY_TO_FINISH) {
+                        taskState = TaskState.WORKING
+                        stateReminderPending = false
+                        DiagnosticLog.record(context, "LOCAL_SHELL_LIFECYCLE", "READY_TO_FINISH -> WORKING; reason=guidance; turn=$turn")
+                    }
+                    messages.add(message(
+                        "system",
+                        "===== ДОПОЛНИТЕЛЬНОЕ УКАЗАНИЕ ИЗ ОСНОВНОГО ЧАТА =====\n" +
+                            "STATE=WORKING. Новое указание отменяет прежнюю готовность к завершению.\n" +
+                            note +
+                            "\n===== КОНЕЦ ДОПОЛНИТЕЛЬНОГО УКАЗАНИЯ ====="
+                    ))
+                    onProgress(Progress("Принял уточнение из чата", turn, toolCalls))
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_GUIDANCE",
+                        "accepted=" + guidance.size + "; chars=" + note.length + "; turn=" + turn
+                    )
+                }
+
+                if (taskState == TaskState.READY_TO_FINISH && stateReminderPending) {
+                    messages.add(message(
+                        "system",
+                        "===== СОСТОЯНИЕ LOCAL SHELL =====\n" +
+                            "STATE=READY_TO_FINISH. Пользовательский local_export успешно подготовлен. " +
+                            "Если исходная задача явно не требует следующего этапа или отдельного дополнительного результата, " +
+                            "заверши работу сейчас обычным финальным ответом БЕЗ вызовов инструментов. " +
+                            "Не выполняй повторные list/read/search/command/python/archive проверки уже проверенного результата «на всякий случай». " +
+                            "Если исходная задача действительно требует продолжения после этого пользовательского экспорта, продолжай только нужный следующий этап; " +
+                            "служебные промежуточные архивы должны создаваться через local_archive, а не local_export.\n" +
+                            "===== КОНЕЦ СОСТОЯНИЯ ====="
+                    ))
+                    stateReminderPending = false
+                }
+
+                val shouldCompact = !forceDecisionNextTurn &&
+                    taskState == TaskState.WORKING &&
+                    turn > 0 &&
+                    turn < safeMaxTurns - 1 &&
+                    turn - lastCompactionTurn >= MIN_TURNS_BETWEEN_COMPACTIONS &&
+                    gson.toJson(messages).length >= CONTEXT_COMPACTION_TRIGGER_CHARS
+                if (shouldCompact) {
+                    turn += 1
+                    onProgress(Progress("Сжимаю рабочий контекст", turn, toolCalls))
+                    val compactRoot = compactContext(
+                        apiKey = apiKey,
+                        model = model,
+                        prompt = prompt,
+                        messages = messages,
+                        routing = routing,
+                        baseUrl = baseUrl,
+                        requestRunId = requestRunId,
+                        turn = turn
+                    )
+                    returnedModel = compactRoot.string("model") ?: returnedModel
+                    val compactUsage = compactRoot.getAsJsonObject("usage")
+                    totalInputTokens += compactUsage?.int("prompt_tokens") ?: compactUsage?.int("input_tokens") ?: 0
+                    totalOutputTokens += compactUsage?.int("completion_tokens") ?: compactUsage?.int("output_tokens") ?: 0
+                    (compactUsage?.double("cost") ?: compactRoot.double("cost"))?.let {
+                        totalCost += it
+                        costObserved = true
+                    }
+                    val compactChoice = compactRoot.getAsJsonArray("choices")
+                        ?.firstOrNull()
+                        ?.takeIf { it.isJsonObject }
+                        ?.asJsonObject
+                        ?: error("OpenRouter не вернул результат сжатия контекста")
+                    val checkpoint = extractText(compactChoice.getAsJsonObject("message")?.get("content")).trim()
+                    if (checkpoint.isBlank()) error("Не удалось создать рабочий checkpoint Local Shell")
+                    messages = JsonArray().apply {
+                        add(message("system", systemPrompt))
+                        add(message("system", LOCAL_SHELL_PROGRESS_POLICY))
+                        add(message("user", prompt))
+                        add(message("system", "===== СЖАТЫЙ РАБОЧИЙ CHECKPOINT =====\n" + checkpoint + "\n===== КОНЕЦ CHECKPOINT ====="))
+                    }
+                    lastCompactionTurn = turn
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_CONTEXT",
+                        "compacted; turn=$turn; checkpointChars=${checkpoint.length}; input=$totalInputTokens; output=$totalOutputTokens"
+                    )
+                    continue
+                }
+
+                turn += 1
+                onProgress(Progress(
+                    if (forceDecisionNextTurn) "Формирую итог по критерию готовности" else "Модель планирует следующий локальный шаг",
+                    turn,
+                    toolCalls
+                ))
+
+                val payload = JsonObject().apply {
+                    addProperty("model", model)
+                    add("messages", messages)
+                    if (!forceDecisionNextTurn) {
+                        add("tools", engine.toolDefinitions())
+                        addProperty("tool_choice", if (turn == 1) "required" else "auto")
+                    }
+                    addProperty("stream", false)
+                    add("metadata", JsonObject().apply {
+                        addProperty("umnik_local_shell", "true")
+                        addProperty("umnik_request_id", requestRunId)
+                        addProperty("umnik_turn", turn.toString())
+                        if (forceDecisionNextTurn) addProperty("umnik_progress_forced_decision", "true")
+                    })
+                    add("usage", JsonObject().apply { addProperty("include", true) })
+
+                    if (reasoningEnabled) {
+                        add("reasoning", JsonObject().apply {
+                            addProperty("enabled", true)
+                            reasoningEffort?.takeIf { it.isNotBlank() }?.let { addProperty("effort", it) }
+                            addProperty("exclude", true)
+                        })
+                    }
+                }
+                OpenRouterFeaturePayload.applyRouting(payload, routing)
+
+                fun requestForPayload(): Request = Request.Builder()
+                    .url(endpoint(baseUrl, "chat/completions"))
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Content-Type", "application/json")
+                    .header("X-Title", "Umnik Android Local Shell")
+                    .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
+                    .header("X-OpenRouter-Metadata", "enabled")
+                    .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val root = try {
+                    execute(requestForPayload())
+                } catch (error: Throwable) {
+                    if (LocalShellProviderPolicy.shouldRetryRequiredAsAuto(turn, forceDecisionNextTurn, error)) {
+                        firstTurnAutoFallbackUsed = true
+                        payload.addProperty("tool_choice", "auto")
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_MODEL_COMPAT",
+                            "required rejected; retry=auto; model=${AgentToolRuntimePolicy.redactText(model, 180)}; request=$requestRunId"
+                        )
+                        execute(requestForPayload())
+                    } else {
+                        throw error
+                    }
+                }
+                returnedModel = root.string("model") ?: returnedModel
+                val usage = root.getAsJsonObject("usage")
+                totalInputTokens += usage?.int("prompt_tokens") ?: usage?.int("input_tokens") ?: 0
+                totalOutputTokens += usage?.int("completion_tokens") ?: usage?.int("output_tokens") ?: 0
+                (usage?.double("cost") ?: root.double("cost"))?.let {
+                    totalCost += it
+                    costObserved = true
+                }
+
+                val choice = root.getAsJsonArray("choices")
+                    ?.firstOrNull()
+                    ?.takeIf { it.isJsonObject }
+                    ?.asJsonObject
+                    ?: error("OpenRouter не вернул choices для локального Shell")
+                val assistant = choice.getAsJsonObject("message")
+                    ?: error("OpenRouter не вернул message для локального Shell")
+
+                val calls = assistant.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
+                if (calls == null || calls.size() == 0) {
+                    if (firstTurnAutoFallbackUsed && toolCalls == 0 && !forceDecisionNextTurn) {
+                        if (!autoFallbackReminderSent && turn < safeMaxTurns) {
+                            autoFallbackReminderSent = true
+                            messages.add(assistant.deepCopy())
+                            messages.add(message(
+                                "system",
+                                "Совместимый режим tool_choice=auto включён после отказа провайдера от required. " +
+                                    "Работа Local Shell ещё не началась: прежде чем давать итоговый ответ, обязательно вызови хотя бы один реальный локальный инструмент по задаче."
+                            ))
+                            DiagnosticLog.record(
+                                context,
+                                "LOCAL_SHELL_MODEL_COMPAT",
+                                "auto returned no tools; reminder sent; turn=$turn; request=$requestRunId"
+                            )
+                            continue
+                        }
+                        error("Модель не вызвала ни одного инструмента Local Shell после compatibility fallback tool_choice=auto")
+                    }
+                    val text = extractText(assistant.get("content")).trim()
+                    if (text.isBlank()) {
+                        error("Модель завершила локальный Shell без итогового текста")
+                    }
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_AGENT",
+                        "done; turns=$turn; toolCalls=$toolCalls; forcedDecision=$forceDecisionNextTurn; input=$totalInputTokens; output=$totalOutputTokens"
+                    )
+                    val result = Result(
+                        text = text,
+                        model = returnedModel ?: model,
+                        turns = turn,
+                        toolCalls = toolCalls,
+                        costUsd = totalCost.takeIf { costObserved },
+                        inputTokens = totalInputTokens.takeIf { it > 0 },
+                        outputTokens = totalOutputTokens.takeIf { it > 0 }
+                    )
+                    LocalShellRuntime.completeTerminal(
+                        LocalShellTerminalResult(
+                            state = LocalShellTerminalState.DONE,
+                            text = result.text,
+                            files = engine.exportedFiles(),
+                            modelId = result.model,
+                            turns = result.turns,
+                            toolCalls = result.toolCalls,
+                            costUsd = result.costUsd,
+                            inputTokens = result.inputTokens,
+                            outputTokens = result.outputTokens
+                        )
+                    )
+                    return@withContext result
+                }
+
+                if (forceDecisionNextTurn) {
+                    error("Local Shell должен был завершить задачу после принудительной проверки прогресса, но модель снова запросила инструмент")
+                }
+
+                messages.add(assistant.deepCopy())
+                var loopDecisionForTurn: LocalShellLoopDecision? = null
+                var progressDecisionForTurn: LocalShellProgressDecision? = null
+                for (element in calls) {
+                    if (!element.isJsonObject) continue
+                    if (toolCalls >= maxToolCalls) {
+                        error("Локальный Shell достиг аварийного предела $maxToolCalls вызовов инструментов")
+                    }
+                    val call = element.asJsonObject
+                    val callId = call.string("id") ?: UUID.randomUUID().toString()
+                    val function = call.getAsJsonObject("function")
+                    val name = function?.string("name").orEmpty()
+                    val args = function?.string("arguments") ?: "{}"
+                    toolCalls += 1
+                    onProgress(Progress(toolLabel(name), turn, toolCalls))
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_TOOL_CALL",
+                        "request=$requestRunId; turn=$turn; call=$toolCalls; tool=$name; args=${AgentToolRuntimePolicy.localShellToolArgs(gson, name, args)}"
+                    )
+                    val wasReadyBeforeTool = taskState == TaskState.READY_TO_FINISH
+                    val resultText = engine.execute(name, args)
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_TOOL_RESULT",
+                        "request=$requestRunId; turn=$turn; call=$toolCalls; tool=$name; ${AgentToolRuntimePolicy.localShellToolResult(gson, resultText)}"
+                    )
+
+                    // The exact loop guard catches identical action/result cycles.
+                    val actionKey = name + ":" + stableFingerprint(normalizeJson(args))
+                    val stateKey = stableFingerprint(normalizeJson(resultText))
+                    val loopDecision = loopGuard.observe(actionKey, stateKey)
+                    if (loopDecision != null) {
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_LOOP_GUARD",
+                            "pattern=${loopDecision.patternSize}; strike=${loopDecision.strike}; stop=${loopDecision.shouldStop}; " +
+                                "tool=$name; turn=$turn; action=$actionKey; state=$stateKey"
+                        )
+                        if (loopDecision.shouldStop) {
+                            error(
+                                "Local Shell остановлен: повторяющийся цикл не изменяет состояние после попытки перестроить план. " +
+                                    "Аварийный лимит шагов не достигнут."
+                            )
+                        }
+                        loopDecisionForTurn = loopDecision
+                    }
+
+                    val resultObject = runCatching { gson.fromJson(resultText, JsonObject::class.java) }.getOrNull()
+                    val toolOk = resultObject?.get("ok")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val readyForUser = resultObject?.get("ready_for_user")?.takeIf { it.isJsonPrimitive }?.asBoolean == true
+                    val durableProgress = localDurableProgress(name, args, toolOk == true, readyForUser)
+                    val progressDecision = progressGuard.observe(
+                        progressKey = localProgressKey(name, args),
+                        durableProgress = durableProgress
+                    )
+                    if (durableProgress) {
+                        progressDecisionForTurn = null
+                        forceDecisionNextTurn = false
+                    } else if (progressDecision != null &&
+                        (progressDecisionForTurn == null || progressDecision.forceFinish)
+                    ) {
+                        progressDecisionForTurn = progressDecision
+                    }
+
+                    if (name == "local_export" && toolOk && readyForUser) {
+                        if (taskState != TaskState.READY_TO_FINISH) {
+                            DiagnosticLog.record(context, "LOCAL_SHELL_LIFECYCLE", "WORKING -> READY_TO_FINISH; reason=export; turn=$turn")
+                        }
+                        taskState = TaskState.READY_TO_FINISH
+                        stateReminderPending = true
+                        onProgress(Progress("Результат готов к завершению", turn, toolCalls))
+                    } else if (wasReadyBeforeTool) {
+                        taskState = TaskState.WORKING
+                        stateReminderPending = false
+                        DiagnosticLog.record(
+                            context,
+                            "LOCAL_SHELL_LIFECYCLE",
+                            "READY_TO_FINISH -> WORKING; reason=continued_tool:$name; turn=$turn"
+                        )
+                    }
+
+                    messages.add(JsonObject().apply {
+                        addProperty("role", "tool")
+                        addProperty("tool_call_id", callId)
+                        addProperty("content", resultText)
+                    })
+                }
+
+                loopDecisionForTurn?.let { decision ->
+                    messages.add(message(
+                        "system",
+                        "===== ЗАЩИТА LOCAL SHELL ОТ ЗАЦИКЛИВАНИЯ =====\n" +
+                            "Обнаружен повторяющийся цикл из ${decision.patternSize} локальных действий без изменения результата. " +
+                            "Это первое предупреждение, задача НЕ остановлена. Перестрой план: выбери другой инструмент, " +
+                            "другой запрос, файл, диапазон или способ проверки. Не повторяй тот же цикл. " +
+                            "Если такой цикл возникнет снова до заметного прогресса, Local Shell будет остановлен.\n" +
+                            "===== КОНЕЦ ПРЕДУПРЕЖДЕНИЯ ====="
+                    ))
+                    onProgress(Progress("Перестраиваю план после повторяющегося цикла", turn, toolCalls))
+                }
+
+                progressDecisionForTurn?.let { decision ->
+                    DiagnosticLog.record(
+                        context,
+                        "LOCAL_SHELL_PROGRESS_GUARD",
+                        "strike=${decision.strike}; forceFinish=${decision.forceFinish}; turn=$turn; toolCalls=$toolCalls"
+                    )
+                    if (decision.forceFinish) {
+                        forceDecisionNextTurn = true
+                        messages.add(message(
+                            "system",
+                            "===== ОБЯЗАТЕЛЬНОЕ РЕШЕНИЕ ПО ПРОГРЕССУ =====\n" +
+                                "Повторилась исследовательская последовательность без нового целевого направления или устойчивого результата. " +
+                                "На следующем ходе инструменты будут отключены. Сравни уже собранные доказательства с КРИТЕРИЕМ ГОТОВНОСТИ исходного task. " +
+                                "Если критерий выполнен — заверши STATUS=DONE. Если нет — заверши STATUS=PARTIAL и кратко укажи: что уже установлено, " +
+                                "какое препятствие осталось и какой один следующий шаг нужен. Не продолжай исследование «на всякий случай».\n" +
+                                "===== КОНЕЦ РЕШЕНИЯ ====="
+                        ))
+                        onProgress(Progress("Завершаю после повторной проверки прогресса", turn, toolCalls))
+                    } else {
+                        messages.add(message(
+                            "system",
+                            "===== ПРОВЕРКА ПРОГРЕССА LOCAL SHELL =====\n" +
+                                "Несколько действий повторяют уже исследованное направление. Сверься с ЦЕЛЬЮ и КРИТЕРИЕМ ГОТОВНОСТИ исходного task. " +
+                                "Если доказательств уже достаточно — заверши. Если нет — выбери другое целевое направление и заранее определи, " +
+                                "какое новое доказательство должен дать следующий шаг. Не делай проверки «на всякий случай» и не расширяй scope.\n" +
+                                "===== КОНЕЦ ПРОВЕРКИ ====="
+                        ))
+                        onProgress(Progress("Проверяю реальный прогресс по задаче", turn, toolCalls))
+                    }
+                }
+            }
+            error("Локальный Shell достиг лимита $safeMaxTurns модельных шагов без завершения")
+        } catch (cancelled: CancellationException) {
+            LocalShellRuntime.completeTerminal(
+                LocalShellTerminalResult(
+                    state = LocalShellTerminalState.STOPPED,
+                    files = engine.exportedFiles(),
+                    modelId = returnedModel ?: model,
+                    turns = turn,
+                    toolCalls = toolCalls,
+                    costUsd = totalCost.takeIf { costObserved },
+                    inputTokens = totalInputTokens.takeIf { it > 0 },
+                    outputTokens = totalOutputTokens.takeIf { it > 0 },
+                    error = "Local Shell остановлен"
+                )
+            )
+            throw cancelled
+        } catch (error: Throwable) {
+            LocalShellRuntime.completeTerminal(
+                LocalShellTerminalResult(
+                    state = LocalShellTerminalState.FAILED,
+                    files = engine.exportedFiles(),
+                    modelId = returnedModel ?: model,
+                    turns = turn,
+                    toolCalls = toolCalls,
+                    costUsd = totalCost.takeIf { costObserved },
+                    inputTokens = totalInputTokens.takeIf { it > 0 },
+                    outputTokens = totalOutputTokens.takeIf { it > 0 },
+                    error = error.message ?: error::class.java.simpleName
+                )
+            )
+            throw error
+        } finally {
+            activeCall = null
+        }
+    }
+
+    private fun compactContext(
+        apiKey: String,
+        model: String,
+        prompt: String,
+        messages: JsonArray,
+        routing: ProviderRoutingSettings,
+        baseUrl: String,
+        requestRunId: String,
+        turn: Int
+    ): JsonObject {
+        val raw = gson.toJson(messages)
+        val transcript = if (raw.length <= MAX_COMPACTION_SOURCE_CHARS) {
+            raw
+        } else {
+            val head = raw.take(COMPACTION_HEAD_CHARS)
+            val tail = raw.takeLast(MAX_COMPACTION_SOURCE_CHARS - COMPACTION_HEAD_CHARS)
+            head + "\n... [середина журнала сокращена перед checkpoint] ...\n" + tail
+        }
+        val compactMessages = JsonArray().apply {
+            add(message(
+                "system",
+                "Ты создаёшь точный рабочий checkpoint для продолжающейся задачи Local Shell. " +
+                    "Не решай задачу заново и не добавляй новых предположений. Сохрани: что уже сделано, " +
+                    "изменённые файлы, найденные ошибки, результаты проверок, важные решения, ограничения, " +
+                    "все дополнительные указания пользователя из основного чата и конкретный следующий план. " +
+                    "Пиши компактно, но не теряй данные, нужные для продолжения."
+            ))
+            add(message(
+                "user",
+                "Исходная задача пользователя:\n" + prompt +
+                    "\n\nТекущий журнал работы:\n" + transcript
+            ))
+        }
+        val payload = JsonObject().apply {
+            addProperty("model", model)
+            add("messages", compactMessages)
+            addProperty("stream", false)
+            add("metadata", JsonObject().apply {
+                addProperty("umnik_local_shell", "true")
+                addProperty("umnik_context_compaction", "true")
+                addProperty("umnik_request_id", requestRunId)
+                addProperty("umnik_turn", turn.toString())
+            })
+            add("usage", JsonObject().apply { addProperty("include", true) })
+        }
+        OpenRouterFeaturePayload.applyRouting(payload, routing)
+        val request = Request.Builder()
+            .url(endpoint(baseUrl, "chat/completions"))
+            .header("Authorization", "Bearer $apiKey")
+            .header("Content-Type", "application/json")
+            .header("X-Title", "Umnik Android Local Shell")
+            .header("HTTP-Referer", "https://github.com/Ayuemin/Umnik")
+            .header("X-OpenRouter-Metadata", "enabled")
+            .post(gson.toJson(payload).toRequestBody("application/json".toMediaType()))
+            .build()
+        return execute(request)
+    }
+
+    private fun execute(request: Request): JsonObject {
+        val call = http.newCall(request)
+        activeCall = call
+        call.execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val detail = apiError(response.code, body)
+                DiagnosticLog.record(
+                    context,
+                    "LOCAL_SHELL_PROVIDER_ERROR",
+                    "http=${response.code}; error=${AgentToolRuntimePolicy.redactText(detail, 900)}"
+                )
+                error(detail)
+            }
+            return gson.fromJson(body, JsonObject::class.java)
+        }
+    }
+
+    private fun message(role: String, text: String) = JsonObject().apply {
+        addProperty("role", role)
+        addProperty("content", text)
+    }
+
+    private fun extractText(content: JsonElement?): String {
+        if (content == null || content.isJsonNull) return ""
+        if (content.isJsonPrimitive) return content.asString
+        if (content.isJsonArray) {
+            return content.asJsonArray.mapNotNull { part ->
+                when {
+                    part.isJsonPrimitive -> part.asString
+                    part.isJsonObject -> part.asJsonObject.get("text")
+                        ?.takeIf { it.isJsonPrimitive }
+                        ?.asString
+                    else -> null
+                }
+            }.joinToString("\n")
+        }
+        return content.toString()
+    }
+
+    private fun normalizeJson(raw: String): String = runCatching {
+        gson.toJson(gson.fromJson(raw.ifBlank { "null" }, JsonElement::class.java))
+    }.getOrDefault(raw.trim())
+
+    private fun stableFingerprint(value: String): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray(Charsets.UTF_8))
+        return digest.take(12).joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+    }
+
+    private fun localProgressKey(name: String, argsRaw: String): String {
+        val args = runCatching { gson.fromJson(argsRaw.ifBlank { "{}" }, JsonObject::class.java) }.getOrNull()
+            ?: return name + ":" + stableFingerprint(normalizeJson(argsRaw))
+        fun value(key: String): String = args.get(key)?.takeUnless { it.isJsonNull }?.toString().orEmpty()
+        return when (name) {
+            "local_list" -> "list:" + value("path") + ":" + value("recursive")
+            "local_read" -> "read:" + value("path") + ":" + value("start_line") + ":" + value("max_lines")
+            "local_search" -> "search:" + value("path") + ":" + value("query") + ":" + value("regex")
+            "local_command" -> "command:" + value("command") + ":" + stableFingerprint(value("args"))
+            // Multiple tiny Python probes are a common form of mechanical drift. The worker
+            // should combine them into one targeted script or switch to a more direct tool.
+            "local_python" -> "python"
+            "local_archive" -> "archive:" + value("action") + ":" + value("source") + ":" + value("destination")
+            "local_git" -> "git:" + value("action") + ":" + value("path") + ":" + stableFingerprint(value("arg"))
+            "local_fetch" -> "fetch:" + value("url") + ":" + value("save_as")
+            "local_write" -> "write:" + value("path")
+            "local_replace" -> "replace:" + value("path")
+            "local_export" -> "export:" + value("source") + ":" + value("filename")
+            else -> name + ":" + stableFingerprint(normalizeJson(argsRaw))
+        }
+    }
+
+    private fun localDurableProgress(
+        name: String,
+        argsRaw: String,
+        toolOk: Boolean,
+        readyForUser: Boolean
+    ): Boolean {
+        if (!toolOk) return false
+        if (readyForUser) return true
+        val args = runCatching { gson.fromJson(argsRaw.ifBlank { "{}" }, JsonObject::class.java) }.getOrNull()
+        return when (name) {
+            "local_write", "local_replace", "local_archive" -> true
+            "local_git" -> {
+                val action = args?.string("action").orEmpty().lowercase()
+                action in setOf("init", "add", "commit", "checkout", "public_clone")
+            }
+            "local_fetch" -> args?.string("save_as").orEmpty().isNotBlank()
+            else -> false
+        }
+    }
+
+    private fun toolLabel(name: String): String = when (name) {
+        "local_list", "local_read", "local_search", "local_archive", "local_git", "local_fetch" -> "Изучаю проект"
+        "local_write", "local_replace" -> "Исправляю файлы"
+        "local_command", "local_python" -> "Запускаю проверки"
+        "local_export" -> "Готовлю результат"
+        else -> "Выполняю локальное действие"
+    }
+
+    private fun apiError(code: Int, body: String): String {
+        val detail = runCatching {
+            val root = gson.fromJson(body, JsonObject::class.java)
+            root.getAsJsonObject("error")?.string("message") ?: root.string("message")
+        }.getOrNull()
+        return "OpenRouter HTTP $code: " + (detail ?: body.take(500))
+    }
+
+    private fun endpoint(baseUrl: String, path: String): String =
+        baseUrl.trimEnd('/') + "/" + path.trimStart('/')
+
+    private fun JsonObject.string(name: String): String? = runCatching {
+        get(name)?.takeIf { !it.isJsonNull && it.isJsonPrimitive }?.asString
+    }.getOrNull()?.takeIf { it.isNotBlank() }
+
+    private fun JsonObject.int(name: String): Int? = runCatching {
+        get(name)?.takeUnless { it.isJsonNull }?.asInt
+    }.getOrNull()
+
+    private fun JsonObject.double(name: String): Double? = runCatching {
+        get(name)?.takeUnless { it.isJsonNull }?.asDouble
+    }.getOrNull()
+
+    companion object {
+        private const val DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+        private const val DEFAULT_MAX_TURNS = 500
+        private const val HARD_MAX_TURNS = 500
+        private const val MIN_TOOL_CALLS = 64
+        private const val MAX_TOOL_CALLS = 100_000
+        private const val CONTEXT_COMPACTION_TRIGGER_CHARS = 140_000
+        private const val MIN_TURNS_BETWEEN_COMPACTIONS = 8
+        private const val MAX_COMPACTION_SOURCE_CHARS = 260_000
+        private const val COMPACTION_HEAD_CHARS = 40_000
+        private const val LOCAL_SHELL_PROGRESS_POLICY =
+            "Считай task рабочим контрактом от основной модели. Перед первым действием выдели для себя ЦЕЛЬ, ДАНО, " +
+                "КРИТЕРИЙ ГОТОВНОСТИ и ОГРАНИЧЕНИЯ; для сложной задачи — короткий ПЛАН. Если task не размечен этими словами, " +
+                "восстанови их один раз из смысла, но не расширяй scope. Каждый вызов инструмента должен либо дать новое доказательство " +
+                "к критерию, либо изменить целевой артефакт, либо исключить правдоподобный путь. Не делай проверки «на всякий случай». " +
+                "Если выбранный путь не сходится с данными, смени подход; если нового целевого шага нет — заверши частичным результатом. " +
+                "Финальный ответ начинай STATUS=DONE, когда критерий выполнен, или STATUS=PARTIAL, когда выполнено не всё. " +
+                "Для PARTIAL обязательно укажи, что уже установлено, препятствие и один следующий нужный шаг."
+    }
+}

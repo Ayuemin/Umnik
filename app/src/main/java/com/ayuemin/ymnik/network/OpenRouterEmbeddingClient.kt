@@ -14,7 +14,10 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
-class OpenRouterEmbeddingClient(context: Context) {
+class OpenRouterEmbeddingClient(
+    context: Context,
+    private val costSink: ((String?) -> Unit)? = null
+) {
     private val gson = Gson()
     private val http = OkHttpClient.Builder()
         .addInterceptor(DiagnosticHttpInterceptor(context, "OpenRouter embeddings"))
@@ -57,6 +60,16 @@ class OpenRouterEmbeddingClient(context: Context) {
                 error("OpenRouter embeddings HTTP ${response.code}: ${body.take(700)}")
             }
             val root = gson.fromJson(body, JsonObject::class.java)
+            val usage = root.getAsJsonObject("usage")
+            val costExact = runCatching {
+                (usage?.get("cost")?.takeUnless { it.isJsonNull }
+                    ?: root.get("cost")?.takeUnless { it.isJsonNull })
+                    ?.takeIf { it.isJsonPrimitive }
+                    ?.asString
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+            }.getOrNull()
+            costSink?.invoke(costExact)
             val rows = root.getAsJsonArray("data")?.mapNotNull { element ->
                 val obj = element.takeIf { it.isJsonObject }?.asJsonObject ?: return@mapNotNull null
                 val index = obj.get("index")?.asInt ?: return@mapNotNull null
