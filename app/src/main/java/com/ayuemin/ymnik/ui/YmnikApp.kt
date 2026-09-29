@@ -1337,7 +1337,7 @@ private fun ChatScreen(
                                 )
                             }
                             if (index < state.skills.lastIndex) {
-                                HorizontalDivider(color = umnikDividerColor())
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                             }
                         }
                     }
@@ -2606,7 +2606,7 @@ private fun MessageCard(
     pendingLabel: String? = null,
     tts: TtsController,
     openRouterSpeechEnabled: Boolean,
-    openRouterSpeechPhase: OpenRouterSpeechPhase,
+    openRouterSpeechPhase: OpenRouterSpeechPlaybackState.Phase,
     onOpenRouterSpeech: () -> Unit,
     onSaveGenerated: (GeneratedFile) -> Unit,
     onExportText: () -> Unit,
