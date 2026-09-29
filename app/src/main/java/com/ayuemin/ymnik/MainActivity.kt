@@ -6,7 +6,11 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.Modifier
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
+import com.ayuemin.ymnik.ui.ChatUtilityToolOverlay
 import com.ayuemin.ymnik.ui.UmnikV16Root
 
 class MainActivity : ComponentActivity() {
@@ -17,7 +21,12 @@ class MainActivity : ComponentActivity() {
         DiagnosticLog.installCrashHandler(applicationContext)
         DiagnosticLog.recordPreviousProcessExit(applicationContext)
         enableEdgeToEdge()
-        setContent { UmnikV16Root(viewModel) }
+        setContent {
+            Box(Modifier.fillMaxSize()) {
+                UmnikV16Root(viewModel)
+                ChatUtilityToolOverlay(viewModel)
+            }
+        }
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {

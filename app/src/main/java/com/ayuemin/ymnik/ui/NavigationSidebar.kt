@@ -191,7 +191,7 @@ fun NavigationSidebar(
                         ) {
                             Icon(Icons.Outlined.Add, contentDescription = null, modifier = Modifier.size(20.dp))
                             Spacer(Modifier.width(7.dp))
-                            Text("Создать команда")
+                            Text("Создать команду")
                         }
                     }
                     item { SidebarSectionTitle("Команды") }
@@ -435,7 +435,7 @@ private fun SidebarTeamRow(
             ) {
                 Icon(
                     if (team.isFavorite) Icons.Outlined.Star else Icons.Outlined.StarBorder,
-                    contentDescription = if (team.isFavorite) "Открепить команда" else "Закрепить команда",
+                    contentDescription = if (team.isFavorite) "Открепить команду" else "Закрепить команду",
                     modifier = Modifier.size(20.dp)
                 )
             }

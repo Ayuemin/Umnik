@@ -33,6 +33,10 @@ internal data class HubToolActivity(
 )
 
 internal object AsyncJobEvents {
+    private val floatingUtilityPages = setOf(
+        "stt", "transcription", "speech", "tts", "video", "jobs", "batch"
+    )
+
     private val mutableSequence = MutableStateFlow(0L)
     val sequence: StateFlow<Long> = mutableSequence
 
@@ -40,6 +44,9 @@ internal object AsyncJobEvents {
     val hubRequest: StateFlow<String?> = mutableHubRequest
     private val mutableHubReturnLabel = MutableStateFlow<String?>(null)
     val hubReturnLabel: StateFlow<String?> = mutableHubReturnLabel
+
+    private val mutableChatUtilityRequest = MutableStateFlow<String?>(null)
+    val chatUtilityRequest: StateFlow<String?> = mutableChatUtilityRequest
 
     private val mutableSpeechRequest = MutableStateFlow<OpenRouterSpeechRequest?>(null)
     val speechRequest: StateFlow<OpenRouterSpeechRequest?> = mutableSpeechRequest
@@ -58,13 +65,25 @@ internal object AsyncJobEvents {
     }
 
     fun requestHub(page: String, returnLabel: String? = null) {
+        val normalized = page.trim().lowercase().ifBlank { "models" }
+        if (normalized in floatingUtilityPages) {
+            mutableHubRequest.value = null
+            mutableHubReturnLabel.value = null
+            mutableChatUtilityRequest.value = normalized
+            return
+        }
+        mutableChatUtilityRequest.value = null
         mutableHubReturnLabel.value = returnLabel?.trim()?.takeIf { it.isNotBlank() }
-        mutableHubRequest.value = page.trim().lowercase().ifBlank { "models" }
+        mutableHubRequest.value = normalized
     }
 
     fun consumeHubRequest() {
         mutableHubRequest.value = null
         mutableHubReturnLabel.value = null
+    }
+
+    fun consumeChatUtilityRequest() {
+        mutableChatUtilityRequest.value = null
     }
 
     fun requestSpeech(chatId: String, text: String) {
