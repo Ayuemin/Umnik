@@ -568,9 +568,6 @@ private fun ChatScreen(
                     var opened = false
 
                     while (true) {
-                        // Свайп от левого края имеет приоритет над LazyColumn: это делает
-                        // открытие панели надёжным даже когда палец попал на сообщение.
-                        // В остальной области сохраняем защиту горизонтальных таблиц/списков.
                         val event = awaitPointerEvent(PointerEventPass.Final)
                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                         if (change.isConsumed && !startedAtEdge) blockedByChild = true
@@ -642,62 +639,62 @@ private fun ChatScreen(
                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-            if (state.messages.isEmpty()) {
-                item { EmptyChatWelcome(Modifier.fillParentMaxSize()) }
-            }
-            items(state.messages, key = { it.id }) { message ->
-                MessageCard(
-                    message = message,
-                    searchMatch = chatSearchOpen && chatSearchQuery.isNotBlank() && message.text.contains(chatSearchQuery.trim(), ignoreCase = true),
-                    searchSelected = chatSearchOpen && selectedSearchMessageId == message.id,
-                    pendingLabel = if (message.deliveryState == "pending") {
-                        if (requestActiveHere && state.messages.lastOrNull { it.deliveryState == "pending" }?.id == message.id) {
-                            state.busyLabel ?: "Модель работает…"
-                        } else {
-                            "Восстанавливаю ответ в фоне…"
-                        }
-                    } else null,
-                    tts = tts,
-                    openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
-                    openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
-                    onOpenRouterSpeech = { openRouterSpeech.toggle(message.id, message.text) },
-                    onSaveGenerated = { file ->
-                        fileToSave = file
-                        save.launch(file.name)
-                    },
-                    onExportText = {
-                        val file = vm.exportMessage(message)
-                        fileToSave = file
-                        save.launch(file.name)
-                    },
-                    onGuideLink = if (isUsageGuide && message.providerName == "Umnik") {
-                        { target ->
-                            guideScrollTarget = target.coerceIn(0, state.messages.lastIndex.coerceAtLeast(0))
-                        }
-                    } else null,
-onBranch = if (message.role == "assistant") {
-    { vm.branchFromMessage(message.id) }
-} else null,
-                    onRetry = when {
-                        message.role != "user" || message.text.isBlank() -> null
-                        message.deliveryState == "pending" -> null
-                        message.deliveryState == "failed" && message.attachmentNames.all { it in availableRetryAttachmentNames } ->
-                            { { vm.retryFailedMessage(message.id) } }
-                        message.imageGeneration && message.attachmentNames.isEmpty() -> {
-                            { vm.sendImagePrompt(message.text) }
-                        }
-                        !message.imageGeneration && message.attachmentNames.all { it in availableRetryAttachmentNames } -> {
-                            { vm.send(message.text) }
-                        }
-                        else -> null
-                    }
-                )
-            }
-            if (requestActiveHere && streamingText.isNotBlank()) {
-                item(key = "streaming-${state.currentChatId}") {
-                    StreamingAssistantMessage(streamingText)
+                if (state.messages.isEmpty()) {
+                    item { EmptyChatWelcome(Modifier.fillParentMaxSize()) }
                 }
-            }
+                items(state.messages, key = { it.id }) { message ->
+                    MessageCard(
+                        message = message,
+                        searchMatch = chatSearchOpen && chatSearchQuery.isNotBlank() && message.text.contains(chatSearchQuery.trim(), ignoreCase = true),
+                        searchSelected = chatSearchOpen && selectedSearchMessageId == message.id,
+                        pendingLabel = if (message.deliveryState == "pending") {
+                            if (requestActiveHere && state.messages.lastOrNull { it.deliveryState == "pending" }?.id == message.id) {
+                                state.busyLabel ?: "Модель работает…"
+                            } else {
+                                "Восстанавливаю ответ в фоне…"
+                            }
+                        } else null,
+                        tts = tts,
+                        openRouterSpeechEnabled = state.openRouterSpeechModel.isNotBlank(),
+                        openRouterSpeechPhase = if (openRouterSpeechState.messageId == message.id) openRouterSpeechState.phase else OpenRouterSpeechPhase.IDLE,
+                        onOpenRouterSpeech = { openRouterSpeech.toggle(message.id, message.text) },
+                        onSaveGenerated = { file ->
+                            fileToSave = file
+                            save.launch(file.name)
+                        },
+                        onExportText = {
+                            val file = vm.exportMessage(message)
+                            fileToSave = file
+                            save.launch(file.name)
+                        },
+                        onGuideLink = if (isUsageGuide && message.providerName == "Umnik") {
+                            { target ->
+                                guideScrollTarget = target.coerceIn(0, state.messages.lastIndex.coerceAtLeast(0))
+                            }
+                        } else null,
+                        onBranch = if (message.role == "assistant") {
+                            { vm.branchFromMessage(message.id) }
+                        } else null,
+                        onRetry = when {
+                            message.role != "user" || message.text.isBlank() -> null
+                            message.deliveryState == "pending" -> null
+                            message.deliveryState == "failed" && message.attachmentNames.all { it in availableRetryAttachmentNames } ->
+                                { { vm.retryFailedMessage(message.id) } }
+                            message.imageGeneration && message.attachmentNames.isEmpty() -> {
+                                { vm.sendImagePrompt(message.text) }
+                            }
+                            !message.imageGeneration && message.attachmentNames.all { it in availableRetryAttachmentNames } -> {
+                                { vm.send(message.text) }
+                            }
+                            else -> null
+                        }
+                    )
+                }
+                if (requestActiveHere && streamingText.isNotBlank()) {
+                    item(key = "streaming-${state.currentChatId}") {
+                        StreamingAssistantMessage(streamingText)
+                    }
+                }
                 item(key = "chat-end") { Spacer(Modifier.height(1.dp)) }
             }
 
@@ -896,17 +893,16 @@ onBranch = if (message.role == "assistant") {
                     )
                 }
 
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it },
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    leadingIcon = {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(1.dp)
-                        ) {
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                ) {
+                    OutlinedTextField(
+                        value = text,
+                        onValueChange = { text = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        leadingIcon = {
                             IconButton(
                                 onClick = { actionsOpen = true },
                                 enabled = !state.isLoading,
@@ -918,201 +914,217 @@ onBranch = if (message.role == "assistant") {
                                     tint = MaterialTheme.colorScheme.primary
                                 )
                             }
-                            if (!imagePromptMode && activeSkillCount > 0) {
+                        },
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (!imagePromptMode && !requestActiveHere) {
+                                    IconButton(
+                                        onClick = {
+                                            if (isRecording) {
+                                                val file = voiceRecorder.stop()
+                                                isRecording = false
+                                                recordingStartedAt = 0L
+                                                recordingSeconds = 0
+                                                file?.let { vm.addVoiceRecording(it.absolutePath) }
+                                            } else if (microphoneAvailable) {
+                                                if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                                                    startVoiceRecording()
+                                                } else {
+                                                    microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
+                                                }
+                                            }
+                                        },
+                                        enabled = isRecording || (!nonRequestBusy && !requestActiveHere && microphoneAvailable),
+                                        modifier = Modifier.size(42.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Mic,
+                                            contentDescription = when {
+                                                isRecording -> "Остановить запись и прикрепить"
+                                                microphoneAvailable -> "Записать голосовое сообщение"
+                                                else -> "Выбранная модель не поддерживает аудио"
+                                            },
+                                            tint = when {
+                                                isRecording -> MaterialTheme.colorScheme.error
+                                                microphoneAvailable -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
+                                            }
+                                        )
+                                    }
+                                }
+                                if (localShellGuidanceHere && text.isNotBlank()) {
+                                    IconButton(
+                                        onClick = {
+                                            vm.send(text)
+                                            text = ""
+                                        },
+                                        enabled = !nonRequestBusy,
+                                        modifier = Modifier.size(44.dp)
+                                    ) {
+                                        Icon(
+                                            Icons.Outlined.Send,
+                                            contentDescription = "Передать уточнение Local Shell",
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                                IconButton(
+                                    onClick = {
+                                        if (requestActiveHere) {
+                                            vm.stopGeneration()
+                                        } else if (isRecording) {
+                                            val file = voiceRecorder.stop()
+                                            isRecording = false
+                                            recordingStartedAt = 0L
+                                            recordingSeconds = 0
+                                            if (file != null && vm.addVoiceRecording(file.absolutePath)) {
+                                                vm.send(text)
+                                                text = ""
+                                            }
+                                        } else if (imagePromptMode) {
+                                            if (vm.sendImagePrompt(text)) {
+                                                text = ""
+                                                imagePromptMode = false
+                                            }
+                                        } else {
+                                            vm.send(text)
+                                            text = ""
+                                        }
+                                    },
+                                    enabled = requestActiveHere || isRecording || (!nonRequestBusy && (
+                                        text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
+                                    )),
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    if (requestActiveHere) {
+                                        WorkingStopIcon()
+                                    } else {
+                                        Icon(
+                                            Icons.Outlined.Send,
+                                            contentDescription = when {
+                                                isRecording -> "Остановить запись и отправить"
+                                                imagePromptMode -> "Создать изображение"
+                                                else -> "Отправить"
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        },
+                        placeholder = {
+                            when {
+                                localShellGuidanceHere -> Text(
+                                    text = "Local Shell · ${formatRequestDuration(requestElapsedSeconds)} · можно уточнить задачу",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
+                                )
+                                requestActiveHere -> Text(
+                                    text = formatRequestDuration(requestElapsedSeconds),
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.Center,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
+                                )
+                                imagePromptMode -> Text("Опишите изображение")
+                                currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу команде обычным языком")
+                            }
+                        },
+                        shape = UmnikFieldShape,
+                        maxLines = 6
+                    )
+
+                    if (!imagePromptMode && (
+                        activeSkillCount > 0 || state.reasoningEnabled || state.webSearchEnabled || state.agentEnabled
+                    )) {
+                        Row(
+                            modifier = Modifier
+                                .align(Alignment.TopStart)
+                                .padding(start = 52.dp)
+                                .graphicsLayer {
+                                    translationY = -10.dp.toPx()
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (activeSkillCount > 0) {
                                 ComposerInlineIndicator(
                                     icon = Icons.Outlined.Extension,
                                     description = "Активные навыки: $activeSkillCount",
                                     count = activeSkillCount
                                 )
                             }
-                            if (!imagePromptMode && state.reasoningEnabled) {
+                            if (state.reasoningEnabled) {
                                 ComposerInlineIndicator(
                                     icon = Icons.Outlined.Psychology,
                                     description = "Размышление включено"
                                 )
                             }
-                            if (!imagePromptMode && state.webSearchEnabled) {
+                            if (state.webSearchEnabled) {
                                 ComposerInlineIndicator(
                                     icon = Icons.Outlined.Language,
                                     description = "Поиск в сети включён"
                                 )
                             }
-                            if (!imagePromptMode && state.agentEnabled) {
+                            if (state.agentEnabled) {
                                 ComposerInlineIndicator(
                                     icon = Icons.Outlined.SmartToy,
                                     description = "Агентный режим включён"
                                 )
                             }
                         }
-                    },
-                    trailingIcon = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (!imagePromptMode && !requestActiveHere) {
-                                IconButton(
-                                    onClick = {
-                                        if (isRecording) {
-                                            val file = voiceRecorder.stop()
-                                            isRecording = false
-                                            recordingStartedAt = 0L
-                                            recordingSeconds = 0
-                                            file?.let { vm.addVoiceRecording(it.absolutePath) }
-                                        } else if (microphoneAvailable) {
-                                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-                                                startVoiceRecording()
-                                            } else {
-                                                microphonePermission.launch(Manifest.permission.RECORD_AUDIO)
-                                            }
-                                        }
-                                    },
-                                    enabled = isRecording || (!nonRequestBusy && !requestActiveHere && microphoneAvailable),
-                                    modifier = Modifier.size(42.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Outlined.Mic,
-                                        contentDescription = when {
-                                            isRecording -> "Остановить запись и прикрепить"
-                                            microphoneAvailable -> "Записать голосовое сообщение"
-                                            else -> "Выбранная модель не поддерживает аудио"
-                                        },
-                                        tint = when {
-                                            isRecording -> MaterialTheme.colorScheme.error
-                                            microphoneAvailable -> MaterialTheme.colorScheme.onSurfaceVariant
-                                            else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.30f)
-                                        }
-                                    )
-                                }
-                            }
-                            if (localShellGuidanceHere && text.isNotBlank()) {
-                                IconButton(
-                                    onClick = {
-                                        vm.send(text)
-                                        text = ""
-                                    },
-                                    enabled = !nonRequestBusy,
-                                    modifier = Modifier.size(44.dp)
-                                ) {
-                                    Icon(
-                                        Icons.Outlined.Send,
-                                        contentDescription = "Передать уточнение Local Shell",
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
-                                }
-                            }
-                            IconButton(
-                                onClick = {
-                                    if (requestActiveHere) {
-                                        vm.stopGeneration()
-                                    } else if (isRecording) {
-                                        val file = voiceRecorder.stop()
-                                        isRecording = false
-                                        recordingStartedAt = 0L
-                                        recordingSeconds = 0
-                                        if (file != null && vm.addVoiceRecording(file.absolutePath)) {
-                                            vm.send(text)
-                                            text = ""
-                                        }
-                                    } else if (imagePromptMode) {
-                                        if (vm.sendImagePrompt(text)) {
-                                            text = ""
-                                            imagePromptMode = false
-                                        }
-                                    } else {
-                                        vm.send(text)
-                                        text = ""
-                                    }
-                                },
-                                enabled = requestActiveHere || isRecording || (!nonRequestBusy && (
-                                    text.isNotBlank() || state.pendingAttachments.isNotEmpty() || (!imagePromptMode && currentChatFiles.isNotEmpty())
-                                )),
-                                modifier = Modifier.size(48.dp)
-                            ) {
-                                if (requestActiveHere) {
-                                    WorkingStopIcon()
-                                } else {
-                                    Icon(
-                                        Icons.Outlined.Send,
-                                        contentDescription = when {
-                                            isRecording -> "Остановить запись и отправить"
-                                            imagePromptMode -> "Создать изображение"
-                                            else -> "Отправить"
-                                        }
-                                    )
-                                }
-                            }
-                        }
-                    },
-                    placeholder = {
-                        when {
-                            localShellGuidanceHere -> Text(
-                                text = "Local Shell · ${formatRequestDuration(requestElapsedSeconds)} · можно уточнить задачу",
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.48f)
-                            )
-                            requestActiveHere -> Text(
-                                text = formatRequestDuration(requestElapsedSeconds),
-                                modifier = Modifier.fillMaxWidth(),
-                                textAlign = TextAlign.Center,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.34f)
-                            )
-                            imagePromptMode -> Text("Опишите изображение")
-                            currentChat != null && vm.isOrchestratorChat(currentChat.id) -> Text("Поручите работу команде обычным языком")
-                        }
-                    },
-                    shape = UmnikFieldShape,
-                    maxLines = 6
-                )
+                    }
+                }
             }
         }
     }
 
     if (sidebarOpen) {
         NavigationSidebar(
-      state = state,
-      vm = vm,
-      onDismiss = { sidebarOpen = false },
-      onNewChat = {
-          vm.createChat()
-          sidebarOpen = false
-      },
-      onOpenTeams = {
-          teamNavigationOriginChatId = state.currentChatId
-          teamsOpenedFromSidebar = true
-          selectedTeamId = null
-          createTeamDirect = false
-          teamsOpen = true
-          sidebarOpen = false
-      },
-      onCreateTeam = {
-          teamNavigationOriginChatId = state.currentChatId
-          teamsOpenedFromSidebar = true
-          selectedTeamId = null
-          createTeamDirect = true
-          teamsOpen = true
-          sidebarOpen = false
-      },
-      onOpenTeam = { teamId ->
-          teamNavigationOriginChatId = state.currentChatId
-          teamsOpenedFromSidebar = true
-          createTeamDirect = false
-          selectedTeamId = teamId
-          teamsOpen = true
-          sidebarOpen = false
-      },
-      onOpenSkills = {
-          sidebarOpen = false
-          onOpenSkills()
-      },
-      onOpenSettings = {
-          sidebarOpen = false
-          onOpenSettings()
-      },
-      onClearChat = {
-          vm.clearChat()
-          sidebarOpen = false
-      }
+            state = state,
+            vm = vm,
+            onDismiss = { sidebarOpen = false },
+            onNewChat = {
+                vm.createChat()
+                sidebarOpen = false
+            },
+            onOpenTeams = {
+                teamNavigationOriginChatId = state.currentChatId
+                teamsOpenedFromSidebar = true
+                selectedTeamId = null
+                createTeamDirect = false
+                teamsOpen = true
+                sidebarOpen = false
+            },
+            onCreateTeam = {
+                teamNavigationOriginChatId = state.currentChatId
+                teamsOpenedFromSidebar = true
+                selectedTeamId = null
+                createTeamDirect = true
+                teamsOpen = true
+                sidebarOpen = false
+            },
+            onOpenTeam = { teamId ->
+                teamNavigationOriginChatId = state.currentChatId
+                teamsOpenedFromSidebar = true
+                createTeamDirect = false
+                selectedTeamId = teamId
+                teamsOpen = true
+                sidebarOpen = false
+            },
+            onOpenSkills = {
+                sidebarOpen = false
+                onOpenSkills()
+            },
+            onOpenSettings = {
+                sidebarOpen = false
+                onOpenSettings()
+            },
+            onClearChat = {
+                vm.clearChat()
+                sidebarOpen = false
+            }
         )
     }
 
@@ -1238,7 +1250,7 @@ onBranch = if (message.role == "assistant") {
                         ) {
                             CompactComposerTool(Icons.Outlined.Storage, "Shell", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
+                                AsyncJobEvents.requestHub("local-shell", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.Extension, "Навыки", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
@@ -1246,7 +1258,7 @@ onBranch = if (message.role == "assistant") {
                             }
                             CompactComposerTool(Icons.Outlined.Mic, "В текст", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("stt", "Вернуться в чат")
+                                AsyncJobEvents.requestHub("stt", "Вернуться в чат")
                             }
                         }
                         Row(
@@ -1255,81 +1267,85 @@ onBranch = if (message.role == "assistant") {
                         ) {
                             CompactComposerTool(Icons.Outlined.VolumeUp, "Озвучить", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("speech", "Вернуться в чат")
+                                AsyncJobEvents.requestHub("speech", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.Image, "Видео", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("video", "Вернуться в чат")
+                                AsyncJobEvents.requestHub("video", "Вернуться в чат")
                             }
                             CompactComposerTool(Icons.Outlined.Description, "Пакет задач", !state.isLoading, Modifier.weight(1f)) {
                                 actionsOpen = false
-                                com.ayuemin.ymnik.AsyncJobEvents.requestHub("jobs", "Вернуться в чат")
+                                AsyncJobEvents.requestHub("jobs", "Вернуться в чат")
                             }
                         }
                     }
                 }
-
-                // Team stages and shared team skills were removed in the specialist-first architecture.
-                // Specialist-owned tools/skills are configured inside the specialist itself.
             }
         }
     }
 
     if (skillsDialogOpen) {
-        AlertDialog(
+        Dialog(
             onDismissRequest = { skillsDialogOpen = false },
-            title = { Text("Навыки") },
-            text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        "Включённые навыки применяются к следующим запросам только в этом чате.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (state.skills.isEmpty()) {
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false)
+        ) {
+            FloatingChatToolPanel(
+                title = "Навыки",
+                subtitle = "Для следующих запросов только в этом чате",
+                onDismiss = { skillsDialogOpen = false },
+                initialHeight = 410.dp,
+                minHeight = 250.dp,
+                maxHeightFraction = 0.72f
+            ) {
+                Text(
+                    "Включённые навыки применяются к следующим запросам только в этом чате.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(8.dp))
+                if (state.skills.isEmpty()) {
+                    UmnikPanel {
                         Text(
                             "Навыков пока нет. Добавьте их в общих настройках.",
+                            modifier = Modifier.padding(14.dp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                    } else {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(max = 360.dp)
-                                .verticalScroll(rememberScrollState()),
-                            verticalArrangement = Arrangement.spacedBy(2.dp)
-                        ) {
-                            state.skills.forEachIndexed { index, skill ->
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        skill.name,
-                                        modifier = Modifier.weight(1f),
-                                        maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Spacer(Modifier.width(10.dp))
-                                    Switch(
-                                        checked = skill.id in state.activeSkillIds,
-                                        onCheckedChange = { vm.toggleSkill(skill.id) }
-                                    )
-                                }
-                                if (index < state.skills.lastIndex) {
-                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
-                                }
+                    }
+                } else {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f)
+                            .verticalScroll(rememberScrollState()),
+                        verticalArrangement = Arrangement.spacedBy(2.dp)
+                    ) {
+                        state.skills.forEachIndexed { index, skill ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    skill.name,
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(Modifier.width(10.dp))
+                                Switch(
+                                    checked = skill.id in state.activeSkillIds,
+                                    onCheckedChange = { vm.toggleSkill(skill.id) }
+                                )
+                            }
+                            if (index < state.skills.lastIndex) {
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f))
                             }
                         }
                     }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { skillsDialogOpen = false }) { Text("Закрыть") }
             }
-        )
+        }
     }
 
     if (reasoningModeOpen) {
@@ -1495,7 +1511,6 @@ onBranch = if (message.role == "assistant") {
         )
     }
 
-
     if (agentModeInfoOpen) {
         AlertDialog(
             onDismissRequest = { agentModeInfoOpen = false },
@@ -1543,7 +1558,6 @@ onBranch = if (message.role == "assistant") {
         )
     }
 }
-
 
 @Composable
 private fun LocalShellInlineBanner(
@@ -1991,14 +2005,14 @@ private fun ComposerInlineIndicator(
     count: Int? = null
 ) {
     Row(
-        modifier = Modifier.padding(horizontal = 1.dp),
+        modifier = Modifier.graphicsLayer { alpha = 0.52f },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Icon(
             icon,
             contentDescription = description,
-            modifier = Modifier.size(15.dp),
+            modifier = Modifier.size(14.dp),
             tint = MaterialTheme.colorScheme.primary
         )
         if (count != null && count > 1) {
@@ -2980,7 +2994,6 @@ private fun AnswerInfoSheet(
                 }
             }
 
-
             if (executionTrace.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Surface(
@@ -3301,7 +3314,7 @@ private fun MarkdownText(text: String, color: androidx.compose.ui.graphics.Color
                 tableStart -> {
                     flushParagraph()
                     val rows = mutableListOf(possibleHeader)
-                    index += 2 // skip header separator
+                    index += 2
                     while (index < lines.size) {
                         val cells = markdownTableCells(lines[index])
                         if (cells.size != possibleHeader.size) break
@@ -3821,7 +3834,6 @@ private fun createCameraTarget(context: Context): CameraTarget {
     return CameraTarget(uri, file)
 }
 
-
 private fun copyText(context: Context, text: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("Umnik", text))
@@ -3840,7 +3852,7 @@ private fun markdownToShareText(markdown: String): String {
     val tableSeparator = Regex("^\\s*\\|?\\s*:?-{3,}:?\\s*(\\|\\s*:?-{3,}:?\\s*)+\\|?\\s*$")
     var inCodeFence = false
     return markdown
-        .replace("\\r\\n", "\\n")
+        .replace("\r\n", "\n")
         .lineSequence()
         .mapNotNull { raw ->
             val trimmed = raw.trim()
@@ -3866,7 +3878,7 @@ private fun markdownToShareText(markdown: String): String {
             line = Regex("`([^`\\n]+)`").replace(line, "$1")
             line
         }
-        .joinToString("\\n")
+        .joinToString("\n")
         .trim()
 }
 

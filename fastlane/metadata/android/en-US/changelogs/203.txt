@@ -1,0 +1,1 @@
+Umnik 1.20.1: active feature indicators no longer shrink the input field; Skills, Transcription, Speech, Video and Batch now share a unified floating-panel style; the built-in usage guide was refreshed; interface labels were fixed and the README was shortened.

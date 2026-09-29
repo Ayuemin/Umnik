@@ -1,4 +1,4 @@
-// Umnik v1.20.0 — stable release
+// Umnik v1.20.1 — stable release
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -27,8 +27,8 @@ android {
         // the toolchain and libraries move to API 37. targetSdk 37 will be
         // a separate, testable migration step.
         targetSdk = 36
-        versionCode = 201
-        versionName = "1.20.0"
+        versionCode = 203
+        versionName = "1.20.1"
 
         // Local Shell embeds Python for the supported 64-bit release ABIs.
         ndk {
