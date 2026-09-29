@@ -44,6 +44,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.matchParentSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -150,6 +151,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.TextLinkStyles
@@ -898,6 +900,44 @@ private fun ChatScreen(
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp)
                 ) {
+                    if (!imagePromptMode && (
+                        activeSkillCount > 0 || state.reasoningEnabled || state.webSearchEnabled || state.agentEnabled
+                    )) {
+                        Row(
+                            modifier = Modifier
+                                .matchParentSize()
+                                .padding(start = 52.dp, bottom = 8.dp),
+                            verticalAlignment = Alignment.Bottom,
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            if (activeSkillCount > 0) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Extension,
+                                    description = "Активные навыки: $activeSkillCount",
+                                    count = activeSkillCount
+                                )
+                            }
+                            if (state.reasoningEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Psychology,
+                                    description = "Размышление включено"
+                                )
+                            }
+                            if (state.webSearchEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.Language,
+                                    description = "Поиск в сети включён"
+                                )
+                            }
+                            if (state.agentEnabled) {
+                                ComposerInlineIndicator(
+                                    icon = Icons.Outlined.SmartToy,
+                                    description = "Агентный режим включён"
+                                )
+                            }
+                        }
+                    }
+
                     OutlinedTextField(
                         value = text,
                         onValueChange = { text = it },
@@ -1034,47 +1074,6 @@ private fun ChatScreen(
                         shape = UmnikFieldShape,
                         maxLines = 6
                     )
-
-                    if (!imagePromptMode && (
-                        activeSkillCount > 0 || state.reasoningEnabled || state.webSearchEnabled || state.agentEnabled
-                    )) {
-                        Row(
-                            modifier = Modifier
-                                .align(Alignment.TopStart)
-                                .padding(start = 52.dp)
-                                .graphicsLayer {
-                                    translationY = -10.dp.toPx()
-                                },
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            if (activeSkillCount > 0) {
-                                ComposerInlineIndicator(
-                                    icon = Icons.Outlined.Extension,
-                                    description = "Активные навыки: $activeSkillCount",
-                                    count = activeSkillCount
-                                )
-                            }
-                            if (state.reasoningEnabled) {
-                                ComposerInlineIndicator(
-                                    icon = Icons.Outlined.Psychology,
-                                    description = "Размышление включено"
-                                )
-                            }
-                            if (state.webSearchEnabled) {
-                                ComposerInlineIndicator(
-                                    icon = Icons.Outlined.Language,
-                                    description = "Поиск в сети включён"
-                                )
-                            }
-                            if (state.agentEnabled) {
-                                ComposerInlineIndicator(
-                                    icon = Icons.Outlined.SmartToy,
-                                    description = "Агентный режим включён"
-                                )
-                            }
-                        }
-                    }
                 }
             }
         }
@@ -2005,13 +2004,15 @@ private fun ComposerInlineIndicator(
     count: Int? = null
 ) {
     Row(
-        modifier = Modifier.graphicsLayer { alpha = 0.52f },
+        modifier = Modifier
+            .clearAndSetSemantics { }
+            .graphicsLayer { alpha = 0.16f },
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(1.dp)
     ) {
         Icon(
             icon,
-            contentDescription = description,
+            contentDescription = null,
             modifier = Modifier.size(14.dp),
             tint = MaterialTheme.colorScheme.primary
         )

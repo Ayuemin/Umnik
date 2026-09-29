@@ -1,0 +1,1 @@
+Umnik 1.20.2: active skills, reasoning, internet and agent indicators now sit inside the composer as a subtle background layer. They no longer reduce text width or change the field height.
