@@ -18,6 +18,13 @@ class SecretStore(context: Context) {
 
     fun getApiKey(): String? = getProfileApiKey("openrouter")
 
+    /** GitHub PAT is separate from OpenRouter credentials, encrypted under Android Keystore. */
+    fun saveGitHubToken(value: String) = saveSecret("github_agent_token", value)
+
+    fun getGitHubToken(): String? = readSecret("github_agent_token")
+
+    fun deleteGitHubToken() { prefs.edit().remove("github_agent_token").apply() }
+
     fun saveProfileApiKey(profileId: String, value: String) = saveSecret(prefKey(profileId), value)
 
     fun getProfileApiKey(profileId: String): String? = readSecret(prefKey(profileId))
