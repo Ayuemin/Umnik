@@ -8,9 +8,10 @@ package com.ayuemin.ymnik.agenttools
  * confirmation gate; CONTROL means switching tool/session state. Mutating
  * tool operations remain WRITE/UPLOAD/DELETE/EXECUTE.
  *
- * Discovery is NOT execution or a permission grant. Legacy callbacks stay
- * untouched until their real WebView origin / Shell sandbox is resolved by
- * a trusted adapter immediately before each effect.
+ * Discovery is NOT execution or a permission grant. Session-only Browser
+ * controls and Shell status have guarded callbacks; real WebView navigation,
+ * page reads/downloads and Shell execution still use their previous path
+ * pending origin/sandbox enforcement inside their serialized runtimes.
  */
 internal object ExistingLocalToolCatalog {
     private fun descriptor(
@@ -36,8 +37,8 @@ internal object ExistingLocalToolCatalog {
         descriptor("local_browser_scroll", ToolAction.READ, ToolResourceKind.WEB_ORIGIN),
         descriptor("local_browser_back", ToolAction.NAVIGATE, ToolResourceKind.WEB_ORIGIN),
         descriptor("local_browser_wait", ToolAction.READ, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_takeover", ToolAction.CONTROL, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_done", ToolAction.CONTROL, ToolResourceKind.WEB_ORIGIN)
+        descriptor("local_browser_takeover", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION),
+        descriptor("local_browser_done", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION)
     )
 
     private val shell = listOf(

@@ -26,6 +26,7 @@ import com.ayuemin.ymnik.data.SystemTaskPlanner
 import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
+import com.ayuemin.ymnik.agenttools.TrustedBrowserSessionGuard
 import com.ayuemin.ymnik.agenttools.ToolDispatchResult
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -137,6 +138,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val api = OpenRouterClient(context)
     private val localShellClient = LocalShellAgentClient(context)
     private val trustedShellStatusGuard = TrustedShellStatusGuard()
+    private val trustedBrowserSessionGuard = TrustedBrowserSessionGuard()
     private val localWebFetcher = LocalWebFetcher(context)
     private val systemTaskPlanner = SystemTaskPlanner(api)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
@@ -5176,6 +5178,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                         }
                         val localShellToolsEnabled = requestSpecialist == null &&
                             modelToolsAvailable && localShellRequested
+                        val browserControlGrant = trustedBrowserSessionGuard.grantFromUiSubmission(
+                            chatId = chatId,
+                            directUserMessageId = user.id,
+                            browserEnabledForRequest = localBrowserToolsEnabled,
+                            issuedAtMillis = System.currentTimeMillis()
+                        )
                         val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
                         val historicalAttachments = if (requestSpecialist == null) {
                             HistoricalAttachmentPolicy.select(
@@ -5384,10 +5392,44 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     }
                                 } else null,
                                 localBrowserTakeover = if (localBrowserToolsEnabled) {
-                                    { reason -> LocalBrowserRuntime.takeover(chatId, reason) }
+                                    { reason ->
+                                        when (val result = trustedBrowserSessionGuard.control(
+                                            grant = browserControlGrant,
+                                            trustedChatId = chatId,
+                                            directUserMessageId = user.id,
+                                            toolId = "local_browser_takeover",
+                                            nowMillis = System::currentTimeMillis
+                                        ) { LocalBrowserRuntime.takeover(chatId, reason) }) {
+                                            is ToolDispatchResult.Completed -> result.value
+                                            is ToolDispatchResult.Blocked -> gson.toJson(
+                                                mapOf(
+                                                    "ok" to false,
+                                                    "error" to "Управление Browser не разрешено",
+                                                    "reason" to result.decision.name
+                                                )
+                                            )
+                                        }
+                                    }
                                 } else null,
                                 localBrowserDone = if (localBrowserToolsEnabled) {
-                                    { LocalBrowserRuntime.done(chatId) }
+                                    {
+                                        when (val result = trustedBrowserSessionGuard.control(
+                                            grant = browserControlGrant,
+                                            trustedChatId = chatId,
+                                            directUserMessageId = user.id,
+                                            toolId = "local_browser_done",
+                                            nowMillis = System::currentTimeMillis
+                                        ) { LocalBrowserRuntime.done(chatId) }) {
+                                            is ToolDispatchResult.Completed -> result.value
+                                            is ToolDispatchResult.Blocked -> gson.toJson(
+                                                mapOf(
+                                                    "ok" to false,
+                                                    "error" to "Завершение Browser не разрешено",
+                                                    "reason" to result.decision.name
+                                                )
+                                            )
+                                        }
+                                    }
                                 } else null,
                                 localShellStart = if (localShellToolsEnabled) {
                                     { task, allowNetwork, requestedFiles ->

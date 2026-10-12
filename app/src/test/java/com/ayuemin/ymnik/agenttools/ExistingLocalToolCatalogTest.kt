@@ -23,6 +23,8 @@ class ExistingLocalToolCatalogTest {
     @Test fun sideEffectingToolsDoNotMasqueradeAsReads() {
         assertEquals(setOf(ToolAction.EXECUTE), registry.descriptor("local_shell_start")?.actions)
         assertEquals(setOf(ToolAction.INTERACT), registry.descriptor("local_browser_type")?.actions)
+        assertEquals(setOf(ToolResourceKind.LOCAL_SESSION), registry.descriptor("local_browser_takeover")?.resourceKinds)
+        assertEquals(setOf(ToolResourceKind.LOCAL_SESSION), registry.descriptor("local_browser_done")?.resourceKinds)
         assertEquals(setOf(ToolAction.DOWNLOAD), registry.descriptor("local_browser_download")?.actions)
         assertEquals(setOf(ToolAction.READ), registry.descriptor("local_browser_read")?.actions)
         assertTrue(ToolAction.INTERACT in registry.descriptor("local_browser_click")!!.actions)
