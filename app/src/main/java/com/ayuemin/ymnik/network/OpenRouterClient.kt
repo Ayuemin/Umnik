@@ -16,6 +16,7 @@ import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.diagnostics.DiagnosticNetworkEventListener
 import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
 import com.ayuemin.ymnik.model.ChatMessage
+import com.ayuemin.ymnik.model.TokenUsageStats
 import com.ayuemin.ymnik.model.GeneratedFile
 import com.ayuemin.ymnik.model.ModelInfo
 import com.ayuemin.ymnik.model.PendingAttachment
@@ -50,7 +51,8 @@ class OpenRouterClient(
     private val recoveryEnabled: Boolean = false,
     private val streamCallback: (String) -> Unit = {},
     private val phaseCallback: (String) -> Unit = {},
-    private val costSink: ((RequestCostKind, String?) -> Unit)? = null
+    private val costSink: ((RequestCostKind, String?) -> Unit)? = null,
+    private val tokenUsageSink: ((TokenUsageStats?) -> Unit)? = null
 ) {
     private val gson = Gson()
     private val featurePrefs by lazy { OpenRouterFeaturePrefs(context.applicationContext) }
@@ -363,6 +365,7 @@ class OpenRouterClient(
                 apiKey, baseUrl, payload, allowEmpty = created.isNotEmpty(), streamToUi = streamToUi
             )
             costSink?.invoke(RequestCostKind.PRIMARY, completion.costUsdExact)
+            tokenUsageSink?.invoke(completion.tokenUsage)
             val responseMessage = completion.message
             created += generatedImagesFromMessage(responseMessage)
             val toolCalls = responseMessage.get("tool_calls")?.takeIf { it.isJsonArray }?.asJsonArray
@@ -905,6 +908,7 @@ class OpenRouterClient(
             streamToUi = false
         )
         costSink?.invoke(RequestCostKind.SYSTEM, completion.costUsdExact)
+        tokenUsageSink?.invoke(completion.tokenUsage)
         val content = extractText(completion.message.get("content"))
         if (content.isBlank()) error("Системная модель не вернула текст")
         Result(

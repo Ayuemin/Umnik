@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik.network
 
+import com.ayuemin.ymnik.model.TokenUsageStats
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -38,6 +39,7 @@ internal object OpenRouterStreamParser {
         var reasoningTokens: Int? = null
         var costUsd: Double? = null
         var costUsdExact: String? = null
+        var tokenUsage: TokenUsageStats? = null
 
         fun appendPiece(target: StringBuilder, piece: String) {
             if (piece.isEmpty()) return
@@ -95,6 +97,7 @@ internal object OpenRouterStreamParser {
             root.get("model")?.takeUnless { it.isJsonNull }?.asString?.takeIf { it.isNotBlank() }?.let { model = it }
 
             root.getAsJsonObject("usage")?.let { usage ->
+                tokenUsage = OpenRouterTokenUsageParser.parse(usage) ?: tokenUsage
                 promptTokens = runCatching { usage.get("prompt_tokens")?.asInt }.getOrNull() ?: promptTokens
                 completionTokens = runCatching { usage.get("completion_tokens")?.asInt }.getOrNull() ?: completionTokens
                 totalTokens = runCatching { usage.get("total_tokens")?.asInt }.getOrNull() ?: totalTokens
@@ -194,7 +197,8 @@ internal object OpenRouterStreamParser {
             totalTokens = totalTokens,
             reasoningTokens = reasoningTokens,
             costUsd = costUsd,
-            costUsdExact = costUsdExact
+            costUsdExact = costUsdExact,
+            tokenUsage = tokenUsage
         )
     }
 }

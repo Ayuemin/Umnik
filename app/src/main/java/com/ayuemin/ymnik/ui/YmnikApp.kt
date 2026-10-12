@@ -2917,26 +2917,36 @@ private fun AnswerInfoSheet(
                 message.inputTokens != null ||
                 message.outputTokens != null ||
                 message.costUsd != null ||
-                message.costBreakdown != null
+                message.costBreakdown != null ||
+                message.tokenUsage != null
             ) {
                 Spacer(Modifier.height(8.dp))
                 AnswerInfoSectionTitle("Токены и стоимость")
                 AnswerInfoRow(
-                    "Отправлено в OpenRouter",
+                    "Последний вызов · вход",
                     message.inputTokens?.let { "$it токенов" } ?: "—"
                 )
                 AnswerInfoRow(
-                    "Получено от OpenRouter",
+                    "Последний вызов · выход",
                     message.outputTokens?.let { "$it токенов" } ?: "—"
                 )
                 AnswerInfoRow(
-                    "Всего обработано",
+                    "Последний вызов · всего",
                     if (message.inputTokens != null && message.outputTokens != null) {
                         "${message.inputTokens + message.outputTokens} токенов"
                     } else {
                         "—"
                     }
                 )
+
+                message.tokenUsage?.let { usage ->
+                    AnswerInfoRow("Завершено вызовов модели", usage.observedCalls.toString())
+                    AnswerInfoRow("Суммарный вход", usage.inputTokens?.toString()?.plus(" токенов") ?: "Не сообщено")
+                    AnswerInfoRow("Чтение из кеша", usage.cachedInputTokens?.toString()?.plus(" токенов") ?: "Не сообщено")
+                    AnswerInfoRow("Запись в кеш", usage.cacheWriteTokens?.toString()?.plus(" токенов") ?: "Не сообщено")
+                    AnswerInfoRow("Суммарный выход", usage.outputTokens?.toString()?.plus(" токенов") ?: "Не сообщено")
+                    AnswerInfoRow("В том числе reasoning", usage.reasoningTokens?.toString()?.plus(" токенов") ?: "Не сообщено")
+                }
 
                 val costs = message.costBreakdown
                 if (costs != null) {

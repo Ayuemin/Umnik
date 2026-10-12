@@ -2,6 +2,8 @@ package com.ayuemin.ymnik
 
 import android.content.Context
 import com.ayuemin.ymnik.network.OpenRouterClient
+import com.ayuemin.ymnik.network.OpenRouterTokenUsageLedger
+import com.ayuemin.ymnik.model.TokenUsageStats
 import java.util.Collections
 
 /**
@@ -20,6 +22,7 @@ internal class RequestNetworkSession(
     private val clients = Collections.synchronizedSet(mutableSetOf<OpenRouterClient>())
     private val childCancellations = RequestChildCancellationRegistry()
     private val costLedger = RequestCostLedger()
+    private val tokenLedger = OpenRouterTokenUsageLedger()
     private val embeddingClient = com.ayuemin.ymnik.network.OpenRouterEmbeddingClient(app) { exact ->
         costLedger.record(RequestCostKind.EMBEDDINGS, exact)
     }
@@ -37,7 +40,8 @@ internal class RequestNetworkSession(
             recoveryEnabled = recoverable,
             streamCallback = { text -> updatePartial(text) },
             phaseCallback = { label -> updatePhase(label) },
-            costSink = costLedger::record
+            costSink = costLedger::record,
+            tokenUsageSink = tokenLedger::record
         )
             .also { clients += it }
 
@@ -53,6 +57,8 @@ internal class RequestNetworkSession(
     fun embeddings(): com.ayuemin.ymnik.network.OpenRouterEmbeddingClient = embeddingClient
 
     fun costSnapshot(): com.ayuemin.ymnik.model.RequestCostBreakdown? = costLedger.snapshot()
+
+    fun tokenUsageSnapshot(): TokenUsageStats? = tokenLedger.snapshot()
 
     fun reserveChat(chatId: String): Boolean = RequestExecutionManager.reserveChat(requestId, chatId)
 

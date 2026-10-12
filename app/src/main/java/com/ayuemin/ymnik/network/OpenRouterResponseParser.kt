@@ -1,5 +1,6 @@
 package com.ayuemin.ymnik.network
 
+import com.ayuemin.ymnik.model.TokenUsageStats
 import com.google.gson.Gson
 import com.google.gson.JsonElement
 import com.google.gson.JsonObject
@@ -17,7 +18,8 @@ internal object OpenRouterResponseParser {
         val totalTokens: Int?,
         val reasoningTokens: Int?,
         val costUsd: Double?,
-        val costUsdExact: String? = null
+        val costUsdExact: String? = null,
+        val tokenUsage: TokenUsageStats? = null
     )
 
     fun parse(body: String, allowEmpty: Boolean = false): Completion {
@@ -60,7 +62,8 @@ internal object OpenRouterResponseParser {
             totalTokens = runCatching { usage?.get("total_tokens")?.asInt }.getOrNull(),
             reasoningTokens = reasoningTokens,
             costUsd = costExact?.toDoubleOrNull(),
-            costUsdExact = costExact
+            costUsdExact = costExact,
+            tokenUsage = OpenRouterTokenUsageParser.parse(usage)
         )
     }
 

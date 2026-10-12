@@ -5707,6 +5707,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     connectionName = profile.name,
                     requestId = requestId.toString(),
                     costBreakdown = network.costSnapshot(),
+                    tokenUsage = network.tokenUsageSnapshot(),
                     executionTrace = if (mode == ChatMode.TEXT) {
                         RequestExecutionManager.executionTraceForChat(chatId, finalText).takeIf { it.isNotEmpty() }
                     } else null
