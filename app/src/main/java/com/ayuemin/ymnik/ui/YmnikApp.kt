@@ -176,6 +176,9 @@ import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.AndroidDictation
+import com.ayuemin.ymnik.audio.VoskOfflineDictation
+import com.ayuemin.ymnik.data.OfflineDictationPrefs
+import com.ayuemin.ymnik.data.OfflineDictationEngine
 import com.ayuemin.ymnik.browser.LocalBrowserActivity
 import com.ayuemin.ymnik.browser.LocalBrowserLifecycle
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
@@ -348,13 +351,20 @@ private fun ChatScreen(
     var scrollToBottomVisible by remember(state.currentChatId) { mutableStateOf(false) }
     val context = LocalContext.current
     val androidDictation = remember(context) { AndroidDictation(context.applicationContext) }
+    val voskDictation = remember(context) { VoskOfflineDictation(context.applicationContext) }
+    val dictationPrefs = remember(context) { OfflineDictationPrefs(context.applicationContext) }
+    val selectedDictationEngine = dictationPrefs.engine()
+    var activeDictationEngine by remember { mutableStateOf(selectedDictationEngine) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
     var requestElapsedSeconds by remember { mutableIntStateOf(0) }
 
-    DisposableEffect(androidDictation) {
-        onDispose { androidDictation.close() }
+    DisposableEffect(androidDictation, voskDictation) {
+        onDispose {
+            androidDictation.close()
+            voskDictation.close()
+        }
     }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
         ?: state.connectionProfiles.first()
@@ -474,28 +484,36 @@ private fun ChatScreen(
         recordingStartedAt = System.currentTimeMillis()
         recordingSeconds = 0
         isRecording = true
-        androidDictation.start(
-            onText = { recognized ->
+        activeDictationEngine = selectedDictationEngine
+        val onRecognized: (String) -> Unit = { recognized ->
                 isRecording = false
                 recordingStartedAt = 0L
                 recordingSeconds = 0
                 if (state.currentChatId == originChatId) {
                     text = listOf(text.trim(), recognized).filter { it.isNotBlank() }.joinToString(" ")
                 }
-            },
-            onFailure = { reason ->
+            }
+        val onDictationError: (String) -> Unit = { reason ->
                 isRecording = false
                 recordingStartedAt = 0L
                 recordingSeconds = 0
                 Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
             }
-        )
+        if (activeDictationEngine == OfflineDictationEngine.VOSK_RU_SMALL) {
+            voskDictation.start(onRecognized, onDictationError)
+        } else {
+            androidDictation.start(onRecognized, onDictationError)
+        }
     }
 
     fun finishVoiceRecording() {
         if (!isRecording) return
         // The recognition service may still be finishing the transcript.
-        androidDictation.stop()
+        if (activeDictationEngine == OfflineDictationEngine.VOSK_RU_SMALL) {
+            voskDictation.stop()
+        } else {
+            androidDictation.stop()
+        }
     }
 
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -851,6 +869,7 @@ private fun ChatScreen(
                         seconds = recordingSeconds,
                         onCancel = {
                             androidDictation.cancel()
+                            voskDictation.cancel()
                             isRecording = false
                             recordingStartedAt = 0L
                             recordingSeconds = 0
