@@ -2390,6 +2390,26 @@ object LocalBrowserRuntime {
             el.click();
             return JSON.stringify({ok:true, kind:'safe_ui', main_frame:mainFrame, matched_element:matched});
           }
+          // A narrowly identifiable GET search is ordinary navigation. Never
+          // infer general click permission from a button label alone.
+          const controlType = String(el.getAttribute('type') || '').toLowerCase();
+          const form = el.form || el.closest?.('form') || null;
+          const formMethod = String(form?.method || 'get').toLowerCase();
+          const formAction = String(form?.action || '').toLowerCase();
+          const sensitive = /(delete|remove|unsubscribe|purchase|checkout|pay|order|subscribe|transfer|send|publish|login|logout|signout|удал|оплат|куп|заказ|подпис|перевод|отправ|опубликов|выйти)/i;
+          const searchControl = (
+            (tag === 'button' || tag === 'input') &&
+            (!controlType || controlType === 'submit' || controlType === 'button') &&
+            form && formMethod === 'get' &&
+            String(form.getAttribute('role') || '').toLowerCase() === 'search' &&
+            form.querySelector('input[type="search"],[role="searchbox"]') &&
+            !form.querySelector('input[type="password"],input[type="file"]') &&
+            !sensitive.test(label + ' ' + formAction + ' ' + String(form.getAttribute('name') || ''))
+          );
+          if (searchControl) {
+            el.click();
+            return JSON.stringify({ok:true, kind:'search_navigation', main_frame:mainFrame, matched_element:matched});
+          }
           return JSON.stringify({
             ok:false,
             reason:'consequential_or_unknown_action',
@@ -2566,8 +2586,17 @@ object LocalBrowserRuntime {
                   String(form.getAttribute('id') || '') + ' ' +
                   String(form.getAttribute('name') || '')
                 ).toLowerCase();
-                const consequential = formMethod !== 'get' ||
-                  /(delete|remove|purchase|checkout|pay|order|subscribe|unsubscribe|logout|signout|удал|оплат|куп|заказ|подпис|выйти)/i.test(signal);
+                const sensitiveSubmit = /(delete|remove|purchase|checkout|pay|order|subscribe|unsubscribe|logout|signout|send|publish|transfer|удал|оплат|куп|заказ|подпис|выйти|отправ|опубликов|перевод)/i.test(signal);
+                // Some search pages use POST solely for retrieval. Allow only an
+                // explicit same-origin search form without credentials or files.
+                const safePostSearch = formMethod === 'post' &&
+                  String(form.getAttribute('role') || '').toLowerCase() === 'search' &&
+                  !!form.querySelector('input[type="search"],[role="searchbox"]') &&
+                  !form.querySelector('input[type="password"],input[type="file"],input[autocomplete="one-time-code"]') &&
+                  (() => { try { return new URL(formAction, doc.location.href).origin === doc.location.origin; }
+                    catch (_) { return false; } })() &&
+                  !sensitiveSubmit;
+                const consequential = (formMethod !== 'get' && !safePostSearch) || sensitiveSubmit;
                 if (consequential) {
                   return JSON.stringify({
                     ok:false,

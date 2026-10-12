@@ -110,6 +110,21 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(s.contains("candidates:fieldCandidates()"))
     }
 
+    @Test fun safeSearchControlsAreNarrowlyAllowedWithoutWeakeningSensitiveConfirmation() {
+        val s = runtime()
+        assertTrue(s.contains("kind:'search_navigation'"))
+        assertTrue(s.contains("formMethod === 'get'"))
+        assertTrue(s.contains("String(form.getAttribute('role') || '').toLowerCase() === 'search'"))
+        assertTrue(s.contains("form.querySelector('input[type=\"search\"],[role=\"searchbox\"]')"))
+        assertTrue(s.contains("!form.querySelector('input[type=\"password\"],input[type=\"file\"]')"))
+        assertTrue(s.contains("const sensitiveSubmit ="))
+        assertTrue(s.contains("const safePostSearch = formMethod === 'post'"))
+        assertTrue(s.contains("new URL(formAction, doc.location.href).origin === doc.location.origin"))
+        assertTrue(s.contains("const consequential = (formMethod !== 'get' && !safePostSearch) || sensitiveSubmit"))
+        assertTrue(s.contains("confirmation_required:true"))
+        assertTrue(s.contains("user_takeover:true"))
+    }
+
     @Test fun takeoverReturnsFreshSnapshotWithoutAutoRepeatingAction() {
         val s = runtime()
         assertTrue(s.contains("snapshot(session, webView, forceBaseline = true)"))
