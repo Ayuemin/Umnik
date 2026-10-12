@@ -176,6 +176,12 @@ import com.ayuemin.ymnik.RequestExecutionManager
 import com.ayuemin.ymnik.RequestKeepAliveService
 import com.ayuemin.ymnik.ShellActivity
 import com.ayuemin.ymnik.audio.WavRecorder
+import com.ayuemin.ymnik.audio.AndroidDictation
+import com.ayuemin.ymnik.data.VoiceInputPrefs
+import com.ayuemin.ymnik.data.VoiceInputMode
+import com.ayuemin.ymnik.data.SecretStore
+import com.ayuemin.ymnik.data.OpenRouterFeaturePrefs
+import com.ayuemin.ymnik.network.OpenRouterAudioClient
 import com.ayuemin.ymnik.browser.LocalBrowserActivity
 import com.ayuemin.ymnik.browser.LocalBrowserLifecycle
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
@@ -197,6 +203,8 @@ import com.ayuemin.ymnik.model.UiState
 import com.ayuemin.ymnik.model.WebSearchPreset
 import com.ayuemin.ymnik.tts.TtsController
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.launch
 import java.io.File
 import java.math.BigDecimal
@@ -348,13 +356,23 @@ private fun ChatScreen(
     var scrollToBottomVisible by remember(state.currentChatId) { mutableStateOf(false) }
     val context = LocalContext.current
     val voiceRecorder = remember(context) { WavRecorder(context) }
+    val androidDictation = remember(context) { AndroidDictation(context.applicationContext) }
+    val voicePrefs = remember(context) { VoiceInputPrefs(context.applicationContext) }
+    val voiceInputMode = remember { voicePrefs.mode() }
+    val voiceFeaturePrefs = remember(context) { OpenRouterFeaturePrefs(context.applicationContext) }
+    val voiceAudioClient = remember(context) { OpenRouterAudioClient(context.applicationContext) }
+    val voiceSecrets = remember(context) { SecretStore(context.applicationContext) }
+    var isTranscribing by remember { mutableStateOf(false) }
     var isRecording by remember { mutableStateOf(false) }
     var recordingStartedAt by remember { mutableStateOf(0L) }
     var recordingSeconds by remember { mutableIntStateOf(0) }
     var requestElapsedSeconds by remember { mutableIntStateOf(0) }
 
-    DisposableEffect(voiceRecorder) {
-        onDispose { voiceRecorder.cancel() }
+    DisposableEffect(voiceRecorder, androidDictation) {
+        onDispose {
+            voiceRecorder.cancel()
+            androidDictation.close()
+        }
     }
     val activeProfile = state.connectionProfiles.firstOrNull { it.id == state.activeConnectionProfileId }
         ?: state.connectionProfiles.first()
@@ -364,7 +382,8 @@ private fun ChatScreen(
     val imageConnectionAvailable = imageProfile.id !in state.disabledConnectionIds && vm.connectionImageEnabled(imageProfile.id)
     val activeTextModel = state.currentChatTextModel ?: state.textModel
     val textModelInfo = state.availableTextModels.firstOrNull { it.id == activeTextModel }
-    val microphoneAvailable = !imagePromptMode && activeProfile.type == ProviderType.OPENROUTER && textModelInfo?.accepts("audio") == true
+    val microphoneAvailable = !imagePromptMode && activeProfile.type == ProviderType.OPENROUTER &&
+        (voiceInputMode != VoiceInputMode.AUDIO_MESSAGE || textModelInfo?.accepts("audio") == true)
     val imageModelInfo = state.availableImageModels.firstOrNull { it.id == state.imageModel }
     val cameraAvailable = if (imagePromptMode) {
         state.imageModel.isNotBlank() && imageProfile.type == ProviderType.OPENROUTER && imageModelInfo?.accepts("image") != false
@@ -468,7 +487,36 @@ private fun ChatScreen(
     val activeTeamSkillCount = 0
 
     fun startVoiceRecording() {
-        if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode) return
+        if (!microphoneAvailable || nonRequestBusy || requestActiveHere || imagePromptMode || isTranscribing) return
+        if (voiceInputMode == VoiceInputMode.OPENROUTER_DICTATION &&
+            voiceFeaturePrefs.media().transcriptionModel.isBlank()
+        ) {
+            Toast.makeText(context, "Выберите STT-модель OpenRouter в инструменте «В текст»", Toast.LENGTH_LONG).show()
+            return
+        }
+        if (voiceInputMode == VoiceInputMode.ANDROID_DICTATION) {
+            val originChatId = state.currentChatId
+            recordingStartedAt = System.currentTimeMillis()
+            recordingSeconds = 0
+            isRecording = true
+            androidDictation.start(
+                onText = { recognized ->
+                    isRecording = false
+                    recordingStartedAt = 0L
+                    recordingSeconds = 0
+                    if (state.currentChatId == originChatId) {
+                        text = listOf(text.trim(), recognized).filter { it.isNotBlank() }.joinToString(" ")
+                    }
+                },
+                onFailure = { reason ->
+                    isRecording = false
+                    recordingStartedAt = 0L
+                    recordingSeconds = 0
+                    Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
+                }
+            )
+            return
+        }
         runCatching { voiceRecorder.start() }
             .onSuccess {
                 recordingStartedAt = System.currentTimeMillis()
@@ -480,18 +528,67 @@ private fun ChatScreen(
             }
     }
 
+    fun finishVoiceRecording(sendAudioMessage: Boolean) {
+        if (!isRecording) return
+        isRecording = false
+        recordingStartedAt = 0L
+        recordingSeconds = 0
+        if (voiceInputMode == VoiceInputMode.ANDROID_DICTATION) {
+            androidDictation.stop()
+            return
+        }
+        val file = voiceRecorder.stop() ?: return
+        if (voiceInputMode == VoiceInputMode.AUDIO_MESSAGE) {
+            val attached = vm.addVoiceRecording(file.absolutePath)
+            if (sendAudioMessage && attached) {
+                vm.send(text)
+                text = ""
+            }
+            return
+        }
+        val modelId = voiceFeaturePrefs.media().transcriptionModel.trim()
+        val profile = activeProfile
+        val key = voiceSecrets.getProfileApiKey(profile.id)
+        if (modelId.isBlank() || key.isNullOrBlank()) {
+            file.delete()
+            Toast.makeText(context, "Сначала настройте модель распознавания и OpenRouter", Toast.LENGTH_LONG).show()
+            return
+        }
+        val originChatId = state.currentChatId
+        val baseUrl = vm.connectionTextEndpoint(profile.id)
+        isTranscribing = true
+        chatScope.launch {
+            try {
+                val recognized = withContext(Dispatchers.IO) {
+                    voiceAudioClient.transcribe(
+                        apiKey = key, model = modelId, audio = file.readBytes(),
+                        format = "wav", language = "ru", baseUrl = baseUrl
+                    ).text
+                }.trim()
+                if (state.currentChatId == originChatId && recognized.isNotEmpty()) {
+                    text = listOf(text.trim(), recognized).filter { it.isNotBlank() }.joinToString(" ")
+                } else if (recognized.isBlank()) {
+                    Toast.makeText(context, "Речь не распознана", Toast.LENGTH_SHORT).show()
+                }
+            } catch (error: Exception) {
+                Toast.makeText(context, error.message ?: "Ошибка распознавания через OpenRouter", Toast.LENGTH_LONG).show()
+            } finally {
+                file.delete()
+                isTranscribing = false
+            }
+        }
+    }
+
     val microphonePermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startVoiceRecording()
-        else Toast.makeText(context, "Для голосового сообщения нужен доступ к микрофону", Toast.LENGTH_SHORT).show()
+        else Toast.makeText(context, "Для голосового ввода нужен доступ к микрофону", Toast.LENGTH_SHORT).show()
     }
 
     LaunchedEffect(isRecording, recordingStartedAt) {
         while (isRecording) {
             recordingSeconds = ((System.currentTimeMillis() - recordingStartedAt) / 1000L).toInt().coerceAtLeast(0)
             if (recordingSeconds >= 600) {
-                val file = voiceRecorder.stop()
-                isRecording = false
-                file?.let { vm.addVoiceRecording(it.absolutePath) }
+                finishVoiceRecording(sendAudioMessage = false)
                 Toast.makeText(context, "Достигнут максимум записи 10 минут", Toast.LENGTH_SHORT).show()
                 break
             }
@@ -835,6 +932,7 @@ private fun ChatScreen(
                         seconds = recordingSeconds,
                         onCancel = {
                             voiceRecorder.cancel()
+                            androidDictation.cancel()
                             isRecording = false
                             recordingStartedAt = 0L
                             recordingSeconds = 0
@@ -960,11 +1058,7 @@ private fun ChatScreen(
                                     IconButton(
                                         onClick = {
                                             if (isRecording) {
-                                                val file = voiceRecorder.stop()
-                                                isRecording = false
-                                                recordingStartedAt = 0L
-                                                recordingSeconds = 0
-                                                file?.let { vm.addVoiceRecording(it.absolutePath) }
+                                                finishVoiceRecording(sendAudioMessage = false)
                                             } else if (microphoneAvailable) {
                                                 if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
                                                     startVoiceRecording()
@@ -973,7 +1067,7 @@ private fun ChatScreen(
                                                 }
                                             }
                                         },
-                                        enabled = isRecording || (!nonRequestBusy && !requestActiveHere && microphoneAvailable),
+                                        enabled = isRecording || (!nonRequestBusy && !requestActiveHere && microphoneAvailable && !isTranscribing),
                                         modifier = Modifier.size(42.dp)
                                     ) {
                                         Icon(
@@ -1012,14 +1106,7 @@ private fun ChatScreen(
                                         if (requestActiveHere) {
                                             vm.stopGeneration()
                                         } else if (isRecording) {
-                                            val file = voiceRecorder.stop()
-                                            isRecording = false
-                                            recordingStartedAt = 0L
-                                            recordingSeconds = 0
-                                            if (file != null && vm.addVoiceRecording(file.absolutePath)) {
-                                                vm.send(text)
-                                                text = ""
-                                            }
+                                            finishVoiceRecording(sendAudioMessage = true)
                                         } else if (imagePromptMode) {
                                             if (vm.sendImagePrompt(text)) {
                                                 text = ""
