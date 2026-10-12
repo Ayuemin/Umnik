@@ -17,6 +17,8 @@ internal class ToolRegistry {
 
     fun contains(id: String): Boolean = descriptions.containsKey(id)
 
+    fun descriptor(id: String): ToolDescriptor? = descriptions[id]?.let(::snapshot)
+
     fun descriptors(): List<ToolDescriptor> =
         descriptions.values.sortedBy { it.id }.map(::snapshot)
 
