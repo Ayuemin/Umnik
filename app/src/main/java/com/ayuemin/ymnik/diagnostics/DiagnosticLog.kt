@@ -177,8 +177,8 @@ class DiagnosticHttpInterceptor(
         val messages = root.getAsJsonArray("messages") ?: return; var task = ""
         for (item in messages) { if (!item.isJsonObject) continue; val message = item.asJsonObject; if (message.get("role")?.asString != "user") continue; task = message.get("content")?.takeIf { it.isJsonPrimitive }?.asString.orEmpty(); if (task.isNotBlank()) break }
         if (task.isBlank()) return
-        val oneLine = task.replace(Regex("[\\r\\n\\t]+"), " ").replace(Regex("\\s{2,}"), " ").trim()
-        DiagnosticLog.record(context, "LOCAL_SHELL_TASK", buildString { append("chars=").append(task.length).append("; task=").append(oneLine.take(4_000)); if (oneLine.length > 4_000) append("; truncated=true") })
+        // Diagnostic metadata only; never write the user's Shell prompt.
+        DiagnosticLog.record(context, "LOCAL_SHELL_TASK", "chars=${task.length}; lines=${task.lineSequence().count()}; content_omitted=true")
     }
 
     private fun recordLocalShellResponse(requestRoot: JsonObject, response: Response, elapsedMs: Long, loggingEnabled: Boolean) {
@@ -186,8 +186,8 @@ class DiagnosticHttpInterceptor(
         val body = runCatching { response.peekBody(MAX_SHELL_DIAGNOSTIC_BODY_BYTES).string() }.getOrDefault(""); val root = runCatching { JsonParser.parseString(body).asJsonObject }.getOrNull()
         if (!response.isSuccessful) {
             if (loggingEnabled) {
-                val detail = root?.getAsJsonObject("error")?.get("message")?.takeIf { it.isJsonPrimitive }?.asString ?: root?.get("message")?.takeIf { it.isJsonPrimitive }?.asString ?: body.take(2_000)
-                DiagnosticLog.record(context, "LOCAL_SHELL_PROVIDER_ERROR", "http=${response.code}; request=$requestRun; turn=$turn; requestedModel=$requestedModel; body=${detail.take(2_000)}")
+                // Provider error bodies may echo user prompts or private tool output.
+                DiagnosticLog.record(context, "LOCAL_SHELL_PROVIDER_ERROR", "http=${response.code}; request=$requestRun; turn=$turn; requestedModel=$requestedModel; bodyChars=${body.length}; body_omitted=true")
             }
             return
         }
