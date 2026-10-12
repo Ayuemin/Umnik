@@ -1,5 +1,7 @@
 package com.ayuemin.ymnik.agenttools
 
+import kotlinx.coroutines.CancellationException
+
 /** A blocked operation never invokes the supplied tool callback. */
 internal sealed interface ToolDispatchResult<out T> {
     data class Completed<T>(val value: T) : ToolDispatchResult<T>
@@ -25,8 +27,13 @@ internal class GuardedToolDispatcher(private val gate: ToolPermissionGate) {
         nowMillis: () -> Long,
         operation: suspend () -> T
     ): ToolDispatchResult<T> {
-        val actual = runCatching { resolveActualResource() }.getOrNull()
-            ?: return ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE)
+        val actual = try {
+            resolveActualResource()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            null
+        } ?: return ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE)
         if (requested.resource != actual) {
             return ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE)
         }
