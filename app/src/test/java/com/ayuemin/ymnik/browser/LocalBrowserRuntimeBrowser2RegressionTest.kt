@@ -52,7 +52,7 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
 
         val vm = source("src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
         assertTrue(vm.contains("persistBrowserDownload("))
-        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full)"))
+        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)"))
     }
 
     @Test fun fullReadBudgetIsNotReducedByLargePageHardening() {
@@ -138,6 +138,20 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(click.contains("if ((actionKind == \"search_navigation\" || !mainFrame) && navigation == null) delay(300)"))
         assertTrue(click.contains("navigationFailureJson(session, navigation, expectedHref)"))
         assertTrue(click.contains("snapshot(session, webView)"))
+    }
+
+    @Test fun actualBrowserOpenAndReadRequireDirectUiScopeInsideRuntime() {
+        val s = runtime()
+        val vm = source("src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
+        assertTrue(s.contains("private fun requirePublicReadGrant("))
+        assertTrue(s.contains("TrustedPublicBrowserReadGuard()"))
+        assertTrue(s.contains("requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, \"local_browser_open\", safeUrl)"))
+        assertTrue(s.contains("requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, \"local_browser_open\", currentUrl(webView))"))
+        assertTrue(s.contains("requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, \"local_browser_read\", session.currentUrl)"))
+        assertTrue(s.contains("requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, \"local_browser_read\", currentUrl(webView))"))
+        assertTrue(vm.contains("browserEnabledForRequest = localBrowserToolsEnabled"))
+        assertTrue(vm.contains("LocalBrowserRuntime.open(chatId, url, user.id, browserReadGrant)"))
+        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)"))
     }
 
     @Test fun takeoverReturnsFreshSnapshotWithoutAutoRepeatingAction() {

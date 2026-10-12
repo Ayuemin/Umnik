@@ -19,6 +19,9 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.view.View
+import com.ayuemin.ymnik.agenttools.TaskGrant
+import com.ayuemin.ymnik.agenttools.ToolPermissionDecision
+import com.ayuemin.ymnik.agenttools.TrustedPublicBrowserReadGuard
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.network.LocalWebFetchPolicy
 import com.google.gson.Gson
@@ -124,6 +127,28 @@ object LocalBrowserRuntime {
     )
 
     private val gson = Gson()
+    private val trustedPublicReader = TrustedPublicBrowserReadGuard()
+
+    /** Called inside the serialized Browser command, before reading or loading. */
+    private fun requirePublicReadGrant(
+        chatId: String,
+        directUserMessageId: String,
+        grant: TaskGrant?,
+        toolId: String,
+        actualRuntimeUrl: String
+    ) {
+        val decision = trustedPublicReader.checkActualPublicTarget(
+            grant = grant,
+            trustedChatId = chatId,
+            directUserMessageId = directUserMessageId,
+            toolId = toolId,
+            actualRuntimeUrl = actualRuntimeUrl,
+            nowMillis = System.currentTimeMillis()
+        )
+        check(decision == ToolPermissionDecision.ALLOWED) {
+            "Browser: чтение или переход не разрешён исходным запросом ($decision)"
+        }
+    }
     private val downloadDns = object : Dns {
         override fun lookup(hostname: String) = LocalWebFetchPolicy.resolvePublic(hostname)
     }
@@ -326,12 +351,18 @@ object LocalBrowserRuntime {
         if (mutableActivity.value != null) mutableActivity.value = null
     }
 
-    suspend fun open(chatId: String, rawUrl: String): String = commandMutex.withLock {
+    internal suspend fun open(
+        chatId: String,
+        rawUrl: String,
+        directUserMessageId: String,
+        publicReadGrant: TaskGrant?
+    ): String = commandMutex.withLock {
         val safeUrl = withContext(Dispatchers.IO) {
             val parsed = LocalWebFetchPolicy.parseUrl(rawUrl)
             requirePublicHost(parsed.host)
             parsed.toString()
         }
+        requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_open", safeUrl)
         val session = session(chatId)
         session.lifecycle = LocalBrowserLifecycle.WORKING
         session.pendingDownloadUrl = ""
@@ -340,15 +371,25 @@ object LocalBrowserRuntime {
             val webView = webView()
             load(webView, safeUrl)
             if (session.pendingDownloadUrl.isNotBlank()) {
+                requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_open", session.pendingDownloadUrl)
                 session.lifecycle = LocalBrowserLifecycle.WORKING
                 return@runCommand pendingDownloadJson(session)
             }
-            snapshot(session, webView)
+            val page = snapshot(session, webView)
+            // Verify the observed WebView destination after redirects, not merely the LLM URL.
+            requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_open", currentUrl(webView))
+            page
         }
     }
 
-    suspend fun read(chatId: String, full: Boolean = false): String = commandMutex.withLock {
+    internal suspend fun read(
+        chatId: String,
+        full: Boolean = false,
+        directUserMessageId: String,
+        publicReadGrant: TaskGrant?
+    ): String = commandMutex.withLock {
         val session = requireSession(chatId)
+        requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", session.currentUrl)
         runCommand(
             session,
             session.currentUrl,
@@ -358,7 +399,9 @@ object LocalBrowserRuntime {
         ) {
             val webView = webView()
             ensureCurrent(session, webView)
+            requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", currentUrl(webView))
             val page = snapshot(session, webView, forceBaseline = true, expanded = full)
+            requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", currentUrl(webView))
             if (full) attachDomDumpArtifact(webView, session, page) else page
         }
     }

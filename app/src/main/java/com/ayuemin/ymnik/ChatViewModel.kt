@@ -27,6 +27,7 @@ import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
 import com.ayuemin.ymnik.agenttools.TrustedBrowserSessionGuard
+import com.ayuemin.ymnik.agenttools.TrustedPublicBrowserReadGuard
 import com.ayuemin.ymnik.agenttools.TrustedShellStopGuard
 import com.ayuemin.ymnik.agenttools.ToolDispatchResult
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
@@ -140,6 +141,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val localShellClient = LocalShellAgentClient(context)
     private val trustedShellStatusGuard = TrustedShellStatusGuard()
     private val trustedBrowserSessionGuard = TrustedBrowserSessionGuard()
+    private val trustedPublicBrowserReadGuard = TrustedPublicBrowserReadGuard()
     private val trustedShellStopGuard = TrustedShellStopGuard()
     private val localWebFetcher = LocalWebFetcher(context)
     private val systemTaskPlanner = SystemTaskPlanner(api)
@@ -5186,6 +5188,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             browserEnabledForRequest = localBrowserToolsEnabled,
                             issuedAtMillis = System.currentTimeMillis()
                         )
+                        val browserReadGrant = trustedPublicBrowserReadGuard.grantFromUiSubmission(
+                            trustedChatId = chatId,
+                            directUserMessageId = user.id,
+                            browserEnabledForRequest = localBrowserToolsEnabled,
+                            issuedAtMillis = System.currentTimeMillis()
+                        )
                         val shellStopGrant = trustedShellStopGuard.grantFromUiSubmission(
                             chatId = chatId,
                             directUserMessageId = user.id,
@@ -5367,13 +5375,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     null
                                 },
                                 localBrowserOpen = if (localBrowserToolsEnabled) {
-                                    { url -> LocalBrowserRuntime.open(chatId, url) }
+                                    { url -> LocalBrowserRuntime.open(chatId, url, user.id, browserReadGrant) }
                                 } else null,
                                 localBrowserRead = if (localBrowserToolsEnabled) {
                                     { full ->
                                         persistBrowserDownload(
                                             chatId,
-                                            LocalBrowserRuntime.read(chatId, full)
+                                            LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)
                                         )
                                     }
                                 } else null,
