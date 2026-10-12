@@ -130,7 +130,7 @@ internal class GitHubAgentTool(
             "viewer" -> ok(api("GET", "user", token).compact())
             "list_repos" -> ok(api("GET", "user/repos?sort=updated&per_page=50&page=${page(p)}", token).compact())
             "create_repo" -> {
-                require(scope.allowedRepository.isBlank() || scope.mayWrite) { "write_needs_direct_user_instruction" }
+                require(scope.allowedRepository.isBlank()) { "clear_selected_repository_before_creation" }
                 val name = p.value("name")
                 require(Regex("^[A-Za-z0-9_.-]{1,100}$").matches(name) && !name.contains("..")) { "invalid_repo_name" }
                 val isPrivate = p.boolean("private", true)
@@ -143,6 +143,10 @@ internal class GitHubAgentTool(
                 val full = response.value("full_name")
                 require(GitHubAgentScope.normalizeRepo(full) != null) { "github_invalid_new_repo" }
                 createdRepository = full
+                // Keep the newly created repo available for subsequent user turns;
+                // only a verified GitHub API create response can set this value.
+                context.getSharedPreferences("ymnik", Context.MODE_PRIVATE).edit()
+                    .putString("github_agent_repo", full).apply()
                 ok(mapOf("repository" to full, "default_branch" to response.value("default_branch"),
                     "created" to true, "next_step" to "create_branch"))
             }
@@ -337,10 +341,20 @@ internal class GitHubAgentTool(
         val request = githubRequest("GET", "$base/actions/jobs/$jobId/logs", token, null)
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw GitHubApiException(response.code)
+            // Gradle's decisive failure is usually at the END of a large job log.
+            // Retain a bounded tail, never an unbounded provider response.
             return response.body?.byteStream()?.bufferedReader()?.use { reader ->
-                val out = CharArray(36_000)
-                val count = reader.read(out)
-                if (count <= 0) "" else String(out, 0, count)
+                val tail = StringBuilder()
+                val chunk = CharArray(8_192)
+                var totalRead = 0
+                while (totalRead < 6_000_000) {
+                    val size = reader.read(chunk)
+                    if (size <= 0) break
+                    totalRead += size
+                    tail.append(chunk, 0, size)
+                    if (tail.length > 42_000) tail.delete(0, tail.length - 42_000)
+                }
+                tail.toString()
             }.orEmpty()
         }
     }
@@ -474,6 +488,7 @@ internal class GitHubAgentTool(
         val actionWriteOps = setOf("dispatch", "rerun_failed")
         val allowedErrors = setOf(
             "github_connection_not_authorized", "task_grant_expired", "unsupported_operation",
+            "clear_selected_repository_before_creation",
             "write_needs_direct_user_instruction", "github_token_not_configured",
             "select_or_create_repository_first", "invalid_repo_name", "github_invalid_new_repo",
             "invalid_ref_sha", "missing_parent_tree", "missing_files", "too_many_files",
