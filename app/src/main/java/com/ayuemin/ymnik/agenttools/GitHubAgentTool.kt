@@ -374,10 +374,14 @@ jobs:
         var total = 0
         val paths = mutableSetOf<String>()
         val instructions = mutableListOf<Triple<String, String?, Boolean>>()
+        val expectedHashes = mutableMapOf<String, String>()
         files.forEach { element ->
             val file = element.asJsonObject
             val path = requireFile(file.value("path"), read = false)
             require(paths.add(path)) { "duplicate_file_path" }
+            // Existing remote files must match the exact SHA supplied by a prior
+            // read_file response. Never replace or delete unknown revisions.
+            expectedHashes[path] = file.value("expected_sha")
             val delete = file.boolean("delete", false)
             if (delete) {
                 // File deletion on a remote server is a destructive operation.
@@ -404,9 +408,30 @@ jobs:
         val previous = api("GET", "$base/git/commits/$parent", token).asJsonObject
         val treeSha = previous.getAsJsonObject("tree")?.value("sha").orEmpty()
         require(treeSha.isNotBlank()) { "missing_parent_tree" }
+        val tree = api("GET", "$base/git/trees/$treeSha?recursive=1", token).asJsonObject
+        require(tree.get("truncated")?.asBoolean != true) { "repository_tree_truncated" }
+        val entries = tree.getAsJsonArray("tree") ?: error("repository_tree_missing")
+        val current = entries.associate { entry ->
+            val node = entry.asJsonObject
+            node.value("path") to node
+        }
+        // Check *every* requested path before creating a single blob. A newly
+        // introduced path is allowed; an existing path must have a current
+        // expected_sha, including for deletions and workflow updates.
+        instructions.forEach { (path, _, delete) ->
+            val existing = current[path]
+            require(existing == null || existing.value("type") == "blob") { "existing_path_not_file" }
+            require(GitHubFileUpdatePolicy.matches(
+                existingSha = existing?.value("sha"),
+                expectedSha = expectedHashes[path],
+                deleting = delete
+            )) { "file_sha_conflict" }
+        }
         val nodes = JsonArray()
         instructions.forEach { (path, content, delete) ->
-            val element = obj("path" to path, "mode" to "100644", "type" to "blob")
+            val previousMode = current[path]?.value("mode")
+            val mode = previousMode?.takeIf { it in setOf("100644", "100755", "120000") } ?: "100644"
+            val element = obj("path" to path, "mode" to mode, "type" to "blob")
             if (delete) element.add("sha", JsonNull.INSTANCE)
             else {
                 val blob = api("POST", "$base/git/blobs", token,
@@ -710,7 +735,9 @@ jobs:
             "workflow_run_out_of_scope", "workflow_run_not_failed",
             "artifact_expired", "artifact_too_large", "artifact_run_missing",
             "artifact_too_many_entries", "unsafe_artifact_entry",
-            "archive_unpacked_too_large", "invalid_apk_signature"
+            "archive_unpacked_too_large", "invalid_apk_signature",
+            "repository_tree_truncated", "repository_tree_missing",
+            "existing_path_not_file", "file_sha_conflict"
         )
     }
 }
