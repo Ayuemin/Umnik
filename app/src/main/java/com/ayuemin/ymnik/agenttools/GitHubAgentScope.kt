@@ -26,7 +26,7 @@ internal data class GitHubAgentScope(
     companion object {
         private val repoName = Regex("^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$")
         private val writeIntent = Regex(
-            """(?i)(созд|сделай|собер|разработ|реализ|напиш|исправ|измени|изменить|доработ|обнови|добав|удали|коммит|запусти|подготов|открой pr|create|build|implement|fix|update|commit|push|deploy|release|apk|проект|приложен)"""
+            """(?i)(созд|сделай|собер|разработ|реализ|напиш|исправ|измени|изменить|доработ|обнови|добав|удали|коммит|запусти|подготов|открой pr|create|build|implement|fix|update|commit|push|deploy|release|сгенерируй|построй|сделать apk|нужен apk)"""
         )
 
         fun normalizeRepo(raw: String): String? {
