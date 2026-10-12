@@ -47,6 +47,25 @@ internal class GitHubAgentTool(
     // Bound to this particular agent request. Never shared with a future turn.
     private var createdRepository: String? = null
 
+    suspend fun checkConnection(repository: String): String = withContext(Dispatchers.IO) {
+        val token = secrets.getGitHubToken()?.takeIf { it.isNotBlank() }
+            ?: return@withContext "Токен GitHub не настроен"
+        return@withContext runCatching {
+            val user = api("GET", "user", token).asJsonObject
+            val login = user.value("login")
+            val repo = GitHubAgentScope.normalizeRepo(repository)
+            if (repo != null) {
+                api("GET", "repos/${segments(repo)}", token)
+                "GitHub подключён: $login; репозиторий $repo доступен"
+            } else {
+                "GitHub подключён: $login. Репозиторий можно создать через агента."
+            }
+        }.getOrElse { error ->
+            if (error is GitHubApiException) "GitHub: HTTP ${error.status}. Проверьте права токена и репозиторий"
+            else "GitHub: соединение не удалось"
+        }
+    }
+
     suspend fun execute(
         kind: String,
         arguments: String,
@@ -302,7 +321,6 @@ internal class GitHubAgentTool(
             "rerun_failed" -> ok(api("POST", "$base/actions/runs/${number(p, "run_id")}/rerun-failed-jobs", token).compact())
             "list_artifacts" -> {
                 val id = p.value("run_id")
-                val suffix = if (id.isBlank()) "" else "?per_page=100&"
                 val path = if (id.isBlank()) "$base/actions/artifacts?per_page=100" else
                     "$base/actions/runs/${number(p, "run_id")}/artifacts?per_page=100"
                 ok(api("GET", path, token).compact())
@@ -383,7 +401,7 @@ internal class GitHubAgentTool(
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw GitHubApiException(response.code)
             if (response.code == 204) return obj("ok" to true)
-            val content = response.body?.source()?.readByteArray(2_500_000).orEmpty()
+            val content = response.body?.source()?.readByteArray(2_500_000L) ?: ByteArray(0)
             if (content.isEmpty()) return obj("ok" to true)
             return JsonParser.parseString(String(content, Charsets.UTF_8))
         }
