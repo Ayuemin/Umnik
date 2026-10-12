@@ -133,11 +133,11 @@ internal class GitHubAgentTool(
                 require(scope.allowedRepository.isBlank() || scope.mayWrite) { "write_needs_direct_user_instruction" }
                 val name = p.value("name")
                 require(Regex("^[A-Za-z0-9_.-]{1,100}$").matches(name) && !name.contains("..")) { "invalid_repo_name" }
-                val private = p.boolean("private", true)
+                val isPrivate = p.boolean("private", true)
                 val response = api("POST", "user/repos", token, obj(
                     "name" to name,
                     "description" to p.value("description").take(500),
-                    "private" to private,
+                    "private" to isPrivate,
                     "auto_init" to true
                 )).asJsonObject
                 val full = response.value("full_name")
