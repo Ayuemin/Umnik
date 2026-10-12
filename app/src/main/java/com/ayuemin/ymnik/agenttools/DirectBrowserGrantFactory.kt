@@ -46,7 +46,8 @@ internal object DirectBrowserGrantFactory {
     }
 
     /** Only syntactic normalization. The Browser runtime must still enforce SSRF. */
-    fun origin(url: String): String? = runCatching {
+    fun origin(url: String): String? {
+        return runCatching {
         val parsed = URI(url.trim())
         val scheme = parsed.scheme?.lowercase(Locale.ROOT)
         if (scheme != "https" && scheme != "http") return null
@@ -61,5 +62,6 @@ internal object DirectBrowserGrantFactory {
             else -> port
         }
         URI(scheme, null, host, normalizedPort, null, null, null).toString()
-    }.getOrNull()
+        }.getOrNull()
+    }
 }
