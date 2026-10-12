@@ -1727,7 +1727,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    private suspend fun persistGitHubApk(chatId: String, raw: String): String {
+    private suspend fun persistGitHubApk(
+        chatId: String,
+        raw: String,
+        onSaved: (GeneratedFile) -> Unit
+    ): String {
         val root = runCatching { gson.fromJson(raw, JsonObject::class.java) }.getOrNull()
             ?: return raw
         if (root.get("ok")?.asBoolean != true) return raw
@@ -1756,6 +1760,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             }
             _state.update { old -> old.copy(chats = chats, storedFiles = storageRepository.list(),
                 storageStats = storageRepository.stats()) }
+            // Also attach it to the assistant answer so the user can save the APK
+            // directly from the message; the canonical bytes stay in chat storage.
+            onSaved(GeneratedFile(
+                id = saved.id,
+                name = saved.name,
+                mimeType = saved.mimeType,
+                localPath = saved.localPath,
+                size = saved.size
+            ))
             artifact.remove("local_path")
             artifact.addProperty("chat_file_id", saved.id)
             artifact.addProperty("name", saved.name)
@@ -5276,6 +5289,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             nowMillis = System.currentTimeMillis()
                         )
                         val githubTool = if (githubScope != null) GitHubAgentTool(context, secrets) else null
+                        val githubGeneratedFiles = mutableListOf<GeneratedFile>()
                         val browserControlGrant = trustedBrowserSessionGuard.grantFromUiSubmission(
                             chatId = chatId,
                             directUserMessageId = user.id,
@@ -5595,7 +5609,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                         persistGitHubApk(
                                             chatId,
                                             githubTool.execute("actions", args, githubScope, chatId, user.id, clean)
-                                        )
+                                        ) { file -> githubGeneratedFiles += file }
                                     }
                                 } else null,
                                 localShellStop = if (localShellToolsEnabled) {
@@ -5622,7 +5636,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 } else {
                                     null
                                 }
-                            )
+                            ).let { response ->
+                                if (githubGeneratedFiles.isEmpty()) response
+                                else response.copy(files = response.files + githubGeneratedFiles)
+                            }
                         }
                     }
                     ChatMode.IMAGE -> {
