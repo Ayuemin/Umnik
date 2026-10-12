@@ -34,6 +34,7 @@ internal object LocalShellRuntime {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     @Volatile private var cancelCurrent: (() -> Unit)? = null
+    @Volatile private var cancelCurrentTaskId: String? = null
     @Volatile private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
     @Volatile private var parentConsumesTerminal = false
     @Volatile private var checkpointProvider: (() -> String)? = null
@@ -42,6 +43,7 @@ internal object LocalShellRuntime {
     fun prepareForStart() {
         guidanceQueue.clear()
         cancelCurrent = null
+        cancelCurrentTaskId = null
         parentConsumesTerminal = false
         terminalResult = CompletableDeferred()
         LocalShellBudgetTelemetry.reset()
@@ -51,8 +53,21 @@ internal object LocalShellRuntime {
         checkpointProvider = provider
     }
 
-    fun installCancel(cancel: () -> Unit) {
+    fun installCancel(cancel: () -> Unit, taskId: String? = null) = synchronized(this) {
+        cancelCurrentTaskId = taskId
         cancelCurrent = cancel
+    }
+
+    /**
+     * Model-issued cancellation: the exact running task must match the
+     * trusted task ID captured at launch. The user's manual Stop control
+     * continues to use cancel() and does not need a model grant.
+     */
+    fun cancelForTask(taskId: String): Boolean = synchronized(this) {
+        if (taskId.isBlank() || cancelCurrentTaskId != taskId) return@synchronized false
+        val current = cancelCurrent ?: return@synchronized false
+        current.invoke()
+        true
     }
 
     fun cancel(): Boolean {
@@ -112,6 +127,7 @@ internal object LocalShellRuntime {
 
     fun clear() {
         cancelCurrent = null
+        cancelCurrentTaskId = null
         guidanceQueue.clear()
         if (!terminalResult.isCompleted) {
             completeTerminal(

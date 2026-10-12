@@ -1,6 +1,10 @@
 package com.ayuemin.ymnik.agenttools
 
-/** Only an explicit user-submitted stop instruction may cancel a running Local Shell. */
+/**
+ * Let the agent cancel the Shell task it started from this direct user message.
+ * A fresh direct user stop command can also cancel an older task in the same
+ * chat. Routine completion is automatic and needs no manual confirmation.
+ */
 internal class TrustedShellStopGuard(
     registry: ToolRegistry = ExistingLocalToolCatalog.createRegistry()
 ) {
@@ -13,18 +17,25 @@ internal class TrustedShellStopGuard(
         shellEnabledForThisUserRequest: Boolean,
         issuedAtMillis: Long
     ): TaskGrant? {
-        if (!shellEnabledForThisUserRequest || !isDirectStopRequest(directUserText)) return null
+        if (!shellEnabledForThisUserRequest) return null
+        val allowed = mutableSetOf(
+            TaskAllowance(
+                "local_shell_stop", ToolAction.CONTROL,
+                taskResource(chatId, directUserMessageId)
+            )
+        )
+        if (isDirectStopRequest(directUserText)) {
+            allowed += TaskAllowance(
+                "local_shell_stop", ToolAction.CONTROL,
+                chatResource(chatId)
+            )
+        }
         return TaskGrant.fromTrustedUserMessage(
             taskId = directUserMessageId,
             originUserMessageId = directUserMessageId,
             issuedAtMillis = issuedAtMillis,
-            expiresAtMillis = issuedAtMillis + 15 * 60_000L,
-            allowedOperations = setOf(
-                TaskAllowance(
-                    "local_shell_stop", ToolAction.CONTROL,
-                    TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId")
-                )
-            )
+            expiresAtMillis = issuedAtMillis + 4 * 60 * 60_000L,
+            allowedOperations = allowed
         )
     }
 
@@ -33,9 +44,19 @@ internal class TrustedShellStopGuard(
         trustedChatId: String,
         directUserMessageId: String,
         nowMillis: () -> Long,
-        operation: suspend () -> T
+        activeChatId: String?,
+        activeOwnerUserMessageId: String?,
+        activeTaskId: String?,
+        operation: suspend (String) -> T
     ): ToolDispatchResult<T> {
-        val resource = TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$trustedChatId")
+        if (activeChatId != trustedChatId || activeTaskId.isNullOrBlank()) {
+            return ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE)
+        }
+        val resource = if (activeOwnerUserMessageId == directUserMessageId) {
+            taskResource(trustedChatId, directUserMessageId)
+        } else {
+            chatResource(trustedChatId)
+        }
         return dispatcher.invoke(
             grant = grant,
             requested = ToolInvocation(
@@ -47,13 +68,16 @@ internal class TrustedShellStopGuard(
             ),
             resolveActualResource = { resource },
             nowMillis = nowMillis,
-            operation = operation
+            operation = { operation(activeTaskId) }
         )
     }
 
     companion object {
-        // Anchored so negations and instructions quoted inside other tasks
-        // cannot authorize cancellation.
+        private fun chatResource(chatId: String): TaskResource =
+            TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId")
+        private fun taskResource(chatId: String, originMessage: String): TaskResource =
+            TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId:owner:$originMessage")
+
         private val russian = Regex(
             """^(?:пожалуйста[\s,]+)?(?:останови|отмени|прерви|заверши)\s+(?:работу\s+)?(?:local\s+shell|shell|локальный\s+шелл|локальный\s+shell|шелл)(?=$|[\s,;.!?])""",
             RegexOption.IGNORE_CASE
@@ -62,10 +86,7 @@ internal class TrustedShellStopGuard(
             """^(?:please[\s,]+)?(?:stop|cancel|terminate)\s+(?:the\s+)?(?:local\s+)?shell(?=$|[\s,;.!?])""",
             RegexOption.IGNORE_CASE
         )
-
-        fun isDirectStopRequest(text: String): Boolean {
-            val clean = text.trim()
-            return russian.containsMatchIn(clean) || english.containsMatchIn(clean)
-        }
+        fun isDirectStopRequest(text: String): Boolean =
+            russian.containsMatchIn(text.trim()) || english.containsMatchIn(text.trim())
     }
 }

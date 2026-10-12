@@ -23,7 +23,9 @@ internal data class LocalShellActivity(
     val status: String = "Готовлю локальную рабочую область",
     val startedAt: Long = System.currentTimeMillis(),
     val turn: Int = 0,
-    val toolCalls: Int = 0
+    val toolCalls: Int = 0,
+    val originUserMessageId: String? = null,
+    val taskId: String? = null
 )
 internal data class HubToolActivity(
     val chatId: String,
@@ -134,13 +136,22 @@ internal object AsyncJobEvents {
         }
     }
 
-    fun markLocalShellRunning(chatId: String, modelId: String = "", attachmentCount: Int = 0, maxTurns: Int = 500) {
+    fun markLocalShellRunning(
+        chatId: String,
+        modelId: String = "",
+        attachmentCount: Int = 0,
+        maxTurns: Int = 500,
+        originUserMessageId: String? = null,
+        taskId: String? = null
+    ) {
         if (chatId.isBlank()) return
         mutableLocalShellActivity.value = LocalShellActivity(
             chatId = chatId,
             modelId = modelId,
             attachmentCount = attachmentCount.coerceAtLeast(0),
-            maxTurns = maxTurns.coerceAtLeast(1)
+            maxTurns = maxTurns.coerceAtLeast(1),
+            originUserMessageId = originUserMessageId?.takeIf { it.isNotBlank() },
+            taskId = taskId?.takeIf { it.isNotBlank() }
         )
     }
 

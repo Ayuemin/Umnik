@@ -5488,13 +5488,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                             grant = shellStopGrant,
                                             trustedChatId = chatId,
                                             directUserMessageId = user.id,
-                                            nowMillis = System::currentTimeMillis
-                                        ) { stopLocalShellFromChat(chatId) }) {
+                                            nowMillis = System::currentTimeMillis,
+                                            activeChatId = AsyncJobEvents.localShellActivity.value?.chatId,
+                                            activeOwnerUserMessageId = AsyncJobEvents.localShellActivity.value?.originUserMessageId,
+                                            activeTaskId = AsyncJobEvents.localShellActivity.value?.taskId
+                                        ) { expectedTaskId -> stopLocalShellFromChat(chatId, expectedTaskId) }) {
                                             is ToolDispatchResult.Completed -> result.value
                                             is ToolDispatchResult.Blocked -> gson.toJson(
                                                 mapOf(
                                                     "ok" to false,
-                                                    "error" to "Остановка Local Shell требует прямой команды пользователя",
+                                                    "error" to "Нет разрешения остановить эту задачу Local Shell",
                                                     "reason" to result.decision.name
                                                 )
                                             )
@@ -6155,7 +6158,11 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val cancelRequested = AtomicBoolean(false)
 
         LocalShellRuntime.prepareForStart()
-        AsyncJobEvents.markLocalShellRunning(chatId, model, attachments.size, maxTurns)
+        AsyncJobEvents.markLocalShellRunning(
+            chatId, model, attachments.size, maxTurns,
+            originUserMessageId = originUserMessageId,
+            taskId = taskId
+        )
         runCatching { RequestKeepAliveService.start(context) }
 
         val imported = runCatching {
@@ -6172,10 +6179,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         }
 
-        LocalShellRuntime.installCancel {
+        LocalShellRuntime.installCancel({
             cancelRequested.set(true)
             localShellClient.cancelActive()
-        }
+        }, taskId = taskId)
 
         val childCancellationId = "local-shell:$taskId"
         val startedAt = System.currentTimeMillis()
@@ -6426,7 +6433,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
-    private fun stopLocalShellFromChat(chatId: String): String {
+    private fun stopLocalShellFromChat(chatId: String, expectedTaskId: String): String {
         val active = AsyncJobEvents.localShellActivity.value
         if (active == null) {
             return gson.toJson(mapOf("ok" to true, "running" to false, "message" to "Local Shell уже не работает"))
@@ -6434,7 +6441,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (active.chatId != chatId) {
             return gson.toJson(mapOf("ok" to false, "error" to "Активный Local Shell относится к другому чату"))
         }
-        val requested = LocalShellRuntime.cancel()
+        if (active.taskId != expectedTaskId) {
+            return gson.toJson(mapOf("ok" to false, "error" to "Задача Shell сменилась; отмена отклонена"))
+        }
+        val requested = LocalShellRuntime.cancelForTask(expectedTaskId)
         return gson.toJson(
             mapOf(
                 "ok" to requested,
