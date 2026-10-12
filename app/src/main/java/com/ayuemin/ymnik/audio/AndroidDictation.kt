@@ -12,7 +12,7 @@ import java.util.Locale
 /**
  * Android SpeechRecognizer lives on the main thread and is never a model tool.
  * Its transcript enters the composer only after a physical microphone tap.
- * On-device recognition is preferred; Android may not have an offline language pack.
+ * Never falls back to cloud speech services; unavailable on-device recognizers fail closed.
  */
 class AndroidDictation(private val context: Context) {
     private var recognizer: SpeechRecognizer? = null
@@ -24,15 +24,14 @@ class AndroidDictation(private val context: Context) {
         cancel()
         this.onText = onText
         this.onFailure = onFailure
-        if (!SpeechRecognizer.isRecognitionAvailable(context)) {
-            fail("Служба распознавания речи Android отсутствует")
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S ||
+            !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
+        ) {
+            fail("Локальная модель распознавания Android недоступна. Установите офлайн-пакет русского языка.")
             return
         }
-        val onDevice = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-            SpeechRecognizer.isOnDeviceRecognitionAvailable(context)
         val service = try {
-            if (onDevice) SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
-            else SpeechRecognizer.createSpeechRecognizer(context)
+            SpeechRecognizer.createOnDeviceSpeechRecognizer(context)
         } catch (error: Exception) {
             fail(error.message ?: "Не удалось запустить распознавание")
             return
