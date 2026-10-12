@@ -117,11 +117,26 @@ class VoskOfflineDictation(private val context: Context) {
     }
 
     fun close() {
-        cancel()
+        // Release in order: recording first, then recognizer, finally shared model.
+        sessionId++
+        listening = false
+        loading?.cancel()
+        loading = null
+        onText = null
+        onFailure = null
+        val oldService = service
+        val oldRecognizer = recognizer
         val oldModel = model
+        service = null
+        recognizer = null
         model = null
-        scope.launch(Dispatchers.IO) { runCatching { oldModel?.close() } }
         scope.cancel()
+        CoroutineScope(Dispatchers.IO).launch {
+            runCatching { oldService?.cancel() }
+            runCatching { oldService?.shutdown() }
+            runCatching { oldRecognizer?.close() }
+            runCatching { oldModel?.close() }
+        }
     }
 
     private fun appendResult(json: String) {
@@ -130,11 +145,12 @@ class VoskOfflineDictation(private val context: Context) {
     }
 
     private fun finishSuccess() {
-        val callback = onText
+        val success = onText
+        val failure = onFailure
         val text = confirmedSegments.joinToString(" ").trim()
         cancel()
-        if (text.isNotEmpty()) callback?.invoke(text)
-        else onFailure?.invoke("Речь не распознана") // onFailure is cleared in cancel()
+        if (text.isNotEmpty()) success?.invoke(text)
+        else failure?.invoke("Речь не распознана")
     }
 
     private fun fail(message: String) {
