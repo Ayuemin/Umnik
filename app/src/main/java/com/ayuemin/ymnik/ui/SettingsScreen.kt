@@ -70,6 +70,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
+import com.ayuemin.ymnik.data.OfflineDictationEngine
+import com.ayuemin.ymnik.data.OfflineDictationPrefs
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
@@ -274,6 +276,8 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
     var voiceInputExpanded by remember { mutableStateOf(false) }
+    val dictationPrefs = remember(context) { OfflineDictationPrefs(context.applicationContext) }
+    var dictationEngine by remember { mutableStateOf(dictationPrefs.engine()) }
     var skillsLibraryExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
     var profileExpanded by remember { mutableStateOf(false) }
@@ -660,17 +664,39 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                 item {
                     ExpandableSettingsCard(
                         title = "Локальная диктовка",
-                        subtitle = "Русский · локальная модель Android",
+                        subtitle = when (dictationEngine) {
+                            OfflineDictationEngine.VOSK_RU_SMALL -> "Нейросеть Vosk · русский · офлайн"
+                            OfflineDictationEngine.ANDROID_ON_DEVICE -> "Android · только офлайн"
+                        },
                         icon = Icons.Outlined.VolumeUp,
                         expanded = voiceInputExpanded,
                         onToggle = { voiceInputExpanded = !voiceInputExpanded },
-                        info = "Микрофон не отправляет аудио ни OpenRouter, ни основной модели чата. Он использует только on-device распознавание Android."
+                        info = "Оба варианта работают только локально. Русская нейросетевая модель Vosk включена в APK. Кнопка микрофона вставляет текст в поле ввода и не отправляет аудио в OpenRouter."
                     ) {
+                        listOf(
+                            OfflineDictationEngine.VOSK_RU_SMALL to "Vosk Small RU — встроенная нейросеть (по умолчанию)",
+                            OfflineDictationEngine.ANDROID_ON_DEVICE to "Распознавание Android (запасной офлайн-режим)"
+                        ).forEach { (engine, label) ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Checkbox(
+                                    checked = dictationEngine == engine,
+                                    onCheckedChange = { checked ->
+                                        if (checked) {
+                                            dictationEngine = engine
+                                            dictationPrefs.setEngine(engine)
+                                        }
+                                    }
+                                )
+                                Text(label, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
                         Text(
-                            "Сейчас доступна системная локальная модель распознавания Android. " +
-                                "Для работы необходим установленный на телефоне офлайн-распознаватель русского языка. " +
-                                "Если его нет, «Умник» покажет ошибку, но не переключится в облако. " +
-                                "Выбор Whisper Tiny/Base появится здесь после включения встроенного движка Whisper.",
+                            "Vosk распознаёт непрерывную речь, не останавливая запись после короткой паузы. " +
+                                "Нейросеть занимает дополнительную память при работе. " +
+                                "Android может потребовать установленный офлайн-языковой пакет.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
