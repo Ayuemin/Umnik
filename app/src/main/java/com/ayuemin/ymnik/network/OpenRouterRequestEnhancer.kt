@@ -95,6 +95,8 @@ internal class OpenRouterRequestEnhancer(
         }
 
         applyToolExecutionContract(payload)
+        // Apply cache hints AFTER the stable tool contract is finalized.
+        OpenRouterPromptCachePolicy.apply(payload, requestChatId)
 
         ContextUsageTracker.capture(requestId, payload)?.let { usage ->
             val snapshot = activeSnapshot()

@@ -204,7 +204,8 @@ class OpenRouterClient(
         val taskAnchor = taskAnchorMessageId
             ?.takeIf { it.isNotBlank() && prompt.isNotBlank() }
             ?.let { AgentTaskAnchor.fromTrustedUiMessage(it, prompt) }
-        val anchoredSystemPrompt = systemPrompt + (taskAnchor?.reminder(0).orEmpty())
+        // Do not invalidate prompt-prefix caches by changing the first system message.
+        val anchoredSystemPrompt = systemPrompt + (taskAnchor?.stableReminder().orEmpty())
         val selectedHistory = ConversationContext.select(
             history, anchoredSystemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
             modelInfo?.contextLength, 0
@@ -282,10 +283,8 @@ class OpenRouterClient(
         var blockedShellProviderFailure: String? = null
         var loops = 0
         while (loops++ < maxToolLoops) {
-            // Refresh before EVERY main-model cycle, including tool callbacks.
-            if (taskAnchor != null) {
-                messages.set(0, message("system", systemPrompt + taskAnchor.reminder(loops)))
-            }
+            // Immutable task anchor stays on every step; intermediate tool
+            // results carry progress without rewriting the cached prefix.
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
