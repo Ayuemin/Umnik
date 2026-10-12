@@ -116,8 +116,12 @@ internal class GitHubAgentTool(
             }
         )
         val elapsedMs = ((System.nanoTime() - started) / 1_000_000L).coerceAtLeast(0L)
+        // Only log operation names from the local allowlist, never model-supplied
+        // unknown argument text (which could contain secrets or private content).
+        val safeOperation = if (operation in repoReadOps || operation in repoWriteOps ||
+            operation in actionReadOps || operation in actionWriteOps) operation else "unknown"
         DiagnosticLog.record(context, "GITHUB_TOOL",
-            "kind=${kind.take(12)}; op=${operation.take(32)}; ok=${result.get("ok")?.asBoolean}; elapsedMs=$elapsedMs")
+            "kind=${kind.take(12)}; op=$safeOperation; ok=${result.get("ok")?.asBoolean}; elapsedMs=$elapsedMs")
         gson.toJson(result)
     }
 
