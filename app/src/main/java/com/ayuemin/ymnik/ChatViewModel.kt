@@ -1754,7 +1754,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 size = canonical.length(),
                 localPath = canonical.path
             )
-            val saved = withContext(Dispatchers.IO) { chatFilesRepository.importFile(chatId, pending) }
+            val saved = withContext(Dispatchers.IO) { chatFilesRepository.importGeneratedGitHubApk(chatId, pending) }
             val chats = chatsRepository.updateChat(chatId) { chat ->
                 chat.copy(chatFiles = chat.chatFiles.orEmpty() + saved, updatedAt = System.currentTimeMillis())
             }

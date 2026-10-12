@@ -10,9 +10,29 @@ import java.util.UUID
 class ChatFileRepository(private val context: Context) {
     private val root = File(context.filesDir, "chat_files").apply { mkdirs() }
 
-    fun importFile(chatId: String, attachment: PendingAttachment): ChatFile {
-        require(attachment.size <= MAX_BYTES || attachment.size <= 0L) {
-            "Файл чата должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+    fun importFile(chatId: String, attachment: PendingAttachment): ChatFile =
+        importBoundedFile(chatId, attachment, MAX_BYTES)
+
+    /**
+     * Only APKs already downloaded to the internal GitHub artifact cache may
+     * use the larger limit. Ordinary user attachments stay capped at 50 MiB.
+     */
+    fun importGeneratedGitHubApk(chatId: String, attachment: PendingAttachment): ChatFile {
+        require(attachment.mimeType == "application/vnd.android.package-archive") { "invalid_apk_type" }
+        val trustedRoot = File(context.cacheDir, "github_artifacts").canonicalFile
+        val source = attachment.localPath?.let { File(it).canonicalFile }
+        require(source != null && source.isFile &&
+            source.path.startsWith(trustedRoot.path + File.separator) &&
+            source.name.endsWith(".apk", ignoreCase = true)) { "invalid_apk_source" }
+        require(source.length() in 1..MAX_GENERATED_APK_BYTES) { "generated_apk_too_large" }
+        return importBoundedFile(chatId, attachment, MAX_GENERATED_APK_BYTES)
+    }
+
+    private fun importBoundedFile(
+        chatId: String, attachment: PendingAttachment, maxBytes: Long
+    ): ChatFile {
+        require(attachment.size <= maxBytes || attachment.size <= 0L) {
+            "Файл чата должен быть не больше ${maxBytes / 1024 / 1024} МБ"
         }
         val dir = File(root, safeSegment(chatId)).apply { mkdirs() }
         val id = UUID.randomUUID().toString()
@@ -23,15 +43,27 @@ class ChatFileRepository(private val context: Context) {
                 ?.let { File(it).inputStream() }
                 ?: context.contentResolver.openInputStream(Uri.parse(attachment.uri))
                 ?: error("Не удалось открыть ${attachment.name}")
-            input.use { source -> target.outputStream().use { output -> source.copyTo(output) } }
+            input.use { source ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(64 * 1024)
+                    var copied = 0L
+                    while (true) {
+                        val count = source.read(buffer)
+                        if (count < 0) break
+                        copied += count
+                        require(copied <= maxBytes) { "chat_file_size_limit" }
+                        output.write(buffer, 0, count)
+                    }
+                }
+            }
         }.onFailure {
             target.delete()
             throw it
         }
         val actualSize = target.length()
-        require(actualSize <= MAX_BYTES) {
+        require(actualSize <= maxBytes) {
             target.delete()
-            "Файл чата должен быть не больше ${MAX_BYTES / 1024 / 1024} МБ"
+            "Файл чата должен быть не больше ${maxBytes / 1024 / 1024} МБ"
         }
         return ChatFile(
             id = id,
@@ -64,5 +96,6 @@ class ChatFileRepository(private val context: Context) {
 
     companion object {
         private const val MAX_BYTES = 50L * 1024L * 1024L
+        private const val MAX_GENERATED_APK_BYTES = 200L * 1024L * 1024L
     }
 }

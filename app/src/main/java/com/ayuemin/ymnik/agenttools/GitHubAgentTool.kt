@@ -705,9 +705,11 @@ jobs:
     private class GitHubApiException(val status: Int) : IOException("github_http_$status")
 
     private companion object {
-        const val MAX_APK_SIZE = 50L * 1024L * 1024L
-        const val MAX_ARCHIVE_SIZE = 75L * 1024L * 1024L
-        const val MAX_ARCHIVE_UNPACKED = 80L * 1024L * 1024L
+        // Android debug APKs with offline assets can exceed 100 MiB.
+        // Keep bounded limits, independently from ordinary user attachments.
+        const val MAX_APK_SIZE = 200L * 1024L * 1024L
+        const val MAX_ARCHIVE_SIZE = 240L * 1024L * 1024L
+        const val MAX_ARCHIVE_UNPACKED = 250L * 1024L * 1024L
         val repoReadOps = setOf("viewer", "list_repos", "repo_info", "list_tree", "read_file",
             "list_branches", "list_commits", "compare", "list_issues", "read_issue",
             "list_prs", "read_pr", "pr_files", "pr_reviews", "list_tags", "list_releases")
