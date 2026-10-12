@@ -106,8 +106,7 @@ cookies, пароли и т. п.
   prompt-injection и прямых/недоверенных источников.
 - [ ] 3. Подключить имеющиеся Browser и Local Shell через адаптеры,
   сохранив поведение, и проверить обычный CI и реальные действия.
-- [ ] 4. Создать `ArtifactStore` и проверенный переход файла между
-  Browser → Local Shell по ID, без копирования байтов в модель.
+- [ ] 4. Довести существующий `ChatFileRepository` и `chat_file_id` до общего `ArtifactStore` (не дублировать storage): проверенный путь Browser → Local Shell по ID, без копирования байтов в модель. Первый шаг — `ChatArtifactResolver` с canonical path / chat-scope / размером / уникальностью ID, подключённый к Local Shell; публичный адаптер/TaskGrant и сквозной Android-тест ещё впереди.
 - [ ] 5. Добавить `TaskCoordinator`: последовательные зависимости,
   независимые задачи параллельно, timeout/cancel/retry, crash recovery.
 - [ ] 6. Подключить SSH, API, облачные диски и остальные интеграции

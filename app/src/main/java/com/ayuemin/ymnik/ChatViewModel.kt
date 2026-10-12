@@ -29,6 +29,7 @@ import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
 import com.ayuemin.ymnik.agenttools.TrustedBrowserSessionGuard
 import com.ayuemin.ymnik.agenttools.TrustedPublicBrowserReadGuard
 import com.ayuemin.ymnik.agenttools.TrustedShellStopGuard
+import com.ayuemin.ymnik.agenttools.ChatArtifactResolver
 import com.ayuemin.ymnik.agenttools.ToolDispatchResult
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -124,6 +125,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val skills = SkillRepository(context)
     private val chatsRepository = ChatRepository(context)
     private val chatFilesRepository = ChatFileRepository(context)
+    private val chatArtifactResolver = ChatArtifactResolver(context.filesDir)
     private val chatMemory = ChatMemoryRepository(context)
     private val knowledgeBase = KnowledgeBaseRepository(context)
     private val embeddingApi = OpenRouterEmbeddingClient(context)
@@ -6103,11 +6105,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         }
 
-        val chatFiles = chatsRepository.list()
-            .firstOrNull { it.id == chatId }
-            ?.chatFiles
-            .orEmpty()
-            .filter { File(it.localPath).isFile }
+        // Reuse the chat's persisted artifact IDs; never trust a stored path
+        // until it is verified against this chat's private file directory.
+        val chatFiles = chatArtifactResolver.verifiedFiles(
+            chatId = chatId,
+            repositoryFiles = chatsRepository.list()
+                .firstOrNull { it.id == chatId }
+                ?.chatFiles
+                .orEmpty()
+        )
 
         val persistentCandidates = chatFiles.map { file ->
             file.id to chatFileAsAttachment(file)
@@ -6356,6 +6362,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 "max_turns" to maxTurns,
                 "attachments" to imported.size,
                 "files" to selectedCandidates.map { it.second.name },
+                "chat_file_ids" to selectedCandidates.mapNotNull { it.first },
                 "network" to networkEnabled,
                 "message" to "Local Shell запущен асинхронно. Можно продолжать диалог; статус доступен через local_shell_status."
             )
