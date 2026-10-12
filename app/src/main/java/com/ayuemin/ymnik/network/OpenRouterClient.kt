@@ -196,14 +196,21 @@ class OpenRouterClient(
         localShellGuidance: (suspend (String) -> String)? = null,
         localShellStop: (suspend () -> String)? = null,
         githubRepo: (suspend (String) -> String)? = null,
-        githubActions: (suspend (String) -> String)? = null
+        githubActions: (suspend (String) -> String)? = null,
+        taskAnchorMessageId: String? = null
     ): Result = withContext(Dispatchers.IO) {
+        // Trusted UI identity enables a request-local anchor. User text never
+        // moves from its original lower-priority role into system instructions.
+        val taskAnchor = taskAnchorMessageId
+            ?.takeIf { it.isNotBlank() && prompt.isNotBlank() }
+            ?.let { AgentTaskAnchor.fromTrustedUiMessage(it, prompt) }
+        val anchoredSystemPrompt = systemPrompt + (taskAnchor?.reminder(0).orEmpty())
         val selectedHistory = ConversationContext.select(
-            history, systemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
+            history, anchoredSystemPrompt, prompt, ConversationContext.attachmentTokens(attachments),
             modelInfo?.contextLength, 0
         )
         val messages = JsonArray()
-        messages.add(message("system", systemPrompt))
+        messages.add(message("system", anchoredSystemPrompt))
         selectedHistory.forEach { item ->
             messages.add(message(item.role, item.text))
         }
@@ -275,6 +282,10 @@ class OpenRouterClient(
         var blockedShellProviderFailure: String? = null
         var loops = 0
         while (loops++ < maxToolLoops) {
+            // Refresh before EVERY main-model cycle, including tool callbacks.
+            if (taskAnchor != null) {
+                messages.set(0, message("system", systemPrompt + taskAnchor.reminder(loops)))
+            }
             val payload = JsonObject().apply {
                 addProperty("model", model)
                 add("messages", messages)
@@ -710,6 +721,7 @@ class OpenRouterClient(
                     }
                     else -> gson.toJson(mapOf("ok" to false, "error" to "Неизвестный инструмент: $name"))
                 }
+                taskAnchor?.observeTool(name, resultText)
                 if (AgentToolRuntimePolicy.shouldLogMainTool(name)) {
                     DiagnosticLog.record(
                         context,

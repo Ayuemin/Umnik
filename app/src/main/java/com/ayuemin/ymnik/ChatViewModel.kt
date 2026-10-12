@@ -5478,6 +5478,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 },
                                 knowledgeSearchLimit = knowledgeSearchLimit,
                                 requiredLocalBrowserTool = if (localBrowserToolsEnabled) requiredLocalBrowserTool(clean) else null,
+                                taskAnchorMessageId = if (
+                                    agentEnabled || githubScope != null ||
+                                    localBrowserToolsEnabled || localShellToolsEnabled
+                                ) user.id else null,
                                 localWebFetch = if (localWebFetchEnabled) {
                                     { url -> localWebFetcher.fetchForTool(url) }
                                 } else {
