@@ -59,6 +59,17 @@ internal object AgentModePolicy {
                 (agentEnabled && internetMode == InternetMode.AUTO)
         ))
 
+    fun githubRequested(prompt: String): Boolean {
+        val text = prompt.lowercase()
+        return listOf(
+            "github", "гитхаб", "git actions", "github actions",
+            "репозитор", "pull request", "коммит", "ci сборк",
+            "собери apk", "создай apk", "создать apk",
+            "разработай приложение", "сделай приложение", "создай приложение",
+            "собери приложение", "android-проект", "android приложение"
+        ).any(text::contains)
+    }
+
     fun shellRequested(agentEnabled: Boolean, prompt: String): Boolean =
         agentEnabled || explicitlyRequestsLocalShell(prompt)
 }
