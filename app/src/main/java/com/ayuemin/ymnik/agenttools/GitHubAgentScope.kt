@@ -43,7 +43,7 @@ internal data class GitHubAgentScope(
             nowMillis: Long
         ): GitHubAgentScope? {
             if (!enabled || chatId.isBlank() || directMessageId.isBlank()) return null
-            val repo = normalizeRepo(configuredRepository) ?: return null
+            val repo = if (configuredRepository.isBlank()) "" else normalizeRepo(configuredRepository) ?: return null
             return GitHubAgentScope(
                 chatId, directMessageId, repo,
                 mayWrite = writeIntent.containsMatchIn(directUserText),
