@@ -97,7 +97,7 @@ internal class GitHubAgentTool(
                 require(GitHubAgentScope.normalizeRepo(repo) != null) { "select_or_create_repository_first" }
             }
             when (kind) {
-                "repo" -> handleRepository(operation, p, repo, token, scope, directUserText)
+                "repo" -> handleRepository(operation, p, repo, token, scope, directUserText, trustedChatId)
                 "actions" -> handleActions(operation, p, repo, token)
                 else -> error("unsupported_tool")
             }
@@ -121,9 +121,9 @@ internal class GitHubAgentTool(
         gson.toJson(result)
     }
 
-    private fun handleRepository(
+    private suspend fun handleRepository(
         op: String, p: JsonObject, repo: String, token: String,
-        scope: GitHubAgentScope, directUserText: String
+        scope: GitHubAgentScope, directUserText: String, trustedChatId: String
     ): JsonObject {
         val base = "repos/${segments(repo)}"
         return when (op) {
@@ -190,7 +190,7 @@ internal class GitHubAgentTool(
                     "ref" to "refs/heads/$name", "sha" to sha
                 )).compact())
             }
-            "commit_files" -> commitFiles(p, base, token, directUserText)
+            "commit_files" -> commitFiles(p, base, token, directUserText, trustedChatId, repo)
             "list_commits" -> {
                 val branch = p.value("branch").ifBlank { repoDefaultBranch(base, token) }
                 ok(api("GET", "$base/commits?sha=${encode(branch)}&per_page=30&page=${page(p)}", token).compact())
@@ -208,8 +208,12 @@ internal class GitHubAgentTool(
             )).compact())
             "comment_issue" -> ok(api("POST", "$base/issues/${number(p)}/comments", token,
                 obj("body" to p.value("body").take(18_000))).compact())
+            "list_tags" -> ok(api("GET", "$base/tags?per_page=100&page=${page(p)}", token).compact())
+            "list_releases" -> ok(api("GET", "$base/releases?per_page=30&page=${page(p)}", token).compact())
             "list_prs" -> ok(api("GET", "$base/pulls?state=all&per_page=30&page=${page(p)}", token).compact())
             "read_pr" -> ok(api("GET", "$base/pulls/${number(p)}", token).compact())
+            "pr_files" -> ok(api("GET", "$base/pulls/${number(p)}/files?per_page=100", token).compact())
+            "pr_reviews" -> ok(api("GET", "$base/pulls/${number(p)}/reviews?per_page=100", token).compact())
             "create_pr" -> {
                 val head = workingBranch(p.value("head"))
                 val target = p.value("base").ifBlank { repoDefaultBranch(base, token) }
@@ -219,13 +223,95 @@ internal class GitHubAgentTool(
                     "body" to p.value("body").take(24_000)
                 )).compact())
             }
-            // Merging into main, deleting remote data, publishing a release and
-            // altering repository permissions require a separate trusted confirmation UI.
+            "edit_issue" -> {
+                val patch = JsonObject()
+                for (key in listOf("title", "body")) {
+                    if (p.has(key)) patch.addProperty(key, p.value(key).take(24_000))
+                }
+                if (p.has("state")) {
+                    val state = p.value("state")
+                    require(state in setOf("open", "closed")) { "invalid_issue_state" }
+                    patch.addProperty("state", state)
+                }
+                require(patch.size() > 0) { "empty_issue_update" }
+                ok(api("PATCH", "$base/issues/${number(p)}", token, patch).compact())
+            }
+            "comment_pr" -> ok(api("POST", "$base/issues/${number(p)}/comments", token,
+                obj("body" to p.value("body").take(18_000))).compact())
+            "review_pr" -> {
+                val event = p.value("event").ifBlank { "COMMENT" }
+                require(event in setOf("COMMENT", "APPROVE", "REQUEST_CHANGES")) { "invalid_review_event" }
+                ok(api("POST", "$base/pulls/${number(p)}/reviews", token,
+                    obj("body" to p.value("body").take(18_000), "event" to event)).compact())
+            }
+            "merge_pr" -> {
+                require(!repo.equals("Ayuemin/Umnik", true)) { "protected_umnik_release_branch" }
+                require(Regex("(?iu)(сли|merge|объедин|влей)").containsMatchIn(directUserText.lowercase())) {
+                    "merge_needs_direct_user_instruction"
+                }
+                val pr = api("GET", "$base/pulls/${number(p)}", token).asJsonObject
+                val targetBranch = pr.getAsJsonObject("base")?.value("ref").orEmpty()
+                val sourceBranch = pr.getAsJsonObject("head")?.value("ref").orEmpty()
+                require(GitHubAgentScope.isSafeWorkingBranch(sourceBranch)) { "work_branch_only" }
+                require(GitHubApprovalGate.ask(trustedChatId, "Слияние pull request",
+                    "$repo #${number(p)} → $targetBranch",
+                    "Слияние изменит целевую ветку на GitHub. Это отдельное подтверждение."))
+                    { "confirmation_declined" }
+                ok(api("PUT", "$base/pulls/${number(p)}/merge", token,
+                    obj("merge_method" to "squash")).compact())
+            }
+            "delete_branch" -> {
+                val branch = workingBranch(p.value("branch"))
+                require(Regex("(?iu)(удал|delete|remove)").containsMatchIn(directUserText.lowercase())) {
+                    "deletion_needs_explicit_user_instruction"
+                }
+                require(GitHubApprovalGate.ask(trustedChatId, "Удаление ветки",
+                    "$repo:$branch", "Ветка и несохранённые изменения на сервере могут быть потеряны.")) {
+                    "confirmation_declined"
+                }
+                ok(api("DELETE", "$base/git/refs/heads/${pathUrl(branch)}", token).compact())
+            }
+            "create_release" -> {
+                require(!repo.equals("Ayuemin/Umnik", true)) { "protected_umnik_release_branch" }
+                require(Regex("(?iu)(релиз|release|опубликуй|выпусти)").containsMatchIn(directUserText.lowercase())) {
+                    "release_needs_direct_user_instruction"
+                }
+                val tag = p.value("tag")
+                require(tag.matches(Regex("^[A-Za-z0-9._-]{1,100}$"))) { "invalid_tag" }
+                val target = p.value("branch")
+                workingBranch(target)
+                require(GitHubApprovalGate.ask(trustedChatId, "Публикация релиза",
+                    "$repo — $tag", "Релиз может стать доступен другим людям. Проверьте тег и репозиторий.")) {
+                    "confirmation_declined"
+                }
+                ok(api("POST", "$base/releases", token, obj(
+                    "tag_name" to tag,
+                    "target_commitish" to target,
+                    "name" to p.value("name").ifBlank { tag }.take(200),
+                    "body" to p.value("body").take(12_000),
+                    "draft" to false,
+                    "prerelease" to true
+                )).compact())
+            }
+            "delete_repo" -> {
+                require(!repo.equals("Ayuemin/Umnik", true)) { "protected_umnik_release_branch" }
+                require(Regex("(?iu)(удал|delete|remove)").containsMatchIn(directUserText.lowercase())) {
+                    "deletion_needs_explicit_user_instruction"
+                }
+                require(GitHubApprovalGate.ask(trustedChatId, "Удаление репозитория",
+                    repo, "Необратимая операция. Будут удалены код, issues, Actions и история репозитория.")) {
+                    "confirmation_declined"
+                }
+                ok(api("DELETE", base, token).compact())
+            }
             else -> error("unsupported_operation")
         }
     }
 
-    private fun commitFiles(p: JsonObject, base: String, token: String, directUserText: String): JsonObject {
+    private suspend fun commitFiles(
+        p: JsonObject, base: String, token: String, directUserText: String,
+        trustedChatId: String, repo: String
+    ): JsonObject {
         val branch = workingBranch(p.value("branch"))
         val files = p.getAsJsonArray("files") ?: error("missing_files")
         require(files.size() in 1..60) { "too_many_files" }
@@ -248,6 +334,12 @@ internal class GitHubAgentTool(
                 total += content.toByteArray(Charsets.UTF_8).size
                 require(content.length <= 150_000 && total <= 750_000) { "source_payload_too_large" }
                 instructions += Triple(path, content, false)
+            }
+        }
+        if (instructions.any { it.third }) {
+            require(GitHubApprovalGate.ask(trustedChatId, "Удаление файлов в коммите",
+                "$repo:$branch", "В коммите удаляются ${instructions.count { it.third }} файлов на сервере.")) {
+                "confirmation_declined"
             }
         }
         val ref = api("GET", "$base/git/ref/heads/${pathUrl(branch)}", token).asJsonObject
@@ -536,15 +628,20 @@ internal class GitHubAgentTool(
         const val MAX_ARCHIVE_SIZE = 75L * 1024L * 1024L
         const val MAX_ARCHIVE_UNPACKED = 80L * 1024L * 1024L
         val repoReadOps = setOf("viewer", "list_repos", "repo_info", "list_tree", "read_file",
-            "list_branches", "list_commits", "compare", "list_issues", "read_issue", "list_prs", "read_pr")
+            "list_branches", "list_commits", "compare", "list_issues", "read_issue",
+            "list_prs", "read_pr", "pr_files", "pr_reviews", "list_tags", "list_releases")
         val repoWriteOps = setOf("create_repo", "create_branch", "commit_files",
-            "create_issue", "comment_issue", "create_pr")
+            "create_issue", "edit_issue", "comment_issue", "create_pr", "comment_pr",
+            "review_pr", "merge_pr", "delete_branch", "create_release", "delete_repo")
         val actionReadOps = setOf("list_workflows", "list_runs", "run", "jobs", "job_logs",
             "wait_run", "list_artifacts", "download_apk")
         val actionWriteOps = setOf("dispatch", "rerun_failed")
         val allowedErrors = setOf(
             "github_connection_not_authorized", "task_grant_expired", "unsupported_operation",
-            "clear_selected_repository_before_creation",
+            "clear_selected_repository_before_creation", "confirmation_declined",
+            "invalid_issue_state", "empty_issue_update", "invalid_review_event",
+            "merge_needs_direct_user_instruction", "release_needs_direct_user_instruction",
+            "invalid_tag", "protected_umnik_release_branch",
             "write_needs_direct_user_instruction", "github_token_not_configured",
             "select_or_create_repository_first", "invalid_repo_name", "github_invalid_new_repo",
             "invalid_ref_sha", "missing_parent_tree", "missing_files", "too_many_files",
