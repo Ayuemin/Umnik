@@ -70,8 +70,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.ayuemin.ymnik.ChatViewModel
-import com.ayuemin.ymnik.data.VoiceInputMode
-import com.ayuemin.ymnik.data.VoiceInputPrefs
 import com.ayuemin.ymnik.model.AnswerSoundChoice
 import com.ayuemin.ymnik.model.ChatMode
 import com.ayuemin.ymnik.model.GeneratedFile
@@ -275,8 +273,6 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var imageModelId by remember(state.imageModel) { mutableStateOf(state.imageModel) }
     var imageParametersOpen by remember { mutableStateOf(false) }
     var reasoningExpanded by remember { mutableStateOf(false) }
-    val voiceInputPrefs = remember(context) { VoiceInputPrefs(context.applicationContext) }
-    var voiceInputMode by remember { mutableStateOf(voiceInputPrefs.mode()) }
     var voiceInputExpanded by remember { mutableStateOf(false) }
     var skillsLibraryExpanded by remember { mutableStateOf(false) }
     var soundExpanded by remember { mutableStateOf(false) }
@@ -663,36 +659,21 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
 
                 item {
                     ExpandableSettingsCard(
-                        title = "Голосовой ввод",
-                        subtitle = when (voiceInputMode) {
-                            VoiceInputMode.ANDROID_DICTATION -> "Диктовка Android · русский"
-                            VoiceInputMode.OPENROUTER_DICTATION -> "В текст через OpenRouter"
-                            VoiceInputMode.AUDIO_MESSAGE -> "Аудиосообщение модели"
-                        },
+                        title = "Локальная диктовка",
+                        subtitle = "Русский · локальная модель Android",
                         icon = Icons.Outlined.VolumeUp,
                         expanded = voiceInputExpanded,
                         onToggle = { voiceInputExpanded = !voiceInputExpanded },
-                        info = "Диктовка не зависит от модели чата. Android может использовать сетевую службу, если нет установленного офлайн-распознавания. Для OpenRouter выберите STT-модель в инструменте «В текст»."
+                        info = "Микрофон не отправляет аудио ни OpenRouter, ни основной модели чата. Он использует только on-device распознавание Android."
                     ) {
-                        listOf(
-                            VoiceInputMode.ANDROID_DICTATION to "Диктовка Android (по возможности офлайн)",
-                            VoiceInputMode.OPENROUTER_DICTATION to "Диктовка через модель OpenRouter STT",
-                            VoiceInputMode.AUDIO_MESSAGE to "Отправлять аудио основной модели"
-                        ).forEach { (mode, label) ->
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = voiceInputMode == mode,
-                                    onCheckedChange = {
-                                        voiceInputMode = mode
-                                        voiceInputPrefs.setMode(mode)
-                                    }
-                                )
-                                Text(label, style = MaterialTheme.typography.bodyMedium)
-                            }
-                        }
+                        Text(
+                            "Сейчас доступна системная локальная модель распознавания Android. " +
+                                "Для работы необходим установленный на телефоне офлайн-распознаватель русского языка. " +
+                                "Если его нет, «Умник» покажет ошибку, но не переключится в облако. " +
+                                "Выбор Whisper Tiny/Base появится здесь после включения встроенного движка Whisper.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
                 }
 
