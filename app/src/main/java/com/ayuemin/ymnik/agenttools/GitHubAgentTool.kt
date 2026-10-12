@@ -195,6 +195,58 @@ internal class GitHubAgentTool(
                 )).compact())
             }
             "commit_files" -> commitFiles(p, base, token, directUserText, trustedChatId, repo)
+            "setup_android_ci" -> {
+                val branch = workingBranch(p.value("branch"))
+                val workflow = """
+name: Android Debug APK
+on:
+  push:
+    branches:
+      - 'work/**'
+      - 'agent/**'
+      - 'feature/**'
+      - 'fix/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.14'
+      - name: Build debug APK
+        run: |
+          if [ -f ./gradlew ] && [ -f gradle/wrapper/gradle-wrapper.jar ]; then
+            bash ./gradlew --no-daemon :app:assembleDebug
+          else
+            gradle --no-daemon :app:assembleDebug
+          fi
+      - name: Upload debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+""".trimIndent() + "\n"
+                val updated = JsonObject().apply {
+                    addProperty("branch", branch)
+                    addProperty("message", "Add GitHub Actions Android APK build")
+                    add("files", JsonArray().apply {
+                        add(obj("path" to ".github/workflows/android-apk.yml",
+                            "content" to workflow))
+                    })
+                }
+                commitFiles(updated, base, token, directUserText, trustedChatId, repo)
+            }
             "list_commits" -> {
                 val branch = p.value("branch").ifBlank { repoDefaultBranch(base, token) }
                 ok(api("GET", "$base/commits?sha=${encode(branch)}&per_page=30&page=${page(p)}", token).compact())
@@ -634,7 +686,7 @@ internal class GitHubAgentTool(
         val repoReadOps = setOf("viewer", "list_repos", "repo_info", "list_tree", "read_file",
             "list_branches", "list_commits", "compare", "list_issues", "read_issue",
             "list_prs", "read_pr", "pr_files", "pr_reviews", "list_tags", "list_releases")
-        val repoWriteOps = setOf("create_repo", "create_branch", "commit_files",
+        val repoWriteOps = setOf("create_repo", "create_branch", "commit_files", "setup_android_ci",
             "create_issue", "edit_issue", "comment_issue", "create_pr", "comment_pr",
             "review_pr", "merge_pr", "delete_branch", "create_release", "delete_repo")
         val actionReadOps = setOf("list_workflows", "list_runs", "run", "jobs", "job_logs",
