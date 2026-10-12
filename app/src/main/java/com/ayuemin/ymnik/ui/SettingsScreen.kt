@@ -156,6 +156,7 @@ private fun SkillLibrarySettings(state: UiState, vm: ChatViewModel) {
 
 private enum class SettingsCategory(val title: String, val subtitle: String) {
     CONNECTION("Подключение", "API-ключ OpenRouter"),
+    GITHUB("GitHub и Actions", "Репозитории, коммиты, CI и APK"),
     MODELS("Модели", "Чаты, системная, Embeddings, изображения и речь"),
     CONTEXT("Чаты и контекст", "Память, навыки и профиль"),
     INTERFACE("Интерфейс", "Оформление и звук"),
@@ -165,6 +166,7 @@ private enum class SettingsCategory(val title: String, val subtitle: String) {
 
 private fun settingsCategoryIcon(category: SettingsCategory): ImageVector = when (category) {
     SettingsCategory.CONNECTION -> Icons.Outlined.Language
+    SettingsCategory.GITHUB -> Icons.Outlined.Extension
     SettingsCategory.MODELS -> Icons.Outlined.TextFields
     SettingsCategory.CONTEXT -> Icons.Outlined.History
     SettingsCategory.INTERFACE -> Icons.Outlined.Palette
@@ -290,6 +292,9 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
     var diagnosticFileToSave by remember { mutableStateOf<GeneratedFile?>(null) }
     val editingProfile = state.connectionProfiles.first()
     var connectionKey by remember { mutableStateOf("") }
+    var githubTokenText by remember { mutableStateOf("") }
+    var githubRepoText by remember { mutableStateOf(vm.githubRepository()) }
+    var githubEnabled by remember { mutableStateOf(vm.isGitHubAgentEnabled()) }
     var connectionAdvancedExpanded by remember { mutableStateOf(false) }
     var connectionContextWindow by remember(editingProfile.contextLimitTokens) {
         mutableStateOf(editingProfile.contextLimitTokens?.toString().orEmpty())
@@ -451,6 +456,87 @@ internal fun SettingsScreen(state: UiState, vm: ChatViewModel, onBack: () -> Uni
                     }
                 }
 
+                    }
+                    SettingsCategory.GITHUB -> {
+                        item {
+                            UmnikPanel {
+                                Column(Modifier.fillMaxWidth().padding(UmnikPanelPadding)) {
+                                    Text("GitHub API + Actions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Spacer(Modifier.height(7.dp))
+                                    Text(
+                                        "Основная модель может самостоятельно создавать репозитории и рабочие ветки, коммитить исходники, работать с issues/PR, собирать Android через Actions и скачивать APK в чат. Это отдельное подключение, не замена OpenRouter.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(Modifier.height(12.dp))
+                                    OutlinedTextField(
+                                        value = githubRepoText,
+                                        onValueChange = { githubRepoText = it.take(204) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("Разрешённый репозиторий") },
+                                        placeholder = { Text("owner/repo или пусто для создания нового") },
+                                        singleLine = true
+                                    )
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedTextField(
+                                        value = githubTokenText,
+                                        onValueChange = { githubTokenText = it.take(250) },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        label = { Text("GitHub Personal Access Token") },
+                                        placeholder = { Text(if (vm.hasGitHubToken()) "Токен сохранён · оставить пустым" else "Вставьте токен GitHub") },
+                                        visualTransformation = PasswordVisualTransformation(),
+                                        singleLine = true
+                                    )
+                                    Spacer(Modifier.height(7.dp))
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text("Разрешить агенту GitHub", modifier = Modifier.weight(1f))
+                                        Switch(checked = githubEnabled, onCheckedChange = { githubEnabled = it })
+                                    }
+                                    Spacer(Modifier.height(7.dp))
+                                    FilledTonalButton(
+                                        onClick = {
+                                            vm.saveGitHubConnection(githubRepoText, githubTokenText, githubEnabled)
+                                            githubTokenText = ""
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Outlined.Check, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Сохранить подключение")
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    OutlinedButton(
+                                        onClick = { vm.testGitHubConnection() },
+                                        modifier = Modifier.fillMaxWidth(),
+                                        enabled = vm.hasGitHubToken()
+                                    ) {
+                                        Icon(Icons.Outlined.Refresh, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Проверить GitHub")
+                                    }
+                                    Spacer(Modifier.height(6.dp))
+                                    OutlinedButton(
+                                        onClick = {
+                                            vm.deleteGitHubConnection()
+                                            githubRepoText = ""
+                                            githubEnabled = false
+                                            githubTokenText = ""
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null)
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Отключить и удалить токен")
+                                    }
+                                    Spacer(Modifier.height(9.dp))
+                                    Text(
+                                        "Для PAT нужны права Contents (write), Actions (read/write), Pull requests и Issues при использовании соответствующих действий. Создание нового репозитория может требовать Repository creation. Используйте токен с минимальными правами. Доступ к main, релизам и удалению репозиториев агенту не предоставляется.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
                     SettingsCategory.MODELS -> {
                 item {
