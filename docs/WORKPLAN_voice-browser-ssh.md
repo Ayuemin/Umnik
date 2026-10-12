@@ -22,6 +22,8 @@
 
 ## Кеширование и учёт токенов OpenRouter (13.10.2026)
 
+**CI:** для кеш-сессии и provider-native breakpoints быстрый CI `38314074631` зелёный на `6db818f`. Добавлен учёт кешированных и reasoning токенов (`d938a26`); коммит с безопасными метками диагностического кеша запускает полную сборку [full ci]. Полную Android-приёмку пока не проводили.
+
 **Основание:** Android-тест `Ayuemin/calculator` показал большие затраты reasoning при небольшом результате. Заголовок `X-OpenRouter-Cache-Status: off` описывает response caching, а не экономию на cached input tokens. DeepSeek имеет неявное prompt caching; для длительных циклов требуется стабильный prefix/session.
 
 - [x] MVP: стабильный хешированный `session_id` на уровне общего OpenRouter Chat Completions, без исходных идентификаторов чата в API.

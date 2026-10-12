@@ -1116,7 +1116,7 @@ class OpenRouterClient(
                     DiagnosticLog.record(
                         context,
                         "COMPLETION",
-                        "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}; cache=${cacheStatus ?: "off"}"
+                        "OpenRouter id=${completion.id}; provider=${completion.provider}; finish=${completion.finishReason}; nativeFinish=${completion.nativeFinishReason}; completionTokens=${completion.completionTokens}; reasoningTokens=${completion.reasoningTokens}; promptCacheRead=${completion.tokenUsage?.cachedInputTokens ?: "unknown"}; promptCacheWrite=${completion.tokenUsage?.cacheWriteTokens ?: "unknown"}; responseCache=${cacheStatus ?: "off"}"
                     )
                     return completion
                 }
@@ -1130,7 +1130,7 @@ class OpenRouterClient(
                 DiagnosticLog.record(
                     context,
                     "REQUEST_RECOVERY",
-                    "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; cache=${cacheStatus ?: "off"}; recover=$recover; attempt=$recoveryAttempt; error=${error::class.java.simpleName}: ${error.message}"
+                    "body failure; localCancel=$locallyCancelled; generation=${generationId ?: "none"}; responseCache=${cacheStatus ?: "off"}; recover=$recover; attempt=$recoveryAttempt; error=${error::class.java.simpleName}: ${error.message}"
                 )
                 if (!recover) {
                     if (!locallyCancelled && recoveryRecord != null && !generationId.isNullOrBlank()) {
