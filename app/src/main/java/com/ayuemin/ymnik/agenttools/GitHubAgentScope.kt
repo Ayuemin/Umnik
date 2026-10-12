@@ -46,7 +46,7 @@ internal data class GitHubAgentScope(
             val repo = if (configuredRepository.isBlank()) "" else normalizeRepo(configuredRepository) ?: return null
             return GitHubAgentScope(
                 chatId, directMessageId, repo,
-                mayWrite = writeIntent.containsMatchIn(directUserText),
+                mayWrite = writeIntent.containsMatchIn(directUserText.lowercase()),
                 issuedAtMillis = nowMillis,
                 expiresAtMillis = nowMillis + 60 * 60_000L
             )
