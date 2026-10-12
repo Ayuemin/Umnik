@@ -322,7 +322,15 @@ internal class GitHubAgentTool(
                     "html_url" to latest.value("html_url"),
                     "completed" to (latest.value("status") == "completed")))
             }
-            "rerun_failed" -> ok(api("POST", "$base/actions/runs/${number(p, "run_id")}/rerun-failed-jobs", token).compact())
+            "rerun_failed" -> {
+                val runId = number(p, "run_id")
+                val run = authorizedWorkingRun(base, runId, token)
+                require(run.value("status") == "completed" &&
+                    run.value("conclusion") in setOf("failure", "timed_out")) {
+                    "workflow_run_not_failed"
+                }
+                ok(api("POST", "$base/actions/runs/$runId/rerun-failed-jobs", token).compact())
+            }
             "list_artifacts" -> {
                 val id = p.value("run_id")
                 val path = if (id.isBlank()) "$base/actions/artifacts?per_page=100" else
@@ -336,6 +344,24 @@ internal class GitHubAgentTool(
 
     private fun repoDefaultBranch(base: String, token: String): String =
         api("GET", base, token).asJsonObject.value("default_branch").ifBlank { "main" }
+
+    private fun authorizedWorkingRun(
+        base: String, runId: Long, token: String, requireSuccess: Boolean = false
+    ): JsonObject {
+        val run = api("GET", "$base/actions/runs/$runId", token).asJsonObject
+        val actualRepo = run.getAsJsonObject("repository")?.value("full_name")
+        val headRepo = run.getAsJsonObject("head_repository")?.value("full_name")
+        require(GitHubActionsRunPolicy.allows(
+            expectedRepo = base.removePrefix("repos/"),
+            runRepo = actualRepo,
+            headRepo = headRepo,
+            branch = run.value("head_branch"),
+            status = run.value("status"),
+            conclusion = run.value("conclusion"),
+            requireSuccess = requireSuccess
+        )) { "workflow_run_out_of_scope" }
+        return run
+    }
 
     private fun readJobLog(base: String, jobId: Long, token: String): String {
         val request = githubRequest("GET", "$base/actions/jobs/$jobId/logs", token, null)
@@ -360,6 +386,13 @@ internal class GitHubAgentTool(
     }
 
     private fun downloadApk(base: String, artifactId: Long, token: String): JsonObject {
+        val metadata = api("GET", "$base/actions/artifacts/$artifactId", token).asJsonObject
+        require(metadata.get("expired")?.asBoolean == false) { "artifact_expired" }
+        val archivedSize = metadata.value("size_in_bytes").toLongOrNull()
+        require(archivedSize != null && archivedSize in 1..MAX_ARCHIVE_SIZE) { "artifact_too_large" }
+        val runId = metadata.getAsJsonObject("workflow_run")?.get("id")?.asLong
+            ?: error("artifact_run_missing")
+        authorizedWorkingRun(base, runId, token, requireSuccess = true)
         val req = githubRequest("GET", "$base/actions/artifacts/$artifactId/zip", token, null)
         val temporary = File(context.cacheDir, "github_artifacts").apply { mkdirs() }
         val output = File(temporary, "github-$artifactId-${System.nanoTime()}.apk")
@@ -376,26 +409,47 @@ internal class GitHubAgentTool(
                 ZipInputStream(stream).use { zip ->
                     var entry = zip.nextEntry
                     var selected = false
-                    var archiveBytes = 0L
+                    var inspected = 0
+                    var unpacked = 0L
+                    val buffer = ByteArray(32 * 1024)
                     while (entry != null) {
-                        if (!entry.isDirectory && entry.name.endsWith(".apk", true) &&
-                            !entry.name.contains("..") && !entry.name.startsWith("/")) {
+                        require(++inspected <= 100) { "artifact_too_many_entries" }
+                        require(GitHubAgentScope.isSafeFilePath(entry.name.removeSuffix("/"))) {
+                            "unsafe_artifact_entry"
+                        }
+                        val isApk = !entry.isDirectory && entry.name.endsWith(".apk", true)
+                        if (isApk) {
                             output.outputStream().use { out ->
-                                val buffer = ByteArray(32 * 1024)
                                 while (true) {
                                     val read = zip.read(buffer)
                                     if (read < 0) break
-                                    archiveBytes += read
-                                    require(archiveBytes <= MAX_APK_SIZE) { "apk_too_large" }
+                                    unpacked += read
+                                    require(unpacked <= MAX_ARCHIVE_UNPACKED) { "archive_unpacked_too_large" }
+                                    require(output.length() + read <= MAX_APK_SIZE) { "apk_too_large" }
                                     out.write(buffer, 0, read)
                                 }
                             }
                             selected = true
                             break
                         }
+                        // Drain skipped entries with a total uncompressed-size bound:
+                        // nextEntry() alone can unpack an attacker-controlled zip bomb.
+                        while (true) {
+                            val read = zip.read(buffer)
+                            if (read < 0) break
+                            unpacked += read
+                            require(unpacked <= MAX_ARCHIVE_UNPACKED) { "archive_unpacked_too_large" }
+                        }
                         entry = zip.nextEntry
                     }
-                    require(selected && output.isFile && output.length() > 0) { "apk_not_found_in_artifact" }
+                    require(selected && output.isFile && output.length() > 4) { "apk_not_found_in_artifact" }
+                    output.inputStream().use { file ->
+                        val signature = ByteArray(4)
+                        require(file.read(signature) == 4 &&
+                            signature.contentEquals(byteArrayOf(0x50, 0x4B, 0x03, 0x04))) {
+                            "invalid_apk_signature"
+                        }
+                    }
                 }
             }
             return ok(mapOf("artifact" to obj(
@@ -479,6 +533,8 @@ internal class GitHubAgentTool(
 
     private companion object {
         const val MAX_APK_SIZE = 50L * 1024L * 1024L
+        const val MAX_ARCHIVE_SIZE = 75L * 1024L * 1024L
+        const val MAX_ARCHIVE_UNPACKED = 80L * 1024L * 1024L
         val repoReadOps = setOf("viewer", "list_repos", "repo_info", "list_tree", "read_file",
             "list_branches", "list_commits", "compare", "list_issues", "read_issue", "list_prs", "read_pr")
         val repoWriteOps = setOf("create_repo", "create_branch", "commit_files",
@@ -497,7 +553,11 @@ internal class GitHubAgentTool(
             "work_branch_only", "deletion_needs_explicit_user_instruction",
             "not_a_file", "binary_or_large_file_not_supported", "missing_commit_refs",
             "invalid_github_api_path", "unsafe_artifact_redirect", "apk_too_large",
-            "apk_not_found_in_artifact", "too_many_inputs", "empty_artifact"
+            "apk_not_found_in_artifact", "too_many_inputs", "empty_artifact",
+            "workflow_run_out_of_scope", "workflow_run_not_failed",
+            "artifact_expired", "artifact_too_large", "artifact_run_missing",
+            "artifact_too_many_entries", "unsafe_artifact_entry",
+            "archive_unpacked_too_large", "invalid_apk_signature"
         )
     }
 }
