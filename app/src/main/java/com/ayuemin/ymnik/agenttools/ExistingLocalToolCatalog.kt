@@ -18,25 +18,26 @@ internal object ExistingLocalToolCatalog {
         id: String,
         action: ToolAction,
         resource: ToolResourceKind,
-        confirm: Boolean = false
+        confirm: Boolean = false,
+        publicWebRead: Boolean = false
     ) = ToolDescriptor(
         id = id,
         label = id,
         version = 1,
         actions = setOf(action),
-        resourceKinds = setOf(resource),
+        resourceKinds = if (publicWebRead) setOf(resource, ToolResourceKind.PUBLIC_WEB_SESSION) else setOf(resource),
         confirmActions = if (confirm) setOf(action) else emptySet()
     )
 
     private val browser = listOf(
-        descriptor("local_browser_open", ToolAction.NAVIGATE, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_read", ToolAction.READ, ToolResourceKind.WEB_ORIGIN),
+        descriptor("local_browser_open", ToolAction.NAVIGATE, ToolResourceKind.WEB_ORIGIN, publicWebRead = true),
+        descriptor("local_browser_read", ToolAction.READ, ToolResourceKind.WEB_ORIGIN, publicWebRead = true),
         descriptor("local_browser_click", ToolAction.INTERACT, ToolResourceKind.WEB_ORIGIN),
         descriptor("local_browser_download", ToolAction.DOWNLOAD, ToolResourceKind.WEB_ORIGIN),
         descriptor("local_browser_type", ToolAction.INTERACT, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_scroll", ToolAction.READ, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_back", ToolAction.NAVIGATE, ToolResourceKind.WEB_ORIGIN),
-        descriptor("local_browser_wait", ToolAction.READ, ToolResourceKind.WEB_ORIGIN),
+        descriptor("local_browser_scroll", ToolAction.READ, ToolResourceKind.WEB_ORIGIN, publicWebRead = true),
+        descriptor("local_browser_back", ToolAction.NAVIGATE, ToolResourceKind.WEB_ORIGIN, publicWebRead = true),
+        descriptor("local_browser_wait", ToolAction.READ, ToolResourceKind.WEB_ORIGIN, publicWebRead = true),
         descriptor("local_browser_takeover", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION),
         descriptor("local_browser_done", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION)
     )

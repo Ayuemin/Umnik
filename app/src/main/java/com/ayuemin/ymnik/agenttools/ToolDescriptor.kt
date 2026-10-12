@@ -10,7 +10,9 @@ internal enum class ToolAction {
 }
 
 internal enum class ToolResourceKind {
-    WEB_ORIGIN, LOCAL_FILE, LOCAL_SESSION, SSH_HOST, API_CONNECTION, CLOUD_ACCOUNT
+    // Public-web discovery is a distinct trusted-UI grant, NOT a wildcard WEB_ORIGIN.
+    // Runtime adapters must still check every actual URL and redirect as public.
+    WEB_ORIGIN, PUBLIC_WEB_SESSION, LOCAL_FILE, LOCAL_SESSION, SSH_HOST, API_CONNECTION, CLOUD_ACCOUNT
 }
 
 internal data class ToolDescriptor(
