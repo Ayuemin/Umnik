@@ -214,6 +214,13 @@ val prepareRussianVoskModel by tasks.registering {
     }
 }
 android.sourceSets.getByName("main").assets.srcDir(bundledRussianModel.get().asFile)
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
-    dependsOn(prepareRussianVoskModel)
+
+// Gradle 9 tracks the generated directory as output of prepareRussianVoskModel.
+// Every Android task which can inspect sourceSets (including lint model writers
+// and asset merges) must explicitly depend on that producer. A proper AGP
+// variant-source task type can replace this conservative wiring later.
+tasks.configureEach {
+    if (name != "prepareRussianVoskModel" && !name.startsWith("clean", ignoreCase = true)) {
+        dependsOn(prepareRussianVoskModel)
+    }
 }
