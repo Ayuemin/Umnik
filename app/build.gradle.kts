@@ -213,7 +213,7 @@ val prepareRussianVoskModel by tasks.registering {
         }
     }
 }
-android.sourceSets.getByName("main").assets.srcDir(bundledRussianModel)
+android.sourceSets.getByName("main").assets.srcDir(bundledRussianModel.get().asFile)
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
     dependsOn(prepareRussianVoskModel)
 }
