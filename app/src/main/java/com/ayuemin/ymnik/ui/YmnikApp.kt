@@ -182,6 +182,7 @@ import com.ayuemin.ymnik.data.OfflineDictationEngine
 import com.ayuemin.ymnik.browser.LocalBrowserActivity
 import com.ayuemin.ymnik.browser.LocalBrowserLifecycle
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
+import com.ayuemin.ymnik.agenttools.GitHubApprovalGate
 import com.ayuemin.ymnik.R
 import com.ayuemin.ymnik.data.BatchJobRepository
 import com.ayuemin.ymnik.data.VideoJobRepository
@@ -223,6 +224,7 @@ private fun formatUsd(value: Double): String =
 @Composable
 fun YmnikApp(viewModel: ChatViewModel) {
     val state by viewModel.state.collectAsState()
+    val pendingGitHubApproval by GitHubApprovalGate.pending.collectAsState()
     val snackbar = remember { SnackbarHostState() }
     val context = LocalContext.current
     UserFontStore.initialize(context.applicationContext)
@@ -305,6 +307,29 @@ fun YmnikApp(viewModel: ChatViewModel) {
                 }
                 LocalBrowserHost()
             }
+        }
+        pendingGitHubApproval?.let { pending ->
+            AlertDialog(
+                onDismissRequest = { GitHubApprovalGate.answer(pending.id, false) },
+                title = { Text("Подтвердить действие в GitHub") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(pending.operation, fontWeight = FontWeight.SemiBold)
+                        Text(pending.target)
+                        Text(pending.explanation, style = MaterialTheme.typography.bodySmall)
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { GitHubApprovalGate.answer(pending.id, true) }) {
+                        Text("Разрешить")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { GitHubApprovalGate.answer(pending.id, false) }) {
+                        Text("Отмена")
+                    }
+                }
+            )
         }
     }
 }
