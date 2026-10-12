@@ -27,6 +27,7 @@ import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
 import com.ayuemin.ymnik.agenttools.TrustedBrowserSessionGuard
+import com.ayuemin.ymnik.agenttools.TrustedShellStopGuard
 import com.ayuemin.ymnik.agenttools.ToolDispatchResult
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
@@ -139,6 +140,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val localShellClient = LocalShellAgentClient(context)
     private val trustedShellStatusGuard = TrustedShellStatusGuard()
     private val trustedBrowserSessionGuard = TrustedBrowserSessionGuard()
+    private val trustedShellStopGuard = TrustedShellStopGuard()
     private val localWebFetcher = LocalWebFetcher(context)
     private val systemTaskPlanner = SystemTaskPlanner(api)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
@@ -5184,6 +5186,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             browserEnabledForRequest = localBrowserToolsEnabled,
                             issuedAtMillis = System.currentTimeMillis()
                         )
+                        val shellStopGrant = trustedShellStopGuard.grantFromUiSubmission(
+                            chatId = chatId,
+                            directUserMessageId = user.id,
+                            directUserText = clean,
+                            shellEnabledForThisUserRequest = localShellToolsEnabled,
+                            issuedAtMillis = System.currentTimeMillis()
+                        )
                         val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
                         val historicalAttachments = if (requestSpecialist == null) {
                             HistoricalAttachmentPolicy.select(
@@ -5474,7 +5483,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     null
                                 },
                                 localShellStop = if (localShellToolsEnabled) {
-                                    { stopLocalShellFromChat(chatId) }
+                                    {
+                                        when (val result = trustedShellStopGuard.stop(
+                                            grant = shellStopGrant,
+                                            trustedChatId = chatId,
+                                            directUserMessageId = user.id,
+                                            nowMillis = System::currentTimeMillis
+                                        ) { stopLocalShellFromChat(chatId) }) {
+                                            is ToolDispatchResult.Completed -> result.value
+                                            is ToolDispatchResult.Blocked -> gson.toJson(
+                                                mapOf(
+                                                    "ok" to false,
+                                                    "error" to "Остановка Local Shell требует прямой команды пользователя",
+                                                    "reason" to result.decision.name
+                                                )
+                                            )
+                                        }
+                                    }
                                 } else {
                                     null
                                 }
