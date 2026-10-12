@@ -35,6 +35,7 @@ internal object LocalShellRuntime {
 
     @Volatile private var cancelCurrent: (() -> Unit)? = null
     @Volatile private var cancelCurrentTaskId: String? = null
+    @Volatile private var ownedTaskId: String? = null
     @Volatile private var terminalResult = CompletableDeferred<LocalShellTerminalResult>()
     @Volatile private var parentConsumesTerminal = false
     @Volatile private var checkpointProvider: (() -> String)? = null
@@ -47,6 +48,21 @@ internal object LocalShellRuntime {
         parentConsumesTerminal = false
         terminalResult = CompletableDeferred()
         LocalShellBudgetTelemetry.reset()
+    }
+
+    /** Reserve the one process-wide Shell slot before publishing its UI state. */
+    fun tryPrepareForStart(taskId: String): Boolean = synchronized(this) {
+        if (taskId.isBlank() || ownedTaskId != null) return@synchronized false
+        prepareForStart()
+        ownedTaskId = taskId
+        true
+    }
+
+    /** Never let a stale worker clear a replacement task in the same chat. */
+    fun clearForTask(taskId: String): Boolean = synchronized(this) {
+        if (taskId.isBlank() || ownedTaskId != taskId) return@synchronized false
+        clear()
+        true
     }
 
     fun installCheckpointProvider(provider: () -> String) {
@@ -126,6 +142,7 @@ internal object LocalShellRuntime {
     suspend fun awaitTerminal(): LocalShellTerminalResult = terminalResult.await()
 
     fun clear() {
+        ownedTaskId = null
         cancelCurrent = null
         cancelCurrentTaskId = null
         guidanceQueue.clear()

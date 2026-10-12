@@ -15,7 +15,8 @@ internal class TrustedShellStopGuard(
         directUserMessageId: String,
         directUserText: String,
         shellEnabledForThisUserRequest: Boolean,
-        issuedAtMillis: Long
+        issuedAtMillis: Long,
+        activeTaskIdAtSubmission: String? = null
     ): TaskGrant? {
         if (!shellEnabledForThisUserRequest) return null
         val allowed = mutableSetOf(
@@ -24,10 +25,10 @@ internal class TrustedShellStopGuard(
                 taskResource(chatId, directUserMessageId)
             )
         )
-        if (isDirectStopRequest(directUserText)) {
+        if (isDirectStopRequest(directUserText) && !activeTaskIdAtSubmission.isNullOrBlank()) {
             allowed += TaskAllowance(
                 "local_shell_stop", ToolAction.CONTROL,
-                chatResource(chatId)
+                runningTaskResource(chatId, activeTaskIdAtSubmission)
             )
         }
         return TaskGrant.fromTrustedUserMessage(
@@ -55,7 +56,7 @@ internal class TrustedShellStopGuard(
         val resource = if (activeOwnerUserMessageId == directUserMessageId) {
             taskResource(trustedChatId, directUserMessageId)
         } else {
-            chatResource(trustedChatId)
+            runningTaskResource(trustedChatId, activeTaskId)
         }
         return dispatcher.invoke(
             grant = grant,
@@ -73,8 +74,8 @@ internal class TrustedShellStopGuard(
     }
 
     companion object {
-        private fun chatResource(chatId: String): TaskResource =
-            TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId")
+        private fun runningTaskResource(chatId: String, taskId: String): TaskResource =
+            TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId:task:$taskId")
         private fun taskResource(chatId: String, originMessage: String): TaskResource =
             TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId:owner:$originMessage")
 

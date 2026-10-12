@@ -155,9 +155,9 @@ internal object AsyncJobEvents {
         )
     }
 
-    fun updateLocalShellProgress(chatId: String, status: String, turn: Int, toolCalls: Int) {
+    fun updateLocalShellProgress(chatId: String, status: String, turn: Int, toolCalls: Int, taskId: String? = null) {
         val current = mutableLocalShellActivity.value ?: return
-        if (current.chatId != chatId) return
+        if (current.chatId != chatId || (taskId != null && current.taskId != taskId)) return
         mutableLocalShellActivity.value = current.copy(
             status = status.trim().take(160).ifBlank { current.status },
             turn = turn.coerceAtLeast(0),
@@ -165,9 +165,10 @@ internal object AsyncJobEvents {
         )
     }
 
-    fun markLocalShellFinished(chatId: String) {
-        if (mutableLocalShellActivity.value?.chatId == chatId) {
-            mutableLocalShellActivity.value = null
+    fun markLocalShellFinished(chatId: String, taskId: String? = null) {
+        val current = mutableLocalShellActivity.value
+        if (current?.chatId == chatId && (taskId == null || current.taskId == taskId)) {
+            mutableLocalShellActivity.compareAndSet(current, null)
         }
     }
 

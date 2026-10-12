@@ -17,6 +17,37 @@ class LocalShellRuntimeTest {
         LocalShellRuntime.clear()
     }
 
+    @Test fun staleCancelAndCleanupCannotAffectReplacement() {
+        assertTrue(LocalShellRuntime.tryPrepareForStart("shell-1"))
+        var firstCancels = 0
+        LocalShellRuntime.installCancel("shell-1") { firstCancels++ }
+        assertFalse(LocalShellRuntime.tryPrepareForStart("shell-2"))
+        assertFalse(LocalShellRuntime.clearForTask("shell-2"))
+        assertTrue(LocalShellRuntime.cancelForTask("shell-1"))
+        assertEquals(1, firstCancels)
+        assertTrue(LocalShellRuntime.clearForTask("shell-1"))
+
+        assertTrue(LocalShellRuntime.tryPrepareForStart("shell-2"))
+        var secondCancels = 0
+        LocalShellRuntime.installCancel("shell-2") { secondCancels++ }
+        assertFalse(LocalShellRuntime.cancelForTask("shell-1"))
+        assertFalse(LocalShellRuntime.clearForTask("shell-1"))
+        assertTrue(LocalShellRuntime.cancelForTask("shell-2"))
+        assertEquals(1, firstCancels)
+        assertEquals(1, secondCancels)
+        assertTrue(LocalShellRuntime.clearForTask("shell-2"))
+    }
+
+    @Test fun staleProgressAndFinishDoNotRemoveNewTask() {
+        AsyncJobEvents.markLocalShellRunning("test-chat", taskId = "new-shell")
+        AsyncJobEvents.updateLocalShellProgress("test-chat", "stale", 99, 99, taskId = "old-shell")
+        assertEquals(0, AsyncJobEvents.localShellActivity.value?.turn)
+        AsyncJobEvents.markLocalShellFinished("test-chat", "old-shell")
+        assertEquals("new-shell", AsyncJobEvents.localShellActivity.value?.taskId)
+        AsyncJobEvents.markLocalShellFinished("test-chat", "new-shell")
+        assertEquals(null, AsyncJobEvents.localShellActivity.value)
+    }
+
     @Test fun slowChildSuspendsParentWithoutPolling() = runBlocking {
         LocalShellRuntime.prepareForStart()
         val startedAt = System.nanoTime()

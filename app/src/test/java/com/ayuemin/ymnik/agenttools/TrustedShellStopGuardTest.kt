@@ -41,11 +41,23 @@ class TrustedShellStopGuardTest {
     }
 
     @Test fun directUserCanExplicitlyStopOlderTaskInSameChat() = runBlocking {
-        val grant = guard.grantFromUiSubmission("chat-1", "user-2", "Останови Local Shell", true, 100L)
+        val grant = guard.grantFromUiSubmission("chat-1", "user-2", "Останови Local Shell", true, 100L, "shell-1")
         var count = 0
         val result = guard.stop(grant, "chat-1", "user-2", { 200L }, "chat-1", "user-1", "shell-1") { count++; Unit }
         assertEquals(ToolDispatchResult.Completed(Unit), result)
         assertEquals(1, count)
+    }
+
+    @Test fun staleExplicitStopCannotCancelReplacementInSameChat() = runBlocking {
+        val grant = guard.grantFromUiSubmission(
+            "chat-1", "user-2", "Останови Local Shell", true, 100L, "old-shell"
+        )
+        var cancels = 0
+        val stale = guard.stop(grant, "chat-1", "user-2", { 200L }, "chat-1", "user-1", "new-shell") {
+            cancels++
+        }
+        assertEquals(ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE), stale)
+        assertEquals(0, cancels)
     }
 
     @Test fun noPrivilegeFromQuotedTextDisabledToolsOrExpiredRequests() = runBlocking {

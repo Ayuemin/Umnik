@@ -5191,7 +5191,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             directUserMessageId = user.id,
                             directUserText = clean,
                             shellEnabledForThisUserRequest = localShellToolsEnabled,
-                            issuedAtMillis = System.currentTimeMillis()
+                            issuedAtMillis = System.currentTimeMillis(),
+                            activeTaskIdAtSubmission = AsyncJobEvents.localShellActivity.value
+                                ?.takeIf { it.chatId == chatId }?.taskId
                         )
                         val modelPendingAttachments = pending.filter(::shouldSendAttachmentToChatModel)
                         val historicalAttachments = if (requestSpecialist == null) {
@@ -6157,7 +6159,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val taskId = UUID.randomUUID().toString()
         val cancelRequested = AtomicBoolean(false)
 
-        LocalShellRuntime.prepareForStart()
+        if (!LocalShellRuntime.tryPrepareForStart(taskId)) {
+            return gson.toJson(mapOf("ok" to false, "running" to true, "error" to "Local Shell уже запускается или завершает другую задачу"))
+        }
         AsyncJobEvents.markLocalShellRunning(
             chatId, model, attachments.size, maxTurns,
             originUserMessageId = originUserMessageId,
@@ -6168,9 +6172,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val imported = runCatching {
             withContext(Dispatchers.IO) { engine.prepareAttachments(attachments) }
         }.getOrElse { error ->
-            AsyncJobEvents.markLocalShellFinished(chatId)
+            AsyncJobEvents.markLocalShellFinished(chatId, taskId)
             runCatching { RequestKeepAliveService.update(context) }
-            LocalShellRuntime.clear()
+            LocalShellRuntime.clearForTask(taskId)
             return gson.toJson(
                 mapOf(
                     "ok" to false,
@@ -6189,7 +6193,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         lateinit var shellJob: Job
         shellJob = LocalShellRuntime.scope.launch(start = CoroutineStart.LAZY) {
             var lastKeepAliveRefreshAt = 0L
-            runCatching {
+            try {
+                runCatching {
                 localShellClient.run(
                     apiKey = key,
                     model = model,
@@ -6204,7 +6209,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                             chatId = chatId,
                             status = progress.label,
                             turn = progress.turn,
-                            toolCalls = progress.toolCalls
+                            toolCalls = progress.toolCalls,
+                            taskId = taskId
                         )
                         val now = System.currentTimeMillis()
                         if (now - lastKeepAliveRefreshAt >= 30_000L) {
@@ -6301,11 +6307,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     error
                 )
             }
-            requestNetwork?.unregisterChildCancellation(childCancellationId)
-            AsyncJobEvents.markLocalShellFinished(chatId)
-            runCatching { RequestKeepAliveService.update(context) }
-            AsyncJobEvents.notifyChanged()
-            LocalShellRuntime.clear()
+            } finally {
+                requestNetwork?.unregisterChildCancellation(childCancellationId)
+                AsyncJobEvents.markLocalShellFinished(chatId, taskId)
+                runCatching { RequestKeepAliveService.update(context) }
+                AsyncJobEvents.notifyChanged()
+                LocalShellRuntime.clearForTask(taskId)
+            }
         }
 
         val parentAccepted = requestNetwork?.registerChildCancellation(childCancellationId) {
@@ -6319,9 +6327,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         } ?: true
         if (!parentAccepted) {
-            AsyncJobEvents.markLocalShellFinished(chatId)
+            AsyncJobEvents.markLocalShellFinished(chatId, taskId)
             runCatching { RequestKeepAliveService.update(context) }
-            LocalShellRuntime.clear()
+            LocalShellRuntime.clearForTask(taskId)
             return gson.toJson(
                 mapOf(
                     "ok" to false,
