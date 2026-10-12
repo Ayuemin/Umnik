@@ -125,6 +125,21 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(s.contains("user_takeover:true"))
     }
 
+    @Test fun searchButtonAwaitsNavigationButAllowsSamePageResults() {
+        val s = runtime()
+        val clickStart = s.indexOf("suspend fun click(")
+        val typeStart = s.indexOf("suspend fun type(", clickStart)
+        assertTrue(clickStart >= 0 && typeStart > clickStart)
+        val click = s.substring(clickStart, typeStart)
+        assertTrue(click.contains("actionKind == \"navigation\" || actionKind == \"search_navigation\""))
+        assertTrue(click.contains("if (mainFrame && actionKind == \"navigation\")"))
+        assertTrue(click.contains("settleAfterAction("))
+        assertTrue(click.contains("settleOptionalNavigation("))
+        assertTrue(click.contains("if ((actionKind == \"search_navigation\" || !mainFrame) && navigation == null) delay(300)"))
+        assertTrue(click.contains("navigationFailureJson(session, navigation, expectedHref)"))
+        assertTrue(click.contains("snapshot(session, webView)"))
+    }
+
     @Test fun takeoverReturnsFreshSnapshotWithoutAutoRepeatingAction() {
         val s = runtime()
         assertTrue(s.contains("snapshot(session, webView, forceBaseline = true)"))
