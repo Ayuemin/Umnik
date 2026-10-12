@@ -6179,10 +6179,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             )
         }
 
-        LocalShellRuntime.installCancel({
+        LocalShellRuntime.installCancel(taskId = taskId) {
             cancelRequested.set(true)
             localShellClient.cancelActive()
-        }, taskId = taskId)
+        }
 
         val childCancellationId = "local-shell:$taskId"
         val startedAt = System.currentTimeMillis()

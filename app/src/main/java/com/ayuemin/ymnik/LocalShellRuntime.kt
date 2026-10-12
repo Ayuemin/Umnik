@@ -53,7 +53,7 @@ internal object LocalShellRuntime {
         checkpointProvider = provider
     }
 
-    fun installCancel(cancel: () -> Unit, taskId: String? = null) = synchronized(this) {
+    fun installCancel(taskId: String? = null, cancel: () -> Unit) = synchronized(this) {
         cancelCurrentTaskId = taskId
         cancelCurrent = cancel
     }
