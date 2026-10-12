@@ -401,7 +401,7 @@ internal class GitHubAgentTool(
         http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) throw GitHubApiException(response.code)
             if (response.code == 204) return obj("ok" to true)
-            val content = response.body?.source()?.readByteArray(2_500_000L) ?: ByteArray(0)
+            val content = response.peekBody(2_500_000L).bytes()
             if (content.isEmpty()) return obj("ok" to true)
             return JsonParser.parseString(String(content, Charsets.UTF_8))
         }
@@ -454,7 +454,7 @@ internal class GitHubAgentTool(
     private fun encode(value: String): String = URLEncoder.encode(value, "UTF-8").replace("+", "%20")
     private fun pathUrl(path: String): String = path.split('/').joinToString("/") { encode(it) }
     private fun workingBranch(value: String): String =
-        value.takeIf(GitHubAgentScope::isSafeWorkingBranch) ?: error("work_branch_only")
+        value.takeIf { GitHubAgentScope.isSafeWorkingBranch(it) } ?: error("work_branch_only")
     private fun requireFile(path: String, read: Boolean): String {
         require(GitHubAgentScope.isSafeFilePath(path)) { "invalid_file_path" }
         if (read) require(!GitHubAgentScope.isPrivateFile(path)) { "secret_file_read_blocked" }
