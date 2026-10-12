@@ -10,7 +10,7 @@ internal enum class ToolAction {
 }
 
 internal enum class ToolResourceKind {
-    WEB_ORIGIN, LOCAL_FILE, SSH_HOST, API_CONNECTION, CLOUD_ACCOUNT
+    WEB_ORIGIN, LOCAL_FILE, LOCAL_SESSION, SSH_HOST, API_CONNECTION, CLOUD_ACCOUNT
 }
 
 internal data class ToolDescriptor(

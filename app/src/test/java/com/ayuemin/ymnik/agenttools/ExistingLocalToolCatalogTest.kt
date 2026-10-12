@@ -28,5 +28,6 @@ class ExistingLocalToolCatalogTest {
         assertTrue(ToolAction.INTERACT in registry.descriptor("local_browser_click")!!.actions)
         assertEquals(setOf(ToolAction.NAVIGATE), registry.descriptor("local_browser_open")?.actions)
         assertEquals(setOf(ToolAction.CONTROL), registry.descriptor("local_shell_stop")?.actions)
+        assertEquals(setOf(ToolResourceKind.LOCAL_SESSION), registry.descriptor("local_shell_status")?.resourceKinds)
     }
 }

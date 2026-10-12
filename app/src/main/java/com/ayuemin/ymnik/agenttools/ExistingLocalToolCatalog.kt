@@ -42,9 +42,9 @@ internal object ExistingLocalToolCatalog {
 
     private val shell = listOf(
         descriptor("local_shell_start", ToolAction.EXECUTE, ToolResourceKind.LOCAL_FILE),
-        descriptor("local_shell_status", ToolAction.READ, ToolResourceKind.LOCAL_FILE),
-        descriptor("local_shell_note", ToolAction.WRITE, ToolResourceKind.LOCAL_FILE),
-        descriptor("local_shell_stop", ToolAction.CONTROL, ToolResourceKind.LOCAL_FILE)
+        descriptor("local_shell_status", ToolAction.READ, ToolResourceKind.LOCAL_SESSION),
+        descriptor("local_shell_note", ToolAction.WRITE, ToolResourceKind.LOCAL_SESSION),
+        descriptor("local_shell_stop", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION)
     )
 
     fun createRegistry(): ToolRegistry = ToolRegistry().apply {

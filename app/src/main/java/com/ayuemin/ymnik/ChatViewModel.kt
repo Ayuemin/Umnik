@@ -25,6 +25,8 @@ import com.ayuemin.ymnik.data.StorageRepository
 import com.ayuemin.ymnik.data.SystemTaskPlanner
 import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
+import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
+import com.ayuemin.ymnik.agenttools.ToolDispatchResult
 import com.ayuemin.ymnik.browser.LocalBrowserRuntime
 import com.ayuemin.ymnik.diagnostics.DiagnosticLog
 import com.ayuemin.ymnik.help.UmnikUsageGuide
@@ -134,6 +136,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val answerSoundPlayer = AnswerSoundPlayer()
     private val api = OpenRouterClient(context)
     private val localShellClient = LocalShellAgentClient(context)
+    private val trustedShellStatusGuard = TrustedShellStatusGuard()
     private val localWebFetcher = LocalWebFetcher(context)
     private val systemTaskPlanner = SystemTaskPlanner(api)
     private val chatMemoryManager = ChatMemoryManager(context, chatMemory, embeddingApi, api)
@@ -5060,6 +5063,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             prompt = clean
         )
         val localShellRequested = AgentModePolicy.shellRequested(agentEnabled, clean)
+        // Trusted direct UI message + chat identity; external text cannot issue grants.
+        val shellStatusGrant = trustedShellStatusGuard.grantFromUiSubmission(
+            chatId = chatId,
+            directUserMessageId = user.id,
+            shellEnabledForThisUserRequest = localShellRequested,
+            issuedAtMillis = System.currentTimeMillis()
+        )
         val reasoningEnabled = _state.value.reasoningEnabled
         val reasoningEffort = _state.value.reasoningEffort
         // Everything below belongs to the chat that launched the request. Do not read
@@ -5396,7 +5406,23 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                     null
                                 },
                                 localShellStatus = if (localShellToolsEnabled) {
-                                    { localShellStatusForChat(chatId) }
+                                    {
+                                        when (val status = trustedShellStatusGuard.readStatus(
+                                            grant = shellStatusGrant,
+                                            trustedChatId = chatId,
+                                            directUserMessageId = user.id,
+                                            nowMillis = System::currentTimeMillis
+                                        ) { localShellStatusForChat(chatId) }) {
+                                            is ToolDispatchResult.Completed -> status.value
+                                            is ToolDispatchResult.Blocked -> gson.toJson(
+                                                mapOf(
+                                                    "ok" to false,
+                                                    "error" to "Нет разрешения для статуса Local Shell",
+                                                    "reason" to status.decision.name
+                                                )
+                                            )
+                                        }
+                                    }
                                 } else {
                                     null
                                 },
