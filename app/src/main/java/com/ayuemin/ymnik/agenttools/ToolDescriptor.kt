@@ -6,7 +6,7 @@ package com.ayuemin.ymnik.agenttools
  * immediately before dispatching any tool operation.
  */
 internal enum class ToolAction {
-    READ, DOWNLOAD, UPLOAD, WRITE, DELETE, EXECUTE
+    READ, NAVIGATE, INTERACT, CONTROL, DOWNLOAD, UPLOAD, WRITE, DELETE, EXECUTE
 }
 
 internal enum class ToolResourceKind {

@@ -76,17 +76,19 @@ class GuardedToolDispatcherTest {
         assertEquals(0, calls)
     }
 
-    @Test fun browserNavigationIsNotSilentlyApprovedAsRead() = runBlocking {
+    @Test fun browserNavigationRequiresMatchingExplicitNavigationGrant() = runBlocking {
         var calls = 0
-        val action = read.copy(toolId = "local_browser_open", action = ToolAction.EXECUTE)
+        val action = read.copy(toolId = "local_browser_open", action = ToolAction.NAVIGATE)
         val permission = TaskGrant.fromTrustedUserMessage(
             "task-1", "direct-1", 100L, 2_000L,
-            setOf(TaskAllowance("local_browser_open", ToolAction.EXECUTE, url))
+            setOf(TaskAllowance("local_browser_open", ToolAction.NAVIGATE, url))
         )
         val result = dispatcher.invoke(permission, action, { url }, { 500L }) { calls++ }
-        assertEquals(
-            ToolDispatchResult.Blocked(ToolPermissionDecision.NEEDS_USER_CONFIRMATION), result
-        )
-        assertEquals(0, calls)
+        assertEquals(ToolDispatchResult.Completed(Unit), result)
+        assertEquals(1, calls)
+        val wrongActionGrant = grant(ToolAction.READ)
+        val blocked = dispatcher.invoke(wrongActionGrant, action, { url }, { 500L }) { calls++ }
+        assertEquals(ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_OUT_OF_SCOPE), blocked)
+        assertEquals(1, calls)
     }
 }
