@@ -447,10 +447,13 @@ object LocalBrowserRuntime {
                 )
             }
 
-            if (result.get("kind")?.asString == "navigation") {
+            val actionKind = result.get("kind")?.asString
+            if (actionKind == "navigation" || actionKind == "search_navigation") {
                 val expectedHref = result.get("href")?.asString
                 val mainFrame = result.get("main_frame")?.asBoolean ?: true
-                val navigation = if (mainFrame) {
+                // Search buttons may navigate normally or update results in place.
+                // Observe a real navigation without requiring one for SPA searches.
+                val navigation = if (mainFrame && actionKind == "navigation") {
                     settleAfterAction(
                         session = session,
                         webView = webView,
@@ -474,7 +477,7 @@ object LocalBrowserRuntime {
                     session.lifecycle = LocalBrowserLifecycle.BLOCKED
                     return@runCommand navigationFailureJson(session, navigation, expectedHref)
                 }
-                if (!mainFrame && navigation == null) delay(300)
+                if ((actionKind == "search_navigation" || !mainFrame) && navigation == null) delay(300)
             } else {
                 delay(250)
             }
