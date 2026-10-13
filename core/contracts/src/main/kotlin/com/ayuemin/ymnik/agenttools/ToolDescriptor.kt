@@ -5,17 +5,17 @@ package com.ayuemin.ymnik.agenttools
  * The future ToolPermissionGate must validate the direct user's TaskGrant
  * immediately before dispatching any tool operation.
  */
-internal enum class ToolAction {
+enum class ToolAction {
     READ, NAVIGATE, INTERACT, CONTROL, DOWNLOAD, UPLOAD, WRITE, DELETE, EXECUTE
 }
 
-internal enum class ToolResourceKind {
+enum class ToolResourceKind {
     // Public-web discovery is a distinct trusted-UI grant, NOT a wildcard WEB_ORIGIN.
     // Runtime adapters must still check every actual URL and redirect as public.
     WEB_ORIGIN, PUBLIC_WEB_SESSION, LOCAL_FILE, LOCAL_SESSION, SSH_HOST, API_CONNECTION, CLOUD_ACCOUNT
 }
 
-internal data class ToolDescriptor(
+data class ToolDescriptor(
     val id: String,
     val label: String,
     val version: Int,
@@ -48,6 +48,6 @@ internal data class ToolDescriptor(
  * must require a verified TaskGrant. Existing tools still use their original
  * runtime and cannot be dispatched through this registry.
  */
-internal interface ToolAdapter {
+interface ToolAdapter {
     val descriptor: ToolDescriptor
 }

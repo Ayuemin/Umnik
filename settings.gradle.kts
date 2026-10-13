@@ -17,3 +17,4 @@ dependencyResolutionManagement {
 rootProject.name = "Umnik"
 include(":app")
 include(":core:contracts")
+include(":core:toolbus")

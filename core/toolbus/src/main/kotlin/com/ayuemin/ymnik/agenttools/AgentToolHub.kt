@@ -6,7 +6,7 @@ package com.ayuemin.ymnik.agenttools
  *
  * Do not add an unchecked adapter lookup or an execution shortcut here.
  */
-internal class AgentToolHub(private val registry: ToolRegistry) {
+class AgentToolHub(private val registry: ToolRegistry) {
     fun availableTools(): List<ToolDescriptor> = registry.descriptors()
 
     fun hasTool(id: String): Boolean = registry.contains(id)

@@ -4,7 +4,7 @@ package com.ayuemin.ymnik.agenttools
  * Closed-by-default catalog. Registration exposes capabilities to the hub,
  * but does not authorize or execute them.
  */
-internal class ToolRegistry {
+class ToolRegistry {
     private val descriptions = linkedMapOf<String, ToolDescriptor>()
 
     fun register(adapter: ToolAdapter) {
