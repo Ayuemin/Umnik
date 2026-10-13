@@ -32,6 +32,9 @@ jobs:
       - name: Verify toolbus module boundaries
         run: python3 scripts/check_toolbus_module.py
 
+      - name: Verify security module boundary
+        run: python3 scripts/check_security_module.py
+
       - name: Set up JDK 17
         uses: actions/setup-java@v6
         with:
@@ -55,11 +58,11 @@ jobs:
 
       - name: Fast checks - unit tests and debug APK
         if: env.UMNIK_FULL_CI != 'true'
-        run: ./gradlew --no-daemon :core:contracts:test :core:toolbus:test :app:testDebugUnitTest :app:assembleDebug --stacktrace
+        run: ./gradlew --no-daemon :core:contracts:test :core:toolbus:test :core:security:test :app:testDebugUnitTest :app:assembleDebug --stacktrace
 
       - name: Full checks - lint, unit tests, debug APK and R8 release APK
         if: env.UMNIK_FULL_CI == 'true'
-        run: ./gradlew --no-daemon :core:contracts:test :core:toolbus:test :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
+        run: ./gradlew --no-daemon :core:contracts:test :core:toolbus:test :core:security:test :app:lintDebug :app:testDebugUnitTest :app:assembleDebug :app:assembleRelease --stacktrace
 
       - name: Verify bundled offline Russian dictation
         if: startsWith(github.ref, 'refs/heads/work/')

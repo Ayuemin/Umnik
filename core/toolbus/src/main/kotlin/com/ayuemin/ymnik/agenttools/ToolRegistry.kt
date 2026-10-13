@@ -4,7 +4,7 @@ package com.ayuemin.ymnik.agenttools
  * Closed-by-default catalog. Registration exposes capabilities to the hub,
  * but does not authorize or execute them.
  */
-class ToolRegistry {
+class ToolRegistry : ToolDescriptorLookup {
     private val descriptions = linkedMapOf<String, ToolDescriptor>()
 
     fun register(adapter: ToolAdapter) {
@@ -17,7 +17,7 @@ class ToolRegistry {
 
     fun contains(id: String): Boolean = descriptions.containsKey(id)
 
-    fun descriptor(id: String): ToolDescriptor? = descriptions[id]?.let(::snapshot)
+    override fun descriptor(id: String): ToolDescriptor? = descriptions[id]?.let(::snapshot)
 
     fun descriptors(): List<ToolDescriptor> =
         descriptions.values.sortedBy { it.id }.map(::snapshot)

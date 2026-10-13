@@ -1,7 +1,7 @@
 package com.ayuemin.ymnik.agenttools
 
 /** A declared operation, not executable arguments supplied by a model. */
-internal data class ToolInvocation(
+data class ToolInvocation(
     val taskId: String,
     val originUserMessageId: String,
     val toolId: String,
@@ -9,7 +9,7 @@ internal data class ToolInvocation(
     val resource: TaskResource
 )
 
-internal enum class ToolPermissionDecision {
+enum class ToolPermissionDecision {
     ALLOWED,
     NEEDS_USER_CONFIRMATION,
     DENIED_UNKNOWN_TOOL,
@@ -26,7 +26,7 @@ internal enum class ToolPermissionDecision {
  * A future execution adapter must check the real target immediately before
  * every side effect. No model-produced confirmation flag is accepted here.
  */
-internal class ToolPermissionGate(private val registry: ToolRegistry) {
+class ToolPermissionGate(private val registry: ToolDescriptorLookup) {
     fun check(
         grant: TaskGrant?,
         call: ToolInvocation,

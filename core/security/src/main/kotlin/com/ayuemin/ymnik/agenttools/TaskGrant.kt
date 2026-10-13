@@ -5,7 +5,7 @@ package com.ayuemin.ymnik.agenttools
  * Adapters must supply the actual, normalized resource for EACH operation
  * (including every redirect or target change) rather than a model-supplied label.
  */
-internal data class TaskResource(
+data class TaskResource(
     val kind: ToolResourceKind,
     val key: String
 ) {
@@ -15,7 +15,7 @@ internal data class TaskResource(
     }
 }
 
-internal data class TaskAllowance(
+data class TaskAllowance(
     val toolId: String,
     val action: ToolAction,
     val resource: TaskResource
@@ -29,7 +29,7 @@ internal data class TaskAllowance(
  * remembered conversation text. This stage does not yet wire that boundary;
  * creating a grant is NOT a substitute for verifying the message provenance.
  */
-internal class TaskGrant private constructor(
+class TaskGrant private constructor(
     val taskId: String,
     val originUserMessageId: String,
     val issuedAtMillis: Long,

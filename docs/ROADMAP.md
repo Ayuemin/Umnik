@@ -31,9 +31,9 @@
 - [ ] Сохранить запускаемый исходный `:app`, собрать обычный debug и R8 release в CI; Android baseline smoke test.
 
 ## 2. Ввести настоящие Gradle-модули без второй реализации ядра
-- [~] `:core:contracts` создан, исходный `TokenUsageStats` прошёл полный CI #38353675751. Следующий шаг — перенос существующих `ToolDescriptor`/`ToolAdapter`; полный перечень контрактов будет расти только по нужде.
-- [~] Выделить `:core:toolbus` физическим переносом оригинальных `ToolRegistry`/`AgentToolHub`, **не создавать второй каталог**. Исполняющего ToolBus пока нет; CI нового шага ожидается.
-- [ ] Создать `:core:security`: извлечь runtime gate/permission scope с отдельными тестами запрета и подмены ресурсов.
+- [~] `:core:contracts` существует: `TokenUsageStats` и действующие `ToolDescriptor`/`ToolAdapter`, плюс read-only порт `ToolDescriptorLookup` для security. API расширять по реальным потребителям, без пустышек.
+- [x] `:core:toolbus` выделен переносом **оригинальных** `ToolRegistry`/`AgentToolHub`, без второго каталога; [полный Android CI #38355677942](https://github.com/Ayuemin/Umnik/actions/runs/38355677942) **success** на `87a761baba0e`. Реальное единое исполнение ещё не внедрено.
+- [~] Создаётся `:core:security` физическим переносом действующих `TaskGrant`/`ToolPermissionGate`/`GuardedToolDispatcher`; порт descriptor lookup разрывает риск цикла security→toolbus. CI данного переноса ожидается, Android E2E не пройден.
 - [ ] Вынести `:core:provider`, затем `:providers:openrouter`, сохранив потоковый ответ и tool calls.
 - [ ] Устранить прямые зависимости core→Android UI и core→конкретные инструменты; DI в `:app`.
 - [ ] На каждом шаге зелёный CI, runnable APK, короткий migration note.
@@ -82,13 +82,21 @@
 - Rollback: откатить оба кодовых коммита в обратном порядке (`git revert 41ade546`, затем `git revert 7602ff00`) в рабочей ветке, затем скорректировать документацию; без force-push и без изменений `main`.
 - Следующее решение: перенести минимальные живые tools контракты без второй шины; optional RAG/Team/Batch/Video и данные сохраняются до явного решения.
 
-### 13.10.2026 — второй кодовый этап, извлечение каталога tools (CI ожидается)
-- [~] Физически извлечены `ToolDescriptor`/`ToolAdapter` в `:core:contracts` и существующие `ToolRegistry`/`AgentToolHub` в `:core:toolbus`, сохранены пакеты, алгоритмы регистрации, отсутствие execute. [ADR-0002](DECISIONS/0002-tool-metadata-extraction.md). `TaskGrant`/Gate/Dispatcher пока остаются в `:app`.
-- **Baseline:** `afe3f670d00e2c42221557651cab597fe11e74ea`; [CI #38354774410](https://github.com/Ayuemin/Umnik/actions/runs/38354774410) — success. **Новый SHA, фактический CI URL и итог добавить после запуска/завершения workflow.**
-- **Ожидаемые проверки:** tool boundary script, unit модуля, все прежние app security tests, lint, debug, R8, Vosk APK validation. Не объявлять успех до подтверждения.
+### 13.10.2026 — второй кодовый этап, извлечение каталога tools (полный CI успешен)
+- [x] Физически извлечены `ToolDescriptor`/`ToolAdapter` в `:core:contracts` и существующие `ToolRegistry`/`AgentToolHub` в `:core:toolbus`, сохранены пакеты, алгоритмы регистрации, отсутствие execute. [ADR-0002](DECISIONS/0002-tool-metadata-extraction.md). На этом этапе `TaskGrant`/Gate/Dispatcher оставались в `:app`.
+- **SHA второго этапа:** [`87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`](https://github.com/Ayuemin/Umnik/commit/87a761baba0e0f8ad091baa65dc9048bbfcdd0a5). **Полный CI:** [Android CI #38355677942](https://github.com/Ayuemin/Umnik/actions/runs/38355677942) — **success** (core unit/app unit/lint/debug/R8, architecture, Vosk APK). Android устройство не проверено.
+- **Выполненные проверки:** tool boundary script, unit модулей, прежние app security tests, lint, debug, R8, Vosk APK validation.
 - **Android:** нет проверки на устройстве; test APK .test не затрагивает установленную стабильную версию. Ограничение: tool registry metadata-only и legacy runtime callbacks.
 - **Rollback:** `git revert` кодового коммита миграции в work-ветке, без переписывания истории.
 - **Следующий шаг:** перенос неизменённой семантики `TaskGrant`/permission gate в `:core:security` и тесты на фактические ресурсы.
+
+### 13.10.2026 — третий кодовый этап, извлечение существующей безопасности (CI ожидается)
+- [~] Извлечение в `:core:security`: оригинальные `TaskGrant`, `ToolPermissionGate` и `GuardedToolDispatcher` с прежними правилами; минимальный `ToolDescriptorLookup` предотвращает обратную зависимость от ToolBus. [ADR-0003](DECISIONS/0003-security-extraction.md). Регистрация и реальные Browser/Shell callbacks не меняются.
+- **Baseline:** `87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`, [успешный CI #38355677942](https://github.com/Ayuemin/Umnik/actions/runs/38355677942). **Коммит переноса и фактический новый CI URL дополнить после запуска; отсутствие Android device check не закрыто.**
+- **CI-gate:** архитектурная проверка запретных импортов/циклов/дубликатов и приватного `TaskGrant`, сохранённые security unit-тесты, app tests, lint, debug/R8, offline RU model APK.
+- **Android:** не тестировался на устройстве. Пока security module реализует старый permission gate, а не завершённую универсальную ToolBus.
+- **Backup/rollback:** исходное состояние доступно по `87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`; при регрессии revert отдельного коммита только в work-ветке, без force-push.
+- **Следующий шаг:** подключение универсального исполняющего ToolAdapter с проверкой фактического ресурса и on-device confirmation. Копасить безопасность до согласования E2E нельзя.
 
 ## Приёмка и журнал статусов
 

@@ -1,9 +1,9 @@
 package com.ayuemin.ymnik.agenttools
 
-import kotlinx.coroutines.CancellationException
+import kotlin.coroutines.cancellation.CancellationException
 
 /** A blocked operation never invokes the supplied tool callback. */
-internal sealed interface ToolDispatchResult<out T> {
+sealed interface ToolDispatchResult<out T> {
     data class Completed<T>(val value: T) : ToolDispatchResult<T>
     data class Blocked(val decision: ToolPermissionDecision) : ToolDispatchResult<Nothing>
 }
@@ -19,7 +19,7 @@ internal sealed interface ToolDispatchResult<out T> {
  * Multi-step adapters must re-check their changing targets at each side effect
  * and obtain trusted on-device confirmation for NEEDS_USER_CONFIRMATION.
  */
-internal class GuardedToolDispatcher(private val gate: ToolPermissionGate) {
+class GuardedToolDispatcher(private val gate: ToolPermissionGate) {
     suspend fun <T> invoke(
         grant: TaskGrant?,
         requested: ToolInvocation,

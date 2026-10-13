@@ -51,3 +51,8 @@ data class ToolDescriptor(
 interface ToolAdapter {
     val descriptor: ToolDescriptor
 }
+
+/** Read-only descriptor lookup used by the permission gate without a ToolBus dependency. */
+interface ToolDescriptorLookup {
+    fun descriptor(id: String): ToolDescriptor?
+}

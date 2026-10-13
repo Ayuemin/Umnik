@@ -108,6 +108,7 @@ chaquopy {
 dependencies {
     implementation(project(":core:contracts"))
     implementation(project(":core:toolbus"))
+    implementation(project(":core:security"))
     implementation("androidx.core:core-ktx:1.19.0")
     implementation("androidx.activity:activity-compose:1.13.0")
     implementation(platform("androidx.compose:compose-bom:2026.08.00"))
