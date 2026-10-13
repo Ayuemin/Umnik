@@ -24,4 +24,4 @@
 ## Проверки и откат
 - `python3 scripts/check_contracts_module.py`, `:core:contracts:test`, `:app:testDebugUnitTest`, `:app:lintDebug`, `:app:assembleDebug`, `:app:assembleRelease` (R8), проверка офлайн-модели APK.
 - После GitHub CI отдельно требуется Android smoke (запуск `.test`, чат, streaming, tokens/info, Vosk).
-- При регрессии `git revert` коммита миграции в той же work-ветке, без `force-push`; прошлый стабильный APK не затронут.
+- При регрессии откатить два кодовых коммита в обратном порядке: `git revert 41ade546`, затем `git revert 7602ff00` в той же work-ветке, без `force-push`; прошлый стабильный APK не затронут.
