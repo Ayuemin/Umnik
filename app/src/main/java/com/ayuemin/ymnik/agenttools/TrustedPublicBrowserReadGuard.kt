@@ -13,8 +13,8 @@ import com.ayuemin.ymnik.network.LocalWebFetchPolicy
  * This policy only authorizes read-only navigation and inspection. It does
  * NOT authorize browser clicks, form submission, downloads, Shell or uploads.
  *
- * Stage 1: pure authorization policy + tests. Legacy callbacks are NOT yet
- * routed through this gate; do not describe runtime Browser as protected.
+ * Only observed DOM reads enter ToolBus. Navigation and mutation still need
+ * separate network-layer hardening and per-action resource checks.
  */
 internal class TrustedPublicBrowserReadGuard(
     registry: ToolRegistry = ExistingLocalToolCatalog.createRegistry()
@@ -73,6 +73,29 @@ internal class TrustedPublicBrowserReadGuard(
                 resource = sessionResource(trustedChatId)
             ),
             nowMillis
+        )
+    }
+
+    /** Execute only an already observed DOM read through the existing guarded Hub. */
+    suspend fun readObservedPage(
+        grant: TaskGrant?,
+        trustedChatId: String,
+        directUserMessageId: String,
+        full: Boolean,
+        nowMillis: () -> Long
+    ): ToolDispatchResult<ToolTextResult> {
+        val adapter = LocalBrowserReadAdapter(trustedChatId, directUserMessageId, grant, full)
+        val hub = AgentToolHub(ExistingLocalToolCatalog.createRegistry(localBrowserReadAdapter = adapter))
+        return hub.executeRead(
+            grant = grant,
+            requested = ToolInvocation(
+                taskId = directUserMessageId,
+                originUserMessageId = directUserMessageId,
+                toolId = adapter.descriptor.id,
+                action = ToolAction.READ,
+                resource = sessionResource(trustedChatId)
+            ),
+            nowMillis = nowMillis
         )
     }
 

@@ -49,6 +49,9 @@ internal object ExistingLocalToolCatalog {
         descriptor("local_shell_stop", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION)
     )
 
+    /** The legacy descriptor remains the sole definition of Browser read. */
+    fun browserReadDescriptor(): ToolDescriptor = browser.first { it.id == "local_browser_read" }
+
     /** Original descriptor is the sole definition of the Shell status capability. */
     fun shellStatusDescriptor(): ToolDescriptor = shell.first { it.id == "local_shell_status" }
 
@@ -56,17 +59,24 @@ internal object ExistingLocalToolCatalog {
      * Optional trusted read adapter replaces ONLY its metadata-only registration.
      * All other Browser/Shell descriptors retain their original closed-by-default behavior.
      */
-    fun createRegistry(localShellStatusAdapter: ExecutableToolAdapter? = null): ToolRegistry =
+    fun createRegistry(
+        localShellStatusAdapter: ExecutableToolAdapter? = null,
+        localBrowserReadAdapter: ExecutableToolAdapter? = null
+    ): ToolRegistry =
         ToolRegistry().apply {
             require(localShellStatusAdapter == null ||
                 localShellStatusAdapter.descriptor == shellStatusDescriptor()) {
                 "Local Shell status adapter must match the original descriptor exactly"
             }
+            require(localBrowserReadAdapter == null ||
+                localBrowserReadAdapter.descriptor == browserReadDescriptor()) {
+                "Browser read adapter must match the original descriptor"
+            }
             (browser + shell).forEach { tool ->
-                val selected = if (tool.id == "local_shell_status" && localShellStatusAdapter != null) {
-                    localShellStatusAdapter
-                } else {
-                    object : ToolAdapter { override val descriptor = tool }
+                val selected = when {
+                    tool.id == "local_shell_status" && localShellStatusAdapter != null -> localShellStatusAdapter
+                    tool.id == "local_browser_read" && localBrowserReadAdapter != null -> localBrowserReadAdapter
+                    else -> object : ToolAdapter { override val descriptor = tool }
                 }
                 register(selected)
             }

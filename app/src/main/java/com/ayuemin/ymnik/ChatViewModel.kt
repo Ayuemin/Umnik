@@ -5493,10 +5493,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 } else null,
                                 localBrowserRead = if (localBrowserToolsEnabled) {
                                     { full ->
-                                        persistBrowserDownload(
-                                            chatId,
-                                            LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)
-                                        )
+                                        when (val read = trustedPublicBrowserReadGuard.readObservedPage(
+                                            grant = browserReadGrant,
+                                            trustedChatId = chatId,
+                                            directUserMessageId = user.id,
+                                            full = full,
+                                            nowMillis = System::currentTimeMillis
+                                        )) {
+                                            is ToolDispatchResult.Completed -> persistBrowserDownload(chatId, read.value.text)
+                                            is ToolDispatchResult.Blocked -> gson.toJson(
+                                                mapOf(
+                                                    "ok" to false,
+                                                    "error" to "Чтение Browser не разрешено",
+                                                    "reason" to read.decision.name
+                                                )
+                                            )
+                                        }
                                     }
                                 } else null,
                                 localBrowserClick = if (localBrowserToolsEnabled) {

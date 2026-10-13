@@ -166,6 +166,8 @@ object LocalBrowserRuntime {
     @Volatile private var attachedWebView: WebView? = null
     private var attachSignal = CompletableDeferred<Unit>()
     @Volatile private var activeChatId: String? = null
+    // Chat owning the last successfully completed command on the shared WebView.
+    @Volatile private var lastWebViewChatId: String? = null
 
     private val mutableActivity = MutableStateFlow<LocalBrowserActivity?>(null)
     val activity: StateFlow<LocalBrowserActivity?> = mutableActivity.asStateFlow()
@@ -337,6 +339,7 @@ object LocalBrowserRuntime {
 
         synchronized(attachLock) {
             attachedWebView = webView
+            lastWebViewChatId = null
             if (!attachSignal.isCompleted) attachSignal.complete(Unit)
         }
     }
@@ -345,6 +348,7 @@ object LocalBrowserRuntime {
         synchronized(attachLock) {
             if (attachedWebView !== webView) return
             attachedWebView = null
+            lastWebViewChatId = null
             if (attachSignal.isCompleted) attachSignal = CompletableDeferred()
         }
         mutableUserControlVisible.value = false
@@ -382,13 +386,33 @@ object LocalBrowserRuntime {
         }
     }
 
+    /**
+     * The read adapter can inspect only the already loaded observed page;
+     * it must not silently reload a stale page under a READ permission.
+     */
+    internal suspend fun observedReadTarget(chatId: String): String? {
+        if (activeChatId != null || lastWebViewChatId != chatId) return null
+        val session = sessions[chatId] ?: return null
+        val webView = attachedWebView ?: return null
+        val observed = currentUrl(webView)
+        return observed.takeIf {
+            session.currentUrl.isNotBlank() && sameDocumentUrl(it, session.currentUrl)
+        }
+    }
+
     internal suspend fun read(
         chatId: String,
         full: Boolean = false,
         directUserMessageId: String,
-        publicReadGrant: TaskGrant?
+        publicReadGrant: TaskGrant?,
+        observedOnly: Boolean = false
     ): String = commandMutex.withLock {
         val session = requireSession(chatId)
+        if (observedOnly) {
+            check(observedReadTarget(chatId) != null) {
+                "Browser page changed or belongs to another chat; reopen it first"
+            }
+        }
         requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", session.currentUrl)
         runCommand(
             session,
@@ -398,7 +422,13 @@ object LocalBrowserRuntime {
             "full=" + full
         ) {
             val webView = webView()
-            ensureCurrent(session, webView)
+            if (observedOnly) {
+                check(sameDocumentUrl(currentUrl(webView), session.currentUrl)) {
+                    "Browser document changed during read; reopen it first"
+                }
+            } else {
+                ensureCurrent(session, webView)
+            }
             requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", currentUrl(webView))
             val page = snapshot(session, webView, forceBaseline = true, expanded = full)
             requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, "local_browser_read", currentUrl(webView))
@@ -883,6 +913,7 @@ object LocalBrowserRuntime {
         )
         return try {
             val result = withTimeout(timeoutMs) { block() }
+            lastWebViewChatId = session.chatId
             logAction(
                 session,
                 action,
@@ -891,6 +922,7 @@ object LocalBrowserRuntime {
             )
             result
         } catch (timeout: TimeoutCancellationException) {
+            lastWebViewChatId = null
             session.lifecycle = LocalBrowserLifecycle.BLOCKED
             withContext(NonCancellable + Dispatchers.Main.immediate) {
                 attachedWebView?.stopLoading()
@@ -908,6 +940,7 @@ object LocalBrowserRuntime {
                 timeout
             )
         } catch (error: Throwable) {
+            lastWebViewChatId = null
             logAction(
                 session,
                 action,

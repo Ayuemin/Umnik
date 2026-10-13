@@ -52,7 +52,7 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
 
         val vm = source("src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
         assertTrue(vm.contains("persistBrowserDownload("))
-        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)"))
+        assertTrue(vm.contains("trustedPublicBrowserReadGuard.readObservedPage("))
     }
 
     @Test fun fullReadBudgetIsNotReducedByLargePageHardening() {
@@ -151,7 +151,16 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
         assertTrue(s.contains("requirePublicReadGrant(chatId, directUserMessageId, publicReadGrant, \"local_browser_read\", currentUrl(webView))"))
         assertTrue(vm.contains("browserEnabledForRequest = localBrowserToolsEnabled"))
         assertTrue(vm.contains("LocalBrowserRuntime.open(chatId, url, user.id, browserReadGrant)"))
-        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)"))
+        assertTrue(vm.contains("trustedPublicBrowserReadGuard.readObservedPage("))
+    }
+
+    @Test fun guardedReadCannotSilentlyNavigateOrChangeChats() {
+        val s = runtime()
+        assertTrue(s.contains("internal suspend fun observedReadTarget("))
+        assertTrue(s.contains("lastWebViewChatId != chatId"))
+        assertTrue(s.contains("if (observedOnly) {"))
+        assertTrue(s.contains("sameDocumentUrl(currentUrl(webView), session.currentUrl)"))
+        assertTrue(s.contains("Browser document changed during read"))
     }
 
     @Test fun takeoverReturnsFreshSnapshotWithoutAutoRepeatingAction() {
