@@ -18,7 +18,7 @@ if "com.android" in gradle or "project(" in gradle:
 
 for source in sources:
     text = source.read_text(encoding="utf-8")
-    imports = re.findall(r"^\\s*import\\s+([^\\s]+)", text, re.MULTILINE)
+    imports = re.findall(r"^\s*import\s+([^\s]+)", text, re.MULTILINE)
     forbidden = (
         "android.", "androidx.", "com.ayuemin.ymnik.ui.",
         "com.ayuemin.ymnik.network.", "com.ayuemin.ymnik.agenttools.",
