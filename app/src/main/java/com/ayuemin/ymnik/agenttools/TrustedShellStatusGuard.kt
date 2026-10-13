@@ -8,7 +8,7 @@ package com.ayuemin.ymnik.agenttools
 internal class TrustedShellStatusGuard(
     registry: ToolRegistry = ExistingLocalToolCatalog.createRegistry()
 ) {
-    private val dispatcher = GuardedToolDispatcher(ToolPermissionGate(registry))
+    private val toolHub = AgentToolHub(registry)
 
     fun grantFromUiSubmission(
         chatId: String,
@@ -40,7 +40,7 @@ internal class TrustedShellStatusGuard(
         operation: suspend () -> T
     ): ToolDispatchResult<T> {
         val resource = resourceForChat(trustedChatId)
-        return dispatcher.invoke(
+        return toolHub.dispatch(
             grant = grant,
             requested = ToolInvocation(
                 taskId = directUserMessageId,

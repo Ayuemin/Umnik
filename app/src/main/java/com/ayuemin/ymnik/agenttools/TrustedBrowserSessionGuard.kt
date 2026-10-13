@@ -10,7 +10,7 @@ package com.ayuemin.ymnik.agenttools
 internal class TrustedBrowserSessionGuard(
     registry: ToolRegistry = ExistingLocalToolCatalog.createRegistry()
 ) {
-    private val dispatcher = GuardedToolDispatcher(ToolPermissionGate(registry))
+    private val toolHub = AgentToolHub(registry)
 
     fun grantFromUiSubmission(
         chatId: String,
@@ -44,7 +44,7 @@ internal class TrustedBrowserSessionGuard(
             "Only Browser session-control operations belong to this guard"
         }
         val resource = resourceForChat(trustedChatId)
-        return dispatcher.invoke(
+        return toolHub.dispatch(
             grant = grant,
             requested = ToolInvocation(
                 taskId = directUserMessageId,

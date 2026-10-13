@@ -1,6 +1,6 @@
 # ROADMAP — модульная перестройка Umnik 2
 
-**Дата начала документа:** 13.10.2026. **Статус:** после статического аудита выполнен первый маленький кодовый перенос — `:core:contracts` с исходным `TokenUsageStats`; остальная архитектурная миграция и Android E2E ещё впереди. **Этот GitHub-файл — единственный действующий чек-лист.**  
+**Дата начала документа:** 13.10.2026. **Статус:** после аудита извлечены рабочие JVM-модули `:core:contracts`, `:core:toolbus`, `:core:security`; новый узкий этап проводит два существующих trusted callback через `AgentToolHub`. Большая часть миграции и Android E2E ещё впереди. **Этот GitHub-файл — единственный действующий чек-лист.**  
 **Репозиторий:** `Ayuemin/Umnik`; **действующая ветка миграции** `work/modular-umnik-v2`. Старую ветку и `main` сохранять.  
 **Требования:** `docs/PRODUCT_BLUEPRINT.md`, `docs/PROJECT_TREE.md` и `AGENTS.md` в этой ветке; копии двух первых допустимы в источниках ChatGPT. Старые `docs/WORKPLAN_voice-browser-ssh.md` и `docs/agent-tool-hub-architecture.md` сохранены только как история, НЕ как действующий план. Эту дорожную карту НЕ добавлять в источники ChatGPT; читать непосредственно с GitHub.
 
@@ -33,7 +33,7 @@
 ## 2. Ввести настоящие Gradle-модули без второй реализации ядра
 - [~] `:core:contracts` существует: `TokenUsageStats` и действующие `ToolDescriptor`/`ToolAdapter`, плюс read-only порт `ToolDescriptorLookup` для security. API расширять по реальным потребителям, без пустышек.
 - [x] `:core:toolbus` выделен переносом **оригинальных** `ToolRegistry`/`AgentToolHub`, без второго каталога; [полный Android CI #38355677942](https://github.com/Ayuemin/Umnik/actions/runs/38355677942) **success** на `87a761baba0e`. Реальное единое исполнение ещё не внедрено.
-- [~] Создаётся `:core:security` физическим переносом действующих `TaskGrant`/`ToolPermissionGate`/`GuardedToolDispatcher`; порт descriptor lookup разрывает риск цикла security→toolbus. CI данного переноса ожидается, Android E2E не пройден.
+- [x] `:core:security` извлечён физическим переносом действующих `TaskGrant`/`ToolPermissionGate`/`GuardedToolDispatcher`; порт descriptor lookup разрывает цикл security→toolbus. **Полный CI #38357118999 success** на `6743bd77`. Android E2E не пройден, остальные legacy callback ещё требуют миграции.
 - [ ] Вынести `:core:provider`, затем `:providers:openrouter`, сохранив потоковый ответ и tool calls.
 - [ ] Устранить прямые зависимости core→Android UI и core→конкретные инструменты; DI в `:app`.
 - [ ] На каждом шаге зелёный CI, runnable APK, короткий migration note.
@@ -90,13 +90,21 @@
 - **Rollback:** `git revert` кодового коммита миграции в work-ветке, без переписывания истории.
 - **Следующий шаг:** перенос неизменённой семантики `TaskGrant`/permission gate в `:core:security` и тесты на фактические ресурсы.
 
-### 13.10.2026 — третий кодовый этап, извлечение существующей безопасности (CI ожидается)
-- [~] Извлечение в `:core:security`: оригинальные `TaskGrant`, `ToolPermissionGate` и `GuardedToolDispatcher` с прежними правилами; минимальный `ToolDescriptorLookup` предотвращает обратную зависимость от ToolBus. [ADR-0003](DECISIONS/0003-security-extraction.md). Регистрация и реальные Browser/Shell callbacks не меняются.
-- **Baseline:** `87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`, [успешный CI #38355677942](https://github.com/Ayuemin/Umnik/actions/runs/38355677942). **Коммит переноса и фактический новый CI URL дополнить после запуска; отсутствие Android device check не закрыто.**
+### 13.10.2026 — третий кодовый этап, извлечение существующей безопасности (полный CI успешен)
+- [x] Извлечены в `:core:security` оригинальные `TaskGrant`, `ToolPermissionGate` и `GuardedToolDispatcher` с прежними правилами; минимальный `ToolDescriptorLookup` предотвращает обратную зависимость от ToolBus. [ADR-0003](DECISIONS/0003-security-extraction.md). Регистрация и реальные Browser/Shell callbacks не менялись.
+- **SHA:** [`6743bd7722a33979e828f5fcd2751522add515a1`](https://github.com/Ayuemin/Umnik/commit/6743bd7722a33979e828f5fcd2751522add515a1). **Полный CI:** [Android CI #38357118999](https://github.com/Ayuemin/Umnik/actions/runs/38357118999) — **success** (architecture / 3 core unit modules / app unit / lint / debug / R8 / Vosk + debug artifact). **Android device smoke не выполнен.**
 - **CI-gate:** архитектурная проверка запретных импортов/циклов/дубликатов и приватного `TaskGrant`, сохранённые security unit-тесты, app tests, lint, debug/R8, offline RU model APK.
 - **Android:** не тестировался на устройстве. Пока security module реализует старый permission gate, а не завершённую универсальную ToolBus.
 - **Backup/rollback:** исходное состояние доступно по `87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`; при регрессии revert отдельного коммита только в work-ветке, без force-push.
 - **Следующий шаг:** подключение универсального исполняющего ToolAdapter с проверкой фактического ресурса и on-device confirmation. Копасить безопасность до согласования E2E нельзя.
+
+### 13.10.2026 — четвёртый кодовый этап: первый действующий guarded путь через AgentToolHub (CI ожидается)
+- [~] В **существующий** `AgentToolHub` добавлена делегация `dispatch` к исходному `GuardedToolDispatcher(ToolPermissionGate(registry))`; те же правила `TaskGrant` и фактического ресурса. Два старых trusted callback — `TrustedBrowserSessionGuard.control` и `TrustedShellStatusGuard.readStatus` — теперь вызывают Hub вместо создания собственного dispatcher. [ADR-0004](DECISIONS/0004-guarded-hub-dispatch.md).
+- **Baseline:** `6743bd7722a33979e828f5fcd2751522add515a1`, [полный успешный CI #38357118999](https://github.com/Ayuemin/Umnik/actions/runs/38357118999). **Новый SHA и CI URL / итог внести после проверки workflow**.
+- **Tests:** новый `GuardedHubDispatchTest` (нет grant, подмена actual resource, чужой turn, expiry, confirmation, cancellation), неизменные app Browser/Shell guard tests, три architecture checks, core unit, app unit/lint/debug/R8, Vosk APK.
+- **Android:** проверка на устройстве отсутствует, debug `.test` должен оставаться отдельно от stable APK. **Не готово:** универсальный `ToolAdapter.execute`, GitHub/Browser/Shell runtime migration, сериализация progress/artifacts и on-device confirmation.
+- **Риски:** доверенность `resolveActualResource` обеспечивается только concrete runtime; текущий Hub не должен исполнять модельные параметры вместо реального target. Shell stop и прочие legacy пути намеренно пока неизменны.
+- **Rollback:** `git revert` этого маленького кодового коммита в рабочей ветке, без force-push, исходный коммит доступен. Следующий шаг: отдельный проект действующего `ToolAdapter.execute` с типами аргументов/результатов, привязкой к runtime и pre-action approval.
 
 ## Приёмка и журнал статусов
 

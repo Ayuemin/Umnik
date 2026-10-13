@@ -8,5 +8,6 @@ kotlin {
 
 dependencies {
     implementation(project(":core:contracts"))
+    implementation(project(":core:security"))
     testImplementation("junit:junit:4.13.2")
 }

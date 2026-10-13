@@ -29,8 +29,25 @@ if 'implementation(project(":core:toolbus"))' not in app:
     errors.append("App does not depend on toolbus")
 if 'implementation(project(":core:contracts"))' not in gradle:
     errors.append("Toolbus requires contracts")
+if 'implementation(project(":core:security"))' not in gradle:
+    errors.append("Guarded ToolBus requires security; security main must not depend on ToolBus")
+if not (root / "core/toolbus/src/test/kotlin" / base / "GuardedHubDispatchTest.kt").is_file():
+    errors.append("Guarded AgentToolHub needs cross-module permission tests")
 if "com.android" in gradle or 'project(":app")' in gradle:
     errors.append("Toolbus must remain a standalone JVM module")
+hub_code = (root / "core/toolbus/src/main/kotlin" / base / "AgentToolHub.kt").read_text(encoding="utf-8")
+if "GuardedToolDispatcher(ToolPermissionGate(registry))" not in hub_code:
+    errors.append("AgentToolHub must reuse original GuardedToolDispatcher with original registry")
+if "dispatcher.invoke(" not in hub_code:
+    errors.append("Hub must invoke the security dispatcher before calling any operation")
+for guard_name in ("TrustedBrowserSessionGuard.kt", "TrustedShellStatusGuard.kt"):
+    guard = legacy / guard_name
+    if not guard.is_file():
+        errors.append(f"Missing existing trusted guarded tool: {guard_name}")
+    else:
+        body = guard.read_text(encoding="utf-8")
+        if "AgentToolHub(registry)" not in body or "toolHub.dispatch(" not in body:
+            errors.append(f"Existing trusted guard must pass through AgentToolHub: {guard_name}")
 
 for mod in ("contracts", "toolbus"):
     src = root / "core" / mod / "src/main/kotlin"
