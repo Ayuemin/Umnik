@@ -28,9 +28,9 @@
 6. **Legacy actions:** click/type/scroll/back/open/download are not all routed through `ExecutableToolAdapter`. Existing UI takeover is not a substitute for Hub authorization of each action.
 
 ## Safe first migration slice
-- Bind **only `local_browser_read`** to an `ExecutableToolAdapter` registered in the existing `ExistingLocalToolCatalog` / `AgentToolHub.executeRead`.
+- Bind **only compact `local_browser_read`** to an `ExecutableToolAdapter` registered in the existing `ExistingLocalToolCatalog` / `AgentToolHub.executeRead`. Full reads keep their guarded legacy runtime path until the ToolBus has a large-result/artifact contract.
 - Resolve resource from the *currently observed* WebView document with trusted chat ownership and URL checks; do not use the model-supplied target.
-- Require an existing trusted UI `TaskGrant` and re-check at runtime immediately before/after DOM observation. In this path, **deny instead of reloading** a stale/different document. Preserve the previous compact/full JSON result and full-read artifact handoff.
+- Require an existing trusted UI `TaskGrant` and re-check at runtime immediately before/after DOM observation. In this path, **deny instead of reloading** a stale/different document. Preserve the compact JSON result; retain the existing full-read JSON and artifact handoff outside the new adapter.
 - Cover no grant, expiry, wrong message/chat, unsafe URL, another chat controlling WebView, and stale URL; require full lint/unit/debug/R8 CI. No release, no deletions, no change to user data.
 - Explicitly leave Browser navigation, DNS rebinding and all side-effect actions for later hardening with Android network fixture/E2E. Until then describe read-only ToolBus as *a limited guarded path*, not a complete secure Browser.
 

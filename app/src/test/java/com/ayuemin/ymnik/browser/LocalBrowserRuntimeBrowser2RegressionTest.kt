@@ -52,7 +52,7 @@ class LocalBrowserRuntimeBrowser2RegressionTest {
 
         val vm = source("src/main/java/com/ayuemin/ymnik/ChatViewModel.kt")
         assertTrue(vm.contains("persistBrowserDownload("))
-        assertTrue(vm.contains("trustedPublicBrowserReadGuard.readObservedPage("))
+        assertTrue(vm.contains("LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)"))
     }
 
     @Test fun fullReadBudgetIsNotReducedByLargePageHardening() {

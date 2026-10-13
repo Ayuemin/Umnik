@@ -5493,21 +5493,29 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 } else null,
                                 localBrowserRead = if (localBrowserToolsEnabled) {
                                     { full ->
-                                        when (val read = trustedPublicBrowserReadGuard.readObservedPage(
-                                            grant = browserReadGrant,
-                                            trustedChatId = chatId,
-                                            directUserMessageId = user.id,
-                                            full = full,
-                                            nowMillis = System::currentTimeMillis
-                                        )) {
-                                            is ToolDispatchResult.Completed -> persistBrowserDownload(chatId, read.value.text)
-                                            is ToolDispatchResult.Blocked -> gson.toJson(
-                                                mapOf(
-                                                    "ok" to false,
-                                                    "error" to "Чтение Browser не разрешено",
-                                                    "reason" to read.decision.name
-                                                )
+                                        if (full) {
+                                            // Full DOM JSON may exceed ToolTextResult's 65,536-char limit.
+                                            // Retain the existing guarded runtime and artifact handoff.
+                                            persistBrowserDownload(
+                                                chatId,
+                                                LocalBrowserRuntime.read(chatId, full, user.id, browserReadGrant)
                                             )
+                                        } else {
+                                            when (val read = trustedPublicBrowserReadGuard.readObservedPage(
+                                                grant = browserReadGrant,
+                                                trustedChatId = chatId,
+                                                directUserMessageId = user.id,
+                                                nowMillis = System::currentTimeMillis
+                                            )) {
+                                                is ToolDispatchResult.Completed -> persistBrowserDownload(chatId, read.value.text)
+                                                is ToolDispatchResult.Blocked -> gson.toJson(
+                                                    mapOf(
+                                                        "ok" to false,
+                                                        "error" to "Чтение Browser не разрешено",
+                                                        "reason" to read.decision.name
+                                                    )
+                                                )
+                                            }
                                         }
                                     }
                                 } else null,

@@ -26,12 +26,11 @@ class LocalBrowserReadAdapterTest {
         url: String? = "https://example.org/page",
         turn: String = message,
         time: Long = 1_500L,
-        full: Boolean = false,
         onRead: () -> String
     ): ToolDispatchResult<ToolTextResult> {
         val adapter = LocalBrowserReadAdapter(
             trustedChatId = chat, directUserMessageId = message, grant = grant,
-            full = full, observeUrl = { url }, readPage = { onRead() }
+            observeUrl = { url }, readPage = { onRead() }
         )
         val hub = AgentToolHub(ExistingLocalToolCatalog.createRegistry(localBrowserReadAdapter = adapter))
         return immediate {
@@ -42,10 +41,10 @@ class LocalBrowserReadAdapterTest {
         }
     }
 
-    @Test fun exactDescriptorAndFullResultAreRetained() {
+    @Test fun exactDescriptorAndCompactResultAreRetained() {
         val grant = guard.grantFromUiSubmission(chat, message, true, 1_000L)
         var count = 0
-        val result = run(grant, full = true) { count++; """{"ok":true,"content":"page"}""" }
+        val result = run(grant) { count++; """{"ok":true,"content":"page"}""" }
         assertEquals(ToolDispatchResult.Completed(ToolTextResult("""{"ok":true,"content":"page"}""")), result)
         assertEquals(1, count)
         assertEquals(ExistingLocalToolCatalog.browserReadDescriptor(),
@@ -78,8 +77,19 @@ class LocalBrowserReadAdapterTest {
     }
 
     @Test fun unregisteredBrowserCallsRemainMetadataOnly() {
-        val registry = ExistingLocalToolCatalog.createRegistry()
-        assertEquals(null, registry.executable("local_browser_read"))
-        assertEquals(null, registry.executable("local_browser_click"))
+        val hub = AgentToolHub(ExistingLocalToolCatalog.createRegistry())
+        val grant = guard.grantFromUiSubmission(chat, message, true, 1_000L)
+        for (tool in listOf("local_browser_read", "local_browser_click")) {
+            val result = immediate {
+                hub.executeRead(
+                    grant,
+                    ToolInvocation(message, message, tool, ToolAction.READ, resource)
+                ) { 1_500L }
+            }
+            assertEquals(
+                ToolDispatchResult.Blocked(ToolPermissionDecision.DENIED_UNDECLARED_CAPABILITY),
+                result
+            )
+        }
     }
 }

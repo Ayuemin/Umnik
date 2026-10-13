@@ -81,10 +81,9 @@ internal class TrustedPublicBrowserReadGuard(
         grant: TaskGrant?,
         trustedChatId: String,
         directUserMessageId: String,
-        full: Boolean,
         nowMillis: () -> Long
     ): ToolDispatchResult<ToolTextResult> {
-        val adapter = LocalBrowserReadAdapter(trustedChatId, directUserMessageId, grant, full)
+        val adapter = LocalBrowserReadAdapter(trustedChatId, directUserMessageId, grant)
         val hub = AgentToolHub(ExistingLocalToolCatalog.createRegistry(localBrowserReadAdapter = adapter))
         return hub.executeRead(
             grant = grant,

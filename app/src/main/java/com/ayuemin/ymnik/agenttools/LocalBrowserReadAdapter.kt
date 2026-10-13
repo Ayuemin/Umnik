@@ -11,10 +11,9 @@ internal class LocalBrowserReadAdapter(
     private val trustedChatId: String,
     private val directUserMessageId: String,
     private val grant: TaskGrant?,
-    private val full: Boolean,
     private val observeUrl: suspend () -> String? = { LocalBrowserRuntime.observedReadTarget(trustedChatId) },
     private val readPage: suspend () -> String = {
-        LocalBrowserRuntime.read(trustedChatId, full, directUserMessageId, grant, observedOnly = true)
+        LocalBrowserRuntime.read(trustedChatId, false, directUserMessageId, grant, observedOnly = true)
     }
 ) : ExecutableToolAdapter {
     init { require(trustedChatId.isNotBlank() && directUserMessageId.isNotBlank()) }
