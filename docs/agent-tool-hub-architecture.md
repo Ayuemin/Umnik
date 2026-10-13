@@ -1,3 +1,7 @@
+> **Историческая архитектурная справка о первом AgentToolHub.** Для Umnik 2 действуют [docs/ROADMAP.md](ROADMAP.md), [docs/PRODUCT_BLUEPRINT.md](PRODUCT_BLUEPRINT.md), [docs/PROJECT_TREE.md](PROJECT_TREE.md) и корневой `AGENTS.md`. Этот файл оставлен для исследования прежней реализации и НЕ устанавливает приоритеты работ.
+
+---
+
 # AgentToolHub — единая шина инструментов Умника
 
 **Статус (12.10.2026):** Registry/dispatcher, TaskGrant и fail-closed ToolPermissionGate готовы. Частично подключены реальные Browser open/read и контроль сессии, Shell status/stop. `ChatArtifactResolver` проверяет файловые ID/пути чата для передачи в Shell. Другие callbacks и запуск Shell пока не полностью покрыты единым gate; TaskCoordinator, общий ArtifactStore facade и сквозная Android-приёмка впереди. Не считать эти инструменты целиком защищёнными только по наличию каталога.
