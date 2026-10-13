@@ -74,6 +74,41 @@ for guard_name in ("TrustedBrowserSessionGuard.kt", "TrustedShellStatusGuard.kt"
         if "AgentToolHub(registry)" not in body or "toolHub.dispatch(" not in body:
             errors.append(f"Existing trusted guard must pass through AgentToolHub: {guard_name}")
 
+# First real read-only adapter reuses the original Shell status and runtime state.
+app_adapter = legacy / "LocalShellStatusReadAdapter.kt"
+formatter = legacy / "LocalShellStatusJson.kt"
+catalog = legacy / "ExistingLocalToolCatalog.kt"
+status_guard = legacy / "TrustedShellStatusGuard.kt"
+app_vm = root / "app/src/main/java/com/ayuemin/ymnik/ChatViewModel.kt"
+app_test = root / "app/src/test/java" / base / "LocalShellStatusReadAdapterTest.kt"
+for path in (app_adapter, formatter, catalog, status_guard, app_vm, app_test):
+    if not path.is_file():
+        errors.append(f"Missing production read-adapter wiring: {path.relative_to(root)}")
+if all(p.is_file() for p in (app_adapter, formatter, catalog, status_guard, app_vm, app_test)):
+    adapter_body = app_adapter.read_text(encoding="utf-8")
+    catalog_body = catalog.read_text(encoding="utf-8")
+    guard_body = status_guard.read_text(encoding="utf-8")
+    vm_body = app_vm.read_text(encoding="utf-8")
+    if "AsyncJobEvents.localShellActivity.value" not in adapter_body:
+        errors.append("Shell read must observe runtime-owned state, not model arguments")
+    if "observe()?.chatId" not in adapter_body or "active.chatId != trustedChatId" not in adapter_body:
+        errors.append("Actual runtime chat owner must be checked, including on ownership change")
+    if "ToolTextResult(LocalShellStatusJson.render(" not in adapter_body:
+        errors.append("New read path must reuse existing status JSON shape")
+    if "localShellStatusAdapter.descriptor == shellStatusDescriptor()" not in catalog_body:
+        errors.append("Opt-in adapter must match existing Shell capability exactly")
+    if "AgentToolHub(ExistingLocalToolCatalog.createRegistry(adapter))" not in guard_body:
+        errors.append("Trusted Shell status must use the original protected hub/registry")
+    if "hub.executeRead(" not in guard_body:
+        errors.append("Trusted Shell status must call the guarded read-only executor")
+    if "trustedShellStatusGuard.readObservedStatus(" not in vm_body:
+        errors.append("Active chat agent callback must reach the real read adapter")
+    if "trustedShellStatusGuard.readStatus(" in vm_body:
+        errors.append("Chat agent must not bypass the adapter through legacy callback")
+    for dangerous in ("LocalShellRuntime.cancel(", "LocalShellEngine(", "exec(", "delete("):
+        if dangerous in adapter_body:
+            errors.append(f"Shell status adapter must stay read-only: {dangerous}")
+
 for mod in ("contracts", "toolbus"):
     src = root / "core" / mod / "src/main/kotlin"
     kotlin_files = list(src.rglob("*.kt"))

@@ -49,11 +49,26 @@ internal object ExistingLocalToolCatalog {
         descriptor("local_shell_stop", ToolAction.CONTROL, ToolResourceKind.LOCAL_SESSION)
     )
 
-    fun createRegistry(): ToolRegistry = ToolRegistry().apply {
-        (browser + shell).forEach { tool ->
-            register(object : ToolAdapter {
-                override val descriptor = tool
-            })
+    /** Original descriptor is the sole definition of the Shell status capability. */
+    fun shellStatusDescriptor(): ToolDescriptor = shell.first { it.id == "local_shell_status" }
+
+    /**
+     * Optional trusted read adapter replaces ONLY its metadata-only registration.
+     * All other Browser/Shell descriptors retain their original closed-by-default behavior.
+     */
+    fun createRegistry(localShellStatusAdapter: ExecutableToolAdapter? = null): ToolRegistry =
+        ToolRegistry().apply {
+            require(localShellStatusAdapter == null ||
+                localShellStatusAdapter.descriptor == shellStatusDescriptor()) {
+                "Local Shell status adapter must match the original descriptor exactly"
+            }
+            (browser + shell).forEach { tool ->
+                val selected = if (tool.id == "local_shell_status" && localShellStatusAdapter != null) {
+                    localShellStatusAdapter
+                } else {
+                    object : ToolAdapter { override val descriptor = tool }
+                }
+                register(selected)
+            }
         }
-    }
 }

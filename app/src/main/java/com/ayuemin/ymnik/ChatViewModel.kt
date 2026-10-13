@@ -26,6 +26,7 @@ import com.ayuemin.ymnik.data.SystemTaskPlanner
 import com.ayuemin.ymnik.data.SystemKnowledgePlan
 import com.ayuemin.ymnik.audio.AnswerSoundPlayer
 import com.ayuemin.ymnik.agenttools.TrustedShellStatusGuard
+import com.ayuemin.ymnik.agenttools.LocalShellStatusJson
 import com.ayuemin.ymnik.agenttools.TrustedBrowserSessionGuard
 import com.ayuemin.ymnik.agenttools.TrustedPublicBrowserReadGuard
 import com.ayuemin.ymnik.agenttools.TrustedShellStopGuard
@@ -5581,13 +5582,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                                 },
                                 localShellStatus = if (localShellToolsEnabled) {
                                     {
-                                        when (val status = trustedShellStatusGuard.readStatus(
+                                        when (val status = trustedShellStatusGuard.readObservedStatus(
                                             grant = shellStatusGrant,
                                             trustedChatId = chatId,
                                             directUserMessageId = user.id,
                                             nowMillis = System::currentTimeMillis
-                                        ) { localShellStatusForChat(chatId) }) {
-                                            is ToolDispatchResult.Completed -> status.value
+                                        )) {
+                                            is ToolDispatchResult.Completed -> status.value.text
                                             is ToolDispatchResult.Blocked -> gson.toJson(
                                                 mapOf(
                                                     "ok" to false,
@@ -6531,34 +6532,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         )
     }
 
-    private fun localShellStatusForChat(chatId: String): String {
-        val active = AsyncJobEvents.localShellActivity.value
-            ?: return gson.toJson(mapOf("ok" to true, "running" to false))
-        if (active.chatId != chatId) {
-            return gson.toJson(
-                mapOf(
-                    "ok" to true,
-                    "running" to true,
-                    "in_this_chat" to false,
-                    "message" to "Local Shell занят задачей из другого чата"
-                )
-            )
-        }
-        return gson.toJson(
-            mapOf(
-                "ok" to true,
-                "running" to true,
-                "in_this_chat" to true,
-                "model" to active.modelId,
-                "status" to active.status,
-                "turn" to active.turn,
-                "max_turns" to active.maxTurns,
-                "tool_calls" to active.toolCalls,
-                "attachments" to active.attachmentCount,
-                "elapsed_seconds" to ((System.currentTimeMillis() - active.startedAt).coerceAtLeast(0L) / 1000L)
-            )
-        )
-    }
+    private fun localShellStatusForChat(chatId: String): String =
+        LocalShellStatusJson.render(chatId, AsyncJobEvents.localShellActivity.value, System.currentTimeMillis())
 
     private fun sendLocalShellGuidance(chatId: String, note: String): String {
         val active = AsyncJobEvents.localShellActivity.value

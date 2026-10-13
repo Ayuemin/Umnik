@@ -57,6 +57,33 @@ internal class TrustedShellStatusGuard(
         )
     }
 
+
+    /**
+     * Production Shell status path using the same original ToolRegistry and
+     * GuardedToolDispatcher as the other trusted callbacks. Runtime ownership
+     * is observed inside the adapter, never taken from model arguments.
+     */
+    suspend fun readObservedStatus(
+        grant: TaskGrant?,
+        trustedChatId: String,
+        directUserMessageId: String,
+        nowMillis: () -> Long
+    ): ToolDispatchResult<ToolTextResult> {
+        val adapter = LocalShellStatusReadAdapter(trustedChatId, nowMillis)
+        val hub = AgentToolHub(ExistingLocalToolCatalog.createRegistry(adapter))
+        return hub.executeRead(
+            grant = grant,
+            requested = ToolInvocation(
+                taskId = directUserMessageId,
+                originUserMessageId = directUserMessageId,
+                toolId = adapter.descriptor.id,
+                action = ToolAction.READ,
+                resource = resourceForChat(trustedChatId)
+            ),
+            nowMillis = nowMillis
+        )
+    }
+
     private fun resourceForChat(chatId: String): TaskResource =
         TaskResource(ToolResourceKind.LOCAL_SESSION, "chat:$chatId")
 }
