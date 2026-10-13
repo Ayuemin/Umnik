@@ -40,6 +40,31 @@ if "GuardedToolDispatcher(ToolPermissionGate(registry))" not in hub_code:
     errors.append("AgentToolHub must reuse original GuardedToolDispatcher with original registry")
 if "dispatcher.invoke(" not in hub_code:
     errors.append("Hub must invoke the security dispatcher before calling any operation")
+# Read-only executable adapters are stored in the SAME original ToolRegistry.
+new_adapter = root / "core/toolbus/src/main/kotlin" / base / "ExecutableToolAdapter.kt"
+if not new_adapter.is_file():
+    errors.append("Missing opt-in executable adapter contract")
+else:
+    adapter_code = new_adapter.read_text(encoding="utf-8")
+    if "interface ExecutableToolAdapter : ToolAdapter" not in adapter_code:
+        errors.append("ExecutableToolAdapter must extend the original metadata contract")
+    if "suspend fun resolveActualResource()" not in adapter_code or "suspend fun execute()" not in adapter_code:
+        errors.append("Adapter must expose trusted runtime resource resolution and execution")
+registry_code = (root / "core/toolbus/src/main/kotlin" / base / "ToolRegistry.kt").read_text(encoding="utf-8")
+if "private val registrations =" not in registry_code or "internal fun executable(" not in registry_code:
+    errors.append("Executable adapters must use the original single registration map")
+if "private val descriptions =" in registry_code:
+    errors.append("Old parallel descriptor map must not coexist with registrations")
+if "requested.action != ToolAction.READ" not in hub_code:
+    errors.append("First opt-in adapter step must remain read-only")
+if "registry.executable(requested.toolId)" not in hub_code:
+    errors.append("Hub must only execute trusted registered adapters")
+if "resolveActualResource = { adapter.resolveActualResource() }" not in hub_code:
+    errors.append("Hub must resolve adapter's actual runtime target")
+if "operation = { adapter.execute() }" not in hub_code:
+    errors.append("Executable callback must remain enclosed in the original guarded dispatcher")
+if not (root / "core/toolbus/src/test/kotlin" / base / "ExecutableToolAdapterTest.kt").is_file():
+    errors.append("Opt-in adapter denial tests required")
 for guard_name in ("TrustedBrowserSessionGuard.kt", "TrustedShellStatusGuard.kt"):
     guard = legacy / guard_name
     if not guard.is_file():

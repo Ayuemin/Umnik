@@ -98,13 +98,20 @@
 - **Backup/rollback:** исходное состояние доступно по `87a761baba0e0f8ad091baa65dc9048bbfcdd0a5`; при регрессии revert отдельного коммита только в work-ветке, без force-push.
 - **Следующий шаг:** подключение универсального исполняющего ToolAdapter с проверкой фактического ресурса и on-device confirmation. Копасить безопасность до согласования E2E нельзя.
 
-### 13.10.2026 — четвёртый кодовый этап: первый действующий guarded путь через AgentToolHub (CI ожидается)
-- [~] В **существующий** `AgentToolHub` добавлена делегация `dispatch` к исходному `GuardedToolDispatcher(ToolPermissionGate(registry))`; те же правила `TaskGrant` и фактического ресурса. Два старых trusted callback — `TrustedBrowserSessionGuard.control` и `TrustedShellStatusGuard.readStatus` — теперь вызывают Hub вместо создания собственного dispatcher. [ADR-0004](DECISIONS/0004-guarded-hub-dispatch.md).
-- **Baseline:** `6743bd7722a33979e828f5fcd2751522add515a1`, [полный успешный CI #38357118999](https://github.com/Ayuemin/Umnik/actions/runs/38357118999). **Новый SHA и CI URL / итог внести после проверки workflow**.
+### 13.10.2026 — четвёртый кодовый этап: первый действующий guarded путь через AgentToolHub (полный CI зелёный)
+- [x] В **существующий** `AgentToolHub` добавлена делегация `dispatch` к исходному `GuardedToolDispatcher(ToolPermissionGate(registry))`; те же правила `TaskGrant` и фактического ресурса. Два старых trusted callback — `TrustedBrowserSessionGuard.control` и `TrustedShellStatusGuard.readStatus` — теперь вызывают Hub вместо создания собственного dispatcher. [ADR-0004](DECISIONS/0004-guarded-hub-dispatch.md).
+- **SHA:** [`8a8446758749d7e3a9c883fd7d0b9e78ba1e4cea`](https://github.com/Ayuemin/Umnik/commit/8a8446758749d7e3a9c883fd7d0b9e78ba1e4cea). **Полный CI:** [Android CI #38358699027](https://github.com/Ayuemin/Umnik/actions/runs/38358699027) — **success** (architecture, core unit, app unit, lint, debug, R8, Vosk, debug artifact). Android device smoke не проводился.
 - **Tests:** новый `GuardedHubDispatchTest` (нет grant, подмена actual resource, чужой turn, expiry, confirmation, cancellation), неизменные app Browser/Shell guard tests, три architecture checks, core unit, app unit/lint/debug/R8, Vosk APK.
 - **Android:** проверка на устройстве отсутствует, debug `.test` должен оставаться отдельно от stable APK. **Не готово:** универсальный `ToolAdapter.execute`, GitHub/Browser/Shell runtime migration, сериализация progress/artifacts и on-device confirmation.
 - **Риски:** доверенность `resolveActualResource` обеспечивается только concrete runtime; текущий Hub не должен исполнять модельные параметры вместо реального target. Shell stop и прочие legacy пути намеренно пока неизменны.
 - **Rollback:** `git revert` этого маленького кодового коммита в рабочей ветке, без force-push, исходный коммит доступен. Следующий шаг: отдельный проект действующего `ToolAdapter.execute` с типами аргументов/результатов, привязкой к runtime и pre-action approval.
+
+### 13.10.2026 — пятый кодовый этап: read-only opt-in executable adapter (CI ожидается)
+- [~] В **едином** `ToolRegistry` сохраняются и снимки descriptors, и зарегистрированные объекты адаптеров; `ExecutableToolAdapter : ToolAdapter` разрешён только как явное opt-in. `AgentToolHub.executeRead` запускает **только READ** через уже существующий `GuardedToolDispatcher`; остальные операции отклоняются, metadata-only инструменты остаются неисполняемыми. [ADR-0005](DECISIONS/0005-opt-in-read-only-execution.md).
+- **Baseline:** `8a8446758749d7e3a9c883fd7d0b9e78ba1e4cea`, [CI #38358699027](https://github.com/Ayuemin/Umnik/actions/runs/38358699027) **success**; **новый SHA/URL CI/результат добавить после проверки workflow**.
+- **Новый test-only пример адаптера** проверяет exact current resource, missing grant, wrong turn, expiry, unknown tool, metadata-only registration, запрет WRITE и ограничение текстового результата. Нет новых production Browser/Shell/GitHub adapters, нет новой сетевой или файловой операции.
+- **Android:** не проверено на устройстве. Полный контракт `ToolAdapter.execute`, bounded parallelism, timeout, approvals, ArtifactStore, реальный Browser DOM/redirect SSRF и Shell runtime остаются отдельными задачами.
+- **Rollback:** одиночный `git revert` нового коммита в рабочей ветке без force-push; исходные grants и runtime tools не удаляются. Следующий шаг: привязка первого production read adapter к **проверяемому фактическому** источнику данных без обхода текущих Android guard.
 
 ## Приёмка и журнал статусов
 
