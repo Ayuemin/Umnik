@@ -1,6 +1,6 @@
 # ROADMAP — модульная перестройка Umnik 2
 
-**Дата начала документа:** 13.10.2026. **Статус:** миграционная ветка создана от актуальной рабочей версии; кодовый рефакторинг пока не начинался. **Этот GitHub-файл — единственный действующий чек-лист.**  
+**Дата начала документа:** 13.10.2026. **Статус:** после статического аудита выполнен первый маленький кодовый перенос — `:core:contracts` с исходным `TokenUsageStats`; остальная архитектурная миграция и Android E2E ещё впереди. **Этот GitHub-файл — единственный действующий чек-лист.**  
 **Репозиторий:** `Ayuemin/Umnik`; **действующая ветка миграции** `work/modular-umnik-v2`. Старую ветку и `main` сохранять.  
 **Требования:** `docs/PRODUCT_BLUEPRINT.md`, `docs/PROJECT_TREE.md` и `AGENTS.md` в этой ветке; копии двух первых допустимы в источниках ChatGPT. Старые `docs/WORKPLAN_voice-browser-ssh.md` и `docs/agent-tool-hub-architecture.md` сохранены только как история, НЕ как действующий план. Эту дорожную карту НЕ добавлять в источники ChatGPT; читать непосредственно с GitHub.
 
@@ -74,10 +74,11 @@
 - [ ] SSH/SFTP, MCP, дополнительные провайдеры/API, облака — только через утверждённый контракт шины и новые adapters.
 - [ ] Релиз, изменение названия/package ID, публикация — отдельное прямое решение пользователя.
 
-### 13.10.2026 — первый кодовый шаг, contracts (ожидает CI)
-- [~] По разрешению владельца на продолжение работы выбран **узкий** шаг без изменения API: перенос `model.TokenUsageStats` из `:app` в `:core:contracts` без дублирования. Решение: [ADR-0001](DECISIONS/0001-core-contracts-first-extraction.md).
-- Проверки в новом CI: `scripts/check_contracts_module.py`, `:core:contracts:test`, прежние app unit, lint, debug, release R8 и проверка Vosk assets. **Результат и SHA записать после фактического CI.**
-- Android smoke test: **не выполнен**; изменение файлов чата, секретов, package ID, инструментов, UI и пользовательских данных: **нет**.
+### 13.10.2026 — первый кодовый шаг, contracts (полный CI зелёный)
+- [x] По разрешению владельца на продолжение работы выполнен **узкий** шаг без изменения API: перенос `model.TokenUsageStats` из `:app` в `:core:contracts` без дублирования. Решение: [ADR-0001](DECISIONS/0001-core-contracts-first-extraction.md).
+- **Коммиты:** [`7602ff00`](https://github.com/Ayuemin/Umnik/commit/7602ff00f2e5fd40d1750d75803b42c5d6910a19) — Gradle-модуль/физический перенос/ADR/CI; [`41ade546`](https://github.com/Ayuemin/Umnik/commit/41ade546ce09fb3ada3f028eb7ee1bafaccb004b) — исправление regex в архитектурном checker.
+- **Полный CI:** [Android CI #38353675751](https://github.com/Ayuemin/Umnik/actions/runs/38353675751) — **success**, HEAD `41ade546ce09fb3ada3f028eb7ee1bafaccb004b`. Успешно выполнены `scripts/check_contracts_module.py`, `:core:contracts:test`, `:app:lintDebug`, `:app:testDebugUnitTest`, `:app:assembleDebug`, `:app:assembleRelease` (R8), Vosk APK check. Артефакт `Umnik-DEBUG-separate-app` загружен в Actions, ZIP ~105 МБ.
+- **Android smoke test:** **не выполнен** (нет данных об устройстве/дате установки); изменение файлов чата, секретов, package ID, инструментов, UI и пользовательских данных: **нет**. Существующий debug APK имеет `.test` и устанавливается отдельно. Полный workflow не подтверждает пользовательский E2E.
 - Rollback: revert единственного атомарного миграционного коммита в рабочей ветке, без force-push.
 - Следующее решение: перенести минимальные живые tools контракты без второй шины; optional RAG/Team/Batch/Video и данные сохраняются до явного решения.
 
