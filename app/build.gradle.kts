@@ -117,7 +117,7 @@ dependencies {
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
     implementation("org.eclipse.jgit:org.eclipse.jgit:6.10.0.202406032230-r")
-    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.apache.commons:commons-compress:1.28.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
 }
